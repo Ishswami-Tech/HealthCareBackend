@@ -104,10 +104,27 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
    * This runs independently of API requests
    */
   onModuleInit() {
-    // Start background health monitoring
-    this.startBackgroundMonitoring();
-    // Start continuous database connection monitoring
-    this.startDatabaseMonitoring();
+    try {
+      // Defensive check: ensure serviceStatusCache is initialized
+      if (!this.serviceStatusCache) {
+        // Re-initialize if somehow undefined (should never happen, but defensive)
+        this.serviceStatusCache = new Map<
+          string,
+          { status: 'healthy' | 'unhealthy'; timestamp: number; details?: string }
+        >();
+      }
+
+      // Start background health monitoring
+      this.startBackgroundMonitoring();
+      // Start continuous database connection monitoring
+      this.startDatabaseMonitoring();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+      console.error(`[HealthService] onModuleInit failed: ${errorMessage}`);
+      console.error(`[HealthService] Stack: ${errorStack}`);
+      // Don't throw - allow app to continue without health monitoring
+    }
   }
 
   /**
@@ -172,11 +189,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   private async monitorDatabaseConnection(): Promise<void> {
     try {
       if (!this.databaseService || typeof this.databaseService.getHealthStatus !== 'function') {
-        this.serviceStatusCache.set('database', {
-          status: 'unhealthy',
-          timestamp: Date.now(),
-          details: 'Database service is not available',
-        });
+        // Defensive check before calling .set()
+        if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+          this.serviceStatusCache.set('database', {
+            status: 'unhealthy',
+            timestamp: Date.now(),
+            details: 'Database service is not available',
+          });
+        }
         return;
       }
 
@@ -201,19 +221,25 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         }),
       ]);
 
-      this.serviceStatusCache.set('database', {
-        status: healthStatus.isHealthy ? 'healthy' : 'unhealthy',
-        timestamp: Date.now(),
-        details: healthStatus.isHealthy
-          ? 'PostgreSQL connected'
-          : healthStatus.errors?.[0] || 'Database connection failed',
-      });
+      // Defensive check before calling .set()
+      if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+        this.serviceStatusCache.set('database', {
+          status: healthStatus.isHealthy ? 'healthy' : 'unhealthy',
+          timestamp: Date.now(),
+          details: healthStatus.isHealthy
+            ? 'PostgreSQL connected'
+            : healthStatus.errors?.[0] || 'Database connection failed',
+        });
+      }
     } catch (_error) {
-      this.serviceStatusCache.set('database', {
-        status: 'unhealthy',
-        timestamp: Date.now(),
-        details: 'Database monitoring error',
-      });
+      // Defensive check before calling .set()
+      if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+        this.serviceStatusCache.set('database', {
+          status: 'unhealthy',
+          timestamp: Date.now(),
+          details: 'Database monitoring error',
+        });
+      }
     }
   }
 
@@ -1441,14 +1467,35 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       // Add development-only services with real HTTP checks
       if (isDevMode) {
-        const [prismaStudioHealth, redisCommanderHealth, pgAdminHealth] = await Promise.allSettled([
-          this.checkExternalService('Prisma Studio', 'http://localhost:5555', 2000),
-          this.checkExternalService('Redis Commander', 'http://localhost:8082', 2000),
-          this.checkExternalService('pgAdmin', 'http://localhost:5050', 2000),
-        ]);
+        // CRITICAL: Only check Redis Commander if Redis is the cache provider
+        // If Dragonfly is the provider, skip Redis Commander check
+        const cacheProvider = this.config?.getCacheProvider() || 'dragonfly';
+        const isRedisProvider = cacheProvider === 'redis';
 
+        const healthCheckPromises: Array<Promise<ServiceHealth>> = [
+          this.checkExternalService('Prisma Studio', 'http://localhost:5555', 2000),
+          this.checkExternalService('pgAdmin', 'http://localhost:5050', 2000),
+        ];
+
+        // Only check Redis Commander if Redis is the cache provider
+        if (isRedisProvider) {
+          healthCheckPromises.push(
+            this.checkExternalService('Redis Commander', 'http://localhost:8082', 2000)
+          );
+        }
+
+        const healthCheckResults = await Promise.allSettled(healthCheckPromises);
+
+        // Extract results - always have at least 2 (Prisma Studio and pgAdmin)
+        const prismaStudioHealth = healthCheckResults[0];
+        const pgAdminHealth = healthCheckResults[1];
+        const redisCommanderHealth = isRedisProvider && healthCheckResults.length > 2
+          ? healthCheckResults[2]
+          : undefined;
+
+        // Handle Prisma Studio health
         result.services.prismaStudio =
-          prismaStudioHealth.status === 'fulfilled'
+          prismaStudioHealth && prismaStudioHealth.status === 'fulfilled'
             ? prismaStudioHealth.value
             : {
                 status: 'unhealthy' as const,
@@ -1457,18 +1504,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 details: 'Prisma Studio is not accessible',
               };
 
-        result.services.redisCommander =
-          redisCommanderHealth.status === 'fulfilled'
-            ? redisCommanderHealth.value
-            : {
-                status: 'unhealthy' as const,
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details: 'Redis Commander is not accessible',
-              };
-
+        // Handle pgAdmin health
         result.services.pgAdmin =
-          pgAdminHealth.status === 'fulfilled'
+          pgAdminHealth && pgAdminHealth.status === 'fulfilled'
             ? pgAdminHealth.value
             : {
                 status: 'unhealthy' as const,
@@ -1476,6 +1514,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
                 details: 'pgAdmin is not accessible',
               };
+
+        // Only set Redis Commander status if Redis is the provider
+        if (isRedisProvider && redisCommanderHealth) {
+          result.services.redisCommander =
+            redisCommanderHealth.status === 'fulfilled'
+              ? redisCommanderHealth.value
+              : {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: 'Redis Commander is not accessible',
+                };
+        }
       }
 
       return result;
@@ -1888,20 +1939,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const { promisify } = await import('util');
       const execAsync = promisify(exec);
 
-      // Check for Dragonfly first (default), then Redis
-      const cacheProvider =
-        this.config?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
-        process.env['CACHE_PROVIDER']?.toLowerCase() ||
-        'dragonfly';
+      // Use ConfigService for all cache configuration (single source of truth)
+      if (!this.config) {
+        return false;
+      }
 
-      const isDragonfly = cacheProvider === 'dragonfly';
-      // Use process.env directly to avoid configService defaults to localhost
-      const redisHost = isDragonfly
-        ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-        : process.env['REDIS_HOST'] || 'redis';
-      const redisPort = isDragonfly
-        ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-        : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      const redisHost = this.config.getCacheHost();
+      const redisPort = this.config.getCachePort();
 
       try {
         const { stdout } = await Promise.race([

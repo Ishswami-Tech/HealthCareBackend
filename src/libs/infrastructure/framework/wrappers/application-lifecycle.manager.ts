@@ -186,7 +186,102 @@ export class ApplicationLifecycleManager {
 
       this.logger.log(`Starting server on ${host}:${port}`);
 
+      // Log before listen to help debug
+      this.logger.log(`About to call app.listen(${port}, ${host})...`);
+
+      // Check if app and listen method exist
+      if (!this.app) {
+        throw new Error('Application instance is undefined');
+      }
+      if (typeof this.app.listen !== 'function') {
+        throw new Error('Application.listen is not a function');
+      }
+
+      // Check if app has getHttpAdapter method (for Fastify)
+      let _httpAdapter: unknown = null;
+      try {
+        if (typeof this.app.getHttpAdapter === 'function') {
+          _httpAdapter = this.app.getHttpAdapter();
+          this.logger.log('HTTP adapter retrieved successfully');
+        }
+      } catch (adapterError) {
+        this.logger.warn(
+          `Failed to get HTTP adapter (non-critical): ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
+        );
+      }
+
+      // Explicitly initialize the app before listening
+      // This triggers all OnModuleInit hooks and allows us to catch errors early
+      this.logger.log('Initializing application (triggers OnModuleInit hooks)...');
+      this.logger.log('This will trigger all OnModuleInit hooks in all modules');
+      try {
+        if (typeof this.app.init === 'function') {
+          this.logger.log('Calling app.init()...');
+          await this.app.init();
+          this.logger.log('Application initialized successfully');
+        } else {
+          this.logger.warn(
+            'Application does not have init() method, will be initialized by listen()'
+          );
+        }
+      } catch (initError) {
+        const initErrorMessage = initError instanceof Error ? initError.message : 'Unknown error';
+        const initErrorStack = initError instanceof Error ? initError.stack : 'No stack trace';
+        this.logger.error(`Application initialization failed: ${initErrorMessage}`);
+        this.logger.error(`Full error stack trace (first 50 lines):`);
+        if (initErrorStack) {
+          const stackLines = initErrorStack.split('\n');
+          for (let i = 0; i < Math.min(stackLines.length, 50); i++) {
+            this.logger.error(`[${i}] ${stackLines[i]}`);
+          }
+        } else {
+          this.logger.error('No stack trace available');
+        }
+        // Also log to console for immediate visibility
+        console.error('=== FULL ERROR STACK TRACE ===');
+        console.error(initErrorStack);
+        console.error('=== END STACK TRACE ===');
+        throw initError;
+      }
+
+      this.logger.log('Calling app.listen()...');
+      this.logger.log(`App type: ${typeof this.app}`);
+      this.logger.log(`App value: ${this.app ? 'defined' : 'undefined'}`);
+      this.logger.log(`App.listen type: ${typeof this.app.listen}`);
+
+      try {
+        // app.listen() internally calls app.init() if not already initialized
+        // This triggers all OnModuleInit hooks, which might cause errors
       await this.app.listen(port, host);
+        this.logger.log('app.listen() completed successfully');
+      } catch (listenError) {
+        const errorMessage = listenError instanceof Error ? listenError.message : 'Unknown error';
+        const errorStack = listenError instanceof Error ? listenError.stack : 'No stack trace';
+
+        this.logger.error(`app.listen() failed: ${errorMessage}`);
+        this.logger.error(`Error stack: ${errorStack}`);
+
+        // Log additional error details for debugging
+        if (listenError instanceof Error) {
+          this.logger.error(`Error name: ${listenError.name}`);
+          this.logger.error(`Error constructor: ${listenError.constructor.name}`);
+          if ('code' in listenError) {
+            this.logger.error(`Error code: ${String(listenError.code)}`);
+          }
+        }
+
+        // Try to get more context about what was undefined
+        if (errorMessage.includes("Cannot read properties of undefined (reading 'set')")) {
+          this.logger.error('DEBUG: Error is about undefined .set() method');
+          this.logger.error('DEBUG: This suggests something is trying to call .set() on undefined');
+          this.logger.error(
+            'DEBUG: Common causes: app.set(), app.getHttpAdapter().set(), or similar'
+          );
+          this.logger.error('DEBUG: This might be happening in a service OnModuleInit hook');
+        }
+
+        throw listenError;
+      }
 
       if (this.loggingService) {
         await this.loggingService.log(
@@ -207,7 +302,11 @@ export class ApplicationLifecycleManager {
       const errorMessage = `Failed to start server: ${
         error instanceof Error ? error.message : 'Unknown error'
       }`;
-      this.logger.error(errorMessage);
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+
+      // Log full error details for debugging
+      this.logger.error(`${errorMessage}\nStack: ${errorStack}`);
+
       if (this.loggingService) {
         await this.loggingService.log(
           LogType.ERROR,
@@ -216,9 +315,10 @@ export class ApplicationLifecycleManager {
           'ApplicationLifecycleManager',
           {
             error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
+            stack: errorStack,
             port: serverConfig.port,
             host: serverConfig.host,
+            fullError: error,
           }
         );
       }

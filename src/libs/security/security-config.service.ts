@@ -397,7 +397,7 @@ export class SecurityConfigService {
    * Configures the @fastify/cookie plugin for handling HTTP cookies.
    * Must be configured before session plugin.
    */
-  private async configureCookies(app: INestApplication): Promise<void> {
+  async configureCookies(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
     // Type guard ensures adapter has registerCookie method
     if (!adapter || typeof adapter.registerCookie !== 'function') {
@@ -480,9 +480,92 @@ export class SecurityConfigService {
       cookieName: 'healthcare.session',
     };
 
-    // Add store if provided
+    // Add store if provided and valid
+    // Wrap in try-catch to handle any errors during store wrapper creation
     if (store) {
-      sessionOptions['store'] = store;
+      try {
+        // Validate store has required methods before adding
+        const storeObj = store as {
+          set?: (sid: string, session: unknown, callback: (err?: unknown) => void) => void;
+          get?: (sid: string, callback: (err: unknown, result?: unknown) => void) => void;
+          destroy?: (sid: string, callback: (err?: unknown) => void) => void;
+          touch?: (sid: string, session: unknown, callback: (err?: unknown) => void) => void;
+        };
+
+        // CRITICAL: Validate store object and methods exist BEFORE attempting to bind
+        if (
+          typeof store !== 'object' ||
+          store === null ||
+          typeof storeObj.set !== 'function' ||
+          typeof storeObj.get !== 'function' ||
+          typeof storeObj.destroy !== 'function'
+        ) {
+          this.logger.warn(
+            'Session store provided but does not implement required methods (set, get, destroy). Using in-memory store instead.'
+          );
+        } else {
+          // All methods exist, now bind them
+          // Use direct method access (not optional chaining) since we've validated they exist
+          const boundGet = storeObj.get.bind(store);
+          const boundSet = storeObj.set.bind(store);
+          const boundDestroy = storeObj.destroy.bind(store);
+
+          // Validate bound methods are functions (should always be true, but double-check)
+          if (
+            typeof boundGet !== 'function' ||
+            typeof boundSet !== 'function' ||
+            typeof boundDestroy !== 'function'
+          ) {
+            this.logger.warn(
+              'Session store methods failed to bind properly. Using in-memory store instead.'
+            );
+          } else {
+            // Create store wrapper with bound methods
+            const storeWrapper: {
+              get: (sid: string, callback: (err: unknown, result?: unknown) => void) => void;
+              set: (sid: string, session: unknown, callback: (err?: unknown) => void) => void;
+              destroy: (sid: string, callback: (err?: unknown) => void) => void;
+              touch?: (sid: string, session: unknown, callback: (err?: unknown) => void) => void;
+            } = {
+              get: boundGet,
+              set: boundSet,
+              destroy: boundDestroy,
+            };
+
+            // Add touch method if available
+            if (typeof storeObj.touch === 'function') {
+              const boundTouch = storeObj.touch.bind(store);
+              if (typeof boundTouch === 'function') {
+                storeWrapper.touch = boundTouch;
+              }
+            }
+
+            // Final validation - ensure wrapper has all required methods and they're callable
+            if (
+              typeof storeWrapper.get === 'function' &&
+              typeof storeWrapper.set === 'function' &&
+              typeof storeWrapper.destroy === 'function' &&
+              storeWrapper.get !== undefined &&
+              storeWrapper.set !== undefined &&
+              storeWrapper.destroy !== undefined
+            ) {
+              sessionOptions['store'] = storeWrapper;
+              this.logger.log('Session store wrapper created and validated successfully');
+            } else {
+              this.logger.warn(
+                'Session store wrapper validation failed. Using in-memory store instead.'
+              );
+            }
+          }
+        }
+      } catch (storeError) {
+        this.logger.warn(
+          `Failed to create session store wrapper: ${storeError instanceof Error ? storeError.message : String(storeError)}. Using in-memory store instead.`
+        );
+        // Don't add store - Fastify will use in-memory store
+      }
+    } else {
+      this.logger.log('No session store provided - using in-memory store');
     }
 
     // Use Reflect.apply to call method with proper 'this' binding - avoids ESLint unbound-method warning
@@ -491,7 +574,67 @@ export class SecurityConfigService {
     if (typeof method !== 'function') {
       throw new Error('registerSession is not a function');
     }
-    await Reflect.apply(method, adapter, [app, sessionOptions]);
+
+    // Log session options for debugging (without sensitive data)
+    this.logger.log(
+      `Registering Fastify session plugin with options: ${JSON.stringify({
+        hasStore: !!sessionOptions['store'],
+        cookieName: sessionOptions['cookieName'],
+        cookieSecure: (sessionOptions['cookie'] as { secure?: boolean })?.secure,
+        cookieHttpOnly: (sessionOptions['cookie'] as { httpOnly?: boolean })?.httpOnly,
+      })}`
+    );
+
+    // CRITICAL: Ensure store is completely removed if not valid
+    // Fastify session plugin will fail if store exists but has undefined methods
+    if (sessionOptions['store']) {
+      const store = sessionOptions['store'] as {
+        set?: unknown;
+        get?: unknown;
+        destroy?: unknown;
+      };
+      if (
+        !store ||
+        typeof store.set !== 'function' ||
+        typeof store.get !== 'function' ||
+        typeof store.destroy !== 'function'
+      ) {
+        this.logger.warn('Store in sessionOptions is invalid - removing it before registration');
+        delete sessionOptions['store'];
+      }
+    }
+
+    try {
+      this.logger.log('About to call registerSession method...');
+      await Reflect.apply(method, adapter, [app, sessionOptions]);
+      this.logger.log('Fastify session plugin registered successfully');
+    } catch (registerError) {
+      const errorMessage =
+        registerError instanceof Error ? registerError.message : String(registerError);
+      const errorStack = registerError instanceof Error ? registerError.stack : undefined;
+
+      this.logger.error(`Failed to register Fastify session plugin: ${errorMessage}`, errorStack);
+
+      // Always try without store if registration fails
+      if (sessionOptions['store']) {
+        this.logger.warn(
+          'Session store appears to be causing registration failure. Retrying without store...'
+        );
+        const optionsWithoutStore = { ...sessionOptions };
+        delete optionsWithoutStore['store'];
+        try {
+          await Reflect.apply(method, adapter, [app, optionsWithoutStore]);
+          this.logger.log('Fastify session plugin registered successfully without store');
+        } catch (retryError) {
+          this.logger.error(
+            `Failed to register Fastify session plugin even without store: ${retryError instanceof Error ? retryError.message : String(retryError)}`
+          );
+          throw retryError;
+        }
+      } else {
+        throw registerError;
+      }
+    }
   }
 
   /**

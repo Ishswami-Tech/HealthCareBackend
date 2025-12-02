@@ -9,6 +9,7 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { ErrorsModule } from '@core/errors/errors.module';
     RbacModule,
     LoggingModule,
     ErrorsModule,
+    CacheModule,
   ],
   controllers: [EHRController, EHRClinicController],
   providers: [EHRService],

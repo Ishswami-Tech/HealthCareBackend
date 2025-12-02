@@ -71,6 +71,14 @@ export class MiddlewareManager {
    */
   configurePipes(app: INestApplication, pipes: PipeConfig[]): void {
     try {
+      // Check if app is available and has useGlobalPipes method
+      if (!app) {
+        throw new Error('Application instance is undefined');
+      }
+      if (typeof app.useGlobalPipes !== 'function') {
+        throw new Error('Application does not have useGlobalPipes method');
+      }
+
       const pipeInstances: PipeTransform[] = pipes.map(pipeConfig => {
         if (pipeConfig.pipe === ValidationPipe) {
           // Use provided options or get default options from ValidationPipeConfig
@@ -127,6 +135,14 @@ export class MiddlewareManager {
    */
   configureFilters(app: INestApplication, filters: FilterConfig[]): void {
     try {
+      // Check if app is available and has useGlobalFilters method
+      if (!app) {
+        throw new Error('Application instance is undefined');
+      }
+      if (typeof app.useGlobalFilters !== 'function') {
+        throw new Error('Application does not have useGlobalFilters method');
+      }
+
       const filterInstances: ExceptionFilter[] = filters.map(filterConfig => {
         // If filter is already an instance, use it directly
         if (!(filterConfig.filter instanceof Function)) {
@@ -183,6 +199,14 @@ export class MiddlewareManager {
    */
   configureInterceptors(app: INestApplication, interceptors: InterceptorConfig[]): void {
     try {
+      // Check if app is available and has useGlobalInterceptors method
+      if (!app) {
+        throw new Error('Application instance is undefined');
+      }
+      if (typeof app.useGlobalInterceptors !== 'function') {
+        throw new Error('Application does not have useGlobalInterceptors method');
+      }
+
       const interceptorInstances: NestInterceptor[] = interceptors.map(interceptorConfig => {
         // If interceptor is already an instance, use it directly
         if (!(interceptorConfig.interceptor instanceof Function)) {
@@ -322,6 +346,14 @@ export class MiddlewareManager {
    */
   configureGlobalPrefix(app: INestApplication, prefixConfig: GlobalPrefixConfig): void {
     try {
+      // Check if app is available and has setGlobalPrefix method
+      if (!app) {
+        throw new Error('Application instance is undefined');
+      }
+      if (typeof app.setGlobalPrefix !== 'function') {
+        throw new Error('Application does not have setGlobalPrefix method');
+      }
+
       if (!prefixConfig.prefix || prefixConfig.prefix.trim() === '') {
         this.logger.log('Global prefix not configured (empty or not provided)');
         return;
@@ -411,6 +443,11 @@ export class MiddlewareManager {
    */
   configure(app: INestApplication, config: MiddlewareConfig): void {
     try {
+      // Check if app is available
+      if (!app) {
+        throw new Error('Application instance is undefined');
+      }
+
       if (config.validationPipe) {
         this.configurePipes(app, [{ pipe: ValidationPipe, options: config.validationPipe }]);
       }

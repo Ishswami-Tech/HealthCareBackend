@@ -338,25 +338,41 @@ export class EHRService {
   }
 
   async getMedicalHistory(userId: string, clinicId?: string): Promise<MedicalHistoryResponse[]> {
-    const where: { userId: string; clinicId?: string } = { userId };
-    if (clinicId) {
-      where.clinicId = clinicId;
-    }
+    const cacheKey = `ehr:medical-history:${userId}:${clinicId || 'all'}`;
 
-    // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead<MedicalHistoryBase[]>(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<MedicalHistoryBase[]> };
-        };
-        return await typedClient.medicalHistory.findMany({
-          where: where as PrismaDelegateArgs,
-          orderBy: { date: 'desc' } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        const where: { userId: string; clinicId?: string } = { userId };
+        if (clinicId) {
+          where.clinicId = clinicId;
+        }
+
+        // Use executeHealthcareRead for optimized query
+        const records = await this.databaseService.executeHealthcareRead<MedicalHistoryBase[]>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: {
+                findMany: (args: PrismaDelegateArgs) => Promise<MedicalHistoryBase[]>;
+              };
+            };
+            return await typedClient.medicalHistory.findMany({
+              where: where as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        );
+
+        return records.map(record => this.transformMedicalHistory(record));
+      },
+      {
+        ttl: 1800, // 30 minutes
+        tags: [`ehr:${userId}`, 'medical_history'],
+        priority: 'high',
+        containsPHI: true,
+        compress: true,
       }
     );
-
-    return records.map(record => this.transformMedicalHistory(record));
   }
 
   async updateMedicalHistory(
@@ -515,20 +531,34 @@ export class EHRService {
   }
 
   async getLabReports(userId: string): Promise<LabReportResponse[]> {
-    // Use executeHealthcareRead for optimized query
-    const records = await this.databaseService.executeHealthcareRead<LabReportBase[]>(
-      async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          labReport: { findMany: (args: PrismaDelegateArgs) => Promise<LabReportBase[]> };
-        };
-        return await typedClient.labReport.findMany({
-          where: { userId } as PrismaDelegateArgs,
-          orderBy: { date: 'desc' } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+    const cacheKey = `ehr:lab-reports:${userId}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        // Use executeHealthcareRead for optimized query
+        const records = await this.databaseService.executeHealthcareRead<LabReportBase[]>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              labReport: { findMany: (args: PrismaDelegateArgs) => Promise<LabReportBase[]> };
+            };
+            return await typedClient.labReport.findMany({
+              where: { userId } as PrismaDelegateArgs,
+              orderBy: { date: 'desc' } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        );
+
+        return records.map(record => this.transformLabReport(record));
+      },
+      {
+        ttl: 1800, // 30 minutes
+        tags: [`ehr:${userId}`, 'lab_reports'],
+        priority: 'high',
+        containsPHI: true,
+        compress: true,
       }
     );
-
-    return records.map(record => this.transformLabReport(record));
   }
 
   async updateLabReport(id: string, data: UpdateLabReportDto): Promise<LabReportResponse> {

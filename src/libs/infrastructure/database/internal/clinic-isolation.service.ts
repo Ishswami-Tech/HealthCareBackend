@@ -33,6 +33,9 @@ export class ClinicIsolationService implements OnModuleInit {
   private cacheMissCount = 0;
   private readonly CACHE_TTL = 300000; // 5 minutes
   private readonly MAX_CACHE_SIZE = 10000; // Maximum cache entries
+  private isShuttingDown = false;
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
 
   constructor(
     @Inject(forwardRef(() => PrismaService))
@@ -42,13 +45,9 @@ export class ClinicIsolationService implements OnModuleInit {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
-    // Use ConfigService with dotted notation for configuration access
-    // ConfigService.get() retrieves values from the configuration factory or environment
-    const maxClinicsEnv = process.env['MAX_CLINICS'];
-    const maxLocationsEnv = process.env['MAX_LOCATIONS_PER_CLINIC'];
-
-    this.maxClinics = maxClinicsEnv ? parseInt(maxClinicsEnv, 10) : 200; // Default: 200 clinics
-    this.maxLocationsPerClinic = maxLocationsEnv ? parseInt(maxLocationsEnv, 10) : 50; // Default: 50 locations per clinic
+    // Use ConfigService for all configuration access
+    this.maxClinics = this.configService.getEnvNumber('MAX_CLINICS', 200); // Default: 200 clinics
+    this.maxLocationsPerClinic = this.configService.getEnvNumber('MAX_LOCATIONS_PER_CLINIC', 50); // Default: 50 locations per clinic
   }
 
   async onModuleInit() {
@@ -66,25 +65,86 @@ export class ClinicIsolationService implements OnModuleInit {
    * Initialize clinic caching system
    */
   async initializeClinicCaching(): Promise<void> {
+    // Skip if shutting down
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - this.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
     try {
+      // Wait for Prisma to be ready before attempting to load clinics
+      // Increased timeout to 30 seconds to ensure Prisma is fully initialized
+      const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+      if (!isReady) {
+        // During startup grace period, silently skip (don't log warnings)
+        if (!isInStartupGracePeriod) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'Prisma client not ready within timeout, skipping clinic cache initialization',
+            this.serviceName,
+            {}
+          );
+        }
+        return;
+      }
+
+      // Double-check Prisma is ready before accessing delegates
+      // Access isFullyInitialized through the instance method, not static property
+      if (!this.prismaService.isReady()) {
+        // During startup grace period, silently skip (don't log warnings)
+        if (!isInStartupGracePeriod) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'Prisma client not ready, skipping clinic cache initialization',
+            this.serviceName,
+            {}
+          );
+        }
+        return;
+      }
+
+      // CRITICAL: During startup grace period, don't call Prisma methods at all
+      // Even with getDelegateSafely(), calling methods triggers Prisma's internal validation
+      if (isInStartupGracePeriod) {
+        return;
+      }
+
       // Clear existing caches
       this.clinicCache.clear();
       this.userClinicCache.clear();
       this.locationClinicCache.clear();
 
-      // Load all active clinics - use PrismaService directly
-      type ClinicDelegate = {
-        findMany: <T>(args: T) => Promise<
+      // Load all active clinics - use safe delegate access to avoid Prisma validation errors
+      // CRITICAL: Use getDelegateSafely() to access delegate without triggering validation
+      const clinicDelegate = this.prismaService.getDelegateSafely<{
+        findMany: (args: {
+          where: { isActive: boolean };
+          include: {
+            locations: { select: { id: boolean } };
+            _count: { select: { users: boolean; appointments: boolean } };
+          };
+        }) => Promise<
           Array<{
             id: string;
             name: string;
-            subdomain?: string | null;
-            locations?: Array<{ id: string }>;
-            _count?: { users?: number; appointments?: number };
+            subdomain: string | null;
+            app_name: string;
+            isActive: boolean;
+            locations: Array<{ id: string }>;
+            _count: { users: number; appointments: number };
           }>
         >;
-      };
-      const clinicDelegate = this.prismaService.clinic as ClinicDelegate;
+      }>('clinic');
+
+      if (!clinicDelegate) {
+        throw new Error('Clinic delegate not available - Prisma may not be ready');
+      }
+
       const rawClinics = await clinicDelegate.findMany({
         where: { isActive: true },
         include: {
@@ -156,23 +216,62 @@ export class ClinicIsolationService implements OnModuleInit {
         this.serviceName
       );
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      const errorCode = (error as { code?: string })?.code;
+
+      // Check if this is a "table does not exist" error (migrations not run yet)
+      const isTableMissingError =
+        errorMessage.includes('does not exist') ||
+        errorMessage.includes('relation') ||
+        errorMessage.includes('table') ||
+        errorMessage.includes('Unknown model') ||
+        errorMessage.includes('Invalid `prisma') ||
+        errorCode === 'P2021' || // Prisma table not found
+        errorCode === '42P01' || // PostgreSQL relation does not exist
+        errorCode === 'P2001'; // Prisma model not found
+
+      // Also check for Prisma client initialization errors
+      const isPrismaInitError =
+        errorMessage.includes('did not initialize yet') ||
+        errorMessage.includes('prisma generate') ||
+        errorMessage.includes('Cannot find module') ||
+        errorMessage.includes('MODULE_NOT_FOUND') ||
+        errorMessage.includes('PrismaClient') ||
+        errorMessage.includes('Invalid `prisma.clinic.findMany');
+
+      if (isTableMissingError || isPrismaInitError) {
+        // Log as warning instead of error - this is expected if migrations haven't been run or Prisma isn't ready
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Clinic caching initialization skipped: ${isTableMissingError ? 'Database tables not found' : 'Prisma client not ready'}. Application will continue without clinic caching. Error: ${errorMessage}`,
+          this.serviceName,
+          {
+            error: errorMessage,
+            stack: errorStack,
+            errorCode,
+            action: isTableMissingError
+              ? 'Run database migrations: npx prisma migrate deploy'
+              : 'Ensure Prisma client is generated: npx prisma generate',
+          }
+        );
+        // Don't throw - allow application to start without clinic caching
+        // The cache will be empty, but the app can still function
+        return;
+      }
+
+      // For other errors, log as warning and don't throw - allow app to start
+      // Clinic caching is not critical for app startup
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.ERROR,
-        `Failed to initialize clinic caching: ${(error as Error).message}`,
+        LogLevel.WARN,
+        `Clinic caching initialization failed (non-critical): ${errorMessage}. Application will continue without clinic caching.`,
         this.serviceName,
-        { error: (error as Error).stack }
+        { error: errorMessage, stack: errorStack, errorCode }
       );
-      if (error instanceof HealthcareError) {
-        throw error;
-      }
-      throw new HealthcareError(
-        ErrorCode.DATABASE_QUERY_FAILED,
-        `Failed to initialize clinic caching: ${(error as Error).message}`,
-        undefined,
-        { originalError: (error as Error).message },
-        this.serviceName
-      );
+      // Don't throw - allow application to start without clinic caching
+      return;
     }
   }
 
@@ -198,7 +297,10 @@ export class ClinicIsolationService implements OnModuleInit {
             locations?: Array<{ id: string }>;
           } | null>;
         };
-        const clinicDelegate = this.prismaService.clinic as ClinicDelegate;
+        const clinicDelegate = this.prismaService.getDelegateSafely<ClinicDelegate>('clinic');
+        if (!clinicDelegate) {
+          throw new Error('Clinic delegate not available - Prisma may not be ready');
+        }
         const rawClinic = await clinicDelegate.findFirst({
           where: {
             id: clinicId,
@@ -876,8 +978,17 @@ export class ClinicIsolationService implements OnModuleInit {
 
   // Cleanup
   onModuleDestroy() {
+    // Set shutdown flag to prevent new Prisma operations
+    this.isShuttingDown = true;
+
+    // Clear cache refresh interval
     if (this.cacheUpdateInterval) {
       clearInterval(this.cacheUpdateInterval);
     }
+
+    // Clear caches
+    this.clinicCache.clear();
+    this.userClinicCache.clear();
+    this.locationClinicCache.clear();
   }
 }

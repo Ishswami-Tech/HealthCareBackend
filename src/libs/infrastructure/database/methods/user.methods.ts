@@ -156,8 +156,9 @@ export class UserMethods extends DatabaseMethodsBase {
       }
     );
 
-    // Invalidate cache after update
-    await this.invalidateCache([this.queryKeyFactory.user(id), 'users']);
+    // NOTE: Cache invalidation is now automatic via DatabaseService.executeWrite()
+    // Manual invalidation kept for backward compatibility but not required
+    // await this.invalidateCache([this.queryKeyFactory.user(id), 'users']);
 
     return result;
   }

@@ -22,7 +22,7 @@ import { LogType, LogLevel } from '@core/types';
  * Server configuration options
  */
 export interface ServerConfigurationOptions {
-  readonly environment: 'development' | 'production';
+  readonly environment: 'development' | 'production' | 'staging' | 'test';
   readonly configService?: ConfigService;
   readonly defaultPort?: number;
   readonly defaultHost?: string;
@@ -38,7 +38,7 @@ export class ServerConfigurator {
   private readonly logger: Logger;
   private readonly loggingService: LoggingService | undefined;
   private readonly configService: ConfigService | undefined;
-  private readonly environment: 'development' | 'production';
+  private readonly environment: 'development' | 'production' | 'staging' | 'test';
 
   /**
    * Create a new ServerConfigurator instance
@@ -72,7 +72,10 @@ export class ServerConfigurator {
       8088;
 
     const host =
-      this.configService?.get<string>('VIRTUAL_HOST') ||
+      this.configService?.get<string>(
+        'VIRTUAL_HOST',
+        process.env['VIRTUAL_HOST'] || process.env['HOST'] || '0.0.0.0'
+      ) ||
       process.env['VIRTUAL_HOST'] ||
       process.env['HOST'] ||
       '0.0.0.0';
@@ -108,22 +111,26 @@ export class ServerConfigurator {
    */
   getApplicationConfig(instanceId: string, isHorizontalScaling: boolean): ApplicationConfig {
     const trustProxyValue =
-      this.configService?.get<string>('TRUST_PROXY') || process.env['TRUST_PROXY'] || '0';
+      this.configService?.get<string>('TRUST_PROXY', process.env['TRUST_PROXY'] || '0') ||
+      process.env['TRUST_PROXY'] ||
+      '0';
     const trustProxy = trustProxyValue === '1' || trustProxyValue === 'true';
 
-    const bodyLimit =
-      this.environment === 'production'
-        ? 50 * 1024 * 1024 // 50MB in production
-        : 10 * 1024 * 1024; // 10MB in development
+    // Production-like settings for staging and production
+    const isProductionLike = this.environment === 'production' || this.environment === 'staging';
+    const bodyLimit = isProductionLike
+      ? 50 * 1024 * 1024 // 50MB in production/staging
+      : 10 * 1024 * 1024; // 10MB in development/test
 
-    const keepAliveTimeout = this.environment === 'production' ? 65000 : 5000;
+    const keepAliveTimeout = isProductionLike ? 65000 : 5000;
 
-    const connectionTimeout = this.environment === 'production' ? 60000 : 30000;
+    const connectionTimeout = isProductionLike ? 60000 : 30000;
 
-    const requestTimeout = this.environment === 'production' ? 30000 : 10000;
+    const requestTimeout = isProductionLike ? 30000 : 10000;
 
     const enableHttp2 =
-      this.environment === 'production' && process.env['ENABLE_HTTP2'] !== 'false';
+      (this.environment === 'production' || this.environment === 'staging') &&
+      process.env['ENABLE_HTTP2'] !== 'false';
 
     const config: ApplicationConfig = {
       environment: this.environment,

@@ -4,8 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { FastifySessionStoreAdapter } from './fastify-session-store.adapter';
 import { DatabaseModule } from '@infrastructure/database';
-// CacheModule disabled - using database only (Supabase)
-// import { CacheModule } from '@infrastructure/cache/cache.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 
 /**
@@ -28,8 +27,7 @@ import { LoggingModule } from '@infrastructure/logging';
     ConfigModule,
     JwtModule,
     DatabaseModule,
-    // CacheModule disabled - using database only (Supabase)
-    // CacheModule,
+    CacheModule, // Required for FastifySessionStoreAdapter to use CacheService
     LoggingModule,
   ],
   providers: [SessionManagementService, FastifySessionStoreAdapter],

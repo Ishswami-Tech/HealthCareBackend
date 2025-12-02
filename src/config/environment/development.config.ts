@@ -1,44 +1,17 @@
 import type { Config } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
-
-/**
- * Parses integer from environment variable with validation
- * @param value - Environment variable value
- * @param defaultValue - Default value
- * @param min - Minimum allowed value
- * @param max - Maximum allowed value
- * @returns Parsed integer
- */
-function parseInteger(
-  value: string | undefined,
-  defaultValue: number,
-  min = 1,
-  max = Number.MAX_SAFE_INTEGER
-): number {
-  const parsed = value ? parseInt(value, 10) : defaultValue;
-
-  if (isNaN(parsed) || parsed < min || parsed > max) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
-
-/**
- * Parses boolean from environment variable
- * @param value - Environment variable value
- * @param defaultValue - Default boolean value
- * @returns Parsed boolean or default
- */
-function parseBoolean(value: string | undefined, defaultValue: boolean): boolean {
-  if (!value) {
-    return defaultValue;
-  }
-  return value.toLowerCase() === 'true';
-}
+import { parseInteger, parseBoolean, removeTrailingSlash, getDefaultRedisHost } from './utils';
 
 /**
  * Development environment configuration
+ *
+ * Development mode is optimized for local development with:
+ * - Hot-reload enabled
+ * - Debug logging
+ * - Lenient security (for faster development)
+ * - Local service defaults (localhost)
+ * - Development tools enabled (Swagger, Prisma Studio)
+ *
  * @returns Development configuration object
  */
 export default function createDevelopmentConfig(): Config {
@@ -50,12 +23,17 @@ export default function createDevelopmentConfig(): Config {
       isDev: process.env['IS_DEV'] !== 'false',
       host: process.env['HOST'] || 'localhost',
       bindAddress: process.env['BIND_ADDRESS'] || '0.0.0.0',
-      baseUrl:
+      // CRITICAL: baseUrl and apiUrl should NOT include trailing slashes for proper URL concatenation
+      // The swagger URL uses ${baseUrl}${swagger} pattern, so baseUrl must not end with /
+      baseUrl: removeTrailingSlash(
         process.env['BASE_URL'] ||
-        `http://localhost:${process.env[ENV_VARS.PORT] || DEFAULT_CONFIG.PORT}`,
-      apiUrl:
+          process.env['API_URL'] ||
+          `http://localhost:${process.env[ENV_VARS.PORT] || DEFAULT_CONFIG.PORT}`
+      ),
+      apiUrl: removeTrailingSlash(
         process.env['API_URL'] ||
-        `http://localhost:${process.env[ENV_VARS.PORT] || DEFAULT_CONFIG.PORT}`,
+          `http://localhost:${process.env[ENV_VARS.PORT] || DEFAULT_CONFIG.PORT}`
+      ),
     },
     urls: {
       swagger: process.env['SWAGGER_URL'] || '/docs',
@@ -89,7 +67,7 @@ export default function createDevelopmentConfig(): Config {
       },
     },
     redis: {
-      host: process.env[ENV_VARS.REDIS_HOST] || 'localhost',
+      host: process.env[ENV_VARS.REDIS_HOST] || getDefaultRedisHost(),
       port: parseInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
       ttl: parseInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
       prefix: process.env['REDIS_PREFIX'] || 'healthcare:',
