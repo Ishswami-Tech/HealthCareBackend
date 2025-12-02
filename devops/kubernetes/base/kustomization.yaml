@@ -7,25 +7,39 @@ namespace: healthcare-backend
 
 resources:
   # - namespace.yaml  # Commented out - using namespace: field above instead
+  
+  # Core Infrastructure
   - rbac.yaml
   - network-policies.yaml
   - limitrange.yaml
-  - resourcequota-dynamic.yaml
+  - resourcequota.yaml  # Unified resource quota (switch between 2/3 nodes via comments)
+  
+  # Configuration
   - configmap.yaml
   - postgres-config.yaml
+  - pgbouncer-configmap.yaml
+  
+  # Application Deployments (with HPA auto-scaling)
   - api-deployment.yaml
   - worker-deployment.yaml
+  
+  # Database & Cache
   - postgres-statefulset.yaml
-  - redis-cluster.yaml
-  - dragonfly-deployment.yaml
-  - init-job.yaml
-  - ingress.yaml
-  - pdb.yaml
-  - pgbouncer-configmap.yaml
+  - redis-optimized.yaml  # Consolidated: replaces redis-cluster.yaml
+  - dragonfly-optimized.yaml  # Consolidated: replaces dragonfly-deployment.yaml
   - pgbouncer-deployment.yaml
-  # pgbouncer-service.yaml merged into pgbouncer-deployment.yaml
-  # Note: vpa.yaml is not included in base - it's only used in production/staging overlays
-  # to allow different VPA configurations per environment
+  
+  # Jobs & Maintenance
+  - init-job.yaml
+  
+  # Networking
+  - ingress.yaml
+  
+  # High Availability
+  - pdb.yaml
+  
+  # Optional: VPA for vertical auto-scaling (uncomment if VPA is installed)
+  # - vpa.yaml
 
 # Common labels applied to all resources  
 # Note: commonLabels is deprecated but still works

@@ -946,18 +946,18 @@ export class AppointmentsService {
         // Use core service directly for availability (not a queue operation)
         // The ClinicQueuePlugin is for queue management operations only
         const availabilityData = await this.coreAppointmentService.getDoctorAvailability(
-          doctorId,
+            doctorId,
           date
         );
 
-        // Log the availability retrieval
-        await this.loggingService.log(
-          LogType.BUSINESS,
-          LogLevel.INFO,
-          'Doctor availability retrieved successfully',
-          'AppointmentsService',
-          { doctorId, date, userId, clinicId }
-        );
+            // Log the availability retrieval
+            await this.loggingService.log(
+              LogType.BUSINESS,
+              LogLevel.INFO,
+              'Doctor availability retrieved successfully',
+              'AppointmentsService',
+              { doctorId, date, userId, clinicId }
+            );
 
         return { success: true, data: availabilityData };
       },

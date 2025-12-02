@@ -23,6 +23,29 @@ spec:
         component: backend
     spec:
       serviceAccountName: healthcare-api-sa  # RBAC security
+      # Pod Anti-Affinity: Distribute API pods across nodes for high availability
+      # Uses preferred (not required) to allow scaling beyond node count
+      affinity:
+        podAntiAffinity:
+          # Strong preference: Spread pods across nodes (weight 100 = highest priority)
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: healthcare-api
+              topologyKey: kubernetes.io/hostname
+          # Also prefer to avoid other backend components on same node
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - backend
+                  - worker
+              topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -151,8 +174,8 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: healthcare-api
-  minReplicas: 10  # Production baseline for 1M users
-  maxReplicas: 500  # Support for 1M+ concurrent users (2000 users per pod)
+  minReplicas: 3  # Minimum for 2-3 node cluster (adjust in production overlay)
+  maxReplicas: 200  # Supports scaling to 4-8 nodes (50 per 2 nodes, 200 for 8 nodes)
   metrics:
   # CPU-based scaling
   - type: Resource

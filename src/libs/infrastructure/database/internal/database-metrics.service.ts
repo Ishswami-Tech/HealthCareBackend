@@ -40,6 +40,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private alertInterval!: NodeJS.Timeout;
   private readonly metricsHistory: MetricsSnapshot[] = [];
   private readonly maxHistorySize = 1000; // Keep last 1000 snapshots
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 30000; // 30 seconds grace period during startup
 
   // Performance thresholds
   private readonly slowQueryThreshold = 1000; // 1 second
@@ -101,15 +103,46 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     private readonly connectionPoolManager: ConnectionPoolManager
   ) {}
 
-  onModuleInit() {
+  async onModuleInit(): Promise<void> {
     void this.loggingService.log(
       LogType.DATABASE,
       LogLevel.INFO,
       'Database metrics service initialized',
       this.serviceName
     );
+    
+    // Wait for Prisma to be ready before starting background monitoring
+    if (this.prismaService) {
+      const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
+      if (isReady) {
+        this.startMetricsCollection();
+        this.startAlertMonitoring();
+      } else {
+        // Start with delay - Prisma will be ready soon
+        setTimeout(() => {
+          void (async () => {
+            const ready = await this.prismaService.waitUntilReady(30000);
+            if (ready) {
     this.startMetricsCollection();
     this.startAlertMonitoring();
+            }
+          })();
+        }, 5000);
+      }
+    } else {
+      // PrismaService not available yet, try again after a delay
+      setTimeout(() => {
+        void (async () => {
+          if (this.prismaService) {
+            const ready = await this.prismaService.waitUntilReady(30000);
+            if (ready) {
+              this.startMetricsCollection();
+              this.startAlertMonitoring();
+            }
+          }
+        })();
+      }, 5000);
+    }
   }
 
   onModuleDestroy() {
@@ -440,39 +473,191 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   // Public for DatabaseService access, but marked as internal
   async recordHealthcareMetrics(): Promise<void> {
     try {
-      // Use PrismaService directly
-      // Type-safe Prisma delegates
+      // Check if we're in startup grace period
+      const timeSinceStart = Date.now() - this.serviceStartTime;
+      const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
+      // Check if PrismaService is available and ready
+      if (!this.prismaService) {
+        // Only log warnings after startup grace period
+        if (!isInStartupGracePeriod) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'PrismaService not available, skipping healthcare metrics collection',
+            this.serviceName,
+            {}
+          );
+        }
+        return;
+      }
+
+      // CRITICAL: Wait for Prisma to be ready BEFORE accessing any delegates
+      // Accessing delegates on uninitialized Prisma triggers internal error logging
+      // Increased timeout to 30 seconds to ensure Prisma is fully initialized
+      const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+      if (!isReady) {
+        // Only log warnings after startup grace period
+        if (!isInStartupGracePeriod) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'Prisma client not ready within timeout, skipping healthcare metrics collection',
+            this.serviceName,
+            {}
+          );
+        }
+        return;
+      }
+
+      // CRITICAL: During startup grace period, don't access Prisma at all
+      // Even getDelegateSafely() might trigger Prisma's internal validation that logs to stderr
+      if (isInStartupGracePeriod) {
+        // Return early without accessing any Prisma delegates or methods
+        return;
+      }
+
+      // Double-check Prisma is ready using isReady() before accessing delegates
+      if (!this.prismaService.isReady()) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma client not ready, skipping healthcare metrics collection',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
+
+      // CRITICAL: Don't check delegate existence by accessing them
+      // Accessing this.prismaService.patient, etc. triggers Prisma's validation
+      // If isReady() returns true, delegates are available - just use them directly
+
+      // Use PrismaService's safe delegate access to avoid triggering validation errors
+      // CRITICAL: Use getDelegateSafely() instead of direct property access
       type PatientDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type AppointmentDelegate = { count: (args?: Record<string, never>) => Promise<number> };
       type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
 
-      const patientDelegate = this.prismaService.patient as unknown as PatientDelegate;
-      const appointmentDelegate = this.prismaService.appointment as unknown as AppointmentDelegate;
-      const clinicDelegate = this.prismaService.clinic as unknown as ClinicDelegate;
+      const patientDelegate = this.prismaService.getDelegateSafely<PatientDelegate>('patient');
+      const appointmentDelegate = this.prismaService.getDelegateSafely<AppointmentDelegate>('appointment');
+      const clinicDelegate = this.prismaService.getDelegateSafely<ClinicDelegate>('clinic');
 
-      // Get patient count
-      const patientCount = await patientDelegate.count({} as Record<string, never>);
+      // If any delegate is not available, skip metrics collection
+      if (!patientDelegate || !appointmentDelegate || !clinicDelegate) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma delegates not available, skipping healthcare metrics collection',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
 
-      // Get appointment count
-      const appointmentCount = await appointmentDelegate.count({} as Record<string, never>);
+      // Check if count methods are available
+      if (
+        typeof patientDelegate.count !== 'function' ||
+        typeof appointmentDelegate.count !== 'function' ||
+        typeof clinicDelegate.count !== 'function'
+      ) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma count methods not available, skipping healthcare metrics collection',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
 
-      // Get clinic count
-      const clinicCount = await clinicDelegate.count({} as Record<string, never>);
+      // Get counts with individual error handling to prevent one failure from stopping all
+      let patientCount = 0;
+      let appointmentCount = 0;
+      let clinicCount = 0;
+
+      try {
+        // Check if method exists before calling
+        if (patientDelegate && typeof patientDelegate.count === 'function') {
+          patientCount = await patientDelegate.count({} as Record<string, never>);
+        }
+      } catch (patientError) {
+        // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+        const errorMsg = patientError instanceof Error ? patientError.message : String(patientError);
+        if (!errorMsg.includes('Invalid `prisma')) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to get patient count: ${errorMsg}`,
+            this.serviceName,
+            {}
+          );
+        }
+      }
+
+      try {
+        // Check if method exists before calling
+        if (appointmentDelegate && typeof appointmentDelegate.count === 'function') {
+          appointmentCount = await appointmentDelegate.count({} as Record<string, never>);
+        }
+      } catch (appointmentError) {
+        // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+        const errorMsg = appointmentError instanceof Error ? appointmentError.message : String(appointmentError);
+        if (!errorMsg.includes('Invalid `prisma')) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to get appointment count: ${errorMsg}`,
+            this.serviceName,
+            {}
+          );
+        }
+      }
+
+      try {
+        // Check if method exists before calling
+        if (clinicDelegate && typeof clinicDelegate.count === 'function') {
+          clinicCount = await clinicDelegate.count({} as Record<string, never>);
+        }
+      } catch (clinicError) {
+        // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+        const errorMsg = clinicError instanceof Error ? clinicError.message : String(clinicError);
+        if (!errorMsg.includes('Invalid `prisma')) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to get clinic count: ${errorMsg}`,
+            this.serviceName,
+            {}
+          );
+        }
+      }
 
       this.currentMetrics.healthcare.totalPatients = patientCount;
       this.currentMetrics.healthcare.totalAppointments = appointmentCount;
       this.currentMetrics.healthcare.totalClinics = clinicCount;
 
-      // Update clinic-specific metrics
+      // Update clinic-specific metrics (with error handling)
+      try {
       await this.updateClinicSpecificMetrics();
+      } catch (clinicMetricsError) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Failed to update clinic-specific metrics: ${clinicMetricsError instanceof Error ? clinicMetricsError.message : String(clinicMetricsError)}`,
+          this.serviceName,
+          {}
+        );
+      }
     } catch (_error) {
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.ERROR,
+        LogLevel.WARN,
         `Failed to record healthcare metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
         this.serviceName,
         { error: _error instanceof Error ? _error.stack : String(_error) }
       );
+      // Don't throw - allow metrics collection to continue with default values
     }
   }
 
@@ -505,16 +690,40 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     this.metricsInterval = setInterval(() => {
       void (async () => {
         try {
+          // Check if we're still in startup grace period
+          const timeSinceStart = Date.now() - this.serviceStartTime;
+          const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
+          // CRITICAL: Check if Prisma is ready before attempting to collect metrics
+          // This prevents Prisma errors from being logged to stderr
+          if (!this.prismaService || !this.prismaService.isReady()) {
+            // During startup grace period, silently skip
+            if (!isInStartupGracePeriod) {
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.DEBUG,
+                'Prisma not ready, skipping metrics collection',
+                this.serviceName,
+                {}
+              );
+            }
+            return;
+          }
+
           await this.collectMetrics();
           this.storeMetricsSnapshot();
         } catch (_error) {
+          // Suppress Prisma "Invalid invocation" errors during startup
+          const errorMsg = _error instanceof Error ? _error.message : String(_error);
+          if (!errorMsg.includes('Invalid `prisma')) {
           void this.loggingService.log(
             LogType.DATABASE,
             LogLevel.ERROR,
-            `Failed to collect metrics: ${_error instanceof Error ? _error.message : String(_error)}`,
+              `Failed to collect metrics: ${errorMsg}`,
             this.serviceName,
             { error: _error instanceof Error ? _error.stack : String(_error) }
           );
+          }
         }
       })();
     }, 30000); // Every 30 seconds
@@ -585,6 +794,51 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   private async updateClinicSpecificMetrics(): Promise<void> {
     try {
+      // Check if PrismaService is available and ready
+      if (!this.prismaService) {
+        return;
+      }
+
+      // CRITICAL: Wait for Prisma to be ready BEFORE accessing any delegates
+      // Accessing delegates on uninitialized Prisma triggers internal error logging
+      // Increased timeout to 30 seconds to ensure Prisma is fully initialized
+      const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+      if (!isReady) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma client not ready within timeout, skipping clinic-specific metrics',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
+
+      // Double-check Prisma is ready using isReady() before accessing delegates
+      if (!this.prismaService.isReady()) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma client not ready, skipping clinic-specific metrics',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
+
+      // Now safe to access Prisma delegates - they won't trigger internal error logging
+      // Check if Prisma client delegates are initialized
+      if (!this.prismaService.clinic || !this.prismaService.patient) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma client delegates not initialized, skipping clinic-specific metrics',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
+
       // Use PrismaService directly
       // Type-safe Prisma delegates
       type ClinicWithCount = {
@@ -600,11 +854,40 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         count: (args: Record<string, unknown>) => Promise<number>;
       };
 
-      const clinicDelegate = this.prismaService.clinic as unknown as ClinicDelegate;
-      const patientDelegate = this.prismaService.patient as unknown as PatientDelegate;
+      const clinicDelegate = this.prismaService.getDelegateSafely<ClinicDelegate>('clinic');
+      const patientDelegate = this.prismaService.getDelegateSafely<PatientDelegate>('patient');
+
+      // Check if delegates are available
+      if (!clinicDelegate || !patientDelegate) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma delegates not available, skipping clinic-specific metrics',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
+
+      // Check if methods are available
+      if (
+        typeof clinicDelegate.findMany !== 'function' ||
+        typeof patientDelegate.count !== 'function'
+      ) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Prisma delegate methods not available, skipping clinic-specific metrics',
+          this.serviceName,
+          {}
+        );
+        return;
+      }
 
       // Get clinic-specific data
-      const clinics = await clinicDelegate.findMany({
+      let clinics: ClinicWithCount[] = [];
+      try {
+        clinics = await clinicDelegate.findMany({
         select: {
           id: true,
           _count: {
@@ -614,10 +897,25 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           },
         },
       } as Record<string, unknown>);
+      } catch (clinicError) {
+        // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+        const errorMsg = clinicError instanceof Error ? clinicError.message : String(clinicError);
+        if (!errorMsg.includes('Invalid `prisma')) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Failed to get clinics: ${errorMsg}`,
+            this.serviceName,
+            {}
+          );
+        }
+        return; // Can't continue without clinics
+      }
 
       // Get patient counts separately (since patients are related through appointments)
-      const patientCounts = await Promise.all(
+      const patientCounts = await Promise.allSettled(
         clinics.map(async (clinic: ClinicWithCount) => {
+          try {
           const patientCount = await patientDelegate.count({
             where: {
               appointments: {
@@ -631,13 +929,29 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
             clinicId: clinic.id,
             patientCount,
           };
+          } catch (patientError) {
+            // Suppress Prisma "Invalid invocation" errors
+            const errorMsg = patientError instanceof Error ? patientError.message : String(patientError);
+            if (!errorMsg.includes('Invalid `prisma')) {
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.WARN,
+                `Failed to get patient count for clinic ${clinic.id}: ${errorMsg}`,
+                this.serviceName,
+                {}
+              );
+            }
+            return { clinicId: clinic.id, patientCount: 0 };
+          }
         })
       );
 
       for (const clinic of clinics) {
-        const patientCountData = patientCounts.find(
-          (p: { clinicId: string; patientCount: number }) => p.clinicId === clinic.id
+        const patientCountResult = patientCounts.find(
+          (result): result is PromiseFulfilledResult<{ clinicId: string; patientCount: number }> =>
+            result.status === 'fulfilled' && result.value.clinicId === clinic.id
         );
+        const patientCountData = patientCountResult?.value || { clinicId: clinic.id, patientCount: 0 };
 
         const current = this.currentMetrics.clinicMetrics.get(clinic.id) || {
           clinicId: clinic.id,

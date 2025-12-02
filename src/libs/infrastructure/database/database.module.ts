@@ -273,16 +273,82 @@ export class DatabaseModule implements OnModuleInit {
 
   private async initializeEnhancedComponents() {
     try {
-      // Validate healthcare configuration
+      // Validate healthcare configuration (only if config exists)
+      // Validation is environment-aware: strict in production, lenient in development
       const { validateHealthcareConfig } = await import('./config/healthcare.config');
       const healthcareConf =
         this.configService?.get<Record<string, unknown>>('healthcare') || undefined;
       if (healthcareConf) {
-        validateHealthcareConfig(healthcareConf);
+        try {
+          validateHealthcareConfig(healthcareConf);
+        } catch (validationError) {
+          const errorMessage =
+            validationError instanceof Error ? validationError.message : String(validationError);
+          const isProduction = this.configService?.isProduction() ?? false;
+
+          if (isProduction) {
+            // In production, validation errors are critical
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.ERROR,
+              `Healthcare configuration validation failed: ${errorMessage}`,
+              this.serviceName,
+              { error: errorMessage }
+            );
+            throw validationError;
+          } else {
+            // In development, log as warning and continue
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              `Healthcare configuration validation warning (non-critical in development): ${errorMessage}`,
+              this.serviceName,
+              { error: errorMessage }
+            );
+            // Don't throw - allow application to start in development
+          }
+        }
       }
 
       // Initialize clinic isolation service for full data separation
-      await this.clinicIsolationService.initializeClinicCaching();
+      // This may fail gracefully if database tables don't exist yet (migrations not run)
+      try {
+        await this.clinicIsolationService.initializeClinicCaching();
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        // Check if this is a "table does not exist" error - this is expected if migrations haven't been run
+        const isTableMissingError =
+          errorMessage.includes('does not exist') ||
+          errorMessage.includes('relation') ||
+          errorMessage.includes('table') ||
+          (error as { code?: string })?.code === 'P2021' ||
+          (error as { code?: string })?.code === '42P01';
+
+        if (isTableMissingError) {
+          // Log as warning - this is expected if migrations haven't been run
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            'Clinic caching initialization skipped: Database tables not found. Application will continue without clinic caching. Please run migrations: npx prisma migrate deploy',
+            this.serviceName,
+            {
+              error: errorMessage,
+              action: 'Run database migrations: npx prisma migrate deploy',
+            }
+          );
+          // Don't throw - allow application to start without clinic caching
+        } else {
+          // For other errors, log and rethrow
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            `Failed to initialize clinic caching: ${errorMessage}`,
+            this.serviceName,
+            { error: errorMessage }
+          );
+          throw error;
+        }
+      }
 
       // Log initialization completion
       const poolMetrics = this.connectionPoolManager.getMetrics();

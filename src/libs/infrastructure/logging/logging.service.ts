@@ -111,6 +111,8 @@ export class LoggingService {
   private systemUserQueryPromise: Promise<{ id: string } | null> | null = null;
   private static globalSystemUserLookupDisabled = false;
   private static systemUserWarningLogged = false;
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
 
   constructor(
     @Optional()
@@ -581,6 +583,17 @@ export class LoggingService {
 
       // Temporarily bypass database query due to schema migration issues
       try {
+        // Check if we're in startup grace period
+        const timeSinceStart = Date.now() - this.serviceStartTime;
+        const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
+        // CRITICAL: During startup grace period, don't call Prisma methods at all
+        // Even accessing auditLog delegate triggers Prisma's internal validation that logs to stderr
+        if (isInStartupGracePeriod) {
+          // Return empty array during startup grace period
+          return [];
+        }
+
         const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
           // Access auditLog delegate using dot notation for consistency
           const auditLog = (

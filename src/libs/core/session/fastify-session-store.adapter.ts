@@ -41,6 +41,13 @@ export class FastifySessionStoreAdapter implements SessionStore {
 
   constructor(@Optional() private readonly cacheService?: CacheService) {
     this.useCache = cacheService !== undefined && cacheService !== null;
+
+    // Bind methods to ensure 'this' context is preserved when called by Fastify
+    // This is critical - Fastify session plugin may call these methods without proper context
+    this.get = this.get.bind(this);
+    this.set = this.set.bind(this);
+    this.destroy = this.destroy.bind(this);
+    this.touch = this.touch.bind(this);
   }
 
   /**
@@ -146,6 +153,7 @@ export class FastifySessionStoreAdapter implements SessionStore {
    */
   touch(sid: string, session: unknown, callback: (err?: unknown) => void): void {
     // Touch is essentially a set operation that updates the expiry
+    // Use bound set method to ensure proper context
     this.set(sid, session, callback);
   }
 

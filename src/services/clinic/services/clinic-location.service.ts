@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
+import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type {
@@ -17,7 +18,10 @@ import type {
 export class ClinicLocationService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService?: CacheService
   ) {}
 
   async createClinicLocation(
@@ -70,6 +74,29 @@ export class ClinicLocationService {
   }
 
   async getLocations(
+    clinicId: string,
+    includeDoctors = false
+  ): Promise<ClinicLocationResponseDto[]> {
+    const cacheKey = `clinic_locations:${clinicId}:${includeDoctors}`;
+
+    if (this.cacheService) {
+      return this.cacheService.cache(
+        cacheKey,
+        async () => {
+          return this.fetchLocations(clinicId, includeDoctors);
+        },
+        {
+          ttl: 1800, // 30 minutes
+          tags: ['clinic_locations', `clinic:${clinicId}`],
+          enableSwr: true,
+        }
+      );
+    }
+
+    return this.fetchLocations(clinicId, includeDoctors);
+  }
+
+  private async fetchLocations(
     clinicId: string,
     includeDoctors = false
   ): Promise<ClinicLocationResponseDto[]> {

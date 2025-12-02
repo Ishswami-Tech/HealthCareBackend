@@ -29,15 +29,16 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 @Injectable()
 export class RedisService extends BaseCacheClientService implements OnModuleInit, OnModuleDestroy {
   // Provider-specific configuration
-  protected readonly PRODUCTION_CONFIG = {
-    maxMemoryPolicy: 'noeviction',
-    maxConnections: parseInt(process.env['REDIS_MAX_CONNECTIONS'] || '100', 10),
-    connectionTimeout: 15000,
-    commandTimeout: 5000,
-    retryOnFailover: true,
-    enableAutoPipelining: true,
-    maxRetriesPerRequest: 3,
-    keyPrefix: process.env['REDIS_KEY_PREFIX'] || 'healthcare:',
+  // Provider-specific configuration - will be initialized in onModuleInit
+  protected PRODUCTION_CONFIG!: {
+    maxMemoryPolicy: string;
+    maxConnections: number;
+    connectionTimeout: number;
+    commandTimeout: number;
+    retryOnFailover: boolean;
+    enableAutoPipelining: boolean;
+    maxRetriesPerRequest: number;
+    keyPrefix: string;
   };
 
   protected readonly PROVIDER_NAME = 'redis' as const;
@@ -118,7 +119,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
       );
     }
 
-    this.initializeClient();
+    // Don't initialize client here - wait for onModuleInit when PRODUCTION_CONFIG is ready
+    // Client initialization happens in onModuleInit() after PRODUCTION_CONFIG is set
 
     // CRITICAL: Connect immediately - don't wait for lifecycle hooks
     setImmediate(() => {
@@ -225,6 +227,22 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
   }
 
   async onModuleInit() {
+    // Initialize PRODUCTION_CONFIG using ConfigService
+    const keyPrefix = this.configService.getEnv('REDIS_KEY_PREFIX', 'healthcare:');
+    this.PRODUCTION_CONFIG = {
+      maxMemoryPolicy: 'noeviction',
+      maxConnections: this.configService.getEnvNumber('REDIS_MAX_CONNECTIONS', 100),
+      connectionTimeout: 15000,
+      commandTimeout: 5000,
+      retryOnFailover: true,
+      enableAutoPipelining: true,
+      maxRetriesPerRequest: 3,
+      keyPrefix: keyPrefix || 'healthcare:',
+    };
+
+    // Now initialize the client after PRODUCTION_CONFIG is set
+    this.initializeClient();
+
     // Log that onModuleInit is being called (don't await - don't block on logging)
     void this.loggingService
       .log(
@@ -284,65 +302,11 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
         return; // Don't connect if not using Redis
       }
 
-      // Check if Redis is enabled before attempting connection
-      const configEnabled = this.configService?.get<boolean>('redis.enabled');
-      const envEnabled = process.env['REDIS_ENABLED'] !== 'false';
-      const isRedisEnabled = configEnabled ?? envEnabled;
-
-      // In development mode, Redis might be disabled - check config
-      const isDevelopment =
-        this.configService?.get<string>('NODE_ENV') === 'development' ||
-        process.env['NODE_ENV'] === 'development';
-
-      // Log debug info to understand why Redis might be disabled
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `Cache enabled check: configService=${configEnabled}, env=${process.env['REDIS_ENABLED']}, final=${isRedisEnabled}`,
-        'CacheService',
-        {
-          configEnabled,
-          envEnabled,
-          isRedisEnabled,
-          redisEnabledEnv: process.env['REDIS_ENABLED'],
-          mode: isDevelopment ? 'development' : 'production',
-        }
-      );
-
-      if (!isRedisEnabled) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Cache is disabled - application will run without caching',
-          'CacheService',
-          {
-            reason: 'REDIS_ENABLED is false or Redis is disabled in configuration',
-            configEnabled,
-            envEnabled,
-            redisEnabledEnv: process.env['REDIS_ENABLED'],
-            mode: isDevelopment ? 'development' : 'production',
-          }
-        );
-        // Open circuit breaker to prevent connection attempts
-        this.circuitBreakerOpen = true;
-        this.circuitBreakerFailures = this.circuitBreakerThreshold;
-        this.circuitBreakerLastFailureTime = Date.now();
-        return; // Exit early - don't attempt connection
-      }
-
-      // Determine default host based on environment (same logic as initializeClient)
-      const isDocker =
-        process.env['DOCKER_ENV'] === 'true' ||
-        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-        process.env['REDIS_HOST'] === 'redis' ||
-        process.env['REDIS_HOST'] !== undefined;
-      const defaultHost = isDocker ? 'redis' : 'localhost';
-
-      const redisHost =
-        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
-      const redisPort =
-        this.configService?.get<number>('redis.port') ||
-        parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      // Use ConfigService for all cache configuration (single source of truth)
+      // The base class getHost() and getPort() methods already use ConfigService
+      // We just need to ensure connection is attempted
+      const redisHost = this.getHost();
+      const redisPort = this.getPort();
 
       // Log connection attempt (don't await - don't block)
       void this.loggingService
@@ -351,7 +315,7 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
           LogLevel.INFO,
           `Starting cache connection attempt to ${redisHost}:${redisPort}`,
           'CacheService',
-          { host: redisHost, port: redisPort, isDocker, defaultHost }
+          { host: redisHost, port: redisPort }
         )
         .catch(() => {
           // Ignore logging errors
@@ -471,12 +435,17 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const errorCode = (_error as { code?: string })?.code || 'UNKNOWN';
 
-      console.error(
-        `[RedisService] ✗ Failed to initialize Redis connection: ${errorMessage} (${errorCode})`
-      );
-      console.error(
-        `[RedisService] Stack:`,
-        _error instanceof Error ? _error.stack : 'No stack trace'
+      // Log error using LoggingService instead of console.error
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to initialize Redis connection: ${errorMessage} (${errorCode})`,
+        'RedisService',
+        {
+          error: errorMessage,
+          errorCode,
+          stack: _error instanceof Error ? _error.stack : 'No stack trace',
+        }
       );
 
       // CRITICAL: Don't throw - allow app to start in degraded mode without Redis

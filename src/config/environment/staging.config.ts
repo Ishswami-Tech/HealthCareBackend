@@ -1,51 +1,53 @@
-import type { ProductionConfig } from '@core/types';
+import type { Config } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
 import { parseInteger, parseBoolean, removeTrailingSlash } from './utils';
 
 /**
- * Validates required environment variables for production
+ * Validates required environment variables for staging
+ * Staging requires same variables as production but with more lenient error handling
  * Uses centralized validation utility for consistent error messages
  * @throws Error if required variables are missing
  */
-function validateProductionConfig(): void {
+function validateStagingConfig(): void {
   const { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } = require('./validation');
-  const result = validateEnvironmentConfig('production', false);
+  const result = validateEnvironmentConfig('staging', false);
 
   if (!result.isValid) {
-    const errorMessage = getEnvironmentValidationErrorMessage('production', result.missing);
+    const errorMessage = getEnvironmentValidationErrorMessage('staging', result.missing);
     throw new Error(errorMessage);
   }
 }
 
 /**
- * Production environment configuration
- *
- * Production mode is optimized for production deployment with:
- * - Strict security settings
- * - Info/Warn logging (no debug)
- * - Production service defaults
- * - High performance settings
- * - Required environment variable validation
- *
- * @returns Production configuration object
- * @throws Error if required environment variables are missing
+ * Staging environment configuration
+ * 
+ * Staging is a production-like environment for testing before production deployment.
+ * It uses production-like security settings but with debug logging enabled for troubleshooting.
+ * 
+ * Key differences from production:
+ * - Debug logging enabled (for testing and troubleshooting)
+ * - More lenient error messages
+ * - Can use test/staging database
+ * - Swagger may be enabled for API testing
+ * 
+ * @returns Staging configuration object
  */
-export default function createProductionConfig(): ProductionConfig {
+export default function createStagingConfig(): Config {
   // Validate required environment variables
-  validateProductionConfig();
+  validateStagingConfig();
+
   return {
     app: {
       port: parseInteger(process.env[ENV_VARS.PORT], DEFAULT_CONFIG.PORT, 1, 65535),
       apiPrefix: process.env['API_PREFIX'] || DEFAULT_CONFIG.API_PREFIX,
-      environment: 'production' as const,
-      isDev: false,
-      host: process.env['HOST'] || 'api.ishswami.in',
+      environment: 'production' as const, // Use production type for staging (same security level)
+      isDev: false, // Not development mode
+      host: process.env['HOST'] || 'staging-api.ishswami.in',
       bindAddress: process.env['BIND_ADDRESS'] || '0.0.0.0',
-      // CRITICAL: baseUrl should NOT include trailing slashes for proper URL concatenation
       baseUrl: removeTrailingSlash(
-        process.env['BASE_URL'] || process.env['API_URL'] || 'http://api.ishswami.in'
+        process.env['BASE_URL'] || process.env['API_URL'] || 'http://staging-api.ishswami.in'
       ),
-      apiUrl: process.env['API_URL'] || 'http://api.ishswami.in',
+      apiUrl: process.env['API_URL'] || 'http://staging-api.ishswami.in',
     },
     urls: {
       swagger: process.env['SWAGGER_URL'] || '/docs',
@@ -54,24 +56,24 @@ export default function createProductionConfig(): ProductionConfig {
       redisCommander: process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082',
       prismaStudio: process.env['PRISMA_STUDIO_URL'] || '/prisma',
       pgAdmin: process.env['PGADMIN_URL'] || 'http://localhost:5050',
-      frontend: process.env['FRONTEND_URL'] || 'http://ishswami.in',
+      frontend: process.env['FRONTEND_URL'] || 'http://staging.ishswami.in',
     },
     database: {
       url:
-        process.env['DATABASE_URL_PROD'] ||
+        process.env['DATABASE_URL_STAGING'] ||
         process.env[ENV_VARS.DATABASE_URL] ||
         'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
       sqlInjectionPrevention: {
-        enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], true),
+        enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], true), // Production-like security
       },
       rowLevelSecurity: {
-        enabled: parseBoolean(process.env['DB_ROW_LEVEL_SECURITY'], true),
+        enabled: parseBoolean(process.env['DB_ROW_LEVEL_SECURITY'], true), // Production-like security
       },
       dataMasking: {
-        enabled: parseBoolean(process.env['DB_DATA_MASKING'], true),
+        enabled: parseBoolean(process.env['DB_DATA_MASKING'], true), // Production-like security
       },
       rateLimiting: {
-        enabled: parseBoolean(process.env['DB_RATE_LIMITING'], true),
+        enabled: parseBoolean(process.env['DB_RATE_LIMITING'], true), // Production-like security
       },
       readReplicas: {
         enabled: parseBoolean(process.env['DB_READ_REPLICAS_ENABLED'], false),
@@ -85,9 +87,9 @@ export default function createProductionConfig(): ProductionConfig {
       host: process.env[ENV_VARS.REDIS_HOST] || 'redis',
       port: parseInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
       ttl: parseInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
-      prefix: process.env['REDIS_PREFIX'] || 'healthcare:',
+      prefix: process.env['REDIS_PREFIX'] || 'healthcare:staging:',
       enabled: parseBoolean(process.env['REDIS_ENABLED'], true),
-      development: false,
+      development: false, // Not development mode
     },
     jwt: {
       secret: process.env[ENV_VARS.JWT_SECRET] || 'your-super-secret-key-change-in-production',
@@ -105,7 +107,7 @@ export default function createProductionConfig(): ProductionConfig {
     logging: {
       level:
         (process.env[ENV_VARS.LOG_LEVEL] as 'error' | 'warn' | 'info' | 'debug' | 'verbose') ||
-        'info',
+        'debug', // Debug logging for staging (for testing)
       enableAuditLogs: parseBoolean(process.env['ENABLE_AUDIT_LOGS'], true),
     },
     email: {
@@ -114,12 +116,12 @@ export default function createProductionConfig(): ProductionConfig {
       secure: parseBoolean(process.env['EMAIL_SECURE'], false),
       user: process.env[ENV_VARS.EMAIL_USER] || '',
       password: process.env[ENV_VARS.EMAIL_PASSWORD] || '',
-      from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
+      from: process.env['EMAIL_FROM'] || 'noreply@healthcare-staging.com',
     },
     cors: {
       origin:
         process.env[ENV_VARS.CORS_ORIGIN] ||
-        'http://localhost:8088,http://localhost:5050,http://localhost:8082',
+        'http://staging.ishswami.in,http://staging-api.ishswami.in,http://localhost:3000',
       credentials: parseBoolean(process.env['CORS_CREDENTIALS'], true),
       methods: process.env['CORS_METHODS'] || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     },
@@ -141,10 +143,6 @@ export default function createProductionConfig(): ProductionConfig {
       prescriptionTemplateId:
         process.env['WHATSAPP_PRESCRIPTION_TEMPLATE_ID'] || 'prescription_notification',
     },
-    domains: {
-      main: process.env['MAIN_DOMAIN'] || 'ishswami.in',
-      api: process.env['API_DOMAIN'] || 'api.ishswami.in',
-      frontend: process.env['FRONTEND_DOMAIN'] || 'ishswami.in',
-    },
   };
 }
+

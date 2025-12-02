@@ -23,6 +23,29 @@ spec:
         component: worker
     spec:
       serviceAccountName: healthcare-worker-sa
+      # Pod Anti-Affinity: Distribute worker pods across nodes for high availability
+      # Uses preferred (not required) to allow scaling beyond node count
+      affinity:
+        podAntiAffinity:
+          # Strong preference: Spread pods across nodes (weight 100 = highest priority)
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: healthcare-worker
+              topologyKey: kubernetes.io/hostname
+          # Also prefer to avoid other backend components on same node
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: component
+                  operator: In
+                  values:
+                  - backend
+                  - worker
+              topologyKey: kubernetes.io/hostname
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -181,7 +204,7 @@ spec:
     kind: Deployment
     name: healthcare-worker
   minReplicas: 3  # Minimum workers for production
-  maxReplicas: 50  # Scale based on queue load
+  maxReplicas: 200  # Supports scaling to 4-8 nodes (50 per 2 nodes, 200 for 8 nodes)
   metrics:
   # CPU-based scaling
   - type: Resource

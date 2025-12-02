@@ -115,24 +115,18 @@ import { CommunicationModule } from '@communication/communication.module';
     // These clinic-specific queues need Bull (not BullMQ) to be initialized first
     // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
     // Only register BullModule if cache is enabled (Bull requires Redis/Dragonfly)
-    ...(process.env['CACHE_ENABLED'] === 'true'
-      ? [
+    // Cache check will be done in useFactory via ConfigService
           BullModule.forRootAsync({
             imports: [ConfigModule],
-            useFactory: (_configService: ConfigService) => {
-              // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-              const useDragonfly = cacheProvider === 'dragonfly';
+      useFactory: (configService: ConfigService) => {
+        // Use ConfigService for all cache configuration (single source of truth)
+        if (!configService.isCacheEnabled()) {
+          throw new Error('Cache is disabled but BullModule requires cache');
+        }
 
-              const cacheHost = useDragonfly
-                ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-                : process.env['REDIS_HOST'] || 'localhost';
-              const cachePort = useDragonfly
-                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-              const cachePassword = useDragonfly
-                ? process.env['DRAGONFLY_PASSWORD']
-                : process.env['REDIS_PASSWORD'];
+        const cacheHost = configService.getCacheHost();
+        const cachePort = configService.getCachePort();
+        const cachePassword = configService.getCachePassword();
 
               return {
                 redis: {
@@ -141,7 +135,7 @@ import { CommunicationModule } from '@communication/communication.module';
                   ...(cachePassword?.trim() && {
                     password: cachePassword.trim(),
                   }),
-                  db: parseInt(process.env['REDIS_DB'] || '0', 10),
+            db: configService.getEnvNumber('REDIS_DB', 0),
                 },
                 defaultJobOptions: {
                   removeOnComplete: 1000,
@@ -166,8 +160,6 @@ import { CommunicationModule } from '@communication/communication.module';
             { name: 'clinic-reminder' },
             { name: 'clinic-followup' }
           ),
-        ]
-      : []),
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentsController, AppointmentPluginController],

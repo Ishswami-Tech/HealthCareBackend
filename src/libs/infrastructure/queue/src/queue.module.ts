@@ -1,6 +1,6 @@
 import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService } from '@config';
+import { ConfigModule, ConfigService, isCacheEnabled } from '@config';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -44,12 +44,11 @@ import type { JobData } from '@core/types/queue.types';
 @Module({})
 export class QueueModule {
   static forRoot(): DynamicModule {
-    // Check if cache is enabled first - skip queue registration if cache is disabled
-    // BullMQ requires Redis/Dragonfly to function
-    const cacheEnabledEnv = process.env['CACHE_ENABLED'];
-    const isCacheEnabled = cacheEnabledEnv === 'true';
+    // Note: This is a static method, so we can't inject ConfigService directly
+    // We'll use a factory function that will be called when the module initializes
+    // The actual ConfigService will be injected in the factory
 
-    if (!isCacheEnabled) {
+    if (!isCacheEnabled()) {
       // Return a minimal module without BullMQ queues when cache is disabled
       return {
         module: QueueModule,
@@ -106,62 +105,7 @@ export class QueueModule {
     ];
 
     // Select appropriate queues based on service
-    let queueNames: string[];
-    let redisConfig: unknown;
-
-    // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-    const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-    const useDragonfly = cacheProvider === 'dragonfly';
-
-    const defaultCacheHost = useDragonfly
-      ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-      : process.env['REDIS_HOST'] || 'localhost';
-    const defaultCachePort = useDragonfly
-      ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-      : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-    const defaultCachePassword = useDragonfly
-      ? process.env['DRAGONFLY_PASSWORD']
-      : process.env['REDIS_PASSWORD'];
-
-    if (serviceName === 'clinic') {
-      queueNames = clinicQueues;
-      // Fashion-specific Redis configuration
-      const redisPassword = defaultCachePassword || process.env['REDIS_PASSWORD'];
-      const hasPassword = redisPassword && redisPassword.trim().length > 0;
-      redisConfig = {
-        host: process.env['CLINIC_REDIS_HOST'] || defaultCacheHost,
-        port: parseInt(process.env['CLINIC_REDIS_PORT'] || String(defaultCachePort), 10),
-        ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['REDIS_DB'] || '2', 10), // Database for queue operations
-      };
-    } else if (serviceName === 'worker') {
-      // Worker processes ALL queues from both services
-      queueNames = [...clinicQueues, ...clinicQueues];
-      // Worker uses default Redis configuration
-      const redisPassword = defaultCachePassword || process.env['REDIS_PASSWORD'];
-      const hasPassword = redisPassword && redisPassword.trim().length > 0;
-      redisConfig = {
-        host: defaultCacheHost,
-        port: defaultCachePort,
-        ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['REDIS_DB'] || '1', 10),
-      };
-    } else {
-      // Default to clinic queues (including 'clinic' service)
-      queueNames = clinicQueues;
-      // Clinic-specific Redis configuration
-      const redisPassword =
-        process.env['CLINIC_REDIS_PASSWORD'] ||
-        defaultCachePassword ||
-        process.env['REDIS_PASSWORD'];
-      const hasPassword = redisPassword && redisPassword.trim().length > 0;
-      redisConfig = {
-        host: process.env['CLINIC_REDIS_HOST'] || defaultCacheHost,
-        port: parseInt(process.env['CLINIC_REDIS_PORT'] || String(defaultCachePort), 10),
-        ...(hasPassword && { password: redisPassword }),
-        db: parseInt(process.env['CLINIC_REDIS_DB'] || '1', 10), // Separate DB for clinic
-      };
-    }
+    const queueNames = clinicQueues; // All services use clinic queues for now
 
     return {
       module: QueueModule,
@@ -174,9 +118,36 @@ export class QueueModule {
         QueueMonitoringModule,
         BullModule.forRootAsync({
           imports: [ConfigModule],
-          useFactory: (_configService: ConfigService) => ({
+          useFactory: (configService: ConfigService) => {
+            // Use ConfigService for all cache configuration (single source of truth)
+            if (!configService.isCacheEnabled()) {
+              throw new Error('Cache is disabled but BullMQ requires cache');
+            }
+
+            const cacheHost = configService.getCacheHost();
+            const cachePort = configService.getCachePort();
+            const cachePassword = configService.getCachePassword();
+            const serviceName = configService.getEnv('SERVICE_NAME', 'clinic');
+
+            // Build Redis config based on service
+            const redisConfig: {
+              host: string;
+              port: number;
+              password?: string;
+              db: number;
+            } = {
+              host: cacheHost,
+              port: cachePort,
+              db: configService.getEnvNumber('REDIS_DB', serviceName === 'clinic' ? 2 : 1),
+            };
+
+            if (cachePassword?.trim()) {
+              redisConfig.password = cachePassword.trim();
+            }
+
+            return {
             connection: {
-              ...(redisConfig || {}),
+                ...redisConfig,
               // Enterprise connection settings for 1M users
               maxRetriesPerRequest: 5,
               retryDelayOnFailover: 50,
@@ -214,7 +185,8 @@ export class QueueModule {
               lifo: false,
               timeout: 60000, // 60 second timeout for complex jobs
             },
-          }),
+            };
+          },
           inject: [ConfigService],
         }),
         // Enhanced queue registration with domain-specific settings
@@ -278,8 +250,33 @@ export class QueueModule {
           ? [
               {
                 provide: 'BULLMQ_WORKERS',
-                useFactory: (queueProcessor: QueueProcessor, _prisma: DatabaseService) => {
+                useFactory: (
+                  queueProcessor: QueueProcessor,
+                  _prisma: DatabaseService,
+                  configService: ConfigService
+                ) => {
                   const workers = [];
+
+                  // Build Redis config using ConfigService
+                  const cacheHost = configService.getCacheHost();
+                  const cachePort = configService.getCachePort();
+                  const cachePassword = configService.getCachePassword();
+                  const workerServiceName = configService.getEnv('SERVICE_NAME', 'clinic');
+
+                  const workerRedisConfig: {
+                    host: string;
+                    port: number;
+                    password?: string;
+                    db: number;
+                  } = {
+                    host: cacheHost,
+                    port: cachePort,
+                    db: configService.getEnvNumber('REDIS_DB', workerServiceName === 'clinic' ? 2 : 1),
+                  };
+
+                  if (cachePassword?.trim()) {
+                    workerRedisConfig.password = cachePassword.trim();
+                  }
 
                   // Create workers for each queue with enhanced concurrency
                   for (const queueName of queueNames) {
@@ -328,7 +325,7 @@ export class QueueModule {
                         },
                         {
                           connection: {
-                            ...(redisConfig || {}),
+                            ...workerRedisConfig,
                             // Enhanced worker connection settings
                             maxRetriesPerRequest: 3,
                             retryDelayOnFailover: 100,
@@ -356,7 +353,7 @@ export class QueueModule {
 
                   return workers;
                 },
-                inject: [QueueProcessor, DatabaseService],
+                inject: [QueueProcessor, DatabaseService, ConfigService],
               },
             ]
           : []),

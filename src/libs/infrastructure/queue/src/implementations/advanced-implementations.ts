@@ -480,7 +480,18 @@ export class RealTimeMonitoringImpl {
     timestamp: number;
   }> = [];
 
+  constructor() {
+    // Defensive check: ensure metrics Map is initialized
+    if (!this.metrics || typeof this.metrics.set !== 'function') {
+      this.metrics = new Map<string, Array<{ timestamp: number; value: number }>>();
+    }
+  }
+
   recordMetric(name: string, value: number): void {
+    // Defensive check before calling .set()
+    if (!this.metrics || typeof this.metrics.set !== 'function') {
+      this.metrics = new Map<string, Array<{ timestamp: number; value: number }>>();
+    }
     if (!this.metrics.has(name)) {
       this.metrics.set(name, []);
     }

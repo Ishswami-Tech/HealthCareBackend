@@ -20,6 +20,7 @@ services:
     environment:
       NODE_ENV: production
       DEV_MODE: "false"
+      DOCKER_ENV: "true"
       CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in"
       FRONTEND_URL: https://ishswami.in
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
@@ -176,6 +177,7 @@ services:
       --maxmemory=4gb
       --proactor_threads=8
       --logtostderr
+      --default_lua_flags=allow-undeclared-keys
     ports:
       - "6380:6379"
     volumes:
@@ -254,24 +256,104 @@ services:
       context: ../..
       dockerfile: devops/docker/Dockerfile
       target: production
+      args:
+        - BUILDKIT_INLINE_CACHE=1
+      cache_from:
+        - type=registry,ref=node:20-slim
     container_name: latest-worker
+    hostname: worker
+    env_file:
+      - ../../.env.production
+    environment:
+      NODE_ENV: production
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      
+      # Database Configuration
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      
+      # Cache Provider Configuration (Dragonfly is default)
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: "true"
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      
+      # Redis Configuration (for Redis provider)
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      
+      # JWT Configuration (for queue operations)
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
+      
+      # BullMQ Worker Configuration
+      BULL_WORKER_CONCURRENCY: "10"
+      BULL_MAX_JOBS_PER_WORKER: "100"
+      
+      # Logging Configuration
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      
+      # Email Configuration (for queue jobs)
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      
+      # Firebase Configuration (for notifications)
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.6
+        aliases:
+          - worker.ishswami.in
+    dns: []
+    extra_hosts:
+      - "worker:172.18.0.6"
+      - "postgres:172.18.0.2"
+      - "dragonfly:172.18.0.4"
+      - "redis:172.18.0.3"
     depends_on:
+      postgres:
+        condition: service_healthy
       dragonfly:
         condition: service_healthy
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
-    environment:
-      NODE_ENV: production
-      SERVICE_NAME: worker
-      CACHE_PROVIDER: dragonfly
-      DRAGONFLY_HOST: dragonfly
-      DRAGONFLY_PORT: 6379
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public
+      api:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    command: >
+      sh -c "
+        pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
+        node dist/worker-bootstrap.js
+      "
+    labels:
+      - "com.docker.compose.service=worker"
+      - "app.component=worker"
+      - "app.type=worker"
 
 volumes:
   postgres_data:

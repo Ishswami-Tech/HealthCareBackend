@@ -40,6 +40,7 @@ import type {
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
+import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
 @Controller('ehr')
@@ -51,6 +52,14 @@ export class EHRController {
 
   @Get('comprehensive/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @PatientCache({
+    keyTemplate: 'ehr:comprehensive:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'health_records', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getComprehensiveHealthRecord(@Param('userId') userId: string): Promise<unknown> {
     return this.ehrService.getComprehensiveHealthRecord(userId);
   }
@@ -65,6 +74,14 @@ export class EHRController {
 
   @Get('medical-history/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @PatientCache({
+    keyTemplate: 'ehr:medical-history:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'medical_history', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getMedicalHistory(@Param('userId') userId: string): Promise<MedicalHistoryResponse[]> {
     return await this.ehrService.getMedicalHistory(userId);
   }
@@ -95,6 +112,14 @@ export class EHRController {
 
   @Get('lab-reports/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @PatientCache({
+    keyTemplate: 'ehr:lab-reports:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'lab_reports', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getLabReports(@Param('userId') userId: string): Promise<LabReportResponse[]> {
     return await this.ehrService.getLabReports(userId);
   }

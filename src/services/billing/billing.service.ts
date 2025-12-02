@@ -111,6 +111,11 @@ export class BillingService {
   }
 
   async getBillingPlan(id: string) {
+    const cacheKey = `billing_plan:${id}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
     const plan = await this.databaseService.findBillingPlanByIdSafe(id);
 
     if (!plan) {
@@ -118,6 +123,13 @@ export class BillingService {
     }
 
     return plan;
+      },
+      {
+        ttl: 3600, // 1 hour
+        tags: ['billing_plans', `billing_plan:${id}`],
+        priority: 'normal',
+      }
+    );
   }
 
   async updateBillingPlan(id: string, data: UpdateBillingPlanDto) {
@@ -245,7 +257,7 @@ export class BillingService {
   }
 
   async getUserSubscriptions(userId: string) {
-    const cacheKey = `user_subscriptions:${userId}`;
+    const cacheKey = `billing_subscriptions:user:${userId}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -255,14 +267,19 @@ export class BillingService {
         });
       },
       {
-        ttl: 900,
-        tags: [`user_subscriptions:${userId}`],
-        priority: 'high',
+        ttl: 1800, // 30 minutes
+        tags: ['billing_subscriptions', `user:${userId}`],
+        priority: 'normal',
       }
     );
   }
 
   async getSubscription(id: string) {
+    const cacheKey = `billing_subscription:${id}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
     const subscription = await this.databaseService.findSubscriptionByIdSafe(id);
 
     if (!subscription) {
@@ -270,6 +287,13 @@ export class BillingService {
     }
 
     return subscription;
+      },
+      {
+        ttl: 1800, // 30 minutes
+        tags: ['billing_subscriptions', `billing_subscription:${id}`],
+        priority: 'normal',
+      }
+    );
   }
 
   async updateSubscription(id: string, data: UpdateSubscriptionDto) {

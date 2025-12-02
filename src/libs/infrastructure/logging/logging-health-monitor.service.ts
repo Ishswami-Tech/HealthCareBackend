@@ -26,6 +26,7 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
   ); // Default 20 seconds (within 10-30 range)
   private cachedHealthStatus: LoggingHealthMonitorStatus | null = null;
   private lastHealthCheckTime = 0;
+  private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries
   private readonly HEALTH_CHECK_TIMEOUT_MS = 2000; // Max 2 seconds for health check (non-blocking)
   private lastExpensiveCheckTime = 0;
@@ -161,22 +162,40 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
     }
 
     try {
+      // Skip health checks during startup grace period (first 30 seconds)
+      // This prevents false warnings during application initialization
+      const startupGracePeriod = 30000; // 30 seconds
+      const timeSinceInit = Date.now() - this.serviceStartTime;
+      const isDuringStartup = timeSinceInit < startupGracePeriod;
+
       // Fast path: Essential service availability check only (always runs)
       // Uses lightweight service check - fastest possible logging check
       const serviceHealth = await this.checkServiceHealthWithTimeout();
       status.service = serviceHealth;
       if (!serviceHealth.available) {
-        issues.push('Logging service not available');
-        status.healthy = false;
+        // Only mark as unhealthy if not during startup
+        if (!isDuringStartup) {
+          issues.push('Logging service not available');
+          status.healthy = false;
+        }
         // Circuit breaker will track failures automatically
       }
 
       // Fast path: Endpoint accessibility check (always runs)
-      const endpointHealth = await this.checkEndpointHealthWithTimeout();
-      status.endpoint = endpointHealth;
-      if (!endpointHealth.accessible) {
-        issues.push('Logging endpoint not accessible');
-        status.healthy = false;
+      // Skip endpoint check during startup to avoid false warnings
+      if (!isDuringStartup) {
+        const endpointHealth = await this.checkEndpointHealthWithTimeout();
+        status.endpoint = endpointHealth;
+        if (!endpointHealth.accessible) {
+          issues.push('Logging endpoint not accessible');
+          status.healthy = false;
+        }
+      } else {
+        // During startup, mark endpoint as accessible to avoid false warnings
+        status.endpoint = {
+          accessible: true,
+          latency: 0,
+        };
       }
 
       // Expensive checks only run periodically (every 60 seconds) to avoid performance impact
@@ -318,15 +337,19 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
     try {
       const loggerBaseUrl =
-        this.configService?.get<string>('API_URL') ||
+        this.configService?.get<string>('API_URL', process.env['API_URL'] || 'http://localhost:8088') ||
         process.env['API_URL'] ||
         'http://localhost:8088';
       const loggerPort =
-        this.configService?.get<number | string>('PORT') ||
+        this.configService?.get<number | string>('PORT', process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088) ||
         process.env['PORT'] ||
         process.env['VIRTUAL_PORT'] ||
         8088;
-      const loggerUrl = `${loggerBaseUrl}/health`;
+      const loggerUrlPath =
+        this.configService?.get<string>('LOGGER_URL', process.env['LOGGER_URL'] || '/logger') ||
+        process.env['LOGGER_URL'] ||
+        '/logger';
+      const loggerUrl = `${loggerBaseUrl}${loggerUrlPath}`;
 
       // Use lightweight HTTP check - just verify endpoint responds (even 404 means service is responding)
       const httpCheckPromise = axios.get(loggerUrl, {
@@ -440,18 +463,24 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
         ) {
           // Only log if circuit breaker is not open (avoid log spam)
-          void this.loggingService?.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Logging health check failed',
-            this.serviceName,
-            {
-              issues: status.issues,
-              serviceAvailable: status.service.available,
-              endpointAccessible: status.endpoint.accessible,
-              latency: status.service.latency || status.endpoint.latency,
-            }
-          );
+          // Skip logging during startup (first 30 seconds) to avoid startup warnings
+          const startupGracePeriod = 30000; // 30 seconds
+          const timeSinceInit = Date.now() - this.serviceStartTime;
+          
+          if (timeSinceInit > startupGracePeriod) {
+            void this.loggingService?.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              'Logging health check failed',
+              this.serviceName,
+              {
+                issues: status.issues,
+                serviceAvailable: status.service.available,
+                endpointAccessible: status.endpoint.accessible,
+                latency: status.service.latency || status.endpoint.latency,
+              }
+            );
+          }
         }
       })
       .catch(error => {

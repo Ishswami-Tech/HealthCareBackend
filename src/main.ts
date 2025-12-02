@@ -16,6 +16,8 @@ import { LogType, LogLevel as AppLogLevel } from '@core/types';
 import { ValidationPipeConfig } from '@config/validation-pipe.config';
 import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
+import stagingConfig from './config/environment/staging.config';
+import testConfig from './config/environment/test.config';
 import { ConfigService, isCacheEnabled } from '@config';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
@@ -62,7 +64,7 @@ function setupConsoleRedirect(loggingService: LoggingService) {
 }
 
 // Add environment type
-const validEnvironments = ['development', 'production'] as const;
+const validEnvironments = ['development', 'production', 'staging', 'test'] as const;
 type Environment = (typeof validEnvironments)[number];
 
 // Framework adapter instance - initialized in bootstrap
@@ -72,7 +74,7 @@ let frameworkAdapter: IFrameworkAdapter | undefined;
  * Setup WebSocket adapter with Redis
  * This is custom logic that's not part of the framework wrappers
  */
-async function setupWebSocketAdapter(
+async function _setupWebSocketAdapter(
   app: INestApplication,
   configService: ConfigService,
   logger: Logger,
@@ -101,61 +103,29 @@ async function setupWebSocketAdapter(
     const { createAdapter } = await import('@socket.io/redis-adapter');
     const { createClient } = await import('redis');
 
-    // Cache provider configuration - Use Dragonfly if CACHE_PROVIDER is dragonfly, otherwise Redis
-    const cacheProviderEnv = process.env['CACHE_PROVIDER'] || 'dragonfly';
-    const cacheProviderConfig = configService?.get<string>('CACHE_PROVIDER');
-    const cacheProvider = (cacheProviderConfig || cacheProviderEnv || 'dragonfly').toLowerCase();
-    const useDragonfly = cacheProvider === 'dragonfly';
-
-    // Debug logging
-    logger.log(
-      `[WebSocket] DEBUG: CACHE_PROVIDER from env: ${cacheProviderEnv}, from config: ${cacheProviderConfig}, final: ${cacheProvider}, useDragonfly: ${useDragonfly}`
-    );
-
-    // Use Dragonfly or Redis based on CACHE_PROVIDER
-    // IMPORTANT: Use process.env directly, NOT configService, because:
-    // - configService.get('REDIS_HOST') returns 'localhost' from cache.config.ts default
-    // - We need to check environment variables directly to get the actual values
-    const dragonflyHost = process.env['DRAGONFLY_HOST'] || 'dragonfly';
-    const redisHost = process.env['REDIS_HOST'] || '127.0.0.1';
-    const cacheHost = useDragonfly ? dragonflyHost : redisHost;
-    const cachePort = useDragonfly
-      ? process.env['DRAGONFLY_PORT'] || '6379'
-      : process.env['REDIS_PORT'] || '6379';
-
-    logger.log(
-      `[WebSocket] DEBUG: cacheHost=${cacheHost}, cachePort=${cachePort}, dragonflyHost=${dragonflyHost}, redisHost=${redisHost}, useDragonfly=${useDragonfly}`
-    );
-    // Get password - check environment variable first, then config service
-    // This avoids errors when config keys don't exist
-    let cachePassword: string | undefined;
-    if (useDragonfly) {
-      cachePassword = process.env['DRAGONFLY_PASSWORD'];
-      if (!cachePassword && configService) {
-        try {
-          cachePassword = configService.get<string>('DRAGONFLY_PASSWORD');
-        } catch {
-          // Config key doesn't exist, password remains undefined
-        }
-      }
-    } else {
-      cachePassword = process.env['REDIS_PASSWORD'];
-      if (!cachePassword && configService) {
-        try {
-          cachePassword = configService.get<string>('REDIS_PASSWORD');
-        } catch {
-          // Config key doesn't exist, password remains undefined
-        }
-      }
+    // Use ConfigService for all cache configuration (single source of truth)
+    if (!configService) {
+      logger.warn('[WebSocket] ConfigService not available - skipping WebSocket adapter setup');
+      return null;
     }
 
-    // Log the configuration being used
+    const cacheProvider: 'redis' | 'dragonfly' | 'memory' = configService.getCacheProvider();
+    const useDragonfly = cacheProvider === 'dragonfly';
+    const cacheHost: string = configService.getCacheHost();
+    const cachePort: number = configService.getCachePort();
+    const cachePassword: string | undefined = configService.getCachePassword();
+
+    // Debug logging
     logger.log(
       `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`
     );
 
-    const redisConfig = {
-      url: `redis://${String(cacheHost).trim()}:${String(cachePort).trim()}`,
+    const redisConfig: {
+      url: string;
+      password?: string;
+      retryStrategy: (times: number) => number | null;
+    } = {
+      url: `redis://${cacheHost.trim()}:${cachePort}`,
       ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
       retryStrategy: (times: number) => {
         const maxRetries = 5;
@@ -175,8 +145,47 @@ async function setupWebSocketAdapter(
     };
 
     try {
-      pubClient = createClient(redisConfig) as unknown as RedisClient;
-      subClient = (pubClient as unknown as { duplicate: () => unknown }).duplicate() as RedisClient;
+      // Type guard to check if object matches RedisClient interface
+      // Uses bracket notation to access index signature properties
+      const isRedisClient = (client: unknown): client is RedisClient => {
+        if (!client || typeof client !== 'object') {
+          return false;
+        }
+        const c = client as Record<string, unknown>;
+        return (
+          typeof c['quit'] === 'function' &&
+          typeof c['disconnect'] === 'function' &&
+          typeof c['connect'] === 'function' &&
+          typeof c['on'] === 'function'
+        );
+      };
+
+      const client = createClient(redisConfig);
+
+      // Verify client has required methods before assignment
+      if (isRedisClient(client)) {
+        pubClient = client;
+
+        // Verify duplicate method exists and returns valid client
+        const clientWithDuplicate = client as RedisClient & {
+          duplicate?: () => unknown;
+        };
+
+        if (typeof clientWithDuplicate.duplicate === 'function') {
+          const duplicated = clientWithDuplicate.duplicate();
+          if (isRedisClient(duplicated)) {
+            subClient = duplicated;
+          } else {
+            throw new Error('SubClient duplicate() did not return a valid RedisClient');
+          }
+        } else {
+          throw new Error('Redis client does not have duplicate() method');
+        }
+      } else {
+        throw new Error(
+          'Redis client does not have required methods (quit, disconnect, connect, on)'
+        );
+      }
 
       const cacheProviderName = useDragonfly ? 'Dragonfly' : 'Redis';
 
@@ -242,6 +251,17 @@ async function setupWebSocketAdapter(
             connectWithTimeout(pubClient, 'Pub'),
             connectWithTimeout(subClient, 'Sub'),
           ]);
+          // Verify clients are actually connected before proceeding
+          if (
+            !pubClient ||
+            !subClient ||
+            typeof (pubClient as { isOpen?: () => boolean }).isOpen !== 'function' ||
+            !(pubClient as { isOpen?: () => boolean }).isOpen?.() ||
+            typeof (subClient as { isOpen?: () => boolean }).isOpen !== 'function' ||
+            !(subClient as { isOpen?: () => boolean }).isOpen?.()
+          ) {
+            throw new Error('Clients not properly connected after connection attempt');
+          }
         } catch (connectionError) {
           // Cache is disabled - WebSocket adapter is optional
           // Log warning but continue without Redis adapter
@@ -268,26 +288,53 @@ async function setupWebSocketAdapter(
                 // Ignore logging errors
               });
           }
+          // Clear clients to prevent using uninitialized clients
+          pubClient = null;
+          subClient = null;
           // Return null to indicate adapter setup failed - app will continue without it
           return null;
         }
+      } else {
+        // Clients not created - return null
+        return null;
       }
 
       class CustomIoAdapter extends IoAdapter {
-        private adapterConstructor: ReturnType<typeof createAdapter>;
+        private adapterConstructor: ReturnType<typeof createAdapter> | null = null;
 
         constructor(app: INestApplication) {
           super(app);
-          if (!pubClient || !subClient) {
-            throw new Error('Redis clients must be initialized before creating adapter');
+          // Only create adapter if clients are properly initialized and connected
+          if (pubClient && subClient) {
+            try {
+              // Validate clients have required methods before creating adapter
+              if (
+                typeof (pubClient as { set?: unknown }).set === 'function' &&
+                typeof (subClient as { set?: unknown }).set === 'function'
+              ) {
+                this.adapterConstructor = createAdapter(pubClient, subClient);
+              } else {
+                logger.warn(
+                  'Redis clients do not have required methods - skipping adapter creation'
+                );
+              }
+            } catch (adapterError) {
+              logger.warn(
+                `Failed to create Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
+              );
+              this.adapterConstructor = null;
+            }
+          } else {
+            logger.warn('Redis clients not initialized - skipping adapter creation');
           }
-          this.adapterConstructor = createAdapter(pubClient, subClient);
         }
 
         createIOServer(port: number, options?: Record<string, unknown>): unknown {
           // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
           const corsOrigin =
-            configService?.get<string>('CORS_ORIGIN') || process.env['CORS_ORIGIN'] || '*';
+            configService?.get<string>('CORS_ORIGIN', process.env['CORS_ORIGIN'] || '*') ||
+            process.env['CORS_ORIGIN'] ||
+            '*';
           const corsOrigins =
             corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
 
@@ -318,8 +365,21 @@ async function setupWebSocketAdapter(
           };
 
           const serverWithAdapter = server;
-          if (serverWithAdapter && typeof serverWithAdapter.adapter === 'function') {
-            serverWithAdapter.adapter(this.adapterConstructor);
+          if (
+            serverWithAdapter &&
+            typeof serverWithAdapter.adapter === 'function' &&
+            this.adapterConstructor !== null
+          ) {
+            try {
+              serverWithAdapter.adapter(this.adapterConstructor);
+            } catch (adapterError) {
+              logger.warn(
+                `Failed to set Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
+              );
+              // Continue without adapter - app will work but without pub/sub scaling
+            }
+          } else if (!this.adapterConstructor) {
+            logger.warn('Socket.IO adapter not available - continuing without pub/sub scaling');
           }
 
           const healthNamespace = server.of?.('/health');
@@ -563,7 +623,17 @@ async function bootstrap() {
       );
     }
 
-    const envConfig = environment === 'production' ? productionConfig() : developmentConfig();
+    // Get appropriate config based on environment
+    let envConfig: ReturnType<typeof productionConfig> | ReturnType<typeof developmentConfig>;
+    if (environment === 'production') {
+      envConfig = productionConfig();
+    } else if (environment === 'staging') {
+      envConfig = stagingConfig();
+    } else if (environment === 'test') {
+      envConfig = testConfig();
+    } else {
+      envConfig = developmentConfig();
+    }
 
     // Create framework adapter
     frameworkAdapter = createFrameworkAdapter();
@@ -583,7 +653,10 @@ async function bootstrap() {
       isHorizontalScaling,
       instanceId,
       trustProxy: envConfig.security.trustProxy === 1,
-      bodyLimit: environment === 'production' ? 50 * 1024 * 1024 : 10 * 1024 * 1024,
+      bodyLimit:
+        environment === 'production' || environment === 'staging'
+          ? 50 * 1024 * 1024
+          : 10 * 1024 * 1024,
       keepAliveTimeout: environment === 'production' ? 65000 : 5000,
       connectionTimeout: environment === 'production' ? 60000 : 30000,
       requestTimeout: environment === 'production' ? 30000 : 10000,
@@ -611,8 +684,17 @@ async function bootstrap() {
     const processErrorHandlersService =
       await serviceContainer.getService<ProcessErrorHandlersService>(ProcessErrorHandlersService);
 
-    // Set framework adapter in security service
-    securityConfigService.setFrameworkAdapter(frameworkAdapter);
+    // Set framework adapter in security service (if available)
+    if (securityConfigService && frameworkAdapter) {
+      securityConfigService.setFrameworkAdapter(frameworkAdapter);
+    } else {
+      if (!securityConfigService) {
+        logger.warn('SecurityConfigService not available, skipping framework adapter setup');
+      }
+      if (!frameworkAdapter) {
+        logger.warn('FrameworkAdapter not available, skipping framework adapter setup');
+      }
+    }
 
     logger.log('Core services initialized');
 
@@ -631,37 +713,57 @@ async function bootstrap() {
       setupConsoleRedirect(loggingService);
     }
 
-    // Setup process error handlers
-    processErrorHandlersService.setupErrorHandlers();
+    // Setup process error handlers (if available)
+    if (processErrorHandlersService) {
+      processErrorHandlersService.setupErrorHandlers();
+    } else {
+      logger.warn('ProcessErrorHandlersService not available, using fallback error handlers');
+    }
 
     // Configure middleware using MiddlewareManager
     const middlewareManager = lifecycleManager.getMiddlewareManager();
 
+    // TEMPORARILY DISABLED: All session and cookie configuration disabled for debugging
+    // TODO: Debug and fix session store wrapper issue
+    logger.warn('Session and cookie configuration temporarily disabled for debugging');
     // Configure production security middleware
-    if (environment === 'production') {
-      await securityConfigService.configureProductionSecurity(app, logger);
-    }
+    // if (environment === 'production') {
+    //   await securityConfigService.configureProductionSecurity(app, logger);
+    // } else {
+    //   // In development, we still need to register cookies before session
+    //   // Fastify session plugin requires @fastify/cookie to be registered first
+    //   try {
+    //     await securityConfigService.configureCookies(app);
+    //     logger.log('Fastify cookies configured for development');
+    //   } catch (cookieError) {
+    //     logger.warn(
+    //       `Failed to configure cookies (non-critical): ${cookieError instanceof Error ? cookieError.message : String(cookieError)}`
+    //     );
+    //   }
+    // }
 
     // Configure Fastify session with cache-backed store (for all environments)
-    // Session store uses CacheService if available, otherwise uses in-memory store
-    // Cache is currently disabled - sessions will use in-memory store
-    try {
-      const { FastifySessionStoreAdapter } = await import(
-        './libs/core/session/fastify-session-store.adapter'
-      );
-      const sessionStore = await app.resolve(FastifySessionStoreAdapter);
-      await securityConfigService.configureSession(app, sessionStore);
-      logger.log('Fastify session configured (using in-memory store - cache disabled)');
-    } catch (sessionError) {
-      logger.warn(
-        `Failed to configure Fastify session (non-critical): ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
-      );
-      // Continue without session store - will use in-memory store as fallback
-    }
+    // Session store uses CacheService if cache is enabled, otherwise uses in-memory store
+    // IMPORTANT: Cookies must be registered before session (done above)
+    // TEMPORARILY DISABLED: Commenting out session configuration to isolate the error
+    // TODO: Debug and fix session store wrapper issue
+    // try {
+    //   // For now, always use in-memory store to ensure app starts successfully
+    //   await securityConfigService.configureSession(app);
+    //   logger.log('Fastify session configured (using in-memory store)');
+    // } catch (sessionError) {
+    //   logger.error(
+    //     `Failed to configure Fastify session: ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
+    //   );
+    //   // Don't throw - allow app to continue without session support
+    //   logger.warn('Application will continue without session support');
+    // }
 
     // Prepare middleware configuration
     const apiPrefixRaw =
-      configService?.get<string>('API_PREFIX') || process.env['API_PREFIX'] || '/api/v1';
+      configService?.get<string>('API_PREFIX', process.env['API_PREFIX'] || '/api/v1') ||
+      process.env['API_PREFIX'] ||
+      '/api/v1';
     // Ensure prefix has leading slash for NestJS
     const apiPrefix = apiPrefixRaw.startsWith('/') ? apiPrefixRaw : `/${apiPrefixRaw}`;
 
@@ -700,56 +802,29 @@ async function bootstrap() {
 
     // CRITICAL: Manually register root route after global prefix is set
     // NestJS setGlobalPrefix exclusion doesn't always work reliably for root path
-    // This ensures the dashboard route is accessible at /
+    // Manually register routes that should be excluded from global prefix
+    // Fastify doesn't always respect NestJS global prefix exclusions
     try {
-      const httpAdapter = app.getHttpAdapter();
-      const fastifyInstance = httpAdapter.getInstance() as {
-        get?: (
-          path: string,
-          handler: (request: unknown, reply: unknown) => Promise<unknown>
-        ) => void;
-      };
-      if (fastifyInstance?.get) {
-        // Get AppController instance from NestJS container using the class token
-        const { AppController } = await import('./app.controller');
-        const appController = await app.resolve(AppController);
-        if (
-          appController &&
-          typeof (appController as { getDashboard?: (reply: unknown) => Promise<unknown> })
-            .getDashboard === 'function'
-        ) {
-          const typedController = appController as {
-            getDashboard: (reply: unknown) => Promise<unknown>;
-          };
-          fastifyInstance.get('/', async (_request: unknown, reply: unknown) => {
-            return typedController.getDashboard(reply);
-          });
-          logger.log('Root route / manually registered for dashboard');
-        }
-
-        // CRITICAL: Manually register /health route for Fastify
-        // Fastify doesn't always respect NestJS global prefix exclusions
-        const { HealthController } = await import('./services/health/health.controller');
-        const healthController = await app.resolve(HealthController);
-        if (
-          healthController &&
-          typeof (healthController as { getHealth?: (reply: unknown) => Promise<unknown> })
-            .getHealth === 'function'
-        ) {
-          const typedHealthController = healthController as {
-            getHealth: (reply: unknown) => Promise<unknown>;
-          };
-          fastifyInstance.get('/health', async (_request: unknown, reply: unknown) => {
-            return typedHealthController.getHealth(reply);
-          });
-          logger.log('Health route /health manually registered for Fastify');
-        }
+      // Use relative path for dynamic import to avoid path alias resolution issues at runtime
+      const frameworkModule = await import('./libs/infrastructure/framework');
+      if (
+        frameworkModule &&
+        typeof frameworkModule.registerManualRoutes === 'function' &&
+        loggingService
+      ) {
+        const registerManualRoutes = frameworkModule.registerManualRoutes as (
+          app: INestApplication,
+          loggingService: LoggingService
+        ) => Promise<void>;
+        await registerManualRoutes(app, loggingService);
+      } else if (!loggingService) {
+        logger.warn('LoggingService not available, skipping manual route registration');
       }
-    } catch (error) {
+    } catch (routeError) {
       logger.warn(
-        `Failed to manually register root/health routes: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to register manual routes (non-critical): ${routeError instanceof Error ? routeError.message : String(routeError)}`
       );
-      // Continue - the routes might still work via normal NestJS registration
+      // Continue - routes might still work via normal NestJS registration
     }
 
     // Configure filters and interceptors separately (not in configure method)
@@ -781,76 +856,193 @@ async function bootstrap() {
       );
     }
 
-    // Set up WebSocket adapter with Redis (custom logic)
-    customWebSocketAdapter = await setupWebSocketAdapter(
-      app,
-      configService,
-      logger,
-      loggingService
-    );
+    // TEMPORARILY DISABLED: WebSocket adapter setup disabled for debugging
+    // TODO: Debug and fix Socket.IO adapter issue
+    logger.warn('WebSocket adapter setup temporarily disabled for debugging');
+    customWebSocketAdapter = null;
+    // customWebSocketAdapter = await setupWebSocketAdapter(
+    //   app,
+    //   configService,
+    //   logger,
+    //   loggingService
+    // );
 
     // Configure CORS using SecurityConfigService
     // SecurityConfigService is now framework-agnostic and uses the framework adapter
-    if (app) {
+    // TEMPORARILY DISABLED: CORS configuration disabled to debug "Cannot read properties of undefined (reading 'set')" error
+    // TODO: Re-enable CORS after fixing the undefined .set() error
+    logger.warn('CORS configuration temporarily disabled for debugging');
+    /*
+    logger.log('Configuring CORS...');
+    if (app && securityConfigService) {
+      try {
+        // Check if app has enableCors method before calling
+        if (typeof app.enableCors === 'function') {
+          logger.log('Calling securityConfigService.configureCORS...');
       securityConfigService.configureCORS(app);
-      securityConfigService.addCorsPreflightHandler(app);
-      securityConfigService.addBotDetectionHook(app);
+          logger.log('CORS configured successfully');
+        } else {
+          logger.warn('Application does not have enableCors method, skipping CORS configuration');
+        }
+      // securityConfigService.addCorsPreflightHandler(app);
+      // securityConfigService.addBotDetectionHook(app);
+      } catch (corsError) {
+        const corsErrorMessage = corsError instanceof Error ? corsError.message : 'Unknown error';
+        const corsErrorStack = corsError instanceof Error ? corsError.stack : 'No stack trace';
+        logger.error(`Failed to configure CORS: ${corsErrorMessage}`);
+        logger.error(`CORS error stack: ${corsErrorStack}`);
+        logger.warn('Application will continue without CORS configuration');
+        // Don't throw - allow application to continue without CORS
+      }
+    } else {
+      if (!app) {
+        logger.warn('Application instance is undefined, skipping CORS configuration');
+      }
+      if (!securityConfigService) {
+        logger.warn('SecurityConfigService is undefined, skipping CORS configuration');
+      }
     }
+    logger.log('CORS configuration completed');
+    */
 
     // Configure Swagger with environment variables
     // ConfigService.get<T>() returns T | undefined, using generic type parameter for type safety
     const _port =
-      configService?.get<number | string>('PORT') ||
-      configService?.get<number | string>('VIRTUAL_PORT') ||
+      configService?.get<number | string>(
+        'PORT',
+        process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088
+      ) ||
+      configService?.get<number | string>('VIRTUAL_PORT', process.env['VIRTUAL_PORT'] || 8088) ||
       process.env['PORT'] ||
       process.env['VIRTUAL_PORT'] ||
       8088;
     const _virtualHost =
-      configService?.get<string>('VIRTUAL_HOST') || process.env['VIRTUAL_HOST'] || 'localhost';
-    const apiUrl = configService?.get<string>('API_URL') || process.env['API_URL'];
-    const swaggerUrl =
-      configService?.get<string>('SWAGGER_URL') || process.env['SWAGGER_URL'] || '/docs';
+      configService?.get<string>('VIRTUAL_HOST', process.env['VIRTUAL_HOST'] || 'localhost') ||
+      process.env['VIRTUAL_HOST'] ||
+      'localhost';
+    const _apiUrl =
+      configService?.get<string>('API_URL', process.env['API_URL']) || process.env['API_URL'];
+    const _swaggerUrl =
+      configService?.get<string>('SWAGGER_URL', process.env['SWAGGER_URL'] || '/docs') ||
+      process.env['SWAGGER_URL'] ||
+      '/docs';
     const _bullBoardUrl =
-      configService?.get<string>('BULL_BOARD_URL') ||
+      configService?.get<string>(
+        'BULL_BOARD_URL',
+        process.env['BULL_BOARD_URL'] || '/queue-dashboard'
+      ) ||
       process.env['BULL_BOARD_URL'] ||
       '/queue-dashboard';
     const _socketUrl =
-      configService?.get<string>('SOCKET_URL') || process.env['SOCKET_URL'] || '/socket.io';
+      configService?.get<string>('SOCKET_URL', process.env['SOCKET_URL'] || '/socket.io') ||
+      process.env['SOCKET_URL'] ||
+      '/socket.io';
     const _redisCommanderUrl =
-      configService?.get<string>('REDIS_COMMANDER_URL') || process.env['REDIS_COMMANDER_URL'];
+      configService?.get<string>(
+        'REDIS_COMMANDER_URL',
+        process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
+      ) || process.env['REDIS_COMMANDER_URL'];
     const _prismaStudioUrl =
-      configService?.get<string>('PRISMA_STUDIO_URL') || process.env['PRISMA_STUDIO_URL'];
+      configService?.get<string>(
+        'PRISMA_STUDIO_URL',
+        process.env['PRISMA_STUDIO_URL'] || 'http://localhost:5555'
+      ) || process.env['PRISMA_STUDIO_URL'];
     const _loggerUrl =
-      configService?.get<string>('LOGGER_URL') || process.env['LOGGER_URL'] || '/logger';
+      configService?.get<string>('LOGGER_URL', process.env['LOGGER_URL'] || '/logger') ||
+      process.env['LOGGER_URL'] ||
+      '/logger';
 
-    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    // Check if app is available before configuring Swagger
+    if (!app) {
+      logger.error('Application instance is undefined, cannot configure Swagger');
+      throw new Error('Application instance is undefined');
+    }
 
-    // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
-    // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
+    // Configure Swagger with error handling
+    try {
+      logger.log('Starting Swagger configuration...');
 
-    const swaggerPath = typeof swaggerUrl === 'string' ? swaggerUrl.replace('/', '') : 'docs';
-    SwaggerModule.setup(swaggerPath, app, document, {
-      ...swaggerCustomOptions,
-      swaggerOptions: {
-        ...swaggerCustomOptions.swaggerOptions,
-        // Set the default server based on environment
-        urls: [
-          {
-            url: `${String(apiUrl || '')}${String(swaggerUrl || '/docs')}/swagger.json`,
-            name: process.env['NODE_ENV'] === 'production' ? 'Production' : 'Development',
-          },
-        ],
-      },
-    });
+      // Check if SwaggerModule methods exist
+      if (typeof SwaggerModule.createDocument !== 'function') {
+        throw new Error('SwaggerModule.createDocument is not a function');
+      }
+      if (typeof SwaggerModule.setup !== 'function') {
+        throw new Error('SwaggerModule.setup is not a function');
+      }
 
-    logger.log(`Swagger API documentation configured for ${process.env['NODE_ENV']} environment`);
+      logger.log('Creating Swagger document...');
+      const document = SwaggerModule.createDocument(app, swaggerConfig);
+      logger.log('Swagger document created successfully');
+
+      // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
+      // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
+
+      const swaggerPath = typeof _swaggerUrl === 'string' ? _swaggerUrl.replace(/^\//, '') : 'docs';
+      logger.log(`Setting up Swagger at path: ${swaggerPath}`);
+      SwaggerModule.setup(swaggerPath, app, document, {
+        ...swaggerCustomOptions,
+        swaggerOptions: {
+          ...swaggerCustomOptions.swaggerOptions,
+          // Set the default server based on environment
+          urls: [
+            {
+              url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${String(_swaggerUrl || '/docs')}/swagger.json`,
+              name: process.env['NODE_ENV'] === 'production' ? 'Production' : 'Development',
+            },
+          ],
+        },
+      });
+
+      logger.log(`Swagger API documentation configured for ${process.env['NODE_ENV']} environment`);
+    } catch (swaggerError) {
+      const swaggerErrorMessage =
+        swaggerError instanceof Error ? swaggerError.message : 'Unknown error';
+      const swaggerErrorStack =
+        swaggerError instanceof Error ? swaggerError.stack : 'No stack trace';
+      logger.error(`Failed to configure Swagger: ${swaggerErrorMessage}`);
+      logger.error(`Swagger error stack: ${swaggerErrorStack}`);
+      logger.warn('Application will continue without Swagger documentation');
+      // Don't throw - allow application to continue without Swagger
+    }
 
     // Get server configuration and start server
+    logger.log('Getting server configuration...');
+    logger.log(`ServerConfigurator type: ${typeof serverConfigurator}`);
+    logger.log(`ServerConfigurator value: ${serverConfigurator ? 'defined' : 'undefined'}`);
+    if (serverConfigurator && typeof serverConfigurator.getServerConfig === 'function') {
+      logger.log('Calling serverConfigurator.getServerConfig()...');
+    } else {
+      logger.error('ServerConfigurator or getServerConfig method is not available');
+      throw new Error('ServerConfigurator.getServerConfig is not a function');
+    }
     const serverConfig = serverConfigurator.getServerConfig();
+    logger.log('serverConfigurator.getServerConfig() completed successfully');
+    logger.log(
+      `Server config: ${JSON.stringify({ port: serverConfig.port, host: serverConfig.host })}`
+    );
 
     try {
+      logger.log('Starting server using lifecycle manager...');
+      logger.log(`LifecycleManager type: ${typeof lifecycleManager}`);
+      logger.log(`LifecycleManager value: ${lifecycleManager ? 'defined' : 'undefined'}`);
+
+      // Check if lifecycleManager and startServer method exist
+      if (!lifecycleManager) {
+        throw new Error('LifecycleManager is undefined');
+      }
+      if (typeof lifecycleManager.startServer !== 'function') {
+        throw new Error('LifecycleManager.startServer is not a function');
+      }
+
+      logger.log('Calling lifecycleManager.startServer()...');
       // Start server using lifecycle manager
       await lifecycleManager.startServer(serverConfig);
+      logger.log('lifecycleManager.startServer() completed successfully');
+
+      // Debug: Log configuration values to identify URL concatenation issue
+      logger.log(`DEBUG - envConfig.app.baseUrl: "${envConfig.app.baseUrl}"`);
+      logger.log(`DEBUG - envConfig.urls.swagger: "${envConfig.urls.swagger}"`);
+      logger.log(`DEBUG - Concatenated URL: "${envConfig.app.baseUrl}${envConfig.urls.swagger}"`);
 
       logger.log(
         `Application is running in ${envConfig.app.environment} mode on port ${serverConfig.port}`
@@ -867,26 +1059,82 @@ async function bootstrap() {
       }
 
       // Setup graceful shutdown handlers using GracefulShutdownService
-      if (app) {
-        // Service is properly typed, so method calls are type-safe
-        gracefulShutdownService.setupShutdownHandlers(
-          app,
-          customWebSocketAdapter,
-          pubClient,
-          subClient
-        );
+      if (app && gracefulShutdownService) {
+        try {
+          // Check if setupShutdownHandlers method exists
+          if (typeof gracefulShutdownService.setupShutdownHandlers === 'function') {
+            logger.log('Setting up graceful shutdown handlers...');
+            gracefulShutdownService.setupShutdownHandlers(
+              app,
+              customWebSocketAdapter,
+              pubClient,
+              subClient
+            );
+            logger.log('Graceful shutdown handlers configured successfully');
+          } else {
+            logger.warn(
+              'GracefulShutdownService.setupShutdownHandlers is not a function, skipping shutdown handlers setup'
+            );
+          }
+        } catch (shutdownError) {
+          const shutdownErrorMessage =
+            shutdownError instanceof Error ? shutdownError.message : 'Unknown error';
+          const shutdownErrorStack =
+            shutdownError instanceof Error ? shutdownError.stack : 'No stack trace';
+          logger.error(`Failed to setup graceful shutdown handlers: ${shutdownErrorMessage}`);
+          logger.error(`Shutdown handlers error stack: ${shutdownErrorStack}`);
+          logger.warn('Application will continue without graceful shutdown handlers');
+          // Don't throw - allow application to continue without shutdown handlers
+        }
+      } else {
+        if (!app) {
+          logger.warn(
+            'Application instance is undefined, skipping graceful shutdown handlers setup'
+          );
+        }
+        if (!gracefulShutdownService) {
+          logger.warn(
+            'GracefulShutdownService is undefined, skipping graceful shutdown handlers setup'
+          );
+        }
       }
     } catch (listenError) {
+      const errorMessage = listenError instanceof Error ? listenError.message : 'Unknown error';
+      const errorStack = listenError instanceof Error ? listenError.stack : 'No stack trace';
+
+      // Log full error details including stack trace
+      logger.error(`Failed to start server: ${errorMessage}`);
+      logger.error(`Stack trace: ${errorStack}`);
+
+      // Log additional error details for debugging
+      if (listenError instanceof Error) {
+        logger.error(`Error name: ${listenError.name}`);
+        logger.error(`Error constructor: ${listenError.constructor.name}`);
+        if ('code' in listenError) {
+          logger.error(`Error code: ${String(listenError.code)}`);
+        }
+      }
+
+      // Try to get more context about what was undefined
+      if (errorMessage.includes("Cannot read properties of undefined (reading 'set')")) {
+        logger.error('DEBUG: Error is about undefined .set() method');
+        logger.error('DEBUG: This suggests something is trying to call .set() on undefined');
+        logger.error('DEBUG: Common causes: app.set(), app.getHttpAdapter().set(), or similar');
+      }
+
       await loggingService?.log(
         LogType.ERROR,
         AppLogLevel.ERROR,
-        `Failed to start server: ${listenError instanceof Error ? listenError.message : 'Unknown error'}`,
+        `Failed to start server: ${errorMessage}`,
         'Bootstrap',
-        { _error: listenError instanceof Error ? listenError.stack : '' }
+        {
+          _error: errorStack,
+          fullError: listenError,
+          errorType:
+            listenError instanceof Error ? listenError.constructor.name : typeof listenError,
+        }
       );
-      throw new Error(
-        `Server startup failed: ${listenError instanceof Error ? listenError.message : 'Unknown error'}`
-      );
+      throw new Error(`Server startup failed: ${errorMessage}`);
     }
 
     // Process error handlers are already set up via ProcessErrorHandlersService

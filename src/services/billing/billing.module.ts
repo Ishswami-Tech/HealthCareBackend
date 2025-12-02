@@ -11,6 +11,7 @@ import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
     LoggingModule,
     ErrorsModule,
     WhatsAppModule,
+    CacheModule,
   ],
   controllers: [BillingController],
   providers: [BillingService, InvoicePDFService, BillingEventsListener],

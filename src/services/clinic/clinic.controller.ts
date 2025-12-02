@@ -43,6 +43,7 @@ import { RegisterPatientDto } from './dto/register-patient.dto';
 import { UpdateClinicDto } from './dto/update-clinic.dto';
 import { ClinicListResponseDto, AppNameInlineDto } from './dto/clinic-response.dto';
 import { Public } from '@core/decorators/public.decorator';
+import { Cache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 
@@ -223,10 +224,16 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('clinics', 'create')
+  @Cache({
+    keyTemplate: 'clinics:list:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['clinics'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get all clinics',
     description:
-      'Retrieves all clinics based on user permissions. Super Admin can see all clinics, while Clinic Admin can only see their assigned clinics. Supports pagination.',
+      'Retrieves all clinics based on user permissions. Super Admin can see all clinics, while Clinic Admin can only see their assigned clinics. Supports pagination. Cached for performance.',
   })
   @ApiQuery({
     name: 'page',
@@ -296,6 +303,12 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'clinic:{id}',
+    ttl: 3600, // 1 hour
+    tags: ['clinics', 'clinic:{id}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get a clinic by ID',
     description:
@@ -880,10 +893,16 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @RequireResourcePermission('clinics', 'read')
+  @Cache({
+    keyTemplate: 'clinic:my:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['clinics', 'user_clinic'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get current user clinic',
     description:
-      'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic.',
+      'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic. Cached for performance.',
   })
   @ApiResponse({
     status: HttpStatus.OK,

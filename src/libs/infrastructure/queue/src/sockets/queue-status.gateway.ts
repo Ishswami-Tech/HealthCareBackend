@@ -61,7 +61,19 @@ export class QueueStatusGateway
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService
-  ) {}
+  ) {
+    // Defensive check: ensure all Maps are initialized in constructor
+    // This is critical because afterInit() might be called before onModuleInit()
+    if (!this.connectedClients || typeof this.connectedClients.set !== 'function') {
+      this.connectedClients = new Map<string, ClientSession>();
+    }
+    if (!this.queueSubscriptions || typeof this.queueSubscriptions.set !== 'function') {
+      this.queueSubscriptions = new Map<string, Set<string>>();
+    }
+    if (!this.tenantSubscriptions || typeof this.tenantSubscriptions.set !== 'function') {
+      this.tenantSubscriptions = new Map<string, Set<string>>();
+    }
+  }
 
   /**
    * OnModuleInit ensures LoggingService is available before WebSocket initialization
@@ -69,6 +81,18 @@ export class QueueStatusGateway
    * Using forwardRef() to handle circular dependency between QueueModule and LoggingModule
    */
   onModuleInit() {
+    try {
+      // Defensive check: ensure all Maps are initialized
+      if (!this.connectedClients) {
+        this.connectedClients = new Map<string, ClientSession>();
+      }
+      if (!this.queueSubscriptions) {
+        this.queueSubscriptions = new Map<string, Set<string>>();
+      }
+      if (!this.tenantSubscriptions) {
+        this.tenantSubscriptions = new Map<string, Set<string>>();
+      }
+
     // LoggingService is optional - if not available, we'll continue without logging
     // This handles cases where LoggingService might not be initialized yet due to circular dependencies
     if (this.loggingService) {
@@ -76,6 +100,13 @@ export class QueueStatusGateway
     } else {
       // LoggingService not available yet - will retry in afterInit
       this.isInitialized = false;
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : 'No stack trace';
+      console.error(`[QueueStatusGateway] onModuleInit failed: ${errorMessage}`);
+      console.error(`[QueueStatusGateway] Stack: ${errorStack}`);
+      // Don't throw - allow app to continue without queue status gateway
     }
   }
 
@@ -134,11 +165,24 @@ export class QueueStatusGateway
         lastActivity: new Date(),
       };
 
+      // Defensive check before calling .set()
+      if (this.connectedClients && typeof this.connectedClients.set === 'function') {
       this.connectedClients.set(client.id, session);
+      } else {
+        throw new Error('connectedClients Map is not properly initialized');
+      }
 
       // Setup tenant subscription
+      if (this.tenantSubscriptions && typeof this.tenantSubscriptions.has === 'function') {
       if (!this.tenantSubscriptions.has(tenantId)) {
+          if (typeof this.tenantSubscriptions.set === 'function') {
         this.tenantSubscriptions.set(tenantId, new Set());
+          } else {
+            throw new Error('tenantSubscriptions Map is not properly initialized');
+          }
+        }
+      } else {
+        throw new Error('tenantSubscriptions Map is not properly initialized');
       }
       this.tenantSubscriptions.get(tenantId)!.add(client.id);
 
@@ -237,8 +281,17 @@ export class QueueStatusGateway
 
       void this.validateQueueAccess(session.tenantId, queueName);
 
+      // Defensive check before calling .set()
+      if (this.queueSubscriptions && typeof this.queueSubscriptions.has === 'function') {
       if (!this.queueSubscriptions.has(queueName)) {
+          if (typeof this.queueSubscriptions.set === 'function') {
         this.queueSubscriptions.set(queueName, new Set());
+          } else {
+            throw new Error('queueSubscriptions Map is not properly initialized');
+          }
+        }
+      } else {
+        throw new Error('queueSubscriptions Map is not properly initialized');
       }
       this.queueSubscriptions.get(queueName)!.add(client.id);
       session.subscribedQueues.add(queueName);

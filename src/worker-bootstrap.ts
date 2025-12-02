@@ -21,6 +21,9 @@ import type { LoggingService } from '@infrastructure/logging';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { ResilienceModule } from '@core/resilience';
+import { EventsModule } from '@infrastructure/events';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { ErrorsModule } from '@core/errors';
 import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
@@ -30,10 +33,21 @@ import {
   imports: [
     // ConfigModule is @Global() and already configured in config.module.ts
     ConfigModule,
+    // EventEmitterModule must be configured before EventsModule
+    EventEmitterModule.forRoot({
+      wildcard: true,
+      delimiter: '.',
+      newListener: false,
+      removeListener: false,
+      maxListeners: 20,
+      verboseMemoryLeak: false,
+    }),
     DatabaseModule,
-    CacheModule,
     LoggingModule,
+    ErrorsModule, // Provides CacheErrorHandler globally - required before CacheModule
+    CacheModule,
     ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
+    EventsModule, // Central event system - required for queue event emissions
     QueueModule.forRoot(),
   ],
   providers: [],
@@ -92,16 +106,12 @@ async function bootstrap() {
       console.error(
         `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
       );
-      const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-      const useDragonfly = cacheProvider === 'dragonfly';
-      const cacheHost = useDragonfly
-        ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-        : process.env['REDIS_HOST'] || 'localhost';
-      const cachePort = useDragonfly
-        ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-        : parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      // Use ConfigService for all cache configuration (single source of truth)
+      const cacheProvider = configService.getCacheProvider();
+      const cacheHost = configService.getCacheHost();
+      const cachePort = configService.getCachePort();
       console.error(
-        `📊 ${useDragonfly ? 'Dragonfly' : 'Redis'} Connection: ${cacheHost}:${cachePort}`
+        `📊 ${cacheProvider === 'dragonfly' ? 'Dragonfly' : 'Redis'} Connection: ${cacheHost}:${cachePort}`
       );
     }
 

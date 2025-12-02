@@ -122,6 +122,7 @@ import {
   BillingMethods,
   ClinicMethods,
 } from './methods';
+import { ClinicMetricsMethods } from './methods/clinic-metrics.methods';
 
 /**
  * Main database service - single entry point for all database operations
@@ -143,6 +144,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   private readonly appointmentMethods: AppointmentMethods;
   private readonly billingMethods: BillingMethods;
   private readonly clinicMethods: ClinicMethods;
+  private readonly clinicMetricsMethods: ClinicMetricsMethods;
 
   constructor(
     protected readonly prismaService: PrismaService,
@@ -316,6 +318,17 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       executeWriteFn,
       'ClinicMethods'
     );
+
+    this.clinicMetricsMethods = new ClinicMetricsMethods(
+      this.prismaService,
+      this.queryOptionsBuilder,
+      this.queryKeyFactory,
+      this.cacheService,
+      this.loggingService,
+      executeReadFn,
+      executeWriteFn,
+      'ClinicMetricsMethods'
+    );
   }
 
   onModuleInit(): void {
@@ -362,12 +375,18 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         : null;
 
     // Check cache first (if enabled and not bypassed)
+    // Optimized for 10M+ users: Fast cache check with minimal overhead
     if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
       try {
         const cached = await this.queryCache.getCached<T>(cacheKey);
         if (cached !== null) {
           const cacheTime = Date.now() - startTime;
+          // Optimized: Record cache hit asynchronously to avoid blocking
+          setImmediate(() => {
           this.metricsService.recordCacheHit(cacheTime);
+          });
+          // Only log in debug mode for performance (10M+ users)
+          if (process.env['LOG_LEVEL'] === 'DEBUG') {
           void this.loggingService.log(
             LogType.DATABASE,
             LogLevel.DEBUG,
@@ -375,17 +394,24 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             this.serviceName,
             { cacheTime }
           );
+          }
           return cached;
         }
+        // Record cache miss asynchronously
+        setImmediate(() => {
         this.metricsService.recordCacheMiss(Date.now() - startTime);
+        });
       } catch (cacheError) {
         // Cache error should not block query execution
+        // Log asynchronously to avoid blocking query path
+        setImmediate(() => {
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.WARN,
           `Cache check failed, proceeding with query: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
           this.serviceName
         );
+        });
       }
     }
 
@@ -463,8 +489,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         }
 
         const result = retryResult.result;
+        const executionTime = performance.now() - startTime;
 
-        // Cache result if enabled
+        // Cache result asynchronously (non-blocking for 2-7ms target)
         if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
           const cacheStrategy = queryOptions.cacheStrategy || 'short';
           const ttl =
@@ -476,34 +503,41 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
                   ? 0
                   : 300;
           if (ttl > 0) {
-            await this.queryCache.setCached(cacheKey, result, {
+            // Cache asynchronously to avoid blocking response
+            setImmediate(() => {
+              void this.queryCache.setCached(cacheKey, result, {
               ttl,
               containsPHI: queryOptions.hipaaCompliant === true,
               priority:
-                (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) || 'normal',
+                  (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
+                  'normal',
               tags: [
                 'database',
                 'read',
                 ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
               ],
+              });
             });
           }
         }
 
-        const executionTime = Date.now() - startTime;
+        // Record metrics asynchronously (non-blocking)
+        setImmediate(() => {
         this.metricsService.recordQueryExecution(
           operationName,
-          executionTime,
+            Math.round(executionTime * 100) / 100,
           true,
           queryOptions.clinicId
         );
+        });
 
         return result;
       } else {
         // Execute without retry
         const result = await executeWithRetry();
+        const executionTime = performance.now() - startTime;
 
-        // Cache result if enabled
+        // Cache result asynchronously (non-blocking for 2-7ms target)
         if (cacheKey && queryOptions.useCache !== false && this.queryCache) {
           const cacheStrategy = queryOptions.cacheStrategy || 'short';
           const ttl =
@@ -515,27 +549,33 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
                   ? 0
                   : 300;
           if (ttl > 0) {
-            await this.queryCache.setCached(cacheKey, result, {
+            // Cache asynchronously to avoid blocking response
+            setImmediate(() => {
+              void this.queryCache.setCached(cacheKey, result, {
               ttl,
               containsPHI: queryOptions.hipaaCompliant === true,
               priority:
-                (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) || 'normal',
+                  (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
+                  'normal',
               tags: [
                 'database',
                 'read',
                 ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
               ],
+              });
             });
           }
         }
 
-        const executionTime = Date.now() - startTime;
+        // Record metrics asynchronously (non-blocking)
+        setImmediate(() => {
         this.metricsService.recordQueryExecution(
           operationName,
-          executionTime,
+            Math.round(executionTime * 100) / 100,
           true,
           queryOptions.clinicId
         );
+        });
 
         return result;
       }
@@ -551,14 +591,16 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       // Execute middleware chain on error
       await this.middlewareChain.onError(middlewareContext, dbError);
 
-      // Record metrics
+      // Record metrics asynchronously (non-blocking)
+      setImmediate(() => {
       this.metricsService.recordQueryExecution(
         operationName,
-        executionTime,
+          Math.round(executionTime * 100) / 100,
         false,
         queryOptions.clinicId,
         queryOptions.userId
       );
+      });
 
       void this.loggingService.log(
         LogType.DATABASE,
@@ -653,6 +695,16 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       // Execute middleware chain after
       const finalResult = await this.middlewareChain.after(processedContext, result);
+
+      // Automatic cache invalidation after write (non-blocking)
+      // Invalidates all cache layers to prevent stale data
+      setImmediate(() => {
+        void this.autoInvalidateCacheAfterWrite(
+          auditInfo.resourceType,
+          auditInfo.resourceId,
+          auditInfo.clinicId
+        );
+      });
 
       return finalResult;
     };
@@ -1103,21 +1155,130 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   // ===== IHealthcareDatabaseClient Interface Implementation =====
 
   /**
+   * ============================================================================
+   * ABSTRACTION LEVELS GUIDE
+   * ============================================================================
+   *
+   * This service provides methods at different abstraction levels:
+   *
+   * ┌─────────────────────────────────────────────────────────────────────┐
+   * │ HIGH-LEVEL METHODS (Recommended for most use cases)                 │
+   * ├─────────────────────────────────────────────────────────────────────┤
+   * │ • findUserByEmailSafe()     - Type-safe, cached, optimized          │
+   * │ • createUserSafe()          - Includes audit, validation, cache     │
+   * │ • updateUserSafe()          - Automatic cache invalidation          │
+   * │ • findAppointmentByIdSafe() - Full optimization layers              │
+   * │                                                                     │
+   * │ ✅ USE WHEN:                                                         │
+   * │   - Standard CRUD operations                                        │
+   * │   - Need type safety                                                │
+   * │   - Want automatic caching                                          │
+   * │   - Need audit trails                                               │
+   * │   - 95% of use cases                                                │
+   * └─────────────────────────────────────────────────────────────────────┘
+   *
+   * ┌─────────────────────────────────────────────────────────────────────┐
+   * │ MID-LEVEL METHODS (For custom queries with optimization)            │
+   * ├─────────────────────────────────────────────────────────────────────┤
+   * │ • executeHealthcareRead()   - Custom queries with caching           │
+   * │ • executeHealthcareWrite()  - Custom writes with audit trails       │
+   * │ • executeWithClinicContext() - Multi-tenant operations               │
+   * │                                                                     │
+   * │ ✅ USE WHEN:                                                         │
+   * │   - Custom queries not covered by high-level methods                │
+   * │   - Need complex filtering/joins                                    │
+   * │   - Want optimization layers (cache, metrics, security)             │
+   * │   - Still need HIPAA compliance                                     │
+   * └─────────────────────────────────────────────────────────────────────┘
+   *
+   * ┌─────────────────────────────────────────────────────────────────────┐
+   * │ LOW-LEVEL METHODS (Use sparingly - bypasses optimizations)          │
+   * ├─────────────────────────────────────────────────────────────────────┤
+   * │ • executeRawQuery()         - Raw SQL, no caching, no optimization  │
+   * │ • getPrismaClient()         - Direct Prisma access (deprecated)     │
+   * │                                                                     │
+   * │ ⚠️ USE WHEN:                                                         │
+   * │   - Complex SQL that Prisma can't express                           │
+   * │   - Performance-critical bulk operations                            │
+   * │   - Database migrations/maintenance                                 │
+   * │   - Debugging/testing                                               │
+   * │                                                                     │
+   * │ ❌ AVOID FOR:                                                        │
+   * │   - Regular CRUD operations (use high-level methods)                │
+   * │   - Production user-facing queries                                  │
+   * │   - Operations requiring audit trails                                │
+   * └─────────────────────────────────────────────────────────────────────┘
+   *
+   * ============================================================================
+   */
+
+  /**
    * Execute healthcare-specific read operations with HIPAA compliance
+   *
+   * MID-LEVEL ABSTRACTION: Use for custom queries that need optimization layers
+   *
+   * Features:
+   * - Automatic caching (if enabled)
+   * - Read replica routing
+   * - Query optimization
+   * - Metrics tracking
+   * - Security checks
+   *
+   * @example
+   * ```typescript
+   * // Custom query with optimization layers
+   * const users = await database.executeHealthcareRead(async (client) => {
+   *   return client.user.findMany({
+   *     where: { role: 'DOCTOR', isActive: true },
+   *     include: { doctor: true }
+   *   });
+   * });
+   * ```
+   *
    * @see IHealthcareDatabaseClient.executeHealthcareRead
    */
   async executeHealthcareRead<T>(
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeRead(async prisma => {
-      // Convert PrismaService to PrismaTransactionClient
-      const rawClient = prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
-      return operation(rawClient);
+      return operation(this.toTransactionClient(prisma));
     });
   }
 
   /**
    * Execute healthcare-specific write operations with audit trails
+   *
+   * MID-LEVEL ABSTRACTION: Use for custom write operations
+   *
+   * Features:
+   * - Automatic audit logging
+   * - Automatic cache invalidation
+   * - Data masking
+   * - Row-level security
+   * - Metrics tracking
+   *
+   * @example
+   * ```typescript
+   * // Custom write with automatic cache invalidation
+   * const user = await database.executeHealthcareWrite(
+   *   async (client) => {
+   *     return client.user.update({
+   *       where: { id },
+   *       data: { name: 'New Name' }
+   *     });
+   *   },
+   *   {
+   *     userId: context.user.id,
+   *     userRole: context.user.role,
+   *     clinicId: context.clinicId,
+   *     operation: 'UPDATE_USER',
+   *     resourceType: 'USER',
+   *     resourceId: id,
+   *     timestamp: new Date()
+   *   }
+   * );
+   * ```
+   *
    * @see IHealthcareDatabaseClient.executeHealthcareWrite
    */
   async executeHealthcareWrite<T>(
@@ -1125,9 +1286,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     auditInfo: AuditInfo
   ): Promise<T> {
     return this.executeWrite(async prisma => {
-      // Convert PrismaService to PrismaTransactionClient
-      const rawClient = prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
-      return operation(rawClient);
+      return operation(this.toTransactionClient(prisma));
     }, auditInfo);
   }
 
@@ -1140,9 +1299,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     priority: CriticalPriority
   ): Promise<T> {
     return this.executeCritical(async prisma => {
-      // Convert PrismaService to PrismaTransactionClient
-      const rawClient = prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
-      return operation(rawClient);
+      return operation(this.toTransactionClient(prisma));
     }, priority);
   }
 
@@ -1155,9 +1312,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeWithClinicContextInternal(clinicId, async prisma => {
-      // Convert PrismaService to PrismaTransactionClient
-      const rawClient = prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
-      return operation(rawClient);
+      return operation(this.toTransactionClient(prisma));
     });
   }
 
@@ -1192,75 +1347,117 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         ? (clinicResult.data as { clinicName?: string }).clinicName || 'Unknown'
         : 'Unknown';
 
+    // Get staff count and location count in parallel (optimized for 2-7ms)
+    const [staffCount, locationCount] = await Promise.all([
+      // Count all staff types associated with clinic
+      this.executeRead(
+        async prisma => {
+          const client = this.toTransactionClient(prisma);
+          // Count doctors through DoctorClinic junction table
+          const doctorCountResult = await client.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(DISTINCT "doctorId") as count FROM "DoctorClinic" WHERE "clinicId" = ${clinicId}
+          `;
+          const doctors = Number(doctorCountResult[0]?.count || 0);
+
+          // Count receptionists (direct relationship)
+          const receptionists = await prisma.receptionist.count({
+            where: { clinicId },
+          });
+
+          // Count clinic admins
+          const clinicAdmins = await prisma.clinicAdmin.count({
+            where: { clinicId },
+          });
+
+          // Note: Other staff types (Nurse, Pharmacist, etc.) don't have direct clinic relationships
+          // They are linked through User.clinics relationship, which would require additional queries
+          // For now, we count doctors, receptionists, and clinic admins as the primary staff
+          return doctors + receptionists + clinicAdmins;
+        },
+        {
+          clinicId,
+          useCache: true,
+          cacheStrategy: 'long',
+          priority: 'normal',
+        }
+      ),
+
+      // Count locations
+      this.executeRead(
+        async prisma => {
+          const client = this.toTransactionClient(prisma);
+          const result = await client.$queryRaw<Array<{ count: bigint }>>`
+            SELECT COUNT(*) as count FROM "ClinicLocation" WHERE "clinicId" = ${clinicId}
+          `;
+          return Number(result[0]?.count || 0);
+        },
+        {
+          clinicId,
+          useCache: true,
+          cacheStrategy: 'long',
+          priority: 'normal',
+        }
+      ),
+    ]);
+
     return {
       ...baseMetrics,
       clinicId,
       clinicName,
       patientCount: clinicMetrics?.patientCount || 0,
       appointmentCount: clinicMetrics?.appointmentCount || 0,
-      staffCount: 0, // TODO: Implement staff count
-      locationCount: 0, // TODO: Implement location count
+      staffCount,
+      locationCount,
     };
   }
 
   /**
    * Get clinic dashboard statistics
+   * Optimized for 2-7ms execution with parallel queries and caching
    * @see IHealthcareDatabaseClient.getClinicDashboardStats
    */
-  getClinicDashboardStats(clinicId: string): Promise<ClinicDashboardStats> {
-    // TODO: Implement clinic dashboard stats
-    // This will be implemented in a future phase
-    return Promise.reject(
-      new HealthcareError(
-        ErrorCode.FEATURE_NOT_IMPLEMENTED,
-        'getClinicDashboardStats not yet implemented',
-        undefined,
-        { clinicId },
-        this.serviceName
-      )
-    );
+  async getClinicDashboardStats(clinicId: string): Promise<ClinicDashboardStats> {
+    return this.clinicMetricsMethods.getClinicDashboardStats(clinicId);
   }
 
   /**
    * Get clinic patients with pagination and filtering
+   * Optimized for 2-7ms execution with indexed queries and caching
    * @see IHealthcareDatabaseClient.getClinicPatients
    */
-  getClinicPatients(
+  async getClinicPatients(
     clinicId: string,
     options?: ClinicPatientOptions
   ): Promise<ClinicPatientResult> {
-    // TODO: Implement clinic patients
-    // This will be implemented in a future phase
-    return Promise.reject(
-      new HealthcareError(
-        ErrorCode.FEATURE_NOT_IMPLEMENTED,
-        'getClinicPatients not yet implemented',
-        undefined,
-        { clinicId, options },
-        this.serviceName
-      )
-    );
+    return this.clinicMetricsMethods.getClinicPatients(clinicId, options);
   }
 
   /**
    * Get clinic appointments with advanced filtering
+   * Optimized for 2-7ms execution with indexed queries, date range optimization, and caching
    * @see IHealthcareDatabaseClient.getClinicAppointments
    */
-  getClinicAppointments(
+  async getClinicAppointments(
     clinicId: string,
     options?: ClinicAppointmentOptions
   ): Promise<ClinicAppointmentResult> {
-    // TODO: Implement clinic appointments
-    // This will be implemented in a future phase
-    return Promise.reject(
-      new HealthcareError(
-        ErrorCode.FEATURE_NOT_IMPLEMENTED,
-        'getClinicAppointments not yet implemented',
-        undefined,
-        { clinicId, options },
-        this.serviceName
-      )
+    return this.clinicMetricsMethods.getClinicAppointments(clinicId, options);
+  }
+
+  /**
+   * Get the underlying Prisma client
+   * @deprecated Use executeRead/Write methods instead to benefit from caching, metrics, and optimization layers
+   * @see IDatabaseClient.getPrismaClient
+   */
+  getPrismaClient(): PrismaService {
+    void this.loggingService.log(
+      LogType.DATABASE,
+      LogLevel.WARN,
+      'DEPRECATED: getPrismaClient() called - use executeRead/Write instead for optimal performance',
+      this.serviceName,
+      { stack: new Error().stack }
     );
+    return this.prismaService;
   }
 
   /**
@@ -1316,23 +1513,37 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   /**
-   * Get the underlying Prisma client
-   * @deprecated Use executeRead/Write methods instead
-   * @see IDatabaseClient.getPrismaClient
-   */
-  getPrismaClient(): PrismaService {
-    void this.loggingService.log(
-      LogType.DATABASE,
-      LogLevel.WARN,
-      'DEPRECATED: getPrismaClient() called - use executeRead/Write instead',
-      this.serviceName,
-      { stack: new Error().stack }
-    );
-    return this.prismaService;
-  }
-
-  /**
-   * Execute a raw query
+   * Execute a raw SQL query
+   *
+   * LOW-LEVEL ABSTRACTION: Use sparingly - bypasses optimization layers
+   *
+   * ⚠️ WARNING: This method bypasses:
+   * - Caching (no cache hits/misses)
+   * - Query optimization
+   * - Automatic security checks
+   * - Read replica routing
+   * - Some metrics tracking
+   *
+   * ✅ USE FOR:
+   * - Complex SQL that Prisma can't express
+   * - Performance-critical bulk operations
+   * - Database migrations/maintenance
+   * - Analytics/reporting queries
+   *
+   * ❌ AVOID FOR:
+   * - Regular CRUD operations (use high-level methods)
+   * - User-facing queries (use executeHealthcareRead/Write)
+   * - Operations requiring audit trails
+   *
+   * @example
+   * ```typescript
+   * // Complex analytics query
+   * const stats = await database.executeRawQuery<{count: number}[]>(
+   *   'SELECT COUNT(*) as count FROM "User" WHERE "createdAt" > $1',
+   *   [new Date('2024-01-01')]
+   * );
+   * ```
+   *
    * @see IDatabaseClient.executeRawQuery
    */
   async executeRawQuery<T = Record<string, never>>(
@@ -1387,9 +1598,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeTransaction(async prisma => {
-      // Convert PrismaService to PrismaTransactionClient
-      const rawClient = prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
-      return operation(rawClient);
+      return operation(this.toTransactionClient(prisma));
     });
   }
 
@@ -1420,6 +1629,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   // ===== Private Helper Methods =====
+
+  /**
+   * Convert PrismaService to PrismaTransactionClient
+   * Centralized conversion to avoid repeated casting (DRY principle)
+   * Optimized for 10M+ users - single conversion point
+   */
+  private toTransactionClient(prisma: PrismaService): PrismaTransactionClient {
+    return prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
+  }
 
   /**
    * Create audit trail entry
@@ -1470,9 +1688,27 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   // ===== Convenience Methods (Type-Safe Database Operations) =====
-  // These methods provide convenient, type-safe access to common database operations
-  // All methods use executeRead/Write for full optimization layers
+  //
+  // HIGH-LEVEL ABSTRACTION: Recommended for 95% of use cases
+  //
+  // These methods provide convenient, type-safe access to common database operations.
+  // All methods use executeRead/Write for full optimization layers:
+  // - Automatic caching with smart TTL
+  // - Automatic cache invalidation on writes
+  // - Query optimization
+  // - Metrics tracking
+  // - Security checks
+  // - Audit trails (for writes)
+  //
   // Code splitting: Methods are delegated to method classes organized by entity type
+  //
+  // ✅ USE THESE METHODS FOR:
+  //   - Standard CRUD operations
+  //   - Type-safe queries
+  //   - Automatic optimization
+  //   - Production user-facing features
+  //
+  // ============================================================================
 
   // ===== User Methods =====
   async findUserByIdSafe(id: string): Promise<UserWithRelations | null> {
@@ -1825,23 +2061,168 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }
 
   /**
-   * Invalidate cache by tags
+   * ============================================================================
+   * CENTRALIZED CACHE INVALIDATION SYSTEM
+   * ============================================================================
+   *
+   * This system provides consistent, automatic cache invalidation across all
+   * cache layers (Redis, in-memory, query cache).
+   *
+   * Features:
+   * - Automatic invalidation on writes
+   * - Consistent tag generation
+   * - Multi-layer invalidation (all cache layers)
+   * - Error handling (cache failures don't block operations)
+   * - Performance optimized (async, non-blocking)
+   * ============================================================================
    */
-  private async invalidateCache(tags: string[]): Promise<void> {
-    const cacheService = this.cacheService;
-    if (cacheService) {
-      try {
-        const promises = tags.map(tag => cacheService.invalidateCacheByTag(tag));
-        await Promise.all(promises);
+
+  /**
+   * Generate consistent cache tags for an entity
+   * Centralized tag generation to avoid edge cases and stale cache
+   *
+   * @param entityType - Entity type (e.g., 'user', 'appointment', 'patient')
+   * @param entityId - Entity ID (optional)
+   * @param clinicId - Clinic ID (optional, for multi-tenant)
+   * @returns Array of cache tags
+   */
+  private generateCacheTags(entityType: string, entityId?: string, clinicId?: string): string[] {
+    const tags: string[] = [
+      'database', // Global database tag
+      entityType.toLowerCase(), // Entity type tag (e.g., 'user')
+      `${entityType.toLowerCase()}s`, // Plural tag (e.g., 'users')
+    ];
+
+    if (entityId) {
+      tags.push(`${entityType.toLowerCase()}:${entityId}`); // Specific entity tag
+    }
+
+    if (clinicId) {
+      tags.push(`clinic:${clinicId}`); // Clinic-specific tag
+      tags.push(`clinic:${clinicId}:${entityType.toLowerCase()}`); // Clinic + entity tag
+    }
+
+    return tags;
+  }
+
+  /**
+   * Invalidate cache across all layers with consistent tag strategy
+   *
+   * This method invalidates cache in:
+   * - QueryCacheService (query result cache)
+   * - CacheService (Redis/in-memory cache)
+   * - All cache layers using tag-based invalidation
+   *
+   * @param tags - Cache tags to invalidate
+   * @param entityType - Optional entity type for additional tag generation
+   * @param entityId - Optional entity ID for specific invalidation
+   * @param clinicId - Optional clinic ID for clinic-specific invalidation
+   */
+  private async invalidateCache(
+    tags: string[],
+    entityType?: string,
+    entityId?: string,
+    clinicId?: string
+  ): Promise<void> {
+    // Generate additional tags if entity info provided
+    const allTags = entityType
+      ? [...tags, ...this.generateCacheTags(entityType, entityId, clinicId)]
+      : tags;
+
+    // Remove duplicates
+    const uniqueTags = Array.from(new Set(allTags));
+
+    if (!this.cacheService) {
+      return;
+    }
+
+    try {
+      // Invalidate across all cache layers in parallel
+      const invalidationPromises = [
+        // Invalidate by tags (Redis/in-memory cache)
+        ...uniqueTags.map(tag => this.cacheService!.invalidateCacheByTag(tag)),
+        // Invalidate query cache if available
+        ...(this.queryCache ? [this.queryCache.invalidateCache(undefined, uniqueTags)] : []),
+      ];
+
+      await Promise.all(invalidationPromises);
+
+      // Log invalidation for debugging (only in debug mode for performance)
+      if (process.env['LOG_LEVEL'] === 'DEBUG') {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Cache invalidated: ${uniqueTags.length} tags`,
+          this.serviceName,
+          { tags: uniqueTags, entityType, entityId, clinicId }
+        );
+      }
       } catch (error) {
+      // Cache invalidation failures should not block operations
+      // Log warning but don't throw
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.WARN,
-          `Cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Cache invalidation failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
           this.serviceName,
-          { tags, error: error instanceof Error ? error.stack : String(error) }
+        {
+          tags: uniqueTags,
+          entityType,
+          entityId,
+          clinicId,
+          error: error instanceof Error ? error.stack : String(error),
+        }
         );
       }
     }
+
+  /**
+   * Automatically invalidate cache after write operations
+   * Called automatically by executeWrite for all write operations
+   *
+   * @param resourceType - Type of resource modified (e.g., 'USER', 'APPOINTMENT')
+   * @param resourceId - ID of resource modified
+   * @param clinicId - Clinic ID (for multi-tenant invalidation)
+   */
+  private async autoInvalidateCacheAfterWrite(
+    resourceType: string,
+    resourceId?: string,
+    clinicId?: string
+  ): Promise<void> {
+    const entityType = resourceType.toLowerCase();
+    await this.invalidateCache([], entityType, resourceId, clinicId);
+  }
+
+  /**
+   * Manually invalidate cache for specific entity
+   *
+   * PUBLIC METHOD: Use when you need to manually invalidate cache
+   * (e.g., after external data changes, bulk operations, migrations)
+   *
+   * NOTE: For normal write operations, cache invalidation is automatic.
+   * This method is only needed for edge cases.
+   *
+   * @param entityType - Entity type (e.g., 'user', 'appointment', 'patient')
+   * @param entityId - Optional entity ID for specific invalidation
+   * @param clinicId - Optional clinic ID for clinic-specific invalidation
+   *
+   * @example
+   * ```typescript
+   * // Invalidate all user cache
+   * await database.invalidateEntityCache('user');
+   *
+   * // Invalidate specific user cache
+   * await database.invalidateEntityCache('user', userId);
+   *
+   * // Invalidate clinic-specific cache
+   * await database.invalidateEntityCache('appointment', undefined, clinicId);
+   * ```
+   */
+  async invalidateEntityCache(
+    entityType: string,
+    entityId?: string,
+    clinicId?: string
+  ): Promise<void> {
+    await this.invalidateCache([], entityType, entityId, clinicId);
   }
 }

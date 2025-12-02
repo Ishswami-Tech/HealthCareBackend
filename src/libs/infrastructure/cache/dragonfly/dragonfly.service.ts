@@ -18,16 +18,16 @@ export class DragonflyService
   extends BaseCacheClientService
   implements OnModuleInit, OnModuleDestroy
 {
-  // Provider-specific configuration
-  protected readonly PRODUCTION_CONFIG = {
-    maxMemoryPolicy: 'noeviction',
-    maxConnections: parseInt(process.env['DRAGONFLY_MAX_CONNECTIONS'] || '100', 10),
-    connectionTimeout: 15000,
-    commandTimeout: 5000,
-    retryOnFailover: true,
-    enableAutoPipelining: true,
-    maxRetriesPerRequest: 3,
-    keyPrefix: process.env['DRAGONFLY_KEY_PREFIX'] || 'healthcare:',
+  // Provider-specific configuration - will be initialized in onModuleInit
+  protected PRODUCTION_CONFIG!: {
+    maxMemoryPolicy: string;
+    maxConnections: number;
+    connectionTimeout: number;
+    commandTimeout: number;
+    retryOnFailover: boolean;
+    enableAutoPipelining: boolean;
+    maxRetriesPerRequest: number;
+    keyPrefix: string;
   };
 
   protected readonly PROVIDER_NAME = 'dragonfly' as const;
@@ -43,10 +43,26 @@ export class DragonflyService
     loggingService: LoggingService
   ) {
     super(configService, loggingService);
-    this.initializeClient();
+    // Don't initialize client here - wait for onModuleInit when PRODUCTION_CONFIG is ready
   }
   async onModuleInit() {
     try {
+      // Initialize PRODUCTION_CONFIG using ConfigService
+      const keyPrefix = this.configService.getEnv('DRAGONFLY_KEY_PREFIX', 'healthcare:');
+      this.PRODUCTION_CONFIG = {
+        maxMemoryPolicy: 'noeviction',
+        maxConnections: this.configService.getEnvNumber('DRAGONFLY_MAX_CONNECTIONS', 100),
+        connectionTimeout: 15000,
+        commandTimeout: 5000,
+        retryOnFailover: true,
+        enableAutoPipelining: true,
+        maxRetriesPerRequest: 3,
+        keyPrefix: keyPrefix || 'healthcare:',
+      };
+
+      // Now initialize the client after PRODUCTION_CONFIG is set
+      this.initializeClient();
+
       // Check if cache is enabled using single source of truth
       if (!isCacheEnabled()) {
         if (this.verboseLoggingEnabled) {
@@ -98,9 +114,9 @@ export class DragonflyService
         return;
       }
 
-      // Check if Dragonfly is enabled
-      const configEnabled = this.configService?.get<boolean>('dragonfly.enabled');
-      const envEnabled = process.env['DRAGONFLY_ENABLED'] !== 'false';
+      // Check if Dragonfly is enabled using ConfigService
+      const configEnabled = this.configService?.get<boolean>('dragonfly.enabled', true);
+      const envEnabled = this.configService?.getEnvBoolean('DRAGONFLY_ENABLED', true);
       const isDragonflyEnabled = configEnabled ?? envEnabled;
 
       if (!isDragonflyEnabled) {
@@ -199,7 +215,7 @@ export class DragonflyService
    * The eviction policy is set separately via setEvictionPolicy()
    */
   async optimizeMemoryUsage(): Promise<void> {
-    if (process.env['NODE_ENV'] === 'production') {
+    if (this.configService?.isProduction() ?? false) {
       try {
         if (this.verboseLoggingEnabled) {
           await this.loggingService.log(

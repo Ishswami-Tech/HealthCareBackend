@@ -10,6 +10,7 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { AuthModule } from '@services/auth/auth.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { ErrorsModule } from '@core/errors/errors.module';
     AuthModule,
     LoggingModule,
     ErrorsModule,
+    CacheModule,
   ],
   controllers: [UsersController],
   providers: [UsersService, ClinicContextService],

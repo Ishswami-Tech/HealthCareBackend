@@ -1,5 +1,5 @@
-# Redis StatefulSet with Sentinel for High Availability
-# This replaces the simple Deployment for production use
+# Redis StatefulSet - Optimized for 2-3 Node Cluster
+# High Availability with proper resource allocation
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -10,7 +10,7 @@ metadata:
     component: cache
 spec:
   serviceName: redis-headless
-  replicas: 3  # Redis cluster with 3 nodes
+  replicas: 3  # 3 replicas for HA (works on 2 nodes initially, optimal on 3)
   selector:
     matchLabels:
       app: redis
@@ -21,13 +21,26 @@ spec:
         app: redis
         component: cache
     spec:
+      # Anti-affinity: Spread Redis pods across nodes (REQUIRED for HA)
       affinity:
         podAntiAffinity:
+          # Required: Each Redis pod must be on a different node
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
-              matchLabels:
-                app: redis
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - redis
             topologyKey: kubernetes.io/hostname
+          # Preferred: Also avoid other cache components
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 50
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  component: cache
+              topologyKey: kubernetes.io/hostname
       containers:
       - name: redis
         image: redis:7-alpine
@@ -58,11 +71,13 @@ spec:
         - containerPort: 16379
           name: gossip
         resources:
+          # Optimized for 6 vCPU / 12GB nodes
+          # Each Redis pod: 0.5 vCPU, 1GB RAM (3 pods = 1.5 vCPU, 3GB total)
           requests:
             memory: "1Gi"
             cpu: "500m"
           limits:
-            memory: "2Gi"
+            memory: "2Gi"  # Allows burst for queue operations
             cpu: "1000m"
         volumeMounts:
         - name: redis-storage
@@ -101,8 +116,9 @@ spec:
       resources:
         requests:
           storage: 10Gi
+      storageClassName: standard  # Adjust based on your storage class
 ---
-# Headless service for StatefulSet
+# Headless service for StatefulSet (for pod discovery)
 apiVersion: v1
 kind: Service
 metadata:
@@ -123,7 +139,7 @@ spec:
     targetPort: 16379
     name: gossip
 ---
-# Client service for Redis access
+# Client service for Redis access (load balances to all pods)
 apiVersion: v1
 kind: Service
 metadata:
@@ -139,6 +155,20 @@ spec:
   - port: 6379
     targetPort: 6379
     name: client
+  sessionAffinity: ClientIP  # Sticky sessions for better performance
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800  # 3 hours
 ---
-# Note: autoscaling Redis cluster nodes requires resharding and is not handled automatically.
-# Prefer manual scaling or an operator for production.
+# PodDisruptionBudget - Ensures at least 2 Redis pods are always available
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: redis-pdb
+  namespace: healthcare-backend
+spec:
+  minAvailable: 2  # Keep majority running (2 out of 3)
+  selector:
+    matchLabels:
+      app: redis
+

@@ -1,5 +1,6 @@
-# Dragonfly Deployment - High-performance Redis-compatible cache
-# Dragonfly is 26x faster than Redis and uses less memory
+# Dragonfly Deployment - Optimized for 2-3 Node Cluster
+# Dragonfly is 26x faster than Redis, single-instance is sufficient
+# For HA, use Redis cluster instead, or run Dragonfly with backup strategy
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -9,7 +10,7 @@ metadata:
     app: dragonfly
     component: cache
 spec:
-  replicas: 1  # Dragonfly is single-instance but highly performant
+  replicas: 1  # Dragonfly is single-instance (highly performant)
   selector:
     matchLabels:
       app: dragonfly
@@ -20,24 +21,35 @@ spec:
         app: dragonfly
         component: cache
     spec:
+      # Node affinity: Prefer worker nodes (not master)
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: node-role.kubernetes.io/master
+                operator: DoesNotExist
       containers:
       - name: dragonfly
         image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
         args:
           - --alsologtostderr
           - --cache_mode=false
-          - --maxmemory=4gb
-          - --proactor_threads=8
+          - --maxmemory=3gb  # Optimized for 12GB node (25% of node RAM)
+          - --proactor_threads=4  # Optimized for 6 vCPU node
           - --logtostderr
         ports:
         - containerPort: 6379
           name: client
         resources:
+          # Optimized for 6 vCPU / 12GB nodes
+          # Dragonfly: 1 vCPU, 3GB RAM (single instance)
           requests:
-            memory: "1Gi"
+            memory: "2Gi"
             cpu: "500m"
           limits:
-            memory: "4Gi"
+            memory: "4Gi"  # Allows burst for high queue throughput
             cpu: "2000m"
         volumeMounts:
         - name: dragonfly-storage
@@ -100,6 +112,7 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
-  storageClassName: standard  # Adjust based on your cluster
+      storage: 20Gi  # Increased for queue data persistence
+  storageClassName: standard  # Adjust based on your storage class
+
 

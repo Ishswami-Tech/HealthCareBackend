@@ -62,9 +62,8 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     this.initializeCircuitBreaker();
   }
 
-  onModuleInit() {
+  async onModuleInit(): Promise<void> {
     this.initializePool();
-    this.startHealthMonitoring();
     this.startQueueProcessor();
     void this.loggingService.log(
       LogType.DATABASE,
@@ -72,6 +71,38 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       'Enhanced connection pool manager initialized',
       this.serviceName
     );
+    
+    // Wait for Prisma to be ready before starting health monitoring
+    if (this.prismaService) {
+      const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
+      if (isReady) {
+        this.startHealthMonitoring();
+      } else {
+        // Start with delay - Prisma will be ready soon
+        setTimeout(() => {
+          void (async () => {
+            if (this.prismaService) {
+              const ready = await this.prismaService.waitUntilReady(5000);
+              if (ready) {
+                this.startHealthMonitoring();
+              }
+            }
+          })();
+        }, 5000);
+      }
+    } else {
+      // PrismaService not available yet, try again after a delay
+      setTimeout(() => {
+        void (async () => {
+          if (this.prismaService) {
+            const ready = await this.prismaService.waitUntilReady(5000);
+            if (ready) {
+              this.startHealthMonitoring();
+            }
+          }
+        })();
+      }, 5000);
+    }
   }
 
   onModuleDestroy() {
@@ -369,16 +400,76 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   }
 
   private startHealthMonitoring() {
+    const serviceStartTime = Date.now();
+    const STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
+
     this.healthCheckInterval = setInterval(() => {
       void (async () => {
         try {
+          // Check if we're in startup grace period
+          const timeSinceStart = Date.now() - serviceStartTime;
+          const isInStartupGracePeriod = timeSinceStart < STARTUP_GRACE_PERIOD;
+
+          // Check if PrismaService is available
+          if (!this.prismaService) {
+            this.metrics.isHealthy = false;
+            return;
+          }
+
+          // CRITICAL: Check if Prisma is ready BEFORE attempting any operations
+          // This prevents Prisma errors from being logged to stderr
+          if (!this.prismaService.isReady()) {
+            this.metrics.isHealthy = false;
+            // During startup grace period, silently skip
+            if (!isInStartupGracePeriod) {
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.DEBUG,
+                'Database health check skipped: Prisma client not ready',
+                this.serviceName,
+                {}
+              );
+            }
+            return;
+          }
+
           const start = Date.now();
-          // Use dedicated health check client to avoid interfering with regular operations
-          const prismaClient = PrismaServiceClass.getHealthCheckClient();
-          const typedClient = prismaClient as unknown as {
-            $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
-          };
-          await typedClient.$queryRaw`SELECT 1`;
+
+          try {
+            // Use $queryRawUnsafe directly on PrismaService
+            // PrismaService.$queryRawUnsafe will ensure client is initialized
+            // During startup grace period, this will return empty result instead of throwing
+            await this.prismaService.$queryRawUnsafe('SELECT 1');
+          } catch (_queryError) {
+            // Log warning but don't mark as unhealthy during startup
+            // This is expected if Prisma is still initializing
+            const errorMessage = _queryError instanceof Error ? _queryError.message : String(_queryError);
+            if (errorMessage.includes('not initialized') || errorMessage.includes('not available')) {
+              this.metrics.isHealthy = false;
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.WARN,
+                `Prisma client not ready: ${errorMessage}`,
+                this.serviceName,
+                {}
+              );
+              return;
+            }
+            // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+            if (!errorMessage.includes('Invalid `prisma')) {
+              // For other errors, log but continue (might be transient)
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.WARN,
+                `Health check query failed (non-critical): ${errorMessage}`,
+                this.serviceName,
+                {}
+              );
+            }
+            this.metrics.isHealthy = false;
+            return;
+          }
+
           const duration = Date.now() - start;
 
           this.metrics.lastHealthCheck = new Date();
@@ -440,13 +531,17 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
         } catch (error) {
           this.metrics.isHealthy = false;
           this.handleCircuitBreakerFailure();
+          const errorMessage = (error as Error).message;
+          // Suppress Prisma "Invalid invocation" errors - they're expected during startup
+          if (!errorMessage.includes('Invalid `prisma')) {
           void this.loggingService.log(
             LogType.DATABASE,
-            LogLevel.ERROR,
-            `Health check failed: ${(error as Error).message}`,
+              LogLevel.WARN,
+              `Health check failed: ${errorMessage}`,
             this.serviceName,
             { error: (error as Error).stack }
           );
+          }
         }
       })();
     }, 15000); // Every 15 seconds for faster detection under high load

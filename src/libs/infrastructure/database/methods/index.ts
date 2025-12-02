@@ -12,3 +12,4 @@ export { ClinicAdminMethods } from './clinic-admin.methods';
 export { AppointmentMethods } from './appointment.methods';
 export { BillingMethods } from './billing.methods';
 export { ClinicMethods } from './clinic.methods';
+export { ClinicMetricsMethods } from './clinic-metrics.methods';

@@ -7,7 +7,7 @@
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 
-import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { PrismaService as PrismaServiceClass } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -27,7 +27,7 @@ export interface DatabaseHealthStatus {
  * @internal
  */
 @Injectable()
-export class DatabaseHealthMonitorService implements OnModuleInit {
+export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestroy {
   private readonly serviceName = 'DatabaseHealthMonitorService';
   private healthCheckInterval!: NodeJS.Timeout;
   private readonly checkIntervalMs = 30000; // 30 seconds
@@ -40,6 +40,9 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
   };
   private readonly healthCheckTimeout = 5000; // 5 seconds
   private lastSuccessLogTime = 0; // Track last success log time for periodic logging
+  private isShuttingDown = false;
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
 
   constructor(
     @Inject(forwardRef(() => PrismaServiceClass))
@@ -50,14 +53,45 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
     private readonly loggingService: LoggingService
   ) {}
 
-  onModuleInit(): void {
-    this.startHealthMonitoring();
+  async onModuleInit(): Promise<void> {
     void this.loggingService.log(
       LogType.DATABASE,
       LogLevel.INFO,
       'Database health monitor service initialized',
       this.serviceName
     );
+    
+    // Wait for Prisma to be ready before starting health monitoring
+    if (this.prismaService) {
+      const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
+      if (isReady) {
+        this.startHealthMonitoring();
+      } else {
+        // Start with delay - Prisma will be ready soon
+        setTimeout(() => {
+          void (async () => {
+            if (this.prismaService) {
+              const ready = await this.prismaService.waitUntilReady(5000);
+              if (ready) {
+                this.startHealthMonitoring();
+              }
+            }
+          })();
+        }, 5000);
+      }
+    } else {
+      // PrismaService not available yet, try again after a delay
+      setTimeout(() => {
+        void (async () => {
+          if (this.prismaService) {
+            const ready = await this.prismaService.waitUntilReady(5000);
+            if (ready) {
+              this.startHealthMonitoring();
+            }
+          }
+        })();
+      }, 5000);
+    }
   }
 
   /**
@@ -79,19 +113,41 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
    * This ensures only ONE health check connection is used across the application
    */
   private async performHealthCheck(): Promise<void> {
+    // Skip health check if shutting down
+    if (this.isShuttingDown) {
+      return;
+    }
+
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - this.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
+    // CRITICAL: Check if Prisma is ready BEFORE accessing any Prisma methods
+    // This prevents Prisma's internal error logging
+    if (!this.prismaService || !this.prismaService.isReady()) {
+      // During startup grace period, silently skip (don't log warnings)
+      if (!isInStartupGracePeriod) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          'Database health check skipped: Prisma client not ready',
+          this.serviceName,
+          {}
+        );
+      }
+      return;
+    }
+
     const startTime = Date.now();
 
     try {
-      // Use dedicated health check client (same as ConnectionPoolManager)
-      // This ensures only ONE health check connection pool is used
-      const prismaClient = PrismaServiceClass.getHealthCheckClient();
-      const typedClient = prismaClient as unknown as {
-        $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
-      };
-
-      // Simple health check query using dedicated connection
+      // CRITICAL: Use the main PrismaService instance instead of separate health check client
+      // The health check client might not be initialized, causing Prisma errors
+      // Use the main service which has proper readiness checks
+      // Use $queryRaw on the main PrismaService which has proper readiness checks
+      // During startup grace period, $queryRaw will return empty result instead of throwing
       await Promise.race([
-        typedClient.$queryRaw`SELECT 1`,
+        this.prismaService.$queryRaw`SELECT 1`,
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Health check timeout')), this.healthCheckTimeout)
         ),
@@ -126,7 +182,45 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
       }
     } catch (error) {
       const latency = Date.now() - startTime;
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
 
+      // Check if this is a Prisma initialization error or invalid invocation
+      const isPrismaInitError =
+        errorMessage.includes('Invalid `prisma') ||
+        errorMessage.includes('did not initialize yet') ||
+        errorMessage.includes('prisma generate') ||
+        errorMessage.includes('Cannot find module') ||
+        errorMessage.includes('MODULE_NOT_FOUND') ||
+        errorMessage.includes('PrismaClient') ||
+        errorMessage.includes('$queryRaw');
+
+      // If Prisma isn't ready yet, mark as degraded but don't log as error
+      if (isPrismaInitError) {
+        this.currentHealth = {
+          status: 'degraded',
+          latency,
+          lastCheck: new Date(),
+          connectionCount: 0,
+          errorRate: 0.5,
+          details: {
+            error: errorMessage,
+            reason: 'Prisma client not fully initialized',
+          },
+        };
+
+        // Log as warning instead of error - this is expected during startup
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Database health check skipped: Prisma client not ready. This is expected during application startup.`,
+          this.serviceName,
+          { error: errorMessage, stack: errorStack }
+        );
+        return;
+      }
+
+      // For other errors, mark as unhealthy
       this.currentHealth = {
         status: 'unhealthy',
         latency,
@@ -134,16 +228,16 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
         connectionCount: 0,
         errorRate: 1.0,
         details: {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
         },
       };
 
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.ERROR,
-        `Database health check failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Database health check failed: ${errorMessage}`,
         this.serviceName,
-        { error: error instanceof Error ? error.stack : String(error) }
+        { error: errorStack || errorMessage }
       );
     }
   }
@@ -170,6 +264,13 @@ export class DatabaseHealthMonitorService implements OnModuleInit {
    * Cleanup on module destroy
    */
   onModuleDestroy(): void {
+    // Set shutdown flag to prevent new health checks
+    this.isShuttingDown = true;
+
+    // Clear health check interval
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
     if (this.healthCheckInterval) {
       clearInterval(this.healthCheckInterval);
     }

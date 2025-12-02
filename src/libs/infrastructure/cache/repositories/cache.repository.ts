@@ -17,7 +17,7 @@ import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-prov
  */
 @Injectable()
 export class CacheRepository implements ICacheRepository {
-  private readonly cacheProvider: ICacheProvider;
+  private cacheProvider: ICacheProvider | undefined;
 
   constructor(
     @Inject(forwardRef(() => CacheProviderFactory))
@@ -31,8 +31,32 @@ export class CacheRepository implements ICacheRepository {
     @Inject(CacheKeyFactory)
     private readonly keyFactory: CacheKeyFactory
   ) {
+    // Don't initialize provider in constructor - lazy load on first use
+    // This prevents initialization errors when providers aren't ready yet
+  }
+
+  /**
+   * Get or initialize cache provider (lazy loading)
+   * This ensures provider is initialized when first needed, not during constructor
+   */
+  private getCacheProvider(): ICacheProvider {
+    if (!this.cacheProvider || typeof this.cacheProvider.set !== 'function') {
+      // Defensive check: ensure providerFactory is available
+      if (!this.providerFactory || typeof this.providerFactory.getBasicProvider !== 'function') {
+        throw new Error(
+          'CacheProviderFactory is not initialized. Cannot get cache provider. This may indicate cache service initialization failure.'
+        );
+      }
     // Get provider from factory (provider-agnostic)
-    this.cacheProvider = this.providerFactory.getBasicProvider();
+      const provider = this.providerFactory.getBasicProvider();
+      if (!provider || typeof provider.set !== 'function') {
+        throw new Error(
+          'CacheProviderFactory.getBasicProvider() returned undefined or invalid provider. Cache may not be properly initialized.'
+        );
+      }
+      this.cacheProvider = provider;
+    }
+    return this.cacheProvider;
   }
 
   /**
@@ -73,7 +97,8 @@ export class CacheRepository implements ICacheRepository {
    */
   async get<T>(key: string): Promise<T | null> {
     const versionedKey = this.versioningService.versionKey(key);
-    return this.cacheProvider.get<T>(versionedKey);
+    const provider = this.getCacheProvider();
+    return provider.get<T>(versionedKey);
   }
 
   /**
@@ -82,7 +107,8 @@ export class CacheRepository implements ICacheRepository {
   async set<T>(key: string, value: T, options: CacheOperationOptions = {}): Promise<void> {
     const versionedKey = this.versioningService.versionKey(key);
     const ttl = this.calculateTTL(options);
-    await this.cacheProvider.set(versionedKey, value, ttl);
+    const provider = this.getCacheProvider();
+    await provider.set(versionedKey, value, ttl);
   }
 
   /**
@@ -90,7 +116,8 @@ export class CacheRepository implements ICacheRepository {
    */
   async delete(key: string): Promise<boolean> {
     const versionedKey = this.versioningService.versionKey(key);
-    const deleted = await this.cacheProvider.del(versionedKey);
+    const provider = this.getCacheProvider();
+    const deleted = await provider.del(versionedKey);
     return deleted > 0;
   }
 
@@ -102,7 +129,8 @@ export class CacheRepository implements ICacheRepository {
       return 0;
     }
     const versionedKeys = keys.map(key => this.versioningService.versionKey(key));
-    return this.cacheProvider.delMultiple(versionedKeys);
+    const provider = this.getCacheProvider();
+    return provider.delMultiple(versionedKeys);
   }
 
   /**
@@ -113,7 +141,8 @@ export class CacheRepository implements ICacheRepository {
       return new Map<string, T | null>();
     }
     const versionedKeys = keys.map(key => this.versioningService.versionKey(key));
-    const result = await this.cacheProvider.getMultiple<T>(versionedKeys);
+    const provider = this.getCacheProvider();
+    const result = await provider.getMultiple<T>(versionedKeys);
     // Map back to original keys
     const mapped = new Map<string, T | null>();
     keys.forEach((key, index) => {
@@ -141,7 +170,8 @@ export class CacheRepository implements ICacheRepository {
       value: entry.value,
       ...(entry.ttl !== undefined && { ttl: entry.ttl }),
     }));
-    await this.cacheProvider.setMultiple(versionedEntries);
+    const provider = this.getCacheProvider();
+    await provider.setMultiple(versionedEntries);
   }
 
   /**
@@ -150,7 +180,8 @@ export class CacheRepository implements ICacheRepository {
   async invalidateByPattern(pattern: string): Promise<number> {
     // Version the pattern
     const versionedPattern = `${pattern}:v*`;
-    return this.cacheProvider.clearByPattern(versionedPattern);
+    const provider = this.getCacheProvider();
+    return provider.clearByPattern(versionedPattern);
   }
 
   /**
@@ -159,9 +190,10 @@ export class CacheRepository implements ICacheRepository {
   async invalidateByTags(tags: readonly string[]): Promise<number> {
     // This would require tag tracking - simplified for now
     let total = 0;
+    const provider = this.getCacheProvider();
     for (const tag of tags) {
       const pattern = `*:tag:${tag}:*`;
-      total += await this.cacheProvider.clearByPattern(pattern);
+      total += await provider.clearByPattern(pattern);
     }
     return total;
   }
@@ -171,7 +203,8 @@ export class CacheRepository implements ICacheRepository {
    */
   async exists(key: string): Promise<boolean> {
     const versionedKey = this.versioningService.versionKey(key);
-    return this.cacheProvider.exists(versionedKey);
+    const provider = this.getCacheProvider();
+    return provider.exists(versionedKey);
   }
 
   /**
@@ -179,7 +212,8 @@ export class CacheRepository implements ICacheRepository {
    */
   async getTTL(key: string): Promise<number> {
     const versionedKey = this.versioningService.versionKey(key);
-    return this.cacheProvider.ttl(versionedKey);
+    const provider = this.getCacheProvider();
+    return provider.ttl(versionedKey);
   }
 
   /**

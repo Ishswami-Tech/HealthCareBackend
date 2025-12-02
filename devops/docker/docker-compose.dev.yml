@@ -17,6 +17,7 @@ services:
       PORT: 8088
       HOST: 0.0.0.0
       BIND_ADDRESS: 0.0.0.0
+      DOCKER_ENV: "true"
       
       # Database Configuration
       # Connection pool parameters: connection_limit=50, pool_timeout=20
@@ -25,6 +26,7 @@ services:
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is default)
+      CACHE_ENABLED: "true"
       CACHE_PROVIDER: dragonfly
       
       # Redis Configuration (for Redis provider) - Commented out, using Dragonfly
@@ -183,6 +185,7 @@ services:
       --cache_mode=false
       --maxmemory=2gb
       --proactor_threads=4
+      --default_lua_flags=allow-undeclared-keys
     volumes:
       - dragonfly_data:/data
     networks:
@@ -238,6 +241,68 @@ services:
     networks:
       - healthcare-network
     restart: unless-stopped
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile.dev
+    container_name: healthcare-worker
+    environment:
+      # Application Environment
+      NODE_ENV: development
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DOCKER_ENV: "true"
+      
+      # Database Configuration
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=20
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      
+      # Cache Provider Configuration (Dragonfly is default)
+      CACHE_ENABLED: "true"
+      CACHE_PROVIDER: dragonfly
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      
+      # JWT Configuration (for queue operations)
+      JWT_SECRET: dev-jwt-secret-key-change-in-production
+      
+      # BullMQ Worker Configuration
+      BULL_WORKER_CONCURRENCY: "5"
+      BULL_MAX_JOBS_PER_WORKER: "100"
+      
+      # Logging Configuration
+      LOG_LEVEL: debug
+      ENABLE_AUDIT_LOGS: "true"
+    volumes:
+      - ../../:/app
+      - /app/node_modules
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      api:
+        condition: service_started
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+    command: >
+      sh -c "
+        echo 'Waiting for database to be ready...' &&
+        until pg_isready -h postgres -p 5432 -U postgres; do
+          echo 'Waiting for postgres...'
+          sleep 2
+        done &&
+        echo 'Database is ready!' &&
+        echo 'Generating Prisma Client...' &&
+        pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed' &&
+        echo 'Starting worker process...' &&
+        pnpm exec ts-node -r tsconfig-paths/register src/worker-bootstrap.ts
+      "
 
   pgadmin:
     image: dpage/pgadmin4:latest

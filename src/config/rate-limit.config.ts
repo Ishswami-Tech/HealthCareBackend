@@ -1,28 +1,6 @@
 import { registerAs } from '@nestjs/config';
 import type { EnhancedRateLimitConfig } from '@core/types';
-
-/**
- * Parses integer from environment variable with validation
- * @param value - Environment variable value
- * @param defaultValue - Default value
- * @param min - Minimum allowed value
- * @param max - Maximum allowed value
- * @returns Parsed integer
- */
-function parseRateLimitInteger(
-  value: string | undefined,
-  defaultValue: number,
-  min = 1,
-  max = Number.MAX_SAFE_INTEGER
-): number {
-  const parsed = value ? parseInt(value, 10) : defaultValue;
-
-  if (isNaN(parsed) || parsed < min || parsed > max) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
+import { parseInteger } from './environment/utils';
 
 /**
  * Validates rate limit configuration
@@ -60,44 +38,39 @@ export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
     rules: {
       // API endpoints
       api: {
-        limit: parseRateLimitInteger(process.env['API_RATE_LIMIT'], 100, 1, 10000),
+        limit: parseInteger(process.env['API_RATE_LIMIT'], 100, 1, 10000),
         window: 60, // 1 minute
         burst: 20, // Allow 20 extra requests for bursts
       },
       // Authentication endpoints
       auth: {
-        limit: parseRateLimitInteger(process.env['AUTH_RATE_LIMIT'], 5, 1, 100),
+        limit: parseInteger(process.env['AUTH_RATE_LIMIT'], 5, 1, 100),
         window: 60, // 1 minute
         burst: 2, // Allow 2 extra attempts
       },
       // Heavy operations (e.g., file uploads, reports)
       heavy: {
-        limit: parseRateLimitInteger(process.env['HEAVY_RATE_LIMIT'], 10, 1, 100),
+        limit: parseInteger(process.env['HEAVY_RATE_LIMIT'], 10, 1, 100),
         window: 300, // 5 minutes
         cost: 2, // Each request counts as 2
       },
       // User profile operations
       user: {
-        limit: parseRateLimitInteger(process.env['USER_RATE_LIMIT'], 50, 1, 1000),
+        limit: parseInteger(process.env['USER_RATE_LIMIT'], 50, 1, 1000),
         window: 60, // 1 minute
       },
       // Health check endpoints
       health: {
-        limit: parseRateLimitInteger(process.env['HEALTH_RATE_LIMIT'], 200, 1, 10000),
+        limit: parseInteger(process.env['HEALTH_RATE_LIMIT'], 200, 1, 10000),
         window: 60, // 1 minute
       },
     },
     security: {
-      maxAttempts: parseRateLimitInteger(process.env['MAX_AUTH_ATTEMPTS'], 5, 1, 20),
-      attemptWindow: parseRateLimitInteger(process.env['AUTH_ATTEMPT_WINDOW'], 1800, 60, 86400), // 30 minutes
+      maxAttempts: parseInteger(process.env['MAX_AUTH_ATTEMPTS'], 5, 1, 20),
+      attemptWindow: parseInteger(process.env['AUTH_ATTEMPT_WINDOW'], 1800, 60, 86400), // 30 minutes
       lockoutIntervals: [10, 25, 45, 60, 360] as const, // Progressive lockout in minutes
-      maxConcurrentSessions: parseRateLimitInteger(
-        process.env['MAX_CONCURRENT_SESSIONS'],
-        5,
-        1,
-        50
-      ),
-      sessionInactivityThreshold: parseRateLimitInteger(
+      maxConcurrentSessions: parseInteger(process.env['MAX_CONCURRENT_SESSIONS'], 5, 1, 50),
+      sessionInactivityThreshold: parseInteger(
         process.env['SESSION_INACTIVITY_THRESHOLD'],
         900,
         60,

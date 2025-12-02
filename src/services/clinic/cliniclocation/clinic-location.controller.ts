@@ -26,6 +26,7 @@ import { Role } from '@core/types/enums.types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
 import { CreateClinicLocationDto } from '@services/clinic/dto/create-clinic-location.dto';
 import { UpdateClinicLocationDto } from '@services/clinic/dto/update-clinic-location.dto';
+import { Cache as CacheDecorator, InvalidateClinicCache } from '@core/decorators';
 import type {
   ClinicLocationUpdateInput,
   ClinicLocationResponseDto,
@@ -41,6 +42,10 @@ export class ClinicLocationController {
 
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @InvalidateClinicCache({
+    tags: ['clinic_locations', 'clinic:{clinicId}'],
+    patterns: ['clinic_locations:*', 'clinic_location:*'],
+  })
   @ApiOperation({ summary: 'Create a new clinic location' })
   @ApiBody({ type: CreateClinicLocationDto })
   @ApiResponse({
@@ -73,6 +78,12 @@ export class ClinicLocationController {
 
   @Get()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @CacheDecorator({
+    keyTemplate: 'clinic_locations:{clinicId}:false',
+    ttl: 1800, // 30 minutes
+    tags: ['clinic_locations', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
   @ApiOperation({ summary: 'Get all locations for a clinic' })
   @ApiResponse({
     status: 200,
@@ -88,6 +99,12 @@ export class ClinicLocationController {
 
   @Get(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @CacheDecorator({
+    keyTemplate: 'clinic_location:{id}',
+    ttl: 1800, // 30 minutes
+    tags: ['clinic_locations', 'clinic_location:{id}'],
+    enableSWR: true,
+  })
   @ApiOperation({ summary: 'Get a specific clinic location' })
   @ApiResponse({ status: 200, description: 'Return the specified location.' })
   @ApiResponse({ status: 404, description: 'Location not found.' })
@@ -107,6 +124,10 @@ export class ClinicLocationController {
 
   @Put(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @InvalidateClinicCache({
+    tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
+    patterns: ['clinic_locations:*', 'clinic_location:*'],
+  })
   @ApiOperation({ summary: 'Update a clinic location' })
   @ApiBody({ type: UpdateClinicLocationDto })
   @ApiResponse({
@@ -152,6 +173,10 @@ export class ClinicLocationController {
 
   @Delete(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @InvalidateClinicCache({
+    tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
+    patterns: ['clinic_locations:*', 'clinic_location:*'],
+  })
   @ApiOperation({ summary: 'Delete a clinic location' })
   @ApiResponse({
     status: 200,

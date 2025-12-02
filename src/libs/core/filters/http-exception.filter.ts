@@ -80,6 +80,22 @@ export class HttpExceptionFilter implements ExceptionFilter {
   ];
 
   /**
+   * Checks if an OPTIONS request 404 should be ignored
+   * OPTIONS requests are CORS preflight requests and 404s are expected if routes aren't registered yet
+   *
+   * @param method - The HTTP method
+   * @param path - The request path
+   * @param status - The HTTP status code
+   * @returns True if the OPTIONS 404 should be ignored
+   * @private
+   */
+  private isIgnoredOptions404(method: string, path: string, status: number): boolean {
+    if (method !== 'OPTIONS' || status !== 404) return false;
+    // Ignore OPTIONS 404 for health endpoints (common monitoring endpoints)
+    return /^\/health(\/|$)/i.test(path);
+  }
+
+  /**
    * Checks if a 404 error should be ignored in logging
    *
    * @param path - The request path
@@ -168,8 +184,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
         'HttpExceptionFilter',
         errorLog as unknown as Record<string, unknown>
       );
-    } else if (status === 404 && this.isIgnored404(request.url, status)) {
-      // Skip logging for ignored 404 paths
+    } else if (
+      status === 404 &&
+      (this.isIgnored404(request.url, status) ||
+        this.isIgnoredOptions404(request.method, request.url, status))
+    ) {
+      // Skip logging for ignored 404 paths (static assets, OPTIONS preflight, etc.)
       // Do nothing
     } else if (status >= 400) {
       // Enhanced client error logging

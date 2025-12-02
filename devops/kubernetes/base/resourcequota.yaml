@@ -1,0 +1,189 @@
+# Unified Resource Quota - Scalable from 2 to 8 nodes (horizontal and vertical scaling)
+# Supports: 2, 3, 4, 6, 8 nodes with various node sizes (6-12 vCPU, 12-24GB RAM)
+
+# ============================================================================
+# CONFIGURATION: Uncomment ONE section based on your cluster size
+# ============================================================================
+
+# --- OPTION 1: 2 Nodes (6 vCPU, 12GB RAM each) = 12 vCPU, 24GB RAM total ---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: healthcare-quotas
+  namespace: healthcare-backend
+  labels:
+    app: healthcare-backend
+    cluster-size: "2-nodes"
+    node-spec: "6vCPU-12GB"
+spec:
+  hard:
+    # CPU: 12 vCPU total
+    # Requests: 67% = 8 vCPU (allows 33% headroom for system/kubelet)
+    # Limits: 100% = 12 vCPU (can use all if needed)
+    requests.cpu: "8"
+    limits.cpu: "12"
+    
+    # Memory: 24GB total
+    # Requests: 67% = 16GB (allows 33% headroom for system/kubelet)
+    # Limits: 100% = 24GB (can use all if needed)
+    requests.memory: 16Gi
+    limits.memory: 24Gi
+    
+    # Pods: (12 vCPU / 2) × 10 = 60 pods max
+    pods: "60"
+    
+    # PersistentVolumeClaims: Allow 10 PVCs
+    persistentvolumeclaims: "10"
+    
+    # Services: Allow 20 services
+    services: "20"
+
+# --- OPTION 2: 3 Nodes (6 vCPU, 12GB RAM each) = 18 vCPU, 36GB RAM total ---
+# Uncomment this section and comment out Option 1 when you have 3 nodes
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "3-nodes"
+#     node-spec: "6vCPU-12GB"
+# spec:
+#   hard:
+#     # CPU: 18 vCPU total
+#     # Requests: 67% = 12 vCPU (allows 33% headroom for system/kubelet)
+#     # Limits: 100% = 18 vCPU (can use all if needed)
+#     requests.cpu: "12"
+#     limits.cpu: "18"
+#     
+#     # Memory: 36GB total
+#     # Requests: 67% = 24GB (allows 33% headroom for system/kubelet)
+#     # Limits: 100% = 36GB (can use all if needed)
+#     requests.memory: 24Gi
+#     limits.memory: 36Gi
+#     
+#     # Pods: (18 vCPU / 2) × 10 = 90 pods max
+#     pods: "90"
+#     
+#     # PersistentVolumeClaims: Allow 15 PVCs
+#     persistentvolumeclaims: "15"
+#     
+#     # Services: Allow 30 services
+#     services: "30"
+
+# --- OPTION 3: 4 Nodes (6 vCPU, 12GB RAM each) = 24 vCPU, 48GB RAM total ---
+# For horizontal scaling to 4 nodes
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "4-nodes"
+#     node-spec: "6vCPU-12GB"
+# spec:
+#   hard:
+#     requests.cpu: "16"
+#     limits.cpu: "24"
+#     requests.memory: 32Gi
+#     limits.memory: 48Gi
+#     pods: "120"
+#     persistentvolumeclaims: "20"
+#     services: "40"
+
+# --- OPTION 4: 6 Nodes (6 vCPU, 12GB RAM each) = 36 vCPU, 72GB RAM total ---
+# For horizontal scaling to 6 nodes
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "6-nodes"
+#     node-spec: "6vCPU-12GB"
+# spec:
+#   hard:
+#     requests.cpu: "24"
+#     limits.cpu: "36"
+#     requests.memory: 48Gi
+#     limits.memory: 72Gi
+#     pods: "180"
+#     persistentvolumeclaims: "30"
+#     services: "60"
+
+# --- OPTION 5: 8 Nodes (6 vCPU, 12GB RAM each) = 48 vCPU, 96GB RAM total ---
+# For horizontal scaling to 8 nodes
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "8-nodes"
+#     node-spec: "6vCPU-12GB"
+# spec:
+#   hard:
+#     requests.cpu: "32"
+#     limits.cpu: "48"
+#     requests.memory: 64Gi
+#     limits.memory: 96Gi
+#     pods: "240"
+#     persistentvolumeclaims: "40"
+#     services: "80"
+
+# --- OPTION 6: Vertical Scaling - 3 Nodes (8 vCPU, 16GB RAM each) = 24 vCPU, 48GB RAM ---
+# For vertical scaling (larger nodes)
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "3-nodes"
+#     node-spec: "8vCPU-16GB"
+# spec:
+#   hard:
+#     requests.cpu: "16"
+#     limits.cpu: "24"
+#     requests.memory: 32Gi
+#     limits.memory: 48Gi
+#     pods: "120"
+#     persistentvolumeclaims: "20"
+#     services: "40"
+
+# --- OPTION 7: Vertical Scaling - 4 Nodes (12 vCPU, 24GB RAM each) = 48 vCPU, 96GB RAM ---
+# For maximum vertical scaling
+#
+# apiVersion: v1
+# kind: ResourceQuota
+# metadata:
+#   name: healthcare-quotas
+#   namespace: healthcare-backend
+#   labels:
+#     app: healthcare-backend
+#     cluster-size: "4-nodes"
+#     node-spec: "12vCPU-24GB"
+# spec:
+#   hard:
+#     requests.cpu: "32"
+#     limits.cpu: "48"
+#     requests.memory: 64Gi
+#     limits.memory: 96Gi
+#     pods: "240"
+#     persistentvolumeclaims: "40"
+#     services: "80"
+
+# --- OPTION 8: Custom Configuration (for any combination) ---
+# Use the script: ./devops/kubernetes/scripts/update-resource-quota.sh <nodes> <cpu-per-node> <ram-per-node-gb>
+# Example: ./update-resource-quota.sh 6 8 16  # 6 nodes, 8 vCPU, 16GB RAM each
+

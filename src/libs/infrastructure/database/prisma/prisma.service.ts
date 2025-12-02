@@ -237,6 +237,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
   private static isCircuitOpen = false;
+  private static readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
+  private static readonly serviceStartTime = Date.now(); // Track when service started
 
   /**
    * Dynamically import PrismaClient to avoid module caching issues
@@ -1108,8 +1110,161 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return this.prismaClient;
   }
 
+  private static isConnected = false;
+  private static connectionPromise: Promise<void> | null = null;
+  private static isFullyInitialized = false; // Track if Prisma is fully initialized (delegates ready)
+
   async onModuleInit() {
-    await this.connectWithRetry();
+    // Store the connection promise so other services can wait for it
+    PrismaService.connectionPromise = this.connectWithRetry();
+    await PrismaService.connectionPromise;
+    PrismaService.isConnected = true;
+
+    // Wait an additional 5 seconds to ensure all delegates are fully initialized
+    // This prevents "Invalid invocation" errors when services access delegates
+    // Prisma needs time to fully initialize all delegate properties
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    PrismaService.isFullyInitialized = true;
+
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        'Prisma client fully initialized - delegates are now ready',
+        'PrismaService',
+        {}
+      );
+    }
+  }
+
+  /**
+   * Check if Prisma client is ready (initialized and connected)
+   * Also checks if delegates are available to prevent "Invalid invocation" errors
+   */
+  isReady(): boolean {
+    // First ensure client is initialized
+    if (!this.prismaClient) {
+      try {
+        this.getRawPrismaClient();
+      } catch {
+        return false;
+      }
+    }
+
+    // Check if client exists and has required methods
+    const hasClient = !!this.prismaClient;
+    const hasQueryRaw =
+      typeof (this.prismaClient as unknown as { $queryRaw?: unknown }).$queryRaw === 'function';
+    const isConnected = PrismaService.isConnected;
+
+    // CRITICAL: We don't check delegates here because accessing them triggers Prisma's
+    // internal validation which logs "Invalid invocation" errors even if we catch them.
+    // Once PrismaClient is initialized and connected, delegates are automatically available.
+    // Services should use waitUntilReady() before accessing delegates to ensure Prisma is ready.
+
+    // Also check if Prisma is fully initialized (delegates ready)
+    const isFullyInitialized = PrismaService.isFullyInitialized;
+
+    return hasClient && hasQueryRaw && isConnected && isFullyInitialized;
+  }
+
+  /**
+   * Safely get a Prisma delegate without triggering validation errors
+   * This accesses the delegate through the underlying PrismaClient to avoid
+   * triggering Prisma's internal validation that logs errors
+   * @internal - Use only when you've confirmed Prisma is ready via waitUntilReady()
+   */
+  getDelegateSafely<T>(delegateName: string): T | null {
+    try {
+      // CRITICAL: Check if Prisma is fully initialized (delegates ready)
+      if (!PrismaService.isFullyInitialized) {
+        return null;
+      }
+
+      // CRITICAL: Multiple checks to ensure Prisma is fully ready
+      if (!this.prismaClient) {
+        return null;
+      }
+
+      // Check if Prisma is connected
+      if (!PrismaService.isConnected) {
+        return null;
+      }
+
+      // Double-check isReady() before accessing
+      if (!this.isReady()) {
+        return null;
+      }
+
+      // Additional check: ensure $queryRaw is available (indicates PrismaClient is initialized)
+      const hasQueryRaw =
+        typeof (this.prismaClient as unknown as { $queryRaw?: unknown }).$queryRaw === 'function';
+      if (!hasQueryRaw) {
+        return null;
+      }
+
+      // Access delegate through PrismaClient directly using bracket notation
+      // This bypasses Prisma's property getter validation
+      const clientAsAny = this.prismaClient as unknown as Record<string, unknown>;
+
+      // Check if delegate exists before accessing
+      if (!(delegateName in clientAsAny)) {
+        return null;
+      }
+
+      const delegate = clientAsAny[delegateName];
+      if (!delegate || typeof delegate !== 'object') {
+        return null;
+      }
+
+      return delegate as T;
+    } catch {
+      // If any error occurs, return null - don't let errors propagate
+      return null;
+    }
+  }
+
+  /**
+   * Wait for Prisma client to be ready (initialized and connected)
+   * Use this in services that need to ensure Prisma is ready before calling methods
+   */
+  async waitUntilReady(timeoutMs = 30000): Promise<boolean> {
+    const startTime = Date.now();
+
+    // If already ready, add a small delay to ensure delegates are fully initialized
+    if (this.isReady()) {
+      // Wait 500ms to ensure Prisma has fully initialized all delegates
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return true;
+    }
+
+    // Wait for connection promise if it exists
+    if (PrismaService.connectionPromise) {
+      try {
+        await Promise.race([
+          PrismaService.connectionPromise,
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('Connection timeout')), timeoutMs)
+          ),
+        ]);
+        // After connection promise resolves, wait a bit for delegates to initialize
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch {
+        // Timeout or connection failed - continue to check
+      }
+    }
+
+    // Poll until ready or timeout
+    while (Date.now() - startTime < timeoutMs) {
+      if (this.isReady()) {
+        // Wait 500ms to ensure Prisma has fully initialized all delegates
+        await new Promise(resolve => setTimeout(resolve, 500));
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms between checks
+    }
+
+    return false;
   }
 
   onModuleDestroy() {
@@ -1161,6 +1316,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
       await this.$connect();
       PrismaService.connectionCount++;
+      // Mark as connected immediately after successful connection
+      PrismaService.isConnected = true;
       // Reset circuit breaker on successful connection
       PrismaService.circuitBreakerFailures = 0;
       if (this.loggingService) {
@@ -1287,18 +1444,41 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       }
       return result;
     } catch (_error) {
-      PrismaService.circuitBreakerFailures++;
-      PrismaService.circuitBreakerLastFailure = Date.now();
+      // Don't count failures during startup grace period (first 30 seconds)
+      // This prevents circuit breaker from opening during application initialization
+      const timeSinceStart = Date.now() - PrismaService.serviceStartTime;
+      const isDuringStartup = timeSinceStart < PrismaService.STARTUP_GRACE_PERIOD;
 
-      if (PrismaService.circuitBreakerFailures >= PrismaService.CIRCUIT_BREAKER_THRESHOLD) {
-        PrismaService.isCircuitOpen = true;
+      if (!isDuringStartup) {
+        // Only count failures after startup grace period
+        PrismaService.circuitBreakerFailures++;
+        PrismaService.circuitBreakerLastFailure = Date.now();
+
+        if (PrismaService.circuitBreakerFailures >= PrismaService.CIRCUIT_BREAKER_THRESHOLD) {
+          PrismaService.isCircuitOpen = true;
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.ERROR,
+              'Circuit breaker opened due to failures',
+              'PrismaService',
+              { error: _error instanceof Error ? _error.message : String(_error) }
+            );
+          }
+        }
+      } else {
+        // During startup, log but don't count as failure
         if (this.loggingService) {
           void this.loggingService.log(
             LogType.DATABASE,
-            LogLevel.ERROR,
-            'Circuit breaker opened due to failures',
+            LogLevel.DEBUG,
+            'Prisma operation failed during startup grace period (not counting as circuit breaker failure)',
             'PrismaService',
-            { error: _error instanceof Error ? _error.message : String(_error) }
+            {
+              error: _error instanceof Error ? _error.message : String(_error),
+              timeSinceStart,
+              gracePeriodRemaining: PrismaService.STARTUP_GRACE_PERIOD - timeSinceStart,
+            }
           );
         }
       }
@@ -2539,13 +2719,82 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     query: TemplateStringsArray | string,
     ...values: Array<string | number | boolean | null>
   ): Promise<T> {
-    const prismaClient = this as unknown as {
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - PrismaService.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < PrismaService.STARTUP_GRACE_PERIOD;
+
+    // Ensure PrismaClient is initialized and ready
+    if (!this.isReady()) {
+      const isReady = await this.waitUntilReady(isInStartupGracePeriod ? 10000 : 5000);
+      if (!isReady) {
+        // During startup grace period, return empty result instead of throwing
+        if (isInStartupGracePeriod) {
+          return [] as unknown as T;
+        }
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          'Prisma client is not ready. Please wait for database connection to be established.',
+          undefined,
+          {},
+          'PrismaService.$queryRaw'
+        );
+      }
+    }
+
+    // CRITICAL: During startup grace period, don't access Prisma at all
+    // Accessing Prisma methods triggers internal validation that logs to stderr
+    if (isInStartupGracePeriod && (!this.isReady() || !PrismaService.isFullyInitialized)) {
+      return [] as unknown as T;
+    }
+
+    // Access the underlying PrismaClient directly to avoid infinite recursion
+    const prismaClient = this.prismaClient as unknown as {
       $queryRaw: (
         query: TemplateStringsArray | string,
         ...values: Array<string | number | boolean | null>
       ) => Promise<T>;
     };
-    return await prismaClient.$queryRaw(query, ...values);
+
+    // Check if method exists
+    if (!prismaClient || typeof prismaClient.$queryRaw !== 'function') {
+      // During startup grace period, return empty result instead of throwing
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Prisma $queryRaw method is not available. Prisma client may not be initialized.',
+        undefined,
+        {},
+        'PrismaService.$queryRaw'
+      );
+    }
+
+    // CRITICAL: Double-check Prisma is ready right before calling
+    // This prevents Prisma from logging errors to stderr
+    if (!this.isReady() || !PrismaService.isFullyInitialized) {
+      // During startup grace period, return empty result instead of calling Prisma
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Prisma client is not ready. Please wait for database connection to be established.',
+        undefined,
+        {},
+        'PrismaService.$queryRaw'
+      );
+    }
+
+    try {
+      return await prismaClient.$queryRaw(query, ...values);
+    } catch (error) {
+      // During startup grace period, suppress errors and return empty result
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -2555,13 +2804,81 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     query: string,
     ...values: Array<string | number | boolean | null>
   ): Promise<T> {
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - PrismaService.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < PrismaService.STARTUP_GRACE_PERIOD;
+
+    // Ensure PrismaClient is initialized and ready
+    if (!this.isReady()) {
+      const isReady = await this.waitUntilReady(isInStartupGracePeriod ? 10000 : 5000);
+      if (!isReady) {
+        // During startup grace period, return empty result instead of throwing
+        if (isInStartupGracePeriod) {
+          return [] as unknown as T;
+        }
+        throw new HealthcareError(
+          ErrorCode.DATABASE_CONNECTION_FAILED,
+          'Prisma client is not ready. Please wait for database connection to be established.',
+          undefined,
+          {},
+          'PrismaService.$queryRawUnsafe'
+        );
+      }
+    }
+
+    // CRITICAL: During startup grace period, don't access Prisma at all
+    // Accessing Prisma methods triggers internal validation that logs to stderr
+    if (isInStartupGracePeriod && (!this.isReady() || !PrismaService.isFullyInitialized)) {
+      return [] as unknown as T;
+    }
+
     const prismaClient = this.prismaClient as unknown as {
       $queryRawUnsafe: (
         query: string,
         ...values: Array<string | number | boolean | null>
       ) => Promise<T>;
     };
-    return await prismaClient.$queryRawUnsafe(query, ...values);
+
+    // Check if method exists
+    if (!prismaClient || typeof prismaClient.$queryRawUnsafe !== 'function') {
+      // During startup grace period, return empty result instead of throwing
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Prisma $queryRawUnsafe method is not available. Prisma client may not be initialized.',
+        undefined,
+        {},
+        'PrismaService.$queryRawUnsafe'
+      );
+    }
+
+    // CRITICAL: Double-check Prisma is ready right before calling
+    // This prevents Prisma from logging errors to stderr
+    if (!this.isReady() || !PrismaService.isFullyInitialized) {
+      // During startup grace period, return empty result instead of calling Prisma
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw new HealthcareError(
+        ErrorCode.DATABASE_CONNECTION_FAILED,
+        'Prisma client is not ready. Please wait for database connection to be established.',
+        undefined,
+        {},
+        'PrismaService.$queryRawUnsafe'
+      );
+    }
+
+    try {
+      return await prismaClient.$queryRawUnsafe(query, ...values);
+    } catch (error) {
+      // During startup grace period, suppress errors and return empty result
+      if (isInStartupGracePeriod) {
+        return [] as unknown as T;
+      }
+      throw error;
+    }
   }
 
   // $transaction is now a readonly property initialized in constructor

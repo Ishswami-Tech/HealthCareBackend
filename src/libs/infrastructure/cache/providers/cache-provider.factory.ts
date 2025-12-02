@@ -41,11 +41,20 @@ export class CacheProviderFactory {
 
     const providerType = getCacheProvider();
 
+    // Defensive check: ensure providers are initialized
     switch (providerType) {
       case 'redis':
+        if (!this.redisProvider || typeof this.redisProvider.set !== 'function') {
+          // Fallback to no-op if Redis provider is not ready
+          return this.getNoOpProvider();
+        }
         return this.redisProvider;
       case 'dragonfly':
       default:
+        if (!this.dragonflyProvider || typeof this.dragonflyProvider.set !== 'function') {
+          // Fallback to no-op if Dragonfly provider is not ready
+          return this.getNoOpProvider();
+        }
         return this.dragonflyProvider; // Default to Dragonfly
     }
   }

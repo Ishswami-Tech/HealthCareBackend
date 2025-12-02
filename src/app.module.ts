@@ -9,7 +9,6 @@ import { AppController } from './app.controller';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
-import { JwtModule } from '@nestjs/jwt';
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
@@ -23,6 +22,8 @@ import { ResilienceModule } from '@core/resilience';
 import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
 import { EventsModule } from '@infrastructure/events';
+import { CacheModule } from '@infrastructure/cache/cache.module';
+// import { SessionModule } from '@core/session/session.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -55,8 +56,11 @@ import { EventsModule } from '@infrastructure/events';
     UsersModule,
     // Core modules
     DatabaseModule,
-    // CacheModule disabled - using database only (Supabase)
-    // CacheModule,
+    // CacheModule - Required for caching functionality (Dragonfly/Redis)
+    CacheModule,
+    // SessionModule - Required for FastifySessionStoreAdapter
+    // TEMPORARILY DISABLED: SessionModule disabled for debugging
+    // SessionModule,
 
     // Business modules
     AppointmentsModule,
