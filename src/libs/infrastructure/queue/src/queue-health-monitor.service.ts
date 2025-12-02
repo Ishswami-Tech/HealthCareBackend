@@ -13,6 +13,7 @@ import { LogType, LogLevel } from '@core/types';
 import type { QueueHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience';
 import { QueueService } from './queue.service';
+import { SharedWorkerService } from './shared-worker.service';
 
 @Injectable()
 export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -42,7 +43,9 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => QueueService))
-    private readonly queueService?: QueueService
+    private readonly queueService?: QueueService,
+    @Inject(forwardRef(() => SharedWorkerService))
+    private readonly sharedWorkerService?: SharedWorkerService
   ) {
     // Circuit breaker is managed by CircuitBreakerService using named instances
     // The service will automatically track failures and open/close the circuit
@@ -184,6 +187,31 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
         issues.push('Queue service not connected');
         status.healthy = false;
         // Circuit breaker will track failures automatically
+      }
+
+      // Check for worker errors if SharedWorkerService is available
+      if (this.sharedWorkerService && typeof this.sharedWorkerService.getWorkerErrorSummary === 'function') {
+        try {
+          const workerErrorSummary = this.sharedWorkerService.getWorkerErrorSummary();
+          if (workerErrorSummary.totalErrors > 0) {
+            const errorQueues = workerErrorSummary.queuesWithErrors.slice(0, 5); // Show first 5 queues with errors
+            const errorMessage =
+              workerErrorSummary.totalErrors === 1
+                ? `Worker error on queue: ${errorQueues[0]}`
+                : `Worker errors on ${workerErrorSummary.totalErrors} queue(s): ${errorQueues.join(', ')}${workerErrorSummary.queuesWithErrors.length > 5 ? ` (+${workerErrorSummary.queuesWithErrors.length - 5} more)` : ''}`;
+            issues.push(errorMessage);
+            status.healthy = false;
+          }
+        } catch (workerError) {
+          // Don't fail health check if worker error check fails
+          void this.loggingService?.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Failed to check worker errors',
+            this.serviceName,
+            { error: workerError instanceof Error ? workerError.message : String(workerError) }
+          );
+        }
       }
 
       // Expensive checks only run periodically (every 60 seconds) to avoid performance impact

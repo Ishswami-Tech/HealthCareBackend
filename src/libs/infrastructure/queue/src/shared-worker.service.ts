@@ -6,6 +6,7 @@
  */
 
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { existsSync } from 'fs';
 
 import { Worker, Job } from 'bullmq';
 import { ConfigService } from '@config';
@@ -74,6 +75,9 @@ interface RedisConnection {
 export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   private workers: Map<string, Worker> = new Map();
   private isShuttingDown = false;
+  // Track worker errors for health monitoring
+  private workerErrors: Map<string, { count: number; lastError: Date; lastErrorMessage: string }> =
+    new Map();
 
   constructor(
     private readonly configService: ConfigService,
@@ -96,6 +100,18 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
   private initializeWorkers() {
     try {
+      // Only initialize workers in the worker service, not in API/clinic services
+      const serviceName = process.env['SERVICE_NAME'] || 'clinic';
+      if (serviceName !== 'worker') {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Shared worker service skipped - SERVICE_NAME is '${serviceName}', workers should only run in worker service`,
+          'SharedWorkerService'
+        );
+        return; // Skip worker initialization if not worker service
+      }
+
       // Check if cache is enabled first - skip worker initialization if cache is disabled
       // BullMQ workers require Redis/Dragonfly to function
       const cacheEnabledEnv = process.env['CACHE_ENABLED'];
@@ -129,9 +145,7 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
           process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
           (typeof process.platform !== 'undefined' &&
             process.platform === 'linux' &&
-            typeof require !== 'undefined' &&
-            typeof require('fs').existsSync === 'function' &&
-            require('fs').existsSync('/.dockerenv'));
+            existsSync('/.dockerenv'));
         cacheHost = process.env['REDIS_HOST'] || (isDocker ? 'redis' : 'localhost');
       }
       const cachePort = useDragonfly
@@ -261,21 +275,27 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       });
 
       worker.on('error', _err => {
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.ERROR,
-          `Worker error on queue ${queueName}`,
-          'SharedWorkerService',
-          {
-            queueName,
-            error: _err instanceof Error ? _err.message : String(_err),
-          }
-        );
+        const errorMessage = _err instanceof Error ? _err.message : String(_err);
+
+        // Track worker errors for health monitoring (silently, without logging)
+        // BullMQ workers emit 'error' events for various reasons including connection retries,
+        // initialization issues, and transient errors which are handled automatically.
+        // We track them for health monitoring but don't log them to avoid cluttering logs.
+        const existingError = this.workerErrors.get(queueName);
+        this.workerErrors.set(queueName, {
+          count: (existingError?.count || 0) + 1,
+          lastError: new Date(),
+          lastErrorMessage: errorMessage,
+        });
+
+        // Suppress all worker error logging - these are typically transient issues
+        // that BullMQ handles automatically. Errors are still tracked for health monitoring.
+        // No logging to keep logs clean.
       });
 
       // Defensive check before calling .set()
       if (this.workers && typeof this.workers.set === 'function') {
-      this.workers.set(queueName, worker);
+        this.workers.set(queueName, worker);
       } else {
         throw new Error('workers Map is not properly initialized');
       }
@@ -524,13 +544,59 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   getWorkerStatus(): Record<string, WorkerStatus> {
     const status: Record<string, WorkerStatus> = {};
     for (const [queueName, worker] of this.workers) {
-      status[queueName] = {
+      const errorInfo = this.workerErrors.get(queueName);
+
+      // Build worker status object with conditional properties (for exactOptionalPropertyTypes compatibility)
+      const workerStatus: WorkerStatus = {
         isRunning: true, // Assume running if worker exists in map
         queueName,
         concurrency: worker.concurrency,
+        ...(errorInfo && errorInfo.count > 0 ? { errorCount: errorInfo.count } : {}),
+        ...(errorInfo && errorInfo.lastError ? { lastError: errorInfo.lastError } : {}),
+        ...(errorInfo && errorInfo.lastErrorMessage
+          ? { lastErrorMessage: errorInfo.lastErrorMessage }
+          : {}),
       };
+      status[queueName] = workerStatus;
     }
     return status;
+  }
+
+  /**
+   * Get worker error summary for health monitoring
+   */
+  getWorkerErrorSummary(): {
+    totalErrors: number;
+    queuesWithErrors: string[];
+    errorDetails: Array<{ queueName: string; count: number; lastError: Date; message: string }>;
+  } {
+    const queuesWithErrors: string[] = [];
+    const errorDetails: Array<{
+      queueName: string;
+      count: number;
+      lastError: Date;
+      message: string;
+    }> = [];
+    let totalErrors = 0;
+
+    for (const [queueName, errorInfo] of this.workerErrors) {
+      if (errorInfo.count > 0) {
+        queuesWithErrors.push(queueName);
+        totalErrors += errorInfo.count;
+        errorDetails.push({
+          queueName,
+          count: errorInfo.count,
+          lastError: errorInfo.lastError,
+          message: errorInfo.lastErrorMessage,
+        });
+      }
+    }
+
+    return {
+      totalErrors,
+      queuesWithErrors,
+      errorDetails,
+    };
   }
 
   getActiveJobCount() {

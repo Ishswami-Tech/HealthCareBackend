@@ -162,6 +162,9 @@ export interface WorkerStatus {
   isRunning: boolean;
   queueName: string;
   concurrency: number;
+  errorCount?: number;
+  lastError?: Date;
+  lastErrorMessage?: string;
 }
 
 // Queue metrics (basic - simple structure)
