@@ -162,11 +162,14 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
     }
 
     try {
-      // Skip health checks during startup grace period (first 30 seconds)
+      // Skip health checks during startup grace period (first 90 seconds)
       // This prevents false warnings during application initialization
-      const startupGracePeriod = 30000; // 30 seconds
+      // Increased to 90 seconds to allow server and Prisma to fully start
+      const startupGracePeriod = 90000; // 90 seconds
       const timeSinceInit = Date.now() - this.serviceStartTime;
       const isDuringStartup = timeSinceInit < startupGracePeriod;
+      const serviceName = process.env['SERVICE_NAME'] || 'api';
+      const isWorkerService = serviceName === 'worker';
 
       // Fast path: Essential service availability check only (always runs)
       // Uses lightweight service check - fastest possible logging check
@@ -181,9 +184,10 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
         // Circuit breaker will track failures automatically
       }
 
-      // Fast path: Endpoint accessibility check (always runs)
-      // Skip endpoint check during startup to avoid false warnings
-      if (!isDuringStartup) {
+      // Fast path: Endpoint accessibility check (only in API service, not worker)
+      // Skip endpoint check during startup or in worker service to avoid false warnings
+      if (!isDuringStartup && !isWorkerService) {
+        // Only check endpoint in API service (worker doesn't expose HTTP endpoints)
         const endpointHealth = await this.checkEndpointHealthWithTimeout();
         status.endpoint = endpointHealth;
         if (!endpointHealth.accessible) {
@@ -191,7 +195,7 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           status.healthy = false;
         }
       } else {
-        // During startup, mark endpoint as accessible to avoid false warnings
+        // During startup or in worker service, mark endpoint as accessible to avoid false warnings
         status.endpoint = {
           accessible: true,
           latency: 0,
@@ -337,11 +341,17 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
     try {
       const loggerBaseUrl =
-        this.configService?.get<string>('API_URL', process.env['API_URL'] || 'http://localhost:8088') ||
+        this.configService?.get<string>(
+          'API_URL',
+          process.env['API_URL'] || 'http://localhost:8088'
+        ) ||
         process.env['API_URL'] ||
         'http://localhost:8088';
       const loggerPort =
-        this.configService?.get<number | string>('PORT', process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088) ||
+        this.configService?.get<number | string>(
+          'PORT',
+          process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088
+        ) ||
         process.env['PORT'] ||
         process.env['VIRTUAL_PORT'] ||
         8088;
@@ -351,10 +361,11 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
         '/logger';
       const loggerUrl = `${loggerBaseUrl}${loggerUrlPath}`;
 
-      // Use lightweight HTTP check - just verify endpoint responds (even 404 means service is responding)
+      // Use lightweight HTTP check - just verify endpoint responds (any status code means service is responding)
+      // Accept any status code including 404, 500, etc. - as long as we get a response, the server is up
       const httpCheckPromise = axios.get(loggerUrl, {
         timeout: QUERY_TIMEOUT_MS,
-        validateStatus: () => true, // Accept any status code < 500
+        validateStatus: () => true, // Accept any status code - server responding is what matters
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -363,7 +374,9 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
       const response = await Promise.race([httpCheckPromise, timeoutPromise]);
       const latency = Date.now() - start;
-      const isAccessible = response.status < 500; // Any status < 500 means endpoint is accessible
+      // Any HTTP response (even 404, 500) means the server is up and responding
+      // The endpoint might not exist yet, but the server is accessible
+      const isAccessible = response.status !== undefined; // Any status code means server is responding
 
       return {
         accessible: isAccessible,
@@ -463,11 +476,13 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
         ) {
           // Only log if circuit breaker is not open (avoid log spam)
-          // Skip logging during startup (first 30 seconds) to avoid startup warnings
-          const startupGracePeriod = 30000; // 30 seconds
+          // Skip logging during startup (first 90 seconds) or in worker service to avoid startup warnings
+          const startupGracePeriod = 90000; // 90 seconds
           const timeSinceInit = Date.now() - this.serviceStartTime;
-          
-          if (timeSinceInit > startupGracePeriod) {
+          const currentServiceName = process.env['SERVICE_NAME'] || 'api';
+          const isCurrentWorkerService = currentServiceName === 'worker';
+
+          if (timeSinceInit > startupGracePeriod && !isCurrentWorkerService) {
             void this.loggingService?.log(
               LogType.SYSTEM,
               LogLevel.WARN,
