@@ -30,6 +30,7 @@ import {
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Roles } from '@core/decorators/roles.decorator';
+import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
 @Controller('billing')
@@ -43,11 +44,23 @@ export class BillingController {
   // ============ Billing Plans ============
 
   @Get('plans')
+  @Cache({
+    keyTemplate: 'billing:plans:{clinicId}',
+    ttl: 3600, // 1 hour
+    tags: ['billing', 'billing_plans'],
+    enableSWR: true,
+  })
   async getBillingPlans(@Query('clinicId') clinicId?: string) {
     return this.billingService.getBillingPlans(clinicId);
   }
 
   @Get('plans/:id')
+  @Cache({
+    keyTemplate: 'billing:plan:{id}',
+    ttl: 3600, // 1 hour
+    tags: ['billing', 'billing_plans', 'billing_plan:{id}'],
+    enableSWR: true,
+  })
   async getBillingPlan(@Param('id') id: string) {
     return this.billingService.getBillingPlan(id);
   }

@@ -379,10 +379,12 @@ export const getEnvironmentConfig = () => {
 
 /**
  * Validation functions
+ * Environment-aware validation: strict in production, lenient in development
  */
 export const validateHealthcareConfig = (config: unknown) => {
   const errors: string[] = [];
   const cfg = config as Record<string, unknown>;
+  const isProduction = process.env['NODE_ENV'] === 'production';
 
   const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
@@ -393,14 +395,21 @@ export const validateHealthcareConfig = (config: unknown) => {
 
   // Validate required environment variables
   const databaseUrl = typeof database?.['url'] === 'string' ? database['url'] : undefined;
-  if (!databaseUrl || databaseUrl.trim().length === 0 || databaseUrl.includes('localhost')) {
-    errors.push('DATABASE_URL must be set to a valid production database URL');
+  if (!databaseUrl || databaseUrl.trim().length === 0) {
+    errors.push('DATABASE_URL must be set');
+  } else if (isProduction && databaseUrl.includes('localhost')) {
+    // Only enforce production database URL in production
+    errors.push(
+      'DATABASE_URL must be set to a valid production database URL (localhost not allowed in production)'
+    );
   }
 
-  // Validate security settings
+  // Validate security settings (only in production)
+  if (isProduction) {
   const authentication = asRecord(security?.['authentication']);
   if (authentication?.['jwtSecret'] === 'your-healthcare-jwt-secret') {
-    errors.push('JWT_SECRET must be changed from default value');
+      errors.push('JWT_SECRET must be changed from default value in production');
+    }
   }
 
   // Validate HIPAA compliance
@@ -408,12 +417,14 @@ export const validateHealthcareConfig = (config: unknown) => {
     errors.push('HIPAA compliance must be enabled for healthcare applications');
   }
 
-  // Validate performance settings for scale
+  // Validate performance settings for scale (only in production)
+  if (isProduction) {
   const connectionPool = asRecord(database?.['connectionPool']);
   const primaryPool = asRecord(connectionPool?.['primary']);
   const poolMax = typeof primaryPool?.['max'] === 'number' ? primaryPool['max'] : undefined;
   if (poolMax === undefined || poolMax < 50) {
-    errors.push('DB_POOL_MAX should be at least 50 for handling 10 lakh users');
+      errors.push('DB_POOL_MAX should be at least 50 for handling 10 lakh users in production');
+    }
   }
 
   if (errors.length > 0) {
@@ -421,7 +432,7 @@ export const validateHealthcareConfig = (config: unknown) => {
       ErrorCode.VALIDATION_INVALID_FORMAT,
       `Healthcare configuration validation failed: ${errors.join(', ')}`,
       undefined,
-      { errors },
+      { errors, environment: process.env['NODE_ENV'] || 'development' },
       'validateHealthcareConfig'
     );
   }

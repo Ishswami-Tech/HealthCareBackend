@@ -1,0 +1,13 @@
+# Production Patch: Use optimized Redis configuration
+# This replaces redis-cluster.yaml with redis-optimized.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+patches:
+  # Replace Redis StatefulSet with optimized version
+  - path: ../../base/redis-optimized.yaml
+    target:
+      kind: StatefulSet
+      name: redis
+
+

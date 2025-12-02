@@ -1,0 +1,13 @@
+# Production Patch: Use optimized Dragonfly configuration
+# This replaces dragonfly-deployment.yaml with dragonfly-optimized.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+patches:
+  # Replace Dragonfly Deployment with optimized version
+  - path: ../../base/dragonfly-optimized.yaml
+    target:
+      kind: Deployment
+      name: dragonfly
+
+

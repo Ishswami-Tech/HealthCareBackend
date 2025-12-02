@@ -96,7 +96,10 @@ export class AppController {
   async getDashboard(@Res() res: FastifyReply) {
     try {
       const host: string =
-        this.configService?.get<string>('API_URL') ||
+        this.configService?.get<string>(
+          'API_URL',
+          process.env['API_URL'] || 'https://api.ishswami.in'
+        ) ||
         process.env['API_URL'] ||
         'https://api.ishswami.in';
       const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
@@ -325,7 +328,10 @@ export class AppController {
 
       // Extract real-time metrics for all services
       const basePort =
-        this.configService?.get<number | string>('PORT') ||
+        this.configService?.get<number | string>(
+          'PORT',
+          process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088
+        ) ||
         process.env['PORT'] ||
         process.env['VIRTUAL_PORT'] ||
         8088;
@@ -411,12 +417,22 @@ export class AppController {
 
       // Add development-only services with real-time status
       // Use actual exposed ports from Docker configuration
-      if (!isProduction || isRedisCommanderRunning) {
+      // CRITICAL: Only show Redis Commander if Redis is the cache provider
+      // Only show Dragonfly UI if Dragonfly is the cache provider
+      const cacheProvider = this.configService?.getCacheProvider() || 'dragonfly';
+      const isRedisProvider = cacheProvider === 'redis';
+      const isDragonflyProvider = cacheProvider === 'dragonfly';
+
+      // Show Redis Commander ONLY if Redis is the cache provider
+      if (isRedisProvider && (!isProduction || isRedisCommanderRunning)) {
         allServices.push({
           name: 'Redis Commander',
           description: 'Redis database management interface.',
           url:
-            this.configService?.get<string>('REDIS_COMMANDER_URL') ||
+            this.configService?.get<string>(
+              'REDIS_COMMANDER_URL',
+              process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
+            ) ||
             process.env['REDIS_COMMANDER_URL'] ||
             'http://localhost:8082',
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
@@ -426,12 +442,25 @@ export class AppController {
         });
       }
 
+      // Show Dragonfly UI ONLY if Dragonfly is the cache provider
+      // Note: Dragonfly uses Redis Commander UI as it's Redis-compatible
+      // But we can add a separate Dragonfly UI service if needed
+      if (isDragonflyProvider && !isRedisProvider) {
+        // Dragonfly is Redis-compatible, so we can optionally show Redis Commander for Dragonfly too
+        // Or hide it completely if you want to show only Dragonfly-specific UI
+        // For now, we'll hide Redis Commander when Dragonfly is used
+        // If you have a Dragonfly-specific UI, add it here
+      }
+
       if (!isProduction || isPrismaStudioRunning) {
         allServices.push({
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
           url:
-            this.configService?.get<string>('PRISMA_STUDIO_URL') ||
+            this.configService?.get<string>(
+              'PRISMA_STUDIO_URL',
+              process.env['PRISMA_STUDIO_URL'] || 'http://localhost:5555'
+            ) ||
             process.env['PRISMA_STUDIO_URL'] ||
             'http://localhost:5555',
           active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
@@ -445,7 +474,10 @@ export class AppController {
           name: 'pgAdmin',
           description: 'PostgreSQL database management interface.',
           url:
-            this.configService?.get<string>('PGADMIN_URL') ||
+            this.configService?.get<string>(
+              'PGADMIN_URL',
+              process.env['PGADMIN_URL'] || 'http://localhost:5050'
+            ) ||
             process.env['PGADMIN_URL'] ||
             'http://localhost:5050',
           active: isPgAdminRunning, // Active if pgAdmin health check passes

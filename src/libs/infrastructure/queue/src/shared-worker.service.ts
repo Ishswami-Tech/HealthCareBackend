@@ -79,7 +79,12 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService
-  ) {}
+  ) {
+    // Defensive check: ensure workers Map is initialized
+    if (!this.workers || typeof this.workers.set !== 'function') {
+      this.workers = new Map<string, Worker>();
+    }
+  }
 
   onModuleInit() {
     this.initializeWorkers();
@@ -113,9 +118,22 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
       const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
       const useDragonfly = cacheProvider === 'dragonfly';
 
-      const cacheHost = useDragonfly
-        ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-        : process.env['REDIS_HOST'] || 'localhost';
+      // Determine cache host - detect Docker environment to use container names
+      let cacheHost: string;
+      if (useDragonfly) {
+        cacheHost = process.env['DRAGONFLY_HOST'] || 'dragonfly';
+      } else {
+        // For Redis, detect Docker environment
+        const isDocker =
+          process.env['DOCKER_ENV'] === 'true' ||
+          process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
+          (typeof process.platform !== 'undefined' &&
+            process.platform === 'linux' &&
+            typeof require !== 'undefined' &&
+            typeof require('fs').existsSync === 'function' &&
+            require('fs').existsSync('/.dockerenv'));
+        cacheHost = process.env['REDIS_HOST'] || (isDocker ? 'redis' : 'localhost');
+      }
       const cachePort = useDragonfly
         ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
         : parseInt(process.env['REDIS_PORT'] || '6379', 10);
@@ -255,7 +273,12 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         );
       });
 
+      // Defensive check before calling .set()
+      if (this.workers && typeof this.workers.set === 'function') {
       this.workers.set(queueName, worker);
+      } else {
+        throw new Error('workers Map is not properly initialized');
+      }
 
       void this.loggingService.log(
         LogType.QUEUE,

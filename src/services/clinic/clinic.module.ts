@@ -7,9 +7,10 @@ import { ClinicLocationController } from './cliniclocation/clinic-location.contr
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 import { GuardsModule } from '@core/guards';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 
 @Module({
-  imports: [DatabaseModule, LoggingModule, GuardsModule],
+  imports: [DatabaseModule, LoggingModule, GuardsModule, CacheModule],
   providers: [ClinicService, ClinicLocationService, ClinicUserService],
   controllers: [ClinicController, ClinicLocationController],
   exports: [ClinicService, ClinicLocationService, ClinicUserService],

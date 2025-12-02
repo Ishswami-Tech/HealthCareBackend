@@ -26,8 +26,8 @@ import type { EnterpriseEventPayload } from '@core/types/event.types';
  */
 @Injectable()
 export class QueueMonitoringService {
-  private metrics = new Map<string, ExtendedQueueMetrics>();
-  private alerts = new Map<string, QueueAlert>();
+  private metrics: Map<string, ExtendedQueueMetrics> = new Map<string, ExtendedQueueMetrics>();
+  private alerts: Map<string, QueueAlert> = new Map<string, QueueAlert>();
   private performanceHistory: ExtendedQueueMetrics[] = [];
   private typedEventService?: IEventService;
   private readonly ALERT_THRESHOLDS = {
@@ -45,6 +45,13 @@ export class QueueMonitoringService {
     @Inject(forwardRef(() => EventService))
     private readonly eventService: unknown
   ) {
+    // Defensive check: ensure Maps are initialized (they should be, but check anyway)
+    if (!this.metrics || typeof this.metrics.set !== 'function') {
+      this.metrics = new Map<string, ExtendedQueueMetrics>();
+    }
+    if (!this.alerts || typeof this.alerts.set !== 'function') {
+      this.alerts = new Map<string, QueueAlert>();
+    }
     // Type guard ensures type safety when using the service
     if (isEventService(this.eventService)) {
       this.typedEventService = this.eventService;
@@ -67,7 +74,18 @@ export class QueueMonitoringService {
         health: this.calculateHealth(metrics),
       };
 
+      // Defensive check before calling .set()
+      if (this.metrics && typeof this.metrics.set === 'function') {
       this.metrics.set(queueName, updatedMetrics);
+      } else {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'metrics Map is not properly initialized',
+          'QueueMonitoringService',
+          { queueName }
+        );
+      }
       this.performanceHistory.push({ ...updatedMetrics });
 
       // Check for alerts
@@ -162,7 +180,18 @@ export class QueueMonitoringService {
 
     alert.resolved = true;
     alert.resolvedAt = new Date();
+    // Defensive check before calling .set()
+    if (this.alerts && typeof this.alerts.set === 'function') {
     this.alerts.set(alertId, alert);
+    } else {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'alerts Map is not properly initialized',
+        'QueueMonitoringService',
+        { alertId }
+      );
+    }
 
     // Emit alert resolved event via centralized EventService
     if (this.typedEventService) {
@@ -329,7 +358,10 @@ export class QueueMonitoringService {
 
         if (health !== metrics.health) {
           const updatedMetrics = { ...metrics, health };
+          // Defensive check before calling .set()
+          if (this.metrics && typeof this.metrics.set === 'function') {
           this.metrics.set(queueName, updatedMetrics);
+          }
 
           // Emit health changed event via centralized EventService
           if (this.typedEventService) {
@@ -448,7 +480,18 @@ export class QueueMonitoringService {
 
     // Add new alerts
     for (const alert of alerts) {
+      // Defensive check before calling .set()
+      if (this.alerts && typeof this.alerts.set === 'function') {
       this.alerts.set(alert.id, alert);
+      } else {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'alerts Map is not properly initialized',
+          'QueueMonitoringService',
+          { alertId: alert.id }
+        );
+      }
       // Emit alert created event via centralized EventService
       if (this.typedEventService) {
         void this.typedEventService.emitEnterprise('queue.alert.created', {

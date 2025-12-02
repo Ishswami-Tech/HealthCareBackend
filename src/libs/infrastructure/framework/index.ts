@@ -21,6 +21,9 @@ export {
   BootstrapOrchestrator,
 } from './wrappers';
 
+// Manual Routes Manager
+export { registerManualRoutes } from './manual-routes.manager';
+
 // Framework Extensions
 // Note: FastifyExtensions was removed - use SecurityConfigService for security middleware
 // Extensions module is kept for future framework-specific extensions

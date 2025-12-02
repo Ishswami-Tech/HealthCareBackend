@@ -7,7 +7,7 @@
  * INTERNAL INFRASTRUCTURE COMPONENT - NOT FOR DIRECT USE
  */
 
-import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
@@ -25,7 +25,7 @@ export interface ConnectionLeakInfo {
  * @internal
  */
 @Injectable()
-export class ConnectionLeakDetectorService implements OnModuleInit {
+export class ConnectionLeakDetectorService implements OnModuleInit, OnModuleDestroy {
   private readonly serviceName = 'ConnectionLeakDetectorService';
   private monitoringInterval!: NodeJS.Timeout;
   private readonly monitoringIntervalMs = 30000; // Check every 30 seconds

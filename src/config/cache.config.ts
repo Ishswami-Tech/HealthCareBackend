@@ -12,6 +12,7 @@
 import { registerAs } from '@nestjs/config';
 import type { CacheConfig, RedisConfig } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
+import { getDefaultRedisHost, parseInteger } from './environment/utils';
 
 /**
  * Check if cache is enabled
@@ -64,28 +65,6 @@ function validateRedisConfig(config: RedisConfig): void {
   }
 }
 
-/**
- * Parses integer from environment variable with validation
- * @param value - Environment variable value
- * @param defaultValue - Default value
- * @param min - Minimum allowed value
- * @param max - Maximum allowed value
- * @returns Parsed integer
- */
-function parseRedisInteger(
-  value: string | undefined,
-  defaultValue: number,
-  min = 1,
-  max = Number.MAX_SAFE_INTEGER
-): number {
-  const parsed = value ? parseInt(value, 10) : defaultValue;
-
-  if (isNaN(parsed) || parsed < min || parsed > max) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
 
 /**
  * Cache configuration factory
@@ -104,7 +83,7 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
     // Only include provider-specific config if cache is enabled
     ...(enabled && {
       redis: {
-        host: process.env['REDIS_HOST'] || 'localhost',
+        host: process.env['REDIS_HOST'] || getDefaultRedisHost(),
         port: parseInt(process.env['REDIS_PORT'] || '6379', 10),
         ...(redisPassword && { password: redisPassword }),
         enabled: provider === 'redis',
@@ -126,9 +105,9 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
  */
 export const redisConfig = registerAs('redis', (): RedisConfig => {
   const config: RedisConfig = {
-    host: process.env[ENV_VARS.REDIS_HOST] ?? 'localhost',
-    port: parseRedisInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
-    ttl: parseRedisInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
+    host: process.env[ENV_VARS.REDIS_HOST] ?? getDefaultRedisHost(),
+    port: parseInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
+    ttl: parseInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
     prefix: process.env['REDIS_PREFIX'] ?? 'healthcare:',
     // Respect cache enabled status - Redis is only enabled if cache is enabled and Redis is the provider
     enabled: isCacheEnabled() && getCacheProvider() === 'redis',

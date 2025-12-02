@@ -209,6 +209,10 @@ export class BaseSocket
         }
         // TypeScript guard: socketService is guaranteed to be defined here
         const socketService = this.socketService;
+        // Check if setServer method exists before calling
+        if (typeof socketService.setServer !== 'function') {
+          throw new Error('SocketService.setServer method is not available');
+        }
         socketService.setServer(this.server);
         safeLog(
           this.loggingService,

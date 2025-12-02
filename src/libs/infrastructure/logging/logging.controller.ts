@@ -5,12 +5,14 @@ import { ApiTags } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
+import { Public } from '@core/decorators/public.decorator';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
 
 @ApiTags('logging')
 @Controller('logger')
+@Public()
 export class LoggingController {
   constructor(
     @Inject(forwardRef(() => LoggingService))

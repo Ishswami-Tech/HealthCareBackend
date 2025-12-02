@@ -230,6 +230,30 @@ export class ClinicService {
     totalLocations: number;
     totalAppointments: number;
   }> {
+    const cacheKey = `clinic:${clinicId}:stats`;
+
+    if (this.cacheService) {
+      return this.cacheService.cache(
+        cacheKey,
+        async () => {
+          return this.fetchClinicStats(clinicId);
+        },
+        {
+          ttl: 300, // 5 minutes (stats change frequently)
+          tags: ['clinics', `clinic:${clinicId}`, 'stats'],
+          enableSwr: true,
+        }
+      );
+    }
+
+    return this.fetchClinicStats(clinicId);
+  }
+
+  private async fetchClinicStats(clinicId: string): Promise<{
+    totalUsers: number;
+    totalLocations: number;
+    totalAppointments: number;
+  }> {
     try {
       // Use executeHealthcareRead for parallel queries with optimization
       const [totalUsers, totalLocations, totalAppointments] = await Promise.all([
@@ -268,6 +292,26 @@ export class ClinicService {
   }
 
   async getAllClinics(userId: string): Promise<ClinicResponseDto[]> {
+    const cacheKey = `clinics:user:${userId}`;
+
+    if (this.cacheService) {
+      return this.cacheService.cache(
+        cacheKey,
+        async () => {
+          return this.fetchAllClinics(userId);
+        },
+        {
+          ttl: 1800, // 30 minutes
+          tags: ['clinics', `user:${userId}`],
+          enableSwr: true,
+        }
+      );
+    }
+
+    return this.fetchAllClinics(userId);
+  }
+
+  private async fetchAllClinics(userId: string): Promise<ClinicResponseDto[]> {
     try {
       // Use executeHealthcareRead for optimized query
       const clinics = await this.databaseService.executeHealthcareRead<Clinic[]>(async client => {
@@ -296,6 +340,26 @@ export class ClinicService {
   }
 
   async getClinicById(id: string, includeInactive = false): Promise<ClinicResponseDto> {
+    const cacheKey = `clinic:${id}:${includeInactive ? 'all' : 'active'}`;
+
+    if (this.cacheService) {
+      return this.cacheService.cache(
+        cacheKey,
+        async () => {
+          return this.fetchClinicById(id, includeInactive);
+        },
+        {
+          ttl: 3600, // 1 hour
+          tags: ['clinics', `clinic:${id}`],
+          enableSwr: true,
+        }
+      );
+    }
+
+    return this.fetchClinicById(id, includeInactive);
+  }
+
+  private async fetchClinicById(id: string, includeInactive: boolean): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query
       const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
@@ -367,6 +431,26 @@ export class ClinicService {
   }
 
   async getClinicByAppName(appName: string): Promise<ClinicResponseDto> {
+    const cacheKey = `clinic:app:${appName}`;
+
+    if (this.cacheService) {
+      return this.cacheService.cache(
+        cacheKey,
+        async () => {
+          return this.fetchClinicByAppName(appName);
+        },
+        {
+          ttl: 3600, // 1 hour
+          tags: ['clinics', 'app_name'],
+          enableSwr: true,
+        }
+      );
+    }
+
+    return this.fetchClinicByAppName(appName);
+  }
+
+  private async fetchClinicByAppName(appName: string): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query
       const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
