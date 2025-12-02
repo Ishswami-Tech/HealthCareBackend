@@ -417,17 +417,21 @@ export class AppController {
 
       // Add development-only services with real-time status
       // Use actual exposed ports from Docker configuration
-      // CRITICAL: Only show Redis Commander if Redis is the cache provider
-      // Only show Dragonfly UI if Dragonfly is the cache provider
+      // CRITICAL: Show Redis Commander in dev mode for both Redis and Dragonfly
+      // Dragonfly is Redis-compatible, so Redis Commander can be used to manage it
       const cacheProvider = this.configService?.getCacheProvider() || 'dragonfly';
       const isRedisProvider = cacheProvider === 'redis';
       const isDragonflyProvider = cacheProvider === 'dragonfly';
 
-      // Show Redis Commander ONLY if Redis is the cache provider
-      if (isRedisProvider && (!isProduction || isRedisCommanderRunning)) {
+      // Show Redis Commander in dev mode for both Redis and Dragonfly (Dragonfly is Redis-compatible)
+      // In production/staging, only show if Redis is the provider and it's running
+      if (!isProduction) {
+        // Development mode: Always show Redis Commander (can be used for Dragonfly too)
         allServices.push({
-          name: 'Redis Commander',
-          description: 'Redis database management interface.',
+          name: isDragonflyProvider ? 'Redis Commander (Dragonfly)' : 'Redis Commander',
+          description: isDragonflyProvider
+            ? 'Dragonfly cache management interface (Redis-compatible).'
+            : 'Redis database management interface.',
           url:
             this.configService?.get<string>(
               'REDIS_COMMANDER_URL',
@@ -438,18 +442,25 @@ export class AppController {
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
-          devOnly: !isProduction,
+          devOnly: true,
         });
-      }
-
-      // Show Dragonfly UI ONLY if Dragonfly is the cache provider
-      // Note: Dragonfly uses Redis Commander UI as it's Redis-compatible
-      // But we can add a separate Dragonfly UI service if needed
-      if (isDragonflyProvider && !isRedisProvider) {
-        // Dragonfly is Redis-compatible, so we can optionally show Redis Commander for Dragonfly too
-        // Or hide it completely if you want to show only Dragonfly-specific UI
-        // For now, we'll hide Redis Commander when Dragonfly is used
-        // If you have a Dragonfly-specific UI, add it here
+      } else if (isRedisProvider && isRedisCommanderRunning) {
+        // Production/Staging: Only show if Redis is the provider
+        allServices.push({
+          name: 'Redis Commander',
+          description: 'Redis database management interface.',
+          url:
+            this.configService?.get<string>(
+              'REDIS_COMMANDER_URL',
+              process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
+            ) ||
+            process.env['REDIS_COMMANDER_URL'] ||
+            'http://localhost:8082',
+          active: isRedisCommanderRunning,
+          category: 'Database',
+          credentials: 'Username: admin, Password: admin',
+          devOnly: false,
+        });
       }
 
       if (!isProduction || isPrismaStudioRunning) {
@@ -488,8 +499,25 @@ export class AppController {
       }
 
       // Filter services based on environment
+      // Production/Staging: Only show essential services (worker, api, redis, postgres)
+      // Development: Show all services
       const services = isProduction
-        ? allServices.filter((service: ServiceInfo) => !service.devOnly)
+        ? allServices.filter((service: ServiceInfo) => {
+            // In production/staging, only show: API Documentation, Queue Dashboard, Logger, WebSocket, Email Service
+            // Hide: Prisma Studio, pgAdmin, Redis Commander (unless Redis is provider)
+            const essentialServices = [
+              'API Documentation',
+              'Queue Dashboard',
+              'Logger',
+              'WebSocket',
+              'Email Service',
+            ];
+            // Also show Redis Commander if Redis is the provider (not Dragonfly)
+            if (service.name === 'Redis Commander' && !service.devOnly) {
+              return true;
+            }
+            return essentialServices.includes(service.name);
+          })
         : allServices;
 
       // Calculate overall system health with defensive checks

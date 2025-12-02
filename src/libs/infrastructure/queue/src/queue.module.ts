@@ -213,7 +213,9 @@ export class QueueModule {
         QueueService,
         QueueHealthMonitorService,
         QueueProcessor,
-        ...(serviceName === 'worker' ? [SharedWorkerService] : []),
+        // Always provide SharedWorkerService (it's optional in QueueHealthMonitorService)
+        // It will only initialize workers when serviceName === 'worker'
+        SharedWorkerService,
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
         {

@@ -35,7 +35,8 @@ export class ClinicIsolationService implements OnModuleInit {
   private readonly MAX_CACHE_SIZE = 10000; // Maximum cache entries
   private isShuttingDown = false;
   private readonly serviceStartTime = Date.now(); // Track when service started
-  private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
+  private readonly STARTUP_GRACE_PERIOD = 90000; // 90 seconds grace period during startup
+  private isInitializing = false; // Prevent concurrent initialization
 
   constructor(
     @Inject(forwardRef(() => PrismaService))
@@ -65,10 +66,12 @@ export class ClinicIsolationService implements OnModuleInit {
    * Initialize clinic caching system
    */
   async initializeClinicCaching(): Promise<void> {
-    // Skip if shutting down
-    if (this.isShuttingDown) {
+    // Skip if shutting down or already initializing
+    if (this.isShuttingDown || this.isInitializing) {
       return;
     }
+
+    this.isInitializing = true;
 
     // Check if we're in startup grace period
     const timeSinceStart = Date.now() - this.serviceStartTime;
@@ -76,8 +79,8 @@ export class ClinicIsolationService implements OnModuleInit {
 
     try {
       // Wait for Prisma to be ready before attempting to load clinics
-      // Increased timeout to 30 seconds to ensure Prisma is fully initialized
-      const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+      // Increased timeout to 45 seconds to ensure Prisma is fully initialized
+      const isReady = await this.prismaService.waitUntilReady(45000); // 45 second timeout
       if (!isReady) {
         // During startup grace period, silently skip (don't log warnings)
         if (!isInStartupGracePeriod) {
@@ -272,6 +275,9 @@ export class ClinicIsolationService implements OnModuleInit {
       );
       // Don't throw - allow application to start without clinic caching
       return;
+    } finally {
+      // Reset initialization flag to allow retry
+      this.isInitializing = false;
     }
   }
 

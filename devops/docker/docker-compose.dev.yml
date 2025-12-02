@@ -18,6 +18,7 @@ services:
       HOST: 0.0.0.0
       BIND_ADDRESS: 0.0.0.0
       DOCKER_ENV: "true"
+      SERVICE_NAME: api
       
       # Database Configuration
       # Connection pool parameters: connection_limit=50, pool_timeout=20
@@ -112,6 +113,12 @@ services:
       #   condition: service_healthy
     networks:
       - healthcare-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
     command: >
       sh -c "
@@ -313,6 +320,8 @@ services:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
       PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "True"
+      # PGADMIN_CONFIG_LOGIN_BANNER: "Welcome to Healthcare Database Management"  # Commented out due to syntax error
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
@@ -320,6 +329,12 @@ services:
         condition: service_healthy
     networks:
       - healthcare-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost/misc/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
     restart: unless-stopped
 
 volumes:
