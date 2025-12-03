@@ -4,7 +4,7 @@ import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 // Internal imports - Infrastructure
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingHealthMonitorService } from './logging-health-monitor.service';
+import { LoggingHealthMonitorService } from '@infrastructure/logging/logging-health-monitor.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';

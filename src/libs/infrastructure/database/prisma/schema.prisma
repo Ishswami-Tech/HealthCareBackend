@@ -145,6 +145,7 @@ model Clinic {
   rbacRoles             RbacRole[]
   receptionists         Receptionist[]
   recurringSeries       RecurringAppointmentSeries[]
+  followUpPlans         FollowUpPlan[]
   resources             Resource[]
   resourceBookings      ResourceBooking[]
   rolePermissions       RolePermission[]
@@ -281,6 +282,7 @@ model Doctor {
   therapySessions      TherapySession[]
   waitlistEntries      WaitlistEntry[]
   videoConsultations   VideoConsultation[]
+  followUpPlans        FollowUpPlan[]
 }
 
 model Patient {
@@ -298,6 +300,7 @@ model Patient {
   prescriptions      Prescription[]
   queueEntries       QueueEntry[]
   recurringSeries    RecurringAppointmentSeries[]
+  followUpPlans      FollowUpPlan[]
   reviews            Review[]
   therapySessions    TherapySession[]
   waitlistEntries    WaitlistEntry[]
@@ -305,7 +308,7 @@ model Patient {
 }
 
 model Appointment {
-  id                  String              @id @default(uuid())
+  id                  String            @id @default(uuid())
   type                AppointmentType
   doctorId            String
   patientId           String
@@ -315,7 +318,7 @@ model Appointment {
   time                String
   duration            Int
   status              AppointmentStatus
-  priority            String?             @default("NORMAL")
+  priority            String?           @default("NORMAL")
   notes               String?
   userId              String
   updatedBy           String?
@@ -323,34 +326,71 @@ model Appointment {
   metadata            Json?
   cancelledBy         String?
   cancelledAt         DateTime?
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
   therapyId           String?
   startedAt           DateTime?
   checkedInAt         DateTime?
   completedAt         DateTime?
   subscriptionId      String?
-  isSubscriptionBased Boolean             @default(false)
-  clinic              Clinic              @relation(fields: [clinicId], references: [id])
-  doctor              Doctor              @relation(fields: [doctorId], references: [id])
-  location            ClinicLocation      @relation(fields: [locationId], references: [id])
-  patient             Patient             @relation(fields: [patientId], references: [id])
-  subscription        Subscription?       @relation(fields: [subscriptionId], references: [id])
-  therapy             Therapy?            @relation(fields: [therapyId], references: [id])
-  user                User                @relation(fields: [userId], references: [id])
-  checkIns            CheckIn[]
-  payment             Payment?
-  queue               Queue?
-  queueEntries        QueueEntry[]
-  resourceBookings    ResourceBooking[]
-  therapySessions     TherapySession[]
-  VideoConsultation   VideoConsultation[]
+  isSubscriptionBased Boolean           @default(false)
 
+  // Follow-up relationships
+  parentAppointmentId  String?
+  parentAppointment    Appointment?  @relation("AppointmentFollowUps", fields: [parentAppointmentId], references: [id])
+  followUpAppointments Appointment[] @relation("AppointmentFollowUps")
+
+  // Recurring series
+  seriesId       String?
+  series         RecurringAppointmentSeries? @relation(fields: [seriesId], references: [id])
+  seriesSequence Int? // Position in series (1, 2, 3...)
+
+  // Follow-up metadata
+  isFollowUp            Boolean @default(false)
+  followUpReason        String? // Why this follow-up was created
+  originalAppointmentId String? // Original appointment that triggered this
+
+  // Relations
+  clinic       Clinic         @relation(fields: [clinicId], references: [id])
+  doctor       Doctor         @relation(fields: [doctorId], references: [id])
+  location     ClinicLocation @relation(fields: [locationId], references: [id])
+  patient      Patient        @relation(fields: [patientId], references: [id])
+  subscription Subscription?  @relation(fields: [subscriptionId], references: [id])
+  therapy      Therapy?       @relation(fields: [therapyId], references: [id])
+  user         User           @relation(fields: [userId], references: [id])
+
+  // Follow-up plan relation (one-to-one: appointment can have one follow-up plan)
+  followUpPlan FollowUpPlan? @relation("AppointmentFollowUpPlan")
+
+  // Reverse relation for follow-up appointments created from plans
+  followUpPlanFrom FollowUpPlan? @relation("FollowUpAppointment")
+
+  // Existing relations
+  checkIns          CheckIn[]
+  payment           Payment?
+  queue             Queue?
+  queueEntries      QueueEntry[]
+  resourceBookings  ResourceBooking[]
+  therapySessions   TherapySession[]
+  VideoConsultation VideoConsultation[]
+
+  // Single-column indexes (existing)
   @@index([doctorId])
   @@index([patientId])
   @@index([locationId])
   @@index([clinicId])
   @@index([subscriptionId])
+  @@index([parentAppointmentId])
+  @@index([seriesId])
+  @@index([isFollowUp])
+  @@index([originalAppointmentId])
+  // ✅ Composite indexes for common query patterns (10M+ users optimization)
+  @@index([doctorId, clinicId, date]) // Doctor's daily schedule queries
+  @@index([patientId, status, date]) // Patient's pending/upcoming appointments
+  @@index([clinicId, date, status]) // Clinic's daily appointments by status
+  @@index([clinicId, isFollowUp, type]) // Clinic's follow-ups by type
+  @@index([parentAppointmentId, date]) // Follow-up chains chronologically
+  @@index([seriesId, seriesSequence]) // Recurring series order
 }
 
 model Therapy {
@@ -1129,22 +1169,67 @@ model AppointmentTemplate {
 }
 
 model RecurringAppointmentSeries {
-  id         String              @id @default(uuid())
-  templateId String
-  patientId  String
-  clinicId   String
-  startDate  DateTime
-  endDate    DateTime
-  status     String              @default("active")
-  createdAt  DateTime            @default(now())
-  updatedAt  DateTime            @updatedAt
-  clinic     Clinic              @relation(fields: [clinicId], references: [id])
-  patient    Patient             @relation(fields: [patientId], references: [id])
-  template   AppointmentTemplate @relation(fields: [templateId], references: [id])
+  id           String              @id @default(uuid())
+  templateId   String
+  patientId    String
+  clinicId     String
+  startDate    DateTime
+  endDate      DateTime? // Optional end date
+  status       String              @default("active") // active, paused, cancelled
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  clinic       Clinic              @relation(fields: [clinicId], references: [id])
+  patient      Patient             @relation(fields: [patientId], references: [id])
+  template     AppointmentTemplate @relation(fields: [templateId], references: [id])
+  appointments Appointment[] // Link to appointments in series
 
   @@index([templateId])
   @@index([patientId])
   @@index([clinicId])
+  @@index([status])
+}
+
+model FollowUpPlan {
+  id            String   @id @default(uuid())
+  appointmentId String   @unique // Original appointment (unique for one-to-one relation)
+  patientId     String
+  doctorId      String
+  clinicId      String
+  followUpType  String // routine, urgent, specialist, therapy, surgery
+  scheduledFor  DateTime // Recommended date
+  daysAfter     Int? // Days after original appointment
+  status        String // scheduled, completed, cancelled, overdue
+  priority      String // low, normal, high, urgent
+  instructions  String
+  medications   String[] @default([])
+  tests         String[] @default([])
+  restrictions  String[] @default([])
+  notes         String?
+
+  // Link to actual appointment when created
+  followUpAppointmentId String?      @unique
+  followUpAppointment   Appointment? @relation("FollowUpAppointment", fields: [followUpAppointmentId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  appointment Appointment @relation("AppointmentFollowUpPlan", fields: [appointmentId], references: [id])
+  patient     Patient     @relation(fields: [patientId], references: [id])
+  doctor      Doctor      @relation(fields: [doctorId], references: [id])
+  clinic      Clinic      @relation(fields: [clinicId], references: [id])
+
+  // Single-column indexes (existing)
+  @@index([appointmentId])
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([scheduledFor])
+  @@index([followUpAppointmentId])
+  // ✅ Composite indexes for common query patterns (10M+ users optimization)
+  @@index([patientId, status, scheduledFor]) // Patient's pending/overdue follow-ups
+  @@index([clinicId, status, scheduledFor]) // Clinic's overdue follow-ups
+  @@index([doctorId, scheduledFor]) // Doctor's scheduled follow-ups
 }
 
 model WaitlistEntry {
@@ -1461,6 +1546,7 @@ enum AppointmentStatus {
   CANCELLED
   NO_SHOW
   PENDING
+  FOLLOW_UP_SCHEDULED
 }
 
 enum PaymentStatus {

@@ -1,7 +1,7 @@
 import { Global, Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { JwtModule } from '@nestjs/jwt';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { ConfigModule, ConfigService } from '@config';
 import { EventsModule } from '@infrastructure/events';
 import { SocketService } from '@communication/channels/socket/socket.service';

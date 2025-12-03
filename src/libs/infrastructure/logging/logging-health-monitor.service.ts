@@ -6,13 +6,39 @@
  * Optimized for frequent checks (every 10-30 seconds) without performance impact
  */
 
-import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  forwardRef,
+  OnModuleInit,
+  OnModuleDestroy,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@config';
-import { LoggingService } from './logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggingHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience';
+import type { LoggingService } from './logging.service';
 import axios from 'axios';
+
+/**
+ * Type guard to check if logging service is available and has a valid log method
+ * @param service - The logging service instance (may be null due to circular dependency)
+ * @returns True if the service is available and has a log method
+ */
+function hasLogMethod(service: LoggingService | null): service is LoggingService {
+  return service !== null && typeof service.log === 'function';
+}
+
+/**
+ * Get logging service if available and ready to use
+ * Safely handles null case from @Optional() injection
+ * @param service - The logging service instance (may be null)
+ * @returns The logging service or null if not available
+ */
+function getLoggingService(service: LoggingService | null): LoggingService | null {
+  return hasLogMethod(service) ? service : null;
+}
 
 @Injectable()
 export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -38,8 +64,9 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => 'LoggingService'))
+    private readonly loggingService: LoggingService | null,
     private readonly circuitBreakerService: CircuitBreakerService
   ) {
     // Circuit breaker is managed by CircuitBreakerService using named instances
@@ -298,9 +325,9 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
     try {
       // Use lightweight service check - just verify service exists and log method is callable
-      const checkPromise = Promise.resolve(
-        this.loggingService && typeof this.loggingService.log === 'function'
-      );
+      const isServiceAvailable = hasLogMethod(this.loggingService);
+
+      const checkPromise = Promise.resolve(isServiceAvailable);
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Logging service check timeout')), QUERY_TIMEOUT_MS);
@@ -308,11 +335,12 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
       const isAvailable = await Promise.race([checkPromise, timeoutPromise]);
       const latency = Date.now() - start;
+      const serviceName = 'LoggingService';
 
       return {
         available: isAvailable,
         latency,
-        serviceName: this.loggingService?.constructor?.name || 'LoggingService',
+        serviceName,
       };
     } catch (_error) {
       // Service check failed - return false with latency measurement
@@ -483,31 +511,49 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           const isCurrentWorkerService = currentServiceName === 'worker';
 
           if (timeSinceInit > startupGracePeriod && !isCurrentWorkerService) {
-            void this.loggingService?.log(
-              LogType.SYSTEM,
-              LogLevel.WARN,
-              'Logging health check failed',
-              this.serviceName,
-              {
-                issues: status.issues,
-                serviceAvailable: status.service.available,
-                endpointAccessible: status.endpoint.accessible,
-                latency: status.service.latency || status.endpoint.latency,
-              }
-            );
+            this.logHealthCheckFailure(status);
           }
         }
       })
       .catch(error => {
         // Log errors but don't let them block health monitoring
-        void this.loggingService?.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          'Health check error',
-          this.serviceName,
-          { error: error instanceof Error ? error.message : String(error) }
-        );
+        this.logHealthCheckError(error);
       });
+  }
+
+  /**
+   * Log health check failure
+   * Separated method to handle type narrowing properly
+   */
+  private logHealthCheckFailure(status: LoggingHealthMonitorStatus): void {
+    const service = getLoggingService(this.loggingService);
+    if (service) {
+      void service.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Logging health check failed',
+        this.serviceName,
+        {
+          issues: status.issues,
+          serviceAvailable: status.service.available,
+          endpointAccessible: status.endpoint.accessible,
+          latency: status.service.latency || status.endpoint.latency,
+        }
+      );
+    }
+  }
+
+  /**
+   * Log health check error
+   * Separated method to handle type narrowing properly
+   */
+  private logHealthCheckError(error: unknown): void {
+    const service = getLoggingService(this.loggingService);
+    if (service) {
+      void service.log(LogType.SYSTEM, LogLevel.ERROR, 'Health check error', this.serviceName, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

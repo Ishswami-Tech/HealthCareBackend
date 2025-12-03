@@ -8,14 +8,14 @@
 
 import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import type { CommunicationHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience';
-import { SocketService } from './channels/socket/socket.service';
-import { EmailService } from './channels/email/email.service';
-import { WhatsAppService } from './channels/whatsapp/whatsapp.service';
-import { PushNotificationService } from './channels/push/push.service';
+import { SocketService } from '@communication/channels/socket/socket.service';
+import { EmailService } from '@communication/channels/email/email.service';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
+import { PushNotificationService } from '@communication/channels/push/push.service';
 
 @Injectable()
 export class CommunicationHealthMonitorService implements OnModuleInit, OnModuleDestroy {

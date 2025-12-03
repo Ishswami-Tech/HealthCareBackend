@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentResourceService } from '@services/appointments/plugins/resources/appointment-resource.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentResourceService } from './appointment-resource.service';
 import type { Resource } from '@core/types/appointment.types';
 
 interface ResourcePluginData {

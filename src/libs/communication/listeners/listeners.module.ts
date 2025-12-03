@@ -11,7 +11,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventsModule } from '@infrastructure/events';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { CommunicationModule } from '@communication/communication.module';
 import { NotificationEventListener } from './notification-event.listener';
 

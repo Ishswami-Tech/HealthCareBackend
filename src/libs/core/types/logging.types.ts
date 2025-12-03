@@ -425,6 +425,20 @@ export function createSecurityLog(
 }
 
 /**
+ * Logging service interface type
+ * Used for type-safe logging operations across the application
+ */
+export interface ILoggingService {
+  log: (
+    type: LogType,
+    level: LogLevel,
+    message: string,
+    context: string,
+    metadata?: Record<string, unknown>
+  ) => Promise<void>;
+}
+
+/**
  * Comprehensive logging health status (used by LoggingHealthMonitorService)
  * Provides detailed health information including service availability, endpoint accessibility, metrics, etc.
  */

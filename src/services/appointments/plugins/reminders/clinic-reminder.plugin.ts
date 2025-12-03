@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentReminderService } from '@services/appointments/plugins/reminders/appointment-reminder.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentReminderService } from './appointment-reminder.service';
 import type { ReminderRule } from '@core/types/appointment.types';
 
 interface ReminderPluginData {

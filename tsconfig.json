@@ -37,6 +37,7 @@
       "@utils/*": ["src/libs/utils/*"],
       "@communication/*": ["src/libs/communication/*"],
       "@types/*": ["src/libs/core/types/*"],
+      "@logging": ["src/libs/infrastructure/logging"],
       "@logging/*": ["src/libs/infrastructure/logging/*"],
       "@cache/*": ["src/libs/infrastructure/cache/*"],
       "@events/*": ["src/libs/infrastructure/events/*"],

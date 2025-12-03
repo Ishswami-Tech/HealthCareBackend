@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventsModule } from '@infrastructure/events';
-import { LoggingModule } from '@infrastructure/logging';
+// LoggingModule is @Global() so LoggingService is available without explicit import
 import { QueueMonitoringService } from './queue-monitoring.service';
 
 /**
@@ -14,7 +14,7 @@ import { QueueMonitoringService } from './queue-monitoring.service';
   imports: [
     EventEmitterModule, // Required for @OnEvent decorators
     forwardRef(() => EventsModule), // Central event system
-    LoggingModule,
+    // LoggingModule is @Global() - LoggingService is available without explicit import
   ],
   providers: [QueueMonitoringService],
   exports: [QueueMonitoringService],

@@ -15,7 +15,7 @@ import {
   SocketAuthMiddleware,
   type AuthenticatedUser,
 } from '@communication/channels/socket/socket-auth.middleware';
-import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';
+import { LoggingService, safeLog, safeLogError } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';

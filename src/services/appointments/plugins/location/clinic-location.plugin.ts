@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentLocationService } from '@services/appointments/plugins/location/appointment-location.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentLocationService } from './appointment-location.service';
 
 interface LocationPluginData {
   operation: string;

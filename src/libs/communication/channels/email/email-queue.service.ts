@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { QueueService } from '@infrastructure/queue';
 import { EMAIL_QUEUE } from '@infrastructure/queue';
 import { LogType, LogLevel } from '@core/types';

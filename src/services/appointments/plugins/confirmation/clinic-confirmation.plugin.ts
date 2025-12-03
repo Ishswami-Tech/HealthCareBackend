@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentConfirmationService } from '@services/appointments/plugins/confirmation/appointment-confirmation.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentConfirmationService } from './appointment-confirmation.service';
 
 interface ConfirmationPluginData {
   operation: string;

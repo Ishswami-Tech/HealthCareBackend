@@ -13,7 +13,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 // Infrastructure services
 import { EventService } from '@infrastructure/events';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { CacheService } from '@infrastructure/cache';
 import {
   LogType,

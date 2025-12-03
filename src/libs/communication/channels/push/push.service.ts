@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import * as admin from 'firebase-admin';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';

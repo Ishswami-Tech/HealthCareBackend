@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';

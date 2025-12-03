@@ -5,7 +5,7 @@ import { EmailTemplatesService } from '@communication/channels/email/email-templ
 import { EmailQueueService } from '@communication/channels/email/email-queue.service';
 import { SESEmailService } from '@communication/channels/email/ses-email.service';
 import { ConfigModule } from '@config';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { BullModule } from '@nestjs/bullmq';
 import { EMAIL_QUEUE } from '@infrastructure/queue';

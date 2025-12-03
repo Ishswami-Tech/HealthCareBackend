@@ -3,7 +3,7 @@ import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
+import { AppointmentNotificationService } from '../notifications/appointment-notification.service';
 import { DatabaseService } from '@infrastructure/database';
 import type {
   FollowUpPlan,
@@ -78,7 +78,10 @@ export class AppointmentFollowUpService {
           ? priority
           : 'normal';
 
-      const followUpPlan: FollowUpPlan = {
+      // CRITICAL FIX: Persist to database FIRST, then cache (single source of truth)
+      // This ensures data persistence even if cache expires
+      // Follows CacheService pattern: database is source of truth, cache is optimization layer
+      const followUpPlanData = {
         id: followUpId,
         appointmentId,
         patientId,
@@ -86,20 +89,44 @@ export class AppointmentFollowUpService {
         clinicId,
         followUpType: validFollowUpType,
         scheduledFor,
-        status: 'scheduled',
+        daysAfter,
+        status: 'scheduled' as const,
         priority: validPriority,
         instructions,
         medications: medications || [],
         tests: tests || [],
         restrictions: restrictions || [],
         notes: notes || '',
-        createdAt: new Date(),
-        updatedAt: new Date(),
       };
 
-      // Store follow-up plan in cache
+      // 1. Create in database FIRST (source of truth)
+      const followUpPlan = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (client as unknown as {
+            followUpPlan: {
+              create: <T>(args: T) => Promise<unknown>;
+            };
+          }).followUpPlan.create({
+            data: followUpPlanData,
+          });
+        },
+        {
+          userId: doctorId,
+          userRole: 'DOCTOR',
+          clinicId,
+          operation: 'CREATE_FOLLOWUP_PLAN',
+          resourceType: 'FOLLOWUP_PLAN',
+          resourceId: followUpId,
+          timestamp: new Date(),
+        }
+      );
+
+      // 2. Cache for performance (optimization layer)
       const cacheKey = `followup:${followUpId}`;
       await this.cacheService.set(cacheKey, followUpPlan, this.FOLLOWUP_CACHE_TTL);
+
+      // 3. Invalidate patient follow-ups cache to ensure fresh data
+      await this.cacheService.invalidateCacheByPattern(`patient_followups:${patientId}:${clinicId}:*`);
 
       // Schedule follow-up reminders
       await this.scheduleFollowUpReminders(followUpPlan);
@@ -135,22 +162,35 @@ export class AppointmentFollowUpService {
   }
 
   /**
-   * Get follow-up plans for a patient
+   * Get follow-up plans for a patient with pagination
+   * Optimized for 10M+ users: Cursor-based pagination prevents loading all records
    */
   async getPatientFollowUps(
     patientId: string,
     clinicId: string,
-    status?: string
-  ): Promise<FollowUpPlan[]> {
-    const cacheKey = `patient_followups:${patientId}:${clinicId}:${status || 'all'}`;
+    status?: string,
+    options?: {
+      cursor?: string;
+      limit?: number;
+      includeCompleted?: boolean;
+    }
+  ): Promise<{
+    data: FollowUpPlan[];
+    nextCursor: string | null;
+    hasMore: boolean;
+  }> {
+    const limit = options?.limit || 20; // Default page size (optimized for 10M+ users)
+    const cursor = options?.cursor;
+    const cacheKey = `patient_followups:${patientId}:${clinicId}:${status || 'all'}:${cursor || 'first'}:${limit}`;
 
     try {
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
-        return cached as FollowUpPlan[];
+        return cached as { data: FollowUpPlan[]; nextCursor: string | null; hasMore: boolean };
       }
 
-      // Get follow-up plans from database using executeHealthcareRead
+      // Get follow-up plans from database using executeHealthcareRead with pagination
+      // Uses cursor-based pagination (O(1)) instead of offset (O(N)) for better performance
       const followUps = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
@@ -162,6 +202,10 @@ export class AppointmentFollowUpService {
           where: {
             patientId,
             clinicId,
+            ...(status && { status }),
+            ...(options?.includeCompleted === false && {
+              status: { not: 'completed' },
+            }),
           },
           include: {
             appointment: {
@@ -184,6 +228,8 @@ export class AppointmentFollowUpService {
           orderBy: {
             scheduledFor: 'asc',
           },
+          take: limit + 1, // Take one extra to detect if there are more
+          ...(cursor && { cursor: { id: cursor }, skip: 1 }), // Cursor-based pagination
         });
       });
 
@@ -256,10 +302,19 @@ export class AppointmentFollowUpService {
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         };
+      };
       });
 
-      await this.cacheService.set(cacheKey, followUpList, this.FOLLOWUP_CACHE_TTL);
-      return followUpList;
+      // Cursor-based pagination: Check if there are more results
+      const hasMore = followUpList.length > limit;
+      const data = hasMore ? followUpList.slice(0, limit) : followUpList;
+      const nextCursor = hasMore ? data[data.length - 1]?.id || null : null;
+
+      const result = { data, nextCursor, hasMore };
+
+      // Cache paginated result
+      await this.cacheService.set(cacheKey, result, this.FOLLOWUP_CACHE_TTL);
+      return result;
     } catch (_error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -271,7 +326,7 @@ export class AppointmentFollowUpService {
           patientId,
         }
       );
-      return [];
+      return { data: [], nextCursor: null, hasMore: false };
     }
   }
 
@@ -325,6 +380,117 @@ export class AppointmentFollowUpService {
         }
       );
       return false;
+    }
+  }
+
+  /**
+   * Update a follow-up plan with all fields
+   */
+  async updateFollowUpPlan(
+    followUpId: string,
+    updateData: {
+      scheduledFor?: Date | string;
+      followUpType?: string;
+      instructions?: string;
+      priority?: string;
+      medications?: string[];
+      tests?: string[];
+      restrictions?: string[];
+      notes?: string;
+      status?: 'scheduled' | 'completed' | 'cancelled' | 'overdue';
+    }
+  ): Promise<FollowUpPlan | null> {
+    try {
+      const cacheKey = `followup:${followUpId}`;
+      const followUp = await this.cacheService.get(cacheKey);
+
+      if (!followUp) {
+        await this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.WARN,
+          `Follow-up ${followUpId} not found`,
+          'AppointmentFollowUpService'
+        );
+        return null;
+      }
+
+      const followUpPlan = followUp as FollowUpPlan;
+
+      // Validate and cast followUpType if provided
+      const validFollowUpType: FollowUpPlan['followUpType'] | undefined =
+        updateData.followUpType &&
+        (updateData.followUpType === 'routine' ||
+          updateData.followUpType === 'urgent' ||
+          updateData.followUpType === 'specialist' ||
+          updateData.followUpType === 'therapy' ||
+          updateData.followUpType === 'surgery')
+          ? updateData.followUpType
+          : undefined;
+
+      // Validate and cast priority if provided
+      const validPriority: FollowUpPlan['priority'] | undefined =
+        updateData.priority &&
+        (updateData.priority === 'low' ||
+          updateData.priority === 'normal' ||
+          updateData.priority === 'high' ||
+          updateData.priority === 'urgent')
+          ? updateData.priority
+          : undefined;
+
+      // Validate and cast status if provided
+      const validStatus: FollowUpPlan['status'] | undefined =
+        updateData.status &&
+        (updateData.status === 'scheduled' ||
+          updateData.status === 'completed' ||
+          updateData.status === 'cancelled' ||
+          updateData.status === 'overdue')
+          ? updateData.status
+          : undefined;
+
+      const updatedFollowUp: FollowUpPlan = {
+        ...followUpPlan,
+        ...(updateData.scheduledFor && {
+          scheduledFor:
+            typeof updateData.scheduledFor === 'string'
+              ? new Date(updateData.scheduledFor)
+              : updateData.scheduledFor,
+        }),
+        ...(validFollowUpType && { followUpType: validFollowUpType }),
+        ...(updateData.instructions && { instructions: updateData.instructions }),
+        ...(validPriority && { priority: validPriority }),
+        ...(updateData.medications && { medications: updateData.medications }),
+        ...(updateData.tests && { tests: updateData.tests }),
+        ...(updateData.restrictions && { restrictions: updateData.restrictions }),
+        ...(updateData.notes !== undefined && { notes: updateData.notes }),
+        ...(validStatus && { status: validStatus }),
+        updatedAt: new Date(),
+      };
+
+      await this.cacheService.set(cacheKey, updatedFollowUp, this.FOLLOWUP_CACHE_TTL);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Follow-up ${followUpId} updated`,
+        'AppointmentFollowUpService',
+        {
+          followUpId,
+          updates: Object.keys(updateData),
+        }
+      );
+
+      return updatedFollowUp;
+    } catch (_error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update follow-up plan ${followUpId}`,
+        'AppointmentFollowUpService',
+        {
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+        }
+      );
+      return null;
     }
   }
 

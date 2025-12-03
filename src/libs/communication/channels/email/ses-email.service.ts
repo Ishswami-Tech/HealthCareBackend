@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogLevel, LogType } from '@core/types';
 
 export interface SESEmailOptions {

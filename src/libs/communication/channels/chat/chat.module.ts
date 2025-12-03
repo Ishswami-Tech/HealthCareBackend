@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { ChatBackupService } from './chat-backup.service';
 
 /**
