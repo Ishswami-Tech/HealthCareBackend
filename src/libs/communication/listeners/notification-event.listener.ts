@@ -12,7 +12,7 @@ import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { EventService } from '@infrastructure/events';
 import { CommunicationService } from '@communication/communication.service';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import {
   LogType,
   LogLevel,

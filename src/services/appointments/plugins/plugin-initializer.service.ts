@@ -18,21 +18,21 @@ import type { BasePlugin, PluginContext, PluginInfo } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 
 // Internal imports - Plugins
-import { ClinicQueuePlugin } from '@services/appointments/plugins/queue/clinic-queue.plugin';
-import { ClinicNotificationPlugin } from '@services/appointments/plugins/notifications/clinic-notification.plugin';
-import { ClinicReminderPlugin } from '@services/appointments/plugins/reminders/clinic-reminder.plugin';
-import { ClinicAnalyticsPlugin } from '@services/appointments/plugins/analytics/clinic-analytics.plugin';
-import { ClinicFollowUpPlugin } from '@services/appointments/plugins/followup/clinic-followup.plugin';
-import { ClinicLocationPlugin } from '@services/appointments/plugins/location/clinic-location.plugin';
-import { ClinicConfirmationPlugin } from '@services/appointments/plugins/confirmation/clinic-confirmation.plugin';
-import { ClinicCheckInPlugin } from '@services/appointments/plugins/checkin/clinic-checkin.plugin';
-import { ClinicPaymentPlugin } from '@services/appointments/plugins/payment/clinic-payment.plugin';
-import { ClinicVideoPlugin } from '@services/appointments/plugins/video/clinic-video.plugin';
-import { AppointmentCommunicationsPlugin } from '@services/appointments/communications/appointment-communications.plugin';
-import { ClinicTemplatePlugin } from '@services/appointments/plugins/templates/clinic-template.plugin';
-import { ClinicWaitlistPlugin } from '@services/appointments/plugins/waitlist/clinic-waitlist.plugin';
-import { ClinicResourcePlugin } from '@services/appointments/plugins/resources/clinic-resource.plugin';
-import { ClinicEligibilityPlugin } from '@services/appointments/plugins/eligibility/clinic-eligibility.plugin';
+import { ClinicQueuePlugin } from './queue/clinic-queue.plugin';
+import { ClinicNotificationPlugin } from './notifications/clinic-notification.plugin';
+import { ClinicReminderPlugin } from './reminders/clinic-reminder.plugin';
+import { ClinicAnalyticsPlugin } from './analytics/clinic-analytics.plugin';
+import { ClinicFollowUpPlugin } from './followup/clinic-followup.plugin';
+import { ClinicLocationPlugin } from './location/clinic-location.plugin';
+import { ClinicConfirmationPlugin } from './confirmation/clinic-confirmation.plugin';
+import { ClinicCheckInPlugin } from './checkin/clinic-checkin.plugin';
+import { ClinicPaymentPlugin } from './payment/clinic-payment.plugin';
+import { ClinicVideoPlugin } from './video/clinic-video.plugin';
+import { AppointmentCommunicationsPlugin } from '../communications/appointment-communications.plugin';
+import { ClinicTemplatePlugin } from './templates/clinic-template.plugin';
+import { ClinicWaitlistPlugin } from './waitlist/clinic-waitlist.plugin';
+import { ClinicResourcePlugin } from './resources/clinic-resource.plugin';
+import { ClinicEligibilityPlugin } from './eligibility/clinic-eligibility.plugin';
 
 /**
  * Appointment Plugin Initializer

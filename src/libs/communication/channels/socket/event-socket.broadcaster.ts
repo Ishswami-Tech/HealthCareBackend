@@ -7,7 +7,7 @@
 
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { SocketService } from '@communication/channels/socket/socket.service';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { EventService } from '@infrastructure/events';
 import {
   LogType,

@@ -1,7 +1,5 @@
-import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
 
 // Infrastructure Services
 // Using unified DatabaseService for all database operations
@@ -9,7 +7,13 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import { QueueService } from '@infrastructure/queue';
+import {
+  QueueService,
+  APPOINTMENT_QUEUE,
+  NOTIFICATION_QUEUE,
+  ANALYTICS_QUEUE,
+  QUEUE_PRIORITIES,
+} from '@infrastructure/queue';
 import { DatabaseService } from '@infrastructure/database';
 import { HealthcareErrorsService } from '@core/errors';
 
@@ -26,8 +30,8 @@ import {
   AppointmentFilterDto,
   AppointmentStatus,
   AppointmentPriority,
-} from '@services/appointments/appointment.dto';
-import { PaymentStatus, PaymentMethod, Language } from '@core/types';
+} from '@dtos/appointment.dto';
+// PaymentStatus, PaymentMethod, Language removed - not used in this service
 import type {
   AppointmentContext,
   AppointmentResult,
@@ -85,16 +89,7 @@ export class CoreAppointmentService {
     @Inject(forwardRef(() => AppointmentWorkflowEngine))
     private readonly workflowEngine: AppointmentWorkflowEngine,
     @Inject(forwardRef(() => BusinessRulesEngine))
-    private readonly businessRules: BusinessRulesEngine,
-    @Optional()
-    @InjectQueue('clinic-appointment')
-    private readonly appointmentQueue: Queue | null,
-    @Optional()
-    @InjectQueue('clinic-notification')
-    private readonly notificationQueue: Queue | null,
-    @Optional()
-    @InjectQueue('clinic-analytics')
-    private readonly analyticsQueue: Queue | null
+    private readonly businessRules: BusinessRulesEngine
   ) {}
 
   /**
@@ -132,10 +127,11 @@ export class CoreAppointmentService {
       }
 
       // 2. Check for scheduling conflicts
+      const appointmentDate = new Date(createDto.appointmentDate);
       const existingAppointments = await this.getExistingTimeSlots(
         createDto.doctorId,
         createDto.clinicId,
-        new Date(createDto.date)
+        appointmentDate
       );
 
       const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
@@ -143,7 +139,7 @@ export class CoreAppointmentService {
           patientId: createDto.patientId,
           doctorId: createDto.doctorId,
           clinicId: createDto.clinicId,
-          requestedTime: new Date(`${createDto.date}T${createDto.time}`),
+          requestedTime: appointmentDate,
           duration: createDto.duration,
           priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
           serviceType: createDto.type,
@@ -167,22 +163,27 @@ export class CoreAppointmentService {
       }
 
       // 3. Create appointment with enhanced metadata
-      const appointmentData = {
+      // Extract date and time from appointmentDate
+      const appointmentDateTime = new Date(createDto.appointmentDate);
+      const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
+      const timeStr = appointmentDateTime.toTimeString().slice(0, 5); // HH:mm format
+
+      const appointmentData: Record<string, unknown> = {
         ...createDto,
         userId: context.userId, // Add required userId
         status: AppointmentStatus.SCHEDULED,
         priority: createDto.priority || AppointmentPriority.NORMAL,
-        paymentStatus: createDto.paymentStatus || PaymentStatus.PENDING,
-        paymentMethod: createDto.paymentMethod || PaymentMethod.CASH,
-        amount: createDto.amount || 0,
-        currency: createDto.currency || 'INR',
-        language: createDto.language || Language.EN,
-        isRecurring: createDto.isRecurring || false,
-        date: new Date(createDto.date),
+        date: new Date(dateStr),
+        time: timeStr,
       };
+      // Remove appointmentDate as it's not part of AppointmentCreateInput
+      delete appointmentData['appointmentDate'];
 
+      // Cast to AppointmentCreateInput - appointmentData has all required fields from createDto
       const appointment = (await this.databaseService.createAppointmentSafe(
-        appointmentData
+        appointmentData as unknown as Parameters<
+          typeof this.databaseService.createAppointmentSafe
+        >[0]
       )) as AppointmentData;
 
       // Cast for AppointmentResult compatibility
@@ -265,6 +266,10 @@ export class CoreAppointmentService {
 
   /**
    * Get appointments with advanced filtering and pagination
+   * Optimized for 10M+ users: Uses indexes, pagination, and efficient queries
+   *
+   * NOTE: Caching is handled by AppointmentsService wrapper to avoid double caching
+   * This method focuses on database query optimization only (SOLID: Single Responsibility)
    */
   async getAppointments(
     filters: AppointmentFilterDto,
@@ -275,27 +280,20 @@ export class CoreAppointmentService {
     const startTime = Date.now();
 
     try {
-      // Build cache key
-      const cacheKey = `appointments:${context.clinicId}:${JSON.stringify(filters)}:${page}:${limit}`;
-
-      // Try to get from cache first
-      const cachedResult = await this.cacheService.get(cacheKey);
-      if (cachedResult) {
-        return {
-          success: true,
-          data: cachedResult as Record<string, unknown>,
-          message: 'Appointments retrieved from cache',
-          metadata: { processingTime: Date.now() - startTime },
-        };
-      }
-
-      // Build where clause with role-based access control
+      // Build where clause with role-based access control (uses indexed fields)
       const where = this.buildAppointmentWhereClause(filters, context);
 
-      const _offset = (page - 1) * limit;
+      // Calculate pagination offset (optimized for large datasets)
+      const offset = (page - 1) * limit;
 
+      // Parallel queries for data and count (optimized for 10M+ users)
+      // Both queries use indexed fields: clinicId, doctorId, patientId, status, date
       const [appointments, total] = await Promise.all([
-        this.databaseService.findAppointmentsSafe(where),
+        this.databaseService.findAppointmentsSafe(where, {
+          skip: offset,
+          take: limit,
+          orderBy: { date: 'asc' }, // Indexed field for efficient sorting
+        }),
         this.databaseService.countAppointmentsSafe(where),
       ]);
 
@@ -311,11 +309,8 @@ export class CoreAppointmentService {
         },
       };
 
-      // Cache the result
-      await this.cacheService.set(cacheKey, result, this.CACHE_TTL);
-
-      // HIPAA audit log
-      await this.hipaaAuditLog('VIEW_APPOINTMENTS', context, {
+      // HIPAA audit log (async, non-blocking)
+      void this.hipaaAuditLog('VIEW_APPOINTMENTS', context, {
         outcome: 'SUCCESS',
         filters,
         resultCount: appointments.length,
@@ -331,7 +326,9 @@ export class CoreAppointmentService {
     } catch (error) {
       const processingTime = Date.now() - startTime;
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      void this.loggingService.log(
+
+      // Robust error handling - log synchronously for critical errors
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get appointments: ${errorMessage}`,
@@ -340,6 +337,8 @@ export class CoreAppointmentService {
           error: errorMessage,
           stack: error instanceof Error ? error.stack : undefined,
           processingTime,
+          filters,
+          context: { clinicId: context.clinicId, role: context.role },
         }
       );
 
@@ -390,26 +389,29 @@ export class CoreAppointmentService {
       }
 
       // 3. Check for scheduling conflicts if date/time is being changed
-      if ((updateDto.date || updateDto.time) && existingAppointment.doctorId) {
-        const newDate = updateDto.date || existingAppointment.date;
-        const newTime = updateDto.time || existingAppointment.time;
+      if (updateDto.appointmentDate && existingAppointment.doctorId) {
+        const newAppointmentDate = new Date(updateDto.appointmentDate);
+        const newDateStr = newAppointmentDate.toISOString().split('T')[0] || '';
 
         const existingAppointments = await this.getExistingTimeSlots(
           existingAppointment.doctorId,
           existingAppointment.clinicId,
-          new Date(newDate)
+          new Date(newDateStr)
         );
 
+        const updateDtoWithNotes = updateDto as Record<string, unknown>;
+        const notesValue = updateDtoWithNotes['notes'] as string | undefined;
         const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
           {
             patientId: existingAppointment.patientId,
             doctorId: existingAppointment.doctorId,
             clinicId: existingAppointment.clinicId,
-            requestedTime: new Date(`${String(newDate)}T${String(newTime)}`),
+            requestedTime: newAppointmentDate,
             duration: updateDto.duration || existingAppointment.duration,
             priority: 'regular',
             serviceType: existingAppointment.type,
-            ...(updateDto.notes && { notes: updateDto.notes }),
+            // notes property exists in UpdateAppointmentDto (line 355)
+            ...(notesValue && { notes: notesValue }),
           },
           this.convertToTimeSlots(
             existingAppointments,
@@ -435,9 +437,17 @@ export class CoreAppointmentService {
       // 4. Update appointment
       // Handle date conversion properly for exactOptionalPropertyTypes
       const updateData: Record<string, unknown> = { ...updateDto };
-      if (updateDto.date) {
-        updateData['date'] =
-          typeof updateDto.date === 'string' ? new Date(updateDto.date) : updateDto.date;
+      if (updateDto.appointmentDate) {
+        const appointmentDateTime = new Date(updateDto.appointmentDate);
+        const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
+        const timeStr = appointmentDateTime.toTimeString().slice(0, 5); // HH:mm format
+        updateData['date'] = new Date(dateStr);
+        updateData['time'] = timeStr;
+        // Remove appointmentDate as it's not part of AppointmentUpdateInput
+        delete updateData['appointmentDate'];
+      } else {
+        // Ensure appointmentDate is not in updateData
+        delete updateData['appointmentDate'];
       }
       // Cast to AppointmentUpdateInput - the Record<string, unknown> is compatible
       // since AppointmentUpdateInput has all optional properties
@@ -775,56 +785,53 @@ export class CoreAppointmentService {
     operation: string = 'CREATE'
   ): Promise<void> {
     try {
-      // Queue notification job
-      if (this.notificationQueue) {
-        await this.notificationQueue.add(
-          'APPOINTMENT_NOTIFICATION',
-          {
-            appointmentId: appointment.id,
-            operation,
-            context: _context,
-          },
-          {
-            priority: 3,
-            delay: 0,
-            attempts: 3,
-          }
-        );
-      }
+      // Queue notification job using QueueService
+      await this.queueService.addJob(
+        NOTIFICATION_QUEUE,
+        'APPOINTMENT_NOTIFICATION',
+        {
+          appointmentId: appointment.id,
+          operation,
+          context: _context,
+        },
+        {
+          priority: QUEUE_PRIORITIES.NORMAL,
+          delay: 0,
+          attempts: 3,
+        }
+      );
 
-      // Queue analytics job
-      if (this.analyticsQueue) {
-        await this.analyticsQueue.add(
-          'APPOINTMENT_ANALYTICS',
-          {
-            appointmentId: appointment.id,
-            operation,
-            context: _context,
-          },
-          {
-            priority: 5,
-            delay: 5000, // 5 second delay
-            attempts: 2,
-          }
-        );
-      }
+      // Queue analytics job using QueueService
+      await this.queueService.addJob(
+        ANALYTICS_QUEUE,
+        'APPOINTMENT_ANALYTICS',
+        {
+          appointmentId: appointment.id,
+          operation,
+          context: _context,
+        },
+        {
+          priority: QUEUE_PRIORITIES.LOW,
+          delay: 5000, // 5 second delay
+          attempts: 2,
+        }
+      );
 
-      // Queue appointment processing job
-      if (this.appointmentQueue) {
-        await this.appointmentQueue.add(
-          'APPOINTMENT_PROCESSING',
-          {
-            appointmentId: appointment.id,
-            operation,
-            context: _context,
-          },
-          {
-            priority: 2,
-            delay: 0,
-            attempts: 3,
-          }
-        );
-      }
+      // Queue appointment processing job using QueueService
+      await this.queueService.addJob(
+        APPOINTMENT_QUEUE,
+        'APPOINTMENT_PROCESSING',
+        {
+          appointmentId: appointment.id,
+          operation,
+          context: _context,
+        },
+        {
+          priority: QUEUE_PRIORITIES.HIGH,
+          delay: 0,
+          attempts: 3,
+        }
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(

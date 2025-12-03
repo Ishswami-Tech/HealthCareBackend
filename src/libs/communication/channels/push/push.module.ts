@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';

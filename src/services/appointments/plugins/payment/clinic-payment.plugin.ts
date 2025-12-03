@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { PaymentService } from '@services/appointments/plugins/payment/payment.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { PaymentService } from './payment.service';
 import type { RefundData } from '@core/types/billing.types';
 
 interface PaymentPluginData {
