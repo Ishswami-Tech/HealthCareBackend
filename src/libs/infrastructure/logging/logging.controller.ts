@@ -4,7 +4,7 @@ import { FastifyReply } from 'fastify';
 import { ApiTags } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { Public } from '@core/decorators/public.decorator';
 
 // Internal imports - Types

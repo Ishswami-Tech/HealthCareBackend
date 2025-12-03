@@ -16,6 +16,9 @@ import {
   UsePipes,
   BadRequestException,
   ForbiddenException,
+  Inject,
+  forwardRef,
+  Res,
 } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
 import {
@@ -42,7 +45,13 @@ import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import { Cache, PatientCache, InvalidatePatientCache } from '@core/decorators';
+import {
+  Cache,
+  PatientCache,
+  InvalidatePatientCache,
+  InvalidateAppointmentCache,
+  AppointmentCache,
+} from '@core/decorators';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -50,7 +59,22 @@ import {
   AppointmentListResponseDto,
   DoctorAvailabilityResponseDto,
   AppointmentFilterDto,
-} from './appointment.dto';
+  CompleteAppointmentDto,
+  ScheduleFollowUpDto,
+  AppointmentChainResponseDto,
+  FollowUpPlanResponseDto,
+  CreateRecurringSeriesDto,
+  UpdateRecurringSeriesDto,
+  RecurringSeriesResponseDto,
+  UpdateFollowUpPlanDto,
+  ProcessCheckInDto,
+  StartConsultationDto,
+} from '@dtos/appointment.dto';
+import {
+  ScanLocationQRDto,
+  ScanLocationQRResponseDto,
+  LocationQRCodeResponseDto,
+} from '@dtos/appointment.dto';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
@@ -60,6 +84,11 @@ import {
   // JitsiMeetingToken,
   VideoConsultationSession,
 } from './plugins/video/jitsi-video.service';
+import { CheckInService } from './plugins/checkin/check-in.service';
+import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
+import { QrService, LocationQrService } from '@utils/QR';
+import { FastifyReply } from 'fastify';
 
 // Use centralized types
 import type {
@@ -95,7 +124,17 @@ export class AppointmentsController {
     private readonly errors: HealthcareErrorsService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
-    private readonly jitsiVideoService: JitsiVideoService
+    private readonly jitsiVideoService: JitsiVideoService,
+    @Inject(forwardRef(() => CheckInService))
+    private readonly checkInService: CheckInService,
+    @Inject(forwardRef(() => AppointmentQueueService))
+    private readonly appointmentQueueService: AppointmentQueueService,
+    @Inject(forwardRef(() => CheckInLocationService))
+    private readonly checkInLocationService: CheckInLocationService,
+    @Inject(forwardRef(() => QrService))
+    private readonly qrService: QrService,
+    @Inject(forwardRef(() => LocationQrService))
+    private readonly locationQrService: LocationQrService
   ) {}
 
   @Post()
@@ -104,6 +143,10 @@ export class AppointmentsController {
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:*', 'patient:*:appointments', 'doctor:*:appointments', 'clinic:*:appointments'],
+    tags: ['appointments', 'appointment_data'],
+  })
   @ApiOperation({
     summary: 'Create a new appointment',
     description:
@@ -843,6 +886,10 @@ export class AppointmentsController {
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
   })
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:detail:{id}', 'appointments:*', 'patient:*:appointments'],
+    tags: ['appointments', 'appointment_data'],
+  })
   @InvalidatePatientCache({
     patterns: [
       'appointments:detail:{id}',
@@ -976,6 +1023,10 @@ export class AppointmentsController {
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
+  })
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:detail:{id}', 'appointments:*', 'patient:*:appointments'],
+    tags: ['appointments', 'appointment_data'],
   })
   @InvalidatePatientCache({
     patterns: [
@@ -1659,75 +1710,1832 @@ export class AppointmentsController {
     }
   }
 
-  @Get('test/context')
+  // =============================================
+  // APPOINTMENT LIFECYCLE ENDPOINTS
+  // =============================================
+
+  /**
+   * Complete an appointment
+   * POST /appointments/:id/complete
+   */
+  @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
   @ApiOperation({
-    summary: 'Test appointment context',
-    description: 'Test endpoint to debug appointment context and permissions',
+    summary: 'Complete appointment',
+    description: 'Marks an appointment as completed and optionally creates a follow-up plan',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    type: CompleteAppointmentDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Returns the current appointment context and user info.',
+    description: 'Appointment completed successfully',
+    type: AppointmentResponseDto,
+  })
+  @InvalidateAppointmentCache()
+  async completeAppointment(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) completeDto: CompleteAppointmentDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.completeAppointment';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.completeAppointment(
+        appointmentId,
+        completeDto,
+        userId,
+        clinicId,
+        req.user?.role || 'USER'
+      )) as { success: boolean; data: AppointmentWithRelations };
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Appointment completed via API',
+        context,
+        {
+          appointmentId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result.data as AppointmentResponseDto,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to complete appointment: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to complete appointment: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Check in patient for appointment
+   * POST /appointments/:id/check-in
+   */
+  @Post(':id/check-in')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Check in patient',
+    description: 'Processes patient check-in for an appointment',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    type: ProcessCheckInDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Check-in processed successfully',
+  })
+  @InvalidateAppointmentCache()
+  async checkInAppointment(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) checkInDto: ProcessCheckInDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ message: string }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.checkInAppointment';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      await this.appointmentService.processCheckIn(
+        { ...checkInDto, appointmentId },
+        userId,
+        clinicId,
+        req.user?.role || 'USER'
+      );
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Appointment check-in processed via API',
+        context,
+        {
+          appointmentId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: { message: 'Check-in processed successfully' },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Start consultation
+   * POST /appointments/:id/start
+   */
+  @Post(':id/start')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Start consultation',
+    description: 'Starts the consultation for an appointment',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    type: StartConsultationDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Consultation started successfully',
+  })
+  @InvalidateAppointmentCache()
+  async startConsultation(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) startDto: StartConsultationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ message: string }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.startConsultation';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      await this.appointmentService.startConsultation(
+        appointmentId,
+        startDto,
+        userId,
+        clinicId,
+        req.user?.role || 'USER'
+      );
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Consultation started via API',
+        context,
+        {
+          appointmentId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: { message: 'Consultation started successfully' },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  // =============================================
+  // QR CODE CHECK-IN ENDPOINTS
+  // =============================================
+
+  @Post('check-in/scan-qr')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:detail:*', 'appointments:upcoming:*', 'appointments:my:*'],
+    tags: ['appointments', 'appointment_data', 'check_in'],
+  })
+  @ApiOperation({
+    summary: 'Scan location QR code and check in',
+    description:
+      'Scans a location QR code and automatically checks in the patient if they have a valid appointment for that location. Validates appointment, processes check-in, and adds patient to doctor queue.',
+  })
+  @ApiConsumes('application/json')
+  @ApiProduces('application/json')
+  @ApiBody({
+    type: ScanLocationQRDto,
+    description: 'QR code scan data',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Check-in successful',
+    type: ScanLocationQRResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'No appointment found for this location',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid QR code, wrong location, or already checked in',
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
-    description: 'Unauthorized',
+    description: 'User not authenticated',
   })
-  testAppointmentContext(@Request() req: ClinicAuthenticatedRequest): {
-    message: string;
-    timestamp: string;
-    user: {
-      id?: string;
-      sub?: string;
-      role?: Role;
-      email?: string;
-    };
-    clinicContext: {
-      identifier?: string;
-      clinicId?: string;
-      subdomain?: string;
-      appName?: string;
-      isValid?: boolean;
-    };
-    headers: {
-      'x-clinic-id'?: string | string[];
-      'x-clinic-identifier'?: string | string[];
-      authorization: string;
-    };
-  } {
-    const clinicContext = req.clinicContext;
-    const user = req.user;
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async scanLocationQRAndCheckIn(
+    @Body() scanDto: ScanLocationQRDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<ScanLocationQRResponseDto>> {
+    const context = 'AppointmentsController.scanLocationQRAndCheckIn';
+    const startTime = Date.now();
 
-    return {
-      message: 'Appointment context test',
-      timestamp: new Date().toISOString(),
-      user: {
-        ...(user?.sub && { id: user.sub }),
-        ...(user?.sub && { sub: user.sub }),
-        ...(user?.role && { role: user.role as Role }),
-        ...(user && 'email' in user && { email: String(user['email']) }),
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      const userId = req.user?.sub;
+
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      if (!userId) {
+        throw this.errors.authenticationError('User not authenticated', context);
+      }
+
+      await this.loggingService.log(
+        LogType.REQUEST,
+        LogLevel.INFO,
+        'Scanning location QR code for check-in',
+        context,
+        {
+          userId,
+          clinicId,
+          qrCode: scanDto.qrCode.substring(0, 20) + '...', // Log partial QR for security
+        }
+      );
+
+      // Step 1: Verify QR code format and get location
+      // First, try to parse QR code as JSON (LocationQrService format)
+      let locationIdFromQR: string | null = null;
+      try {
+        const qrData = JSON.parse(scanDto.qrCode);
+        if (qrData.locationId && qrData.type === 'LOCATION_CHECK_IN') {
+          locationIdFromQR = qrData.locationId;
+          // Verify QR code is valid
+          await this.locationQrService.verifyLocationQR(scanDto.qrCode, qrData.locationId);
+        }
+      } catch {
+        // If not JSON format, treat as direct QR code string (database lookup)
+      }
+
+      // Get location by QR code (works with both JSON format and direct QR string)
+      const location = await this.checkInLocationService.getLocationByQRCode(scanDto.qrCode);
+
+      if (!location.isActive) {
+        throw this.errors.validationError(
+          'location',
+          'Check-in location is not active',
+          context,
+          { locationId: location.id }
+        );
+      }
+
+      // If QR code was in JSON format, verify it matches the location
+      if (locationIdFromQR && locationIdFromQR !== location.id) {
+        throw this.errors.validationError(
+          'qrCode',
+          'QR code does not match the location',
+          context,
+          { qrLocationId: locationIdFromQR, dbLocationId: location.id }
+        );
+      }
+
+      // Step 2: Find user's appointments for this location
+      const appointments = await this.appointmentService.findUserAppointmentsByLocation(
+        userId,
+        location.id,
+        clinicId
+      );
+
+      if (appointments.length === 0) {
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          'No appointment found for location QR scan',
+          context,
+          {
+            userId,
+            locationId: location.id,
+            clinicId,
+          }
+        );
+
+        return {
+          success: false,
+          data: undefined,
+          error: {
+            code: 'NO_APPOINTMENT_FOUND',
+            message: 'No appointment found for this location',
+            details: {
+              locationId: location.id,
+              locationName: location.locationName,
+            },
+          },
+        };
+      }
+
+      // Step 3: Find the most appropriate appointment (today's or next upcoming)
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      // Sort appointments: today first, then by date/time
+      const sortedAppointments = appointments.sort((a, b) => {
+        const dateA = new Date(a.date);
+        const dateB = new Date(b.date);
+
+        // Today's appointments first
+        const aIsToday = dateA.toDateString() === today.toDateString();
+        const bIsToday = dateB.toDateString() === today.toDateString();
+
+        if (aIsToday && !bIsToday) return -1;
+        if (!aIsToday && bIsToday) return 1;
+
+        // Then by date/time
+        if (dateA.getTime() !== dateB.getTime()) {
+          return dateA.getTime() - dateB.getTime();
+        }
+
+        // Finally by time
+        return a.time.localeCompare(b.time);
+      });
+
+      const appointment = sortedAppointments[0];
+
+      // Step 4: Validate appointment
+      if (appointment.locationId !== location.id) {
+        throw this.errors.validationError(
+          'location',
+          'Appointment is not scheduled for this location',
+          context,
+          {
+            appointmentLocationId: appointment.locationId,
+            scannedLocationId: location.id,
+          }
+        );
+      }
+
+      // Check if already checked in
+      if (appointment.checkedInAt) {
+        return {
+          success: false,
+          data: undefined,
+          error: {
+            code: 'ALREADY_CHECKED_IN',
+            message: 'Appointment already checked in',
+            details: {
+              appointmentId: appointment.id,
+              checkedInAt: appointment.checkedInAt,
+            },
+          },
+        };
+      }
+
+      // Step 5: Process check-in using CheckInLocationService
+      const checkInData = {
+        appointmentId: appointment.id,
+        locationId: location.id,
+        patientId: userId,
+        coordinates: scanDto.coordinates,
+        deviceInfo: scanDto.deviceInfo,
+      };
+
+      const checkIn = await this.checkInLocationService.processCheckIn(checkInData);
+
+      // Step 6: Add to doctor queue
+      let queuePosition: { position: number; totalInQueue: number; estimatedWaitTime: number } | null = null;
+
+      try {
+        const queueResponse = await this.appointmentQueueService.getPatientQueuePosition(
+          appointment.id,
+          appointment.domain || 'healthcare'
+        );
+
+        if (queueResponse && typeof queueResponse === 'object' && 'position' in queueResponse) {
+          queuePosition = {
+            position: (queueResponse.position as number) || 0,
+            totalInQueue: (queueResponse.totalInQueue as number) || 0,
+            estimatedWaitTime: (queueResponse.estimatedWaitTime as number) || 0,
+          };
+        }
+      } catch (queueError) {
+        // Queue position is optional, log but don't fail
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Failed to get queue position after check-in',
+          context,
+          {
+            appointmentId: appointment.id,
+            error: queueError instanceof Error ? queueError.message : String(queueError),
+          }
+        );
+      }
+
+      // Step 7: Get doctor information
+      const doctorName = appointment.doctor?.user?.name || 'Doctor';
+      const doctorId = appointment.doctorId;
+
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        'Location QR check-in successful',
+        context,
+        {
+          appointmentId: appointment.id,
+          locationId: location.id,
+          userId,
+          clinicId,
+          queuePosition: queuePosition?.position,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: {
+          appointmentId: appointment.id,
+          locationId: location.id,
+          locationName: location.locationName,
+          checkedInAt: checkIn.checkedInAt.toISOString(),
+          queuePosition: queuePosition?.position || 0,
+          totalInQueue: queuePosition?.totalInQueue || 0,
+          estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
+          doctorId,
+          doctorName,
+        },
+        message: 'Checked in successfully',
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to scan QR and check in: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          qrCode: scanDto.qrCode.substring(0, 20) + '...',
+          userId: req.user?.sub,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to process QR check-in: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  @Get('locations/:locationId/qr-code')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:location:{locationId}:qr-code',
+    ttl: 3600,
+    tags: ['appointments', 'qr_codes', 'locations'],
+    enableSWR: true,
+  })
+  @ApiOperation({
+    summary: 'Generate QR code for check-in location',
+    description:
+      'Generates a static QR code image for a check-in location. The QR code can be displayed at the location for patients to scan and check in.',
+  })
+  @ApiParam({
+    name: 'locationId',
+    description: 'UUID of the check-in location',
+    type: String,
+  })
+  @ApiQuery({
+    name: 'format',
+    description: 'QR code format',
+    enum: ['png', 'svg', 'base64'],
+    required: false,
+  })
+  @ApiQuery({
+    name: 'size',
+    description: 'QR code size in pixels',
+    type: Number,
+    required: false,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'QR code generated successfully',
+    type: LocationQRCodeResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Location not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async generateLocationQRCode(
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Query('format') format: 'png' | 'svg' | 'base64' = 'base64',
+    @Query('size') size: number = 300,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Res() res: FastifyReply
+  ): Promise<void> {
+    const context = 'AppointmentsController.generateLocationQRCode';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      // Get location details
+      const locations = await this.checkInLocationService.getClinicLocations(clinicId, true);
+      const location = locations.find(loc => loc.id === locationId);
+
+      if (!location) {
+        throw this.errors.notFoundError('Location not found', context, { locationId });
+      }
+
+      // Generate QR code data string using LocationQrService
+      const qrCodeDataString = await this.locationQrService.generateLocationQR(location.id);
+
+      // Generate QR code image using QrService
+      const qrCodeDataUrl = await this.qrService.generateQR(qrCodeDataString);
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Location QR code generated successfully',
+        context,
+        {
+          locationId,
+          clinicId,
+          format,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      // Return based on format
+      if (format === 'png' || format === 'svg') {
+        // Extract base64 data and return as image
+        const base64Data = qrCodeDataUrl.split(',')[1];
+        const imageBuffer = Buffer.from(base64Data, 'base64');
+
+        res.type(`image/${format === 'png' ? 'png' : 'svg+xml'}`);
+        res.send(imageBuffer);
+      } else {
+        // Return JSON with base64 data
+        res.send({
+          qrCode: qrCodeDataUrl,
+          locationId: location.id,
+          locationName: location.locationName,
+          qrCodeString: qrCodeDataString, // Use generated QR data string instead of stored QR code
+        });
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to generate location QR code: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          locationId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to generate QR code: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  // =============================================
+  // FOLLOW-UP APPOINTMENT ENDPOINTS
+  // =============================================
+
+  /**
+   * Create a follow-up plan for an appointment
+   * POST /appointments/:id/follow-up
+   */
+  @Post(':id/follow-up')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Create a follow-up plan for an appointment',
+    description:
+      'Creates a follow-up plan that can later be converted to an actual appointment. Used when completing an appointment to schedule future care.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    description: 'Follow-up plan details',
+    schema: {
+      type: 'object',
+      required: ['followUpType', 'daysAfter', 'instructions'],
+      properties: {
+        followUpType: {
+          type: 'string',
+          enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+          description: 'Type of follow-up',
+        },
+        daysAfter: {
+          type: 'number',
+          description: 'Number of days after the appointment to schedule follow-up',
+          minimum: 1,
+        },
+        instructions: {
+          type: 'string',
+          description: 'Instructions for the follow-up',
+        },
+        priority: {
+          type: 'string',
+          enum: ['low', 'normal', 'high', 'urgent'],
+          description: 'Priority of the follow-up',
+          default: 'normal',
+        },
+        medications: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Medications to be reviewed',
+        },
+        tests: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tests to be performed',
+        },
+        restrictions: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Restrictions or precautions',
+        },
+        notes: {
+          type: 'string',
+          description: 'Additional notes',
+        },
       },
-      clinicContext: {
-        ...(clinicContext?.identifier && {
-          identifier: clinicContext.identifier,
-        }),
-        ...(clinicContext?.clinicId && { clinicId: clinicContext.clinicId }),
-        ...(clinicContext?.subdomain && { subdomain: clinicContext.subdomain }),
-        ...(clinicContext?.appName && { appName: clinicContext.appName }),
-        ...(clinicContext?.isValid !== undefined && {
-          isValid: clinicContext.isValid,
-        }),
-      },
-      headers: {
-        ...(req.headers['x-clinic-id'] && {
-          'x-clinic-id': req.headers['x-clinic-id'],
-        }),
-        ...(req.headers['x-clinic-identifier'] && {
-          'x-clinic-identifier': req.headers['x-clinic-identifier'],
-        }),
-        authorization: req.headers.authorization ? 'Bearer ***' : 'none',
-      },
-    };
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Follow-up plan created successfully',
+    type: FollowUpPlanResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  @InvalidateAppointmentCache()
+  async createFollowUpPlan(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe)
+    createDto: {
+      followUpType: string;
+      daysAfter: number;
+      instructions: string;
+      priority?: string;
+      medications?: string[];
+      tests?: string[];
+      restrictions?: string[];
+      notes?: string;
+    },
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<FollowUpPlanResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.createFollowUpPlan';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      // Get appointment to extract patientId and doctorId
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+
+      if (!appointment) {
+        throw this.errors.appointmentNotFound(appointmentId, context);
+      }
+
+      const result = (await this.appointmentService.createFollowUpPlan(
+        appointmentId,
+        appointment.patientId,
+        appointment.doctorId,
+        clinicId,
+        createDto.followUpType,
+        createDto.daysAfter,
+        createDto.instructions,
+        createDto.priority || 'normal',
+        createDto.medications,
+        createDto.tests,
+        createDto.restrictions,
+        createDto.notes
+      )) as { success: boolean; followUpId: string; scheduledFor: Date; message: string };
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Follow-up plan created via API',
+        context,
+        {
+          appointmentId,
+          followUpId: result.followUpId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: {
+          id: result.followUpId,
+          appointmentId,
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          clinicId,
+          followUpType: createDto.followUpType as 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery',
+          scheduledFor: result.scheduledFor,
+          status: 'scheduled',
+          priority: (createDto.priority || 'normal') as 'low' | 'normal' | 'high' | 'urgent',
+          instructions: createDto.instructions,
+          medications: createDto.medications || [],
+          tests: createDto.tests || [],
+          restrictions: createDto.restrictions || [],
+          notes: createDto.notes || '',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        } as FollowUpPlanResponseDto,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to create follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Get the full appointment chain (original + all follow-ups)
+   * GET /appointments/:id/chain
+   */
+  @Get(':id/chain')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Get appointment chain',
+    description: 'Retrieves the original appointment and all its follow-up appointments',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the original appointment',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Appointment chain retrieved successfully',
+    type: AppointmentChainResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @PatientCache()
+  async getAppointmentChain(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentChainResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.getAppointmentChain';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.getAppointmentChain(
+        appointmentId,
+        clinicId,
+        userId
+      )) as { original: AppointmentWithRelations; followUps: AppointmentWithRelations[] };
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Appointment chain retrieved via API',
+        context,
+        {
+          appointmentId,
+          userId,
+          clinicId,
+          followUpCount: result.followUps.length,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: {
+          original: result.original as AppointmentResponseDto,
+          followUps: result.followUps.map(apt => apt as AppointmentResponseDto),
+        } as AppointmentChainResponseDto,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get appointment chain: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to get appointment chain: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Get all follow-up plans for a patient
+   * GET /patients/:patientId/follow-up-plans
+   */
+  @Get('patients/:patientId/follow-up-plans')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Get patient follow-up plans',
+    description: 'Retrieves all follow-up plans for a specific patient',
+  })
+  @ApiParam({
+    name: 'patientId',
+    description: 'ID of the patient',
+    type: 'string',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    description: 'Filter by follow-up plan status',
+    enum: ['scheduled', 'completed', 'cancelled', 'overdue'],
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Follow-up plans retrieved successfully',
+    type: [FollowUpPlanResponseDto],
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @PatientCache()
+  async getPatientFollowUpPlans(
+    @Param('patientId', ParseUUIDPipe) patientId: string,
+    @Query('status') status?: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<FollowUpPlanResponseDto[]>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.getPatientFollowUpPlans';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.getPatientFollowUpPlans(
+        patientId,
+        clinicId,
+        status
+      )) as { followUps: FollowUpPlanResponseDto[] };
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Patient follow-up plans retrieved via API',
+        context,
+        {
+          patientId,
+          clinicId,
+          status,
+          count: result.followUps.length,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result.followUps,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get patient follow-up plans: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          patientId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to get patient follow-up plans: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Schedule an appointment from a follow-up plan
+   * POST /follow-up-plans/:id/schedule
+   */
+  @Post('follow-up-plans/:id/schedule')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'create', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Schedule appointment from follow-up plan',
+    description: 'Converts a follow-up plan into an actual scheduled appointment',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the follow-up plan',
+    type: 'string',
+  })
+  @ApiBody({
+    description: 'Appointment scheduling details',
+    type: ScheduleFollowUpDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Appointment scheduled successfully',
+    type: AppointmentResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Follow-up plan not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @InvalidateAppointmentCache()
+  @InvalidatePatientCache()
+  async scheduleFollowUpFromPlan(
+    @Param('id', ParseUUIDPipe) followUpPlanId: string,
+    @Body(ValidationPipe) scheduleDto: ScheduleFollowUpDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.scheduleFollowUpFromPlan';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.scheduleFollowUpFromPlan(
+        followUpPlanId,
+        {
+          appointmentDate: scheduleDto.appointmentDate,
+          doctorId: scheduleDto.doctorId,
+          locationId: scheduleDto.locationId,
+          time: scheduleDto.time,
+        },
+        userId,
+        clinicId
+      )) as { success: boolean; data: AppointmentWithRelations };
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Follow-up appointment scheduled via API',
+        context,
+        {
+          followUpPlanId,
+          appointmentId: result.data.id,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result.data as AppointmentResponseDto,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to schedule follow-up from plan: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          followUpPlanId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to schedule follow-up from plan: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Get all follow-up appointments for an appointment
+   * GET /appointments/:id/follow-ups
+   */
+  @Get(':id/follow-ups')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Get appointment follow-ups',
+    description: 'Retrieves all follow-up appointments for a specific appointment',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Follow-up appointments retrieved successfully',
+    type: [AppointmentResponseDto],
+  })
+  @PatientCache()
+  async getAppointmentFollowUps(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto[]>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.getAppointmentFollowUps';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.getAppointmentFollowUps(
+        appointmentId,
+        clinicId,
+        userId
+      )) as { followUps: AppointmentWithRelations[]; count: number };
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Appointment follow-ups retrieved via API',
+        context,
+        {
+          appointmentId,
+          userId,
+          clinicId,
+          count: result.count,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result.followUps.map(apt => apt as AppointmentResponseDto),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get appointment follow-ups: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to get appointment follow-ups: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Update a follow-up plan
+   * PUT /follow-up-plans/:id
+   */
+  @Put('follow-up-plans/:id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Update follow-up plan',
+    description: 'Updates an existing follow-up plan',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the follow-up plan',
+    type: 'string',
+  })
+  @ApiBody({
+    type: UpdateFollowUpPlanDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Follow-up plan updated successfully',
+    type: FollowUpPlanResponseDto,
+  })
+  @InvalidateAppointmentCache()
+  async updateFollowUpPlan(
+    @Param('id', ParseUUIDPipe) followUpPlanId: string,
+    @Body(ValidationPipe) updateDto: UpdateFollowUpPlanDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<FollowUpPlanResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.updateFollowUpPlan';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.updateFollowUpPlan(
+        followUpPlanId,
+        updateDto,
+        userId,
+        clinicId
+      )) as FollowUpPlanResponseDto;
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Follow-up plan updated via API',
+        context,
+        {
+          followUpPlanId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          followUpPlanId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to update follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Cancel a follow-up plan
+   * DELETE /follow-up-plans/:id
+   */
+  @Delete('follow-up-plans/:id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Cancel follow-up plan',
+    description: 'Cancels an existing follow-up plan',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the follow-up plan',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Follow-up plan cancelled successfully',
+  })
+  @InvalidateAppointmentCache()
+  async cancelFollowUpPlan(
+    @Param('id', ParseUUIDPipe) followUpPlanId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ message: string }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.cancelFollowUpPlan';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      await this.appointmentService.cancelFollowUpPlan(followUpPlanId, userId, clinicId);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Follow-up plan cancelled via API',
+        context,
+        {
+          followUpPlanId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: { message: 'Follow-up plan cancelled successfully' },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to cancel follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          followUpPlanId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to cancel follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  // =============================================
+  // RECURRING APPOINTMENT ENDPOINTS
+  // =============================================
+
+  /**
+   * Create a recurring appointment series
+   * POST /appointments/recurring
+   */
+  @Post('recurring')
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'create', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 5, duration: 60 })
+  @ApiOperation({
+    summary: 'Create recurring appointment series',
+    description: 'Creates a series of recurring appointments from a template',
+  })
+  @ApiBody({
+    type: CreateRecurringSeriesDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Recurring series created successfully',
+    type: RecurringSeriesResponseDto,
+  })
+  @InvalidateAppointmentCache()
+  async createRecurringSeries(
+    @Body(ValidationPipe) createDto: CreateRecurringSeriesDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<RecurringSeriesResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.createRecurringSeries';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.createRecurringSeries(
+        createDto.templateId,
+        createDto.patientId,
+        clinicId,
+        createDto.startDate,
+        createDto.endDate,
+        userId
+      )) as RecurringSeriesResponseDto;
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Recurring series created via API',
+        context,
+        {
+          templateId: createDto.templateId,
+          patientId: createDto.patientId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          templateId: createDto.templateId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to create recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Get recurring appointment series details
+   * GET /appointments/series/:id
+   */
+  @Get('series/:id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Get recurring series',
+    description: 'Retrieves details of a recurring appointment series',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the recurring series',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Series details retrieved successfully',
+    type: RecurringSeriesResponseDto,
+  })
+  @PatientCache()
+  async getRecurringSeries(
+    @Param('id', ParseUUIDPipe) seriesId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<RecurringSeriesResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.getRecurringSeries';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = (await this.appointmentService.getRecurringSeries(
+        seriesId,
+        clinicId,
+        userId
+      )) as RecurringSeriesResponseDto;
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Recurring series retrieved via API',
+        context,
+        {
+          seriesId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          seriesId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to get recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Update recurring appointment series
+   * PUT /appointments/series/:id
+   */
+  @Put('series/:id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Update recurring series',
+    description: 'Updates a recurring appointment series',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the recurring series',
+    type: 'string',
+  })
+  @ApiBody({
+    type: UpdateRecurringSeriesDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Series updated successfully',
+    type: RecurringSeriesResponseDto,
+  })
+  @InvalidateAppointmentCache()
+  async updateRecurringSeries(
+    @Param('id', ParseUUIDPipe) seriesId: string,
+    @Body(ValidationPipe) updateDto: UpdateRecurringSeriesDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<RecurringSeriesResponseDto>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.updateRecurringSeries';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      await this.appointmentService.updateRecurringSeries(seriesId, updateDto, userId, clinicId);
+
+      // Get updated series
+      const result = (await this.appointmentService.getRecurringSeries(
+        seriesId,
+        clinicId,
+        userId
+      )) as RecurringSeriesResponseDto;
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Recurring series updated via API',
+        context,
+        {
+          seriesId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          seriesId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to update recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
+  }
+
+  /**
+   * Cancel recurring appointment series
+   * DELETE /appointments/series/:id
+   */
+  @Delete('series/:id')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: true,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Cancel recurring series',
+    description: 'Cancels a recurring appointment series and all future appointments',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the recurring series',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Series cancelled successfully',
+  })
+  @InvalidateAppointmentCache()
+  async cancelRecurringSeries(
+    @Param('id', ParseUUIDPipe) seriesId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ message: string }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.cancelRecurringSeries';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      await this.appointmentService.cancelRecurringSeries(seriesId, userId, clinicId);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Recurring series cancelled via API',
+        context,
+        {
+          seriesId,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: { message: 'Recurring series cancelled successfully' },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to cancel recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          seriesId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(
+        `Failed to cancel recurring series: ${error instanceof Error ? error.message : String(error)}`,
+        context
+      );
+    }
   }
 }

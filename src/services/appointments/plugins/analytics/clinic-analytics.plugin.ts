@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentAnalyticsService } from '@services/appointments/plugins/analytics/appointment-analytics.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentAnalyticsService } from './appointment-analytics.service';
 import type { AnalyticsFilter } from '@core/types/appointment.types';
 
 interface AnalyticsPluginData {

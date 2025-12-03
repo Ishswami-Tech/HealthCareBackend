@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentFollowUpService } from '@services/appointments/plugins/followup/appointment-followup.service';
+import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { AppointmentFollowUpService } from './appointment-followup.service';
 import type { FollowUpTemplate } from '@core/types/appointment.types';
 
 interface FollowUpPluginData {
@@ -11,6 +11,7 @@ interface FollowUpPluginData {
   clinicId?: string;
   followUpType?: string;
   daysAfter?: number;
+  scheduledFor?: string | Date;
   instructions?: string;
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   medications?: string[];
@@ -19,7 +20,12 @@ interface FollowUpPluginData {
   notes?: string;
   status?: 'scheduled' | 'completed' | 'cancelled' | 'overdue';
   followUpId?: string;
+  followUpPlanId?: string;
   template?: Omit<FollowUpTemplate, 'id'>;
+  // Pagination support (10M+ users optimization)
+  cursor?: string;
+  limit?: number;
+  includeCompleted?: boolean;
 }
 
 @Injectable()
@@ -84,7 +90,12 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
         return await this.followUpService.getPatientFollowUps(
           pluginData.patientId,
           pluginData.clinicId,
-          pluginData.status || undefined
+          pluginData.status || undefined,
+          {
+            cursor: pluginData.cursor,
+            limit: pluginData.limit,
+            includeCompleted: pluginData.includeCompleted,
+          }
         );
 
       case 'updateFollowUpStatus':
@@ -98,6 +109,24 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
           pluginData.status,
           pluginData.notes
         );
+
+      case 'updateFollowUpPlan':
+        if (!pluginData.followUpId) {
+          throw new Error('Missing required field followUpId for updateFollowUpPlan');
+        }
+        return await this.followUpService.updateFollowUpPlan(pluginData.followUpId, {
+          scheduledFor: pluginData.scheduledFor
+            ? new Date(pluginData.scheduledFor as string)
+            : undefined,
+          followUpType: pluginData.followUpType,
+          instructions: pluginData.instructions,
+          priority: pluginData.priority,
+          medications: pluginData.medications,
+          tests: pluginData.tests,
+          restrictions: pluginData.restrictions,
+          notes: pluginData.notes,
+          status: pluginData.status,
+        });
 
       case 'getFollowUpTemplates':
         if (!pluginData.clinicId) {
@@ -154,6 +183,7 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
       ],
       getPatientFollowUps: ['patientId', 'clinicId'],
       updateFollowUpStatus: ['followUpId', 'status'],
+      updateFollowUpPlan: ['followUpId'],
       getFollowUpTemplates: ['clinicId'],
       createFollowUpTemplate: ['template'],
       getOverdueFollowUps: ['clinicId'],

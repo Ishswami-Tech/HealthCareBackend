@@ -15,7 +15,7 @@ import {
 } from '@core/types';
 import * as nodemailer from 'nodemailer';
 import { MailtrapClient } from 'mailtrap';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';

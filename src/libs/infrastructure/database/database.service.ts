@@ -1819,8 +1819,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.appointmentMethods.findAppointmentByIdSafe(id);
   }
 
-  async findAppointmentsSafe(where: AppointmentWhereInput): Promise<AppointmentWithRelations[]> {
-    return this.appointmentMethods.findAppointmentsSafe(where);
+  async findAppointmentsSafe(
+    where: AppointmentWhereInput,
+    options?: {
+      skip?: number;
+      take?: number;
+      orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
+    }
+  ): Promise<AppointmentWithRelations[]> {
+    return this.appointmentMethods.findAppointmentsSafe(where, options);
   }
 
   async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {

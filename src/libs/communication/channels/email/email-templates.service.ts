@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import {
   generateAppointmentReminderTemplate,

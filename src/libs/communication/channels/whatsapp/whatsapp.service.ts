@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config';
 import axios from 'axios';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 
 /**

@@ -4,7 +4,7 @@ import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
 // Internal imports - Infrastructure
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';

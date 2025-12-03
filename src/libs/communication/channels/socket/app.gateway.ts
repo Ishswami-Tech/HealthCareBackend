@@ -3,7 +3,7 @@ import { WebSocketGateway } from '@nestjs/websockets';
 import { BaseSocket } from '@communication/channels/socket/base-socket';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth.middleware';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@logging';
 
 @Injectable()
 @WebSocketGateway({

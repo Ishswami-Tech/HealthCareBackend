@@ -19,6 +19,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config';
 import { EventsModule } from '@infrastructure/events';
 import { ResilienceModule } from '@core/resilience';
+import { DatabaseModule } from '@infrastructure/database';
 // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 // LoggingModule is @Global() and already available - LoggingService can be injected
 
@@ -31,6 +32,7 @@ import { CacheMetricsService } from '@infrastructure/cache/services/cache-metric
 import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flags.service';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
+import { CacheWarmingService } from '@infrastructure/cache/services/cache-warming.service';
 // CacheErrorHandler is now provided by global ErrorsModule
 
 // Factories
@@ -61,6 +63,9 @@ import { HealthcareCacheInterceptor } from '@core/interceptors';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 // Dragonfly Module
 import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.module';
+// Schedule Module for cron jobs
+import { ScheduleModule } from '@nestjs/schedule';
+// Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
 
 /**
  * Cache Module with SOLID architecture and provider-agnostic design
@@ -80,7 +85,11 @@ import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.modul
     RedisModule, // Required for RedisCacheProvider (even if using Dragonfly)
     DragonflyModule, // Required for DragonflyCacheProvider (even if using Redis)
     ResilienceModule, // Provides CircuitBreakerService
+    ScheduleModule, // For cron jobs in CacheWarmingService
+    // QueueModule is @Global() and already available - QueueService can be injected
     // LoggingModule is @Global() and already available - no need to import
+    // DatabaseModule is @Global() but needs explicit import for CacheWarmingService dependency resolution
+    forwardRef(() => DatabaseModule),
   ],
   controllers: [CacheController],
   providers: [
@@ -93,6 +102,7 @@ import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.modul
     FeatureFlagsService,
     CacheVersioningService,
     CacheHealthMonitorService,
+    CacheWarmingService, // Comprehensive cache warming with cron jobs
     // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 
     // Factories
@@ -130,6 +140,8 @@ import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.modul
     CacheKeyFactory,
     // Export health monitor for HealthService
     CacheHealthMonitorService,
+    // Export cache warming service for manual warming
+    CacheWarmingService,
   ],
 })
 export class CacheModule {}
