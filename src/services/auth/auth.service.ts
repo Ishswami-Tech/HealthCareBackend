@@ -309,37 +309,46 @@ export class AuthService {
    */
   async login(loginDto: LoginDto): Promise<AuthResponse> {
     try {
-      // Find user with caching
-      const userResult = await this.cacheService.cache(
-        `user:login:${loginDto.email}`,
-        async (): Promise<UserWithRelations | null> => {
-          return await this.databaseService.findUserByEmailSafe(loginDto.email);
-        },
-        {
-          ttl: 300, // 5 minutes for login attempts
-          tags: ['user_login'],
-          priority: 'high',
-          enableSwr: false, // No SWR for login data
-        }
-      );
-      if (!userResult) {
-        throw this.errors.invalidCredentials('AuthService.login');
-      }
-      // Type assertion: UserWithRelations should have password for auth operations
-      const user = userResult as UserWithRelations & { password: string };
+      // Find user directly without caching for login (password must be fresh)
+      // Use findUserByEmailForAuth which explicitly selects the password field
+      const userResult = (await this.databaseService.findUserByEmailForAuth(loginDto.email)) as
+        | (UserWithRelations & { password: string })
+        | null;
 
-      if (!user) {
+      if (!userResult) {
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.DEBUG,
+          `User not found for login: ${loginDto.email}`,
+          'AuthService.login'
+        );
         throw this.errors.invalidCredentials('AuthService.login');
       }
+      // userResult already has the correct type (UserWithRelations & { password: string })
+      const user: UserWithRelations & { password: string } = userResult;
 
       // Check if user has a password (required for password-based login)
       if (!user.password) {
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `Login attempt for user without password: ${loginDto.email}`,
+          'AuthService.login',
+          { email: loginDto.email, userId: user.id }
+        );
         throw this.errors.invalidCredentials('AuthService.login');
       }
 
-      // Verify password
+      // Verify password using optimized bcrypt comparison
       const isPasswordValid = await bcrypt.compare(loginDto.password, user.password);
       if (!isPasswordValid) {
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `Invalid password attempt for: ${loginDto.email}`,
+          'AuthService.login',
+          { email: loginDto.email, userId: user.id }
+        );
         throw this.errors.invalidCredentials('AuthService.login');
       }
 
@@ -668,57 +677,24 @@ export class AuthService {
     changePasswordDto: ChangePasswordDto
   ): Promise<{ success: boolean; message: string }> {
     try {
-      // Bypass cache for password operations - fetch directly from database
-      // to ensure password field is included
-      const userResult = await this.databaseService.executeHealthcareRead<
-        (UserWithRelations & { password?: string }) | null
-      >(async client => {
-        const tx = client as unknown as {
-          user: {
-            findUnique: (args: {
-              where: { id: string };
-              include: {
-                doctor: boolean;
-                patient: boolean;
-                receptionists: boolean;
-                clinicAdmins: boolean;
-                superAdmin: boolean;
-                pharmacist: boolean;
-                therapist: boolean;
-                labTechnician: boolean;
-                financeBilling: boolean;
-                supportStaff: boolean;
-                nurse: boolean;
-                counselor: boolean;
-              };
-            }) => Promise<UserWithRelations & { password?: string }>;
-          };
-        };
-        return await tx.user.findUnique({
-          where: { id: userId },
-          include: {
-            doctor: true,
-            patient: true,
-            receptionists: true,
-            clinicAdmins: true,
-            superAdmin: true,
-            pharmacist: true,
-            therapist: true,
-            labTechnician: true,
-            financeBilling: true,
-            supportStaff: true,
-            nurse: true,
-            counselor: true,
-          },
-        });
-      });
+      // Use findUserByEmailForAuth pattern but for user ID
+      // We need to get the user's email first, then use findUserByEmailForAuth
+      const userById: UserWithRelations | null =
+        await this.databaseService.findUserByIdSafe(userId);
+
+      if (!userById) {
+        throw this.errors.userNotFound(userId, 'AuthService.changePassword');
+      }
+
+      // Now get the user with password using findUserByEmailForAuth
+      const userResult = await this.databaseService.findUserByEmailForAuth(userById.email);
 
       if (!userResult) {
         throw this.errors.userNotFound(userId, 'AuthService.changePassword');
       }
 
-      // Type assertion: UserWithRelations should have password for auth operations
-      const user = userResult as UserWithRelations & { password?: string };
+      // Type assertion: userResult has password field
+      const user: UserWithRelations & { password: string } = userResult;
 
       // Check if user has a password
       if (!user.password) {

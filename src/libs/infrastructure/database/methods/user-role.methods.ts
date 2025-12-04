@@ -130,6 +130,7 @@ export class UserRoleMethods extends DatabaseMethodsBase {
 
   /**
    * Find user roles
+   * Includes role relation for RBAC service compatibility
    */
   async findUserRolesSafe(userId: string, clinicId?: string): Promise<UserRoleEntity[]> {
     return await this.executeRead<UserRoleEntity[]>(async prisma => {
@@ -137,6 +138,14 @@ export class UserRoleMethods extends DatabaseMethodsBase {
         where: {
           userId,
           ...(clinicId && { clinicId }),
+          isActive: true, // Only return active role assignments
+        },
+        include: {
+          role: {
+            select: {
+              name: true, // Include role name for RBAC service
+            },
+          },
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());

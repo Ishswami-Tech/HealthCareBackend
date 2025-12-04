@@ -47,7 +47,7 @@ export default function createDevelopmentConfig(): Config {
     database: {
       url:
         process.env[ENV_VARS.DATABASE_URL] ||
-        'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        'postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20',
       sqlInjectionPrevention: {
         enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], false),
       },

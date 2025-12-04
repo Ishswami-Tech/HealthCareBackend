@@ -38,6 +38,8 @@ import {
   UpdateAppointmentDto,
   AppointmentFilterDto,
   AppointmentStatus,
+  AppointmentType,
+  AppointmentPriority,
   ProcessCheckInDto,
   CompleteAppointmentDto,
   StartConsultationDto,
@@ -182,7 +184,6 @@ export class AppointmentsService {
       userId,
       role,
       clinicId,
-      locationId: createDto.locationId,
       doctorId: createDto.doctorId,
       patientId: createDto.patientId,
     };
@@ -298,12 +299,15 @@ export class AppointmentsService {
     const keyFactory = this.cacheService.getKeyFactory();
     const filtersHash = JSON.stringify(filters);
     // Key factory automatically adds 'healthcare' prefix, so we don't need to include it
-    const cacheKey = keyFactory.fromTemplate('clinic:{clinicId}:appointments:list:{filters}:{page}:{limit}', {
-      clinicId,
-      filters: filtersHash,
-      page: String(page),
-      limit: String(limit),
-    });
+    const cacheKey = keyFactory.fromTemplate(
+      'clinic:{clinicId}:appointments:list:{filters}:{page}:{limit}',
+      {
+        clinicId,
+        filters: filtersHash,
+        page: String(page),
+        limit: String(limit),
+      }
+    );
 
     return this.cacheService.cache(
       cacheKey,
@@ -602,11 +606,18 @@ export class AppointmentsService {
         );
 
         // Create follow-up plan if requested
-        if (completeDto.followUpRequired && completeDto.followUpType && completeDto.followUpInstructions) {
+        if (
+          completeDto.followUpRequired &&
+          completeDto.followUpType &&
+          completeDto.followUpInstructions
+        ) {
           try {
             // Get appointment details to extract patientId
-            const appointment = await this.getAppointmentById(appointmentId, clinicId) as AppointmentWithRelations;
-            
+            const appointment = (await this.getAppointmentById(
+              appointmentId,
+              clinicId
+            )) as AppointmentWithRelations;
+
             if (appointment && appointment.patientId) {
               // Calculate days after from followUpDate or use default
               let daysAfter = 7; // Default 7 days
@@ -643,24 +654,39 @@ export class AppointmentsService {
 
               // AUTO-SCHEDULING: If followUpDate is provided, automatically create the follow-up appointment
               // This implements the documented flow where completing with followUpDate auto-creates appointment
-              if (completeDto.followUpDate && followUpPlanResult && (followUpPlanResult as { success?: boolean })?.success) {
+              if (
+                completeDto.followUpDate &&
+                followUpPlanResult &&
+                (followUpPlanResult as { success?: boolean })?.success
+              ) {
                 try {
-                  const followUpPlanId = (followUpPlanResult as { followUpId?: string })?.followUpId;
-                  
+                  const followUpPlanId = (followUpPlanResult as { followUpId?: string })
+                    ?.followUpId;
+
                   if (followUpPlanId) {
                     // Auto-create follow-up appointment
+                    // Convert date and time to appointmentDate format
+                    const followUpDate = new Date(completeDto.followUpDate);
+                    const appointmentTime = appointment.time || '10:00';
+                    const [hours, minutes] = appointmentTime.split(':');
+                    followUpDate.setHours(
+                      parseInt(hours || '10', 10),
+                      parseInt(minutes || '0', 10),
+                      0,
+                      0
+                    );
+
                     const followUpAppointment = await this.createAppointment(
                       {
                         patientId: appointment.patientId,
                         doctorId: completeDto.doctorId || appointment.doctorId,
                         clinicId,
-                        locationId: appointment.locationId || undefined,
-                        date: completeDto.followUpDate,
-                        time: appointment.time || '10:00',
+                        appointmentDate: followUpDate.toISOString(),
                         duration: appointment.duration || 30,
-                        type: appointment.type || 'FOLLOW_UP',
-                        priority: completeDto.followUpPriority || 'NORMAL',
+                        type: appointment.type || AppointmentType.FOLLOW_UP,
+                        priority: completeDto.followUpPriority || AppointmentPriority.NORMAL,
                         notes: completeDto.followUpInstructions,
+                        ...(appointment.locationId && { locationId: appointment.locationId }),
                       } as CreateAppointmentDto,
                       userId,
                       clinicId,
@@ -669,8 +695,10 @@ export class AppointmentsService {
 
                     // Link appointment to follow-up plan
                     if (followUpAppointment.success) {
-                      const followUpAppointmentId = (followUpAppointment.data as Record<string, unknown>)?.['id'] as string;
-                      
+                      const followUpAppointmentId = (
+                        followUpAppointment.data as Record<string, unknown>
+                      )?.['id'] as string;
+
                       // Update follow-up plan to link the appointment
                       await this.clinicFollowUpPlugin.process({
                         operation: 'updateFollowUpStatus',
@@ -682,11 +710,13 @@ export class AppointmentsService {
                       // Update appointment to mark as follow-up and link to parent
                       await this.databaseService.executeHealthcareWrite(
                         async client => {
-                          return await (client as unknown as {
-                            appointment: {
-                              update: <T>(args: T) => Promise<unknown>;
-                            };
-                          }).appointment.update({
+                          return await (
+                            client as unknown as {
+                              appointment: {
+                                update: <T>(args: T) => Promise<unknown>;
+                              };
+                            }
+                          ).appointment.update({
                             where: { id: followUpAppointmentId },
                             data: {
                               parentAppointmentId: appointmentId,
@@ -732,7 +762,8 @@ export class AppointmentsService {
                     {
                       appointmentId,
                       followUpDate: completeDto.followUpDate,
-                      error: autoScheduleError instanceof Error ? autoScheduleError.stack : undefined,
+                      error:
+                        autoScheduleError instanceof Error ? autoScheduleError.stack : undefined,
                     }
                   );
                 }
@@ -745,7 +776,10 @@ export class AppointmentsService {
               LogLevel.WARN,
               `Failed to create follow-up plan during completion: ${followUpError instanceof Error ? followUpError.message : String(followUpError)}`,
               'AppointmentsService.completeAppointment',
-              { appointmentId, error: followUpError instanceof Error ? followUpError.stack : undefined }
+              {
+                appointmentId,
+                error: followUpError instanceof Error ? followUpError.stack : undefined,
+              }
             );
           }
         }
@@ -1112,11 +1146,14 @@ export class AppointmentsService {
     // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
     const keyFactory = this.cacheService.getKeyFactory();
     // Key factory automatically adds 'healthcare' prefix
-    const cacheKey = keyFactory.fromTemplate('doctor:{doctorId}:clinic:{clinicId}:availability:{date}', {
-      doctorId,
-      clinicId,
-      date,
-    });
+    const cacheKey = keyFactory.fromTemplate(
+      'doctor:{doctorId}:clinic:{clinicId}:availability:{date}',
+      {
+        doctorId,
+        clinicId,
+        date,
+      }
+    );
 
     return this.cacheService.cache(
       cacheKey,
@@ -1163,7 +1200,9 @@ export class AppointmentsService {
     // Use CacheService key factory for proper key generation (single source of truth)
     // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
     // Use patient-specific caching for better healthcare optimization
-    const cacheKey = this.cacheService.getKeyFactory().patient(userId, clinicId, 'upcoming_appointments');
+    const cacheKey = this.cacheService
+      .getKeyFactory()
+      .patient(userId, clinicId, 'upcoming_appointments');
 
     return this.cacheService.cache(
       cacheKey,
@@ -1256,14 +1295,16 @@ export class AppointmentsService {
       const allAppointments: AppointmentWithRelations[] = [];
 
       if (confirmedResult.success && confirmedResult.data) {
-        const confirmedAppointments = (confirmedResult.data as { appointments: AppointmentWithRelations[] })
-          .appointments;
+        const confirmedAppointments = (
+          confirmedResult.data as { appointments: AppointmentWithRelations[] }
+        ).appointments;
         allAppointments.push(...confirmedAppointments);
       }
 
       if (scheduledResult.success && scheduledResult.data) {
-        const scheduledAppointments = (scheduledResult.data as { appointments: AppointmentWithRelations[] })
-          .appointments;
+        const scheduledAppointments = (
+          scheduledResult.data as { appointments: AppointmentWithRelations[] }
+        ).appointments;
         allAppointments.push(...scheduledAppointments);
       }
 
@@ -1513,37 +1554,49 @@ export class AppointmentsService {
       );
 
       if (!followUpPlan) {
-        throw this.errors.notFound('Follow-up plan', followUpPlanId, 'AppointmentsService.scheduleFollowUpFromPlan');
+        throw this.errors.notFound(
+          'Follow-up plan',
+          followUpPlanId,
+          'AppointmentsService.scheduleFollowUpFromPlan'
+        );
       }
 
       // Get original appointment to extract details
-      const originalAppointment = await this.getAppointmentById(
-        followUpPlan.appointmentId as string,
+      const followUpPlanAppointmentId = followUpPlan['appointmentId'] as string | undefined;
+      if (!followUpPlanAppointmentId) {
+        throw this.errors.notFound(
+          'Follow-up plan',
+          followUpPlanId,
+          'AppointmentsService.scheduleFollowUpFromPlan'
+        );
+      }
+      const originalAppointment = (await this.getAppointmentById(
+        followUpPlanAppointmentId,
         clinicId
-      ) as AppointmentWithRelations;
+      )) as AppointmentWithRelations;
 
       if (!originalAppointment) {
         throw this.errors.appointmentNotFound(
-          followUpPlan.appointmentId as string,
+          followUpPlanAppointmentId,
           'AppointmentsService.scheduleFollowUpFromPlan'
         );
       }
 
       // Create appointment from follow-up plan
+      // scheduleDto.appointmentDate is already in ISO format, use it directly
       const appointmentData: CreateAppointmentDto = {
-        patientId: followUpPlan.patientId as string,
+        patientId: followUpPlan['patientId'] as string,
         doctorId: scheduleDto.doctorId,
         clinicId,
-        locationId: scheduleDto.locationId || originalAppointment.locationId,
-        date: scheduleDto.appointmentDate,
-        time: scheduleDto.time || '10:00',
-        type: (followUpPlan.followUpType as string) || 'FOLLOW_UP',
-        notes: followUpPlan.instructions as string,
-        priority: (followUpPlan.priority as string) || 'NORMAL',
+        appointmentDate: scheduleDto.appointmentDate,
+        duration: originalAppointment.duration || 30,
+        type: (followUpPlan['followUpType'] as AppointmentType) || AppointmentType.FOLLOW_UP,
+        notes: followUpPlan['instructions'] as string,
+        priority: (followUpPlan['priority'] as AppointmentPriority) || AppointmentPriority.NORMAL,
       };
 
       const appointmentResult = await this.createAppointment(
-        appointmentData as CreateAppointmentDto,
+        appointmentData,
         userId,
         clinicId,
         'USER'
@@ -1554,7 +1607,9 @@ export class AppointmentsService {
         operation: 'updateFollowUpStatus',
         followUpPlanId,
         status: 'scheduled',
-        followUpAppointmentId: (appointmentResult.data as Record<string, unknown>)?.['id'] as string,
+        followUpAppointmentId: (appointmentResult.data as Record<string, unknown>)?.[
+          'id'
+        ] as string,
       });
 
       await this.loggingService.log(
@@ -1623,85 +1678,88 @@ export class AppointmentsService {
       // OPTIMIZED: Single query with eager loading to eliminate N+1 problem (10M+ users scale)
       // Uses indexed field @@index([parentAppointmentId]) for efficient query
       // Eager loads parent appointment and all follow-ups with their plans in ONE query
-      const appointmentChain = await this.databaseService.executeHealthcareRead(
-        async client => {
-          return await (client as unknown as {
+      const appointmentChain = (await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
             appointment: {
               findUnique: <T>(args: T) => Promise<unknown>;
             };
-          }).appointment.findUnique({
-            where: { id: appointmentId, clinicId },
-            include: {
-              // Eager load parent appointment (if exists)
-              parentAppointment: {
-                select: {
-                  id: true,
-                  date: true,
-                  status: true,
-                  type: true,
-                  doctor: {
-                    select: {
-                      id: true,
-                      user: {
-                        select: {
-                          name: true,
-                        },
+          }
+        ).appointment.findUnique({
+          where: { id: appointmentId, clinicId },
+          include: {
+            // Eager load parent appointment (if exists)
+            parentAppointment: {
+              select: {
+                id: true,
+                date: true,
+                status: true,
+                type: true,
+                doctor: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
                       },
                     },
                   },
-                  patient: {
-                    select: {
-                      id: true,
-                      user: {
-                        select: {
-                          name: true,
-                        },
+                },
+                patient: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
                       },
                     },
                   },
                 },
               },
-              // Eager load all follow-ups with their plans (eliminates N+1)
-              followUpAppointments: {
-                include: {
-                  followUpPlan: true,
-                  doctor: {
-                    select: {
-                      id: true,
-                      user: {
-                        select: {
-                          name: true,
-                        },
-                      },
-                    },
-                  },
-                  patient: {
-                    select: {
-                      id: true,
-                      user: {
-                        select: {
-                          name: true,
-                        },
-                      },
-                    },
-                  },
-                },
-                orderBy: { date: 'asc' }, // Order by date for chronological order
-              },
-              // Include follow-up plan if this appointment has one
-              followUpPlan: true,
             },
-          });
-        },
-        {
-          enableCache: true,
-          cacheTTL: 300, // Cache for 5 minutes
-          cacheKey: `appointment:chain:${appointmentId}`,
-        }
-      );
+            // Eager load all follow-ups with their plans (eliminates N+1)
+            followUpAppointments: {
+              include: {
+                followUpPlan: true,
+                doctor: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
+                      },
+                    },
+                  },
+                },
+                patient: {
+                  select: {
+                    id: true,
+                    user: {
+                      select: {
+                        name: true,
+                      },
+                    },
+                  },
+                },
+              },
+              orderBy: { date: 'asc' }, // Order by date for chronological order
+            },
+            // Include follow-up plan if this appointment has one
+            followUpPlan: true,
+          },
+        });
+      })) as
+        | (AppointmentWithRelations & {
+            followUpAppointments?: AppointmentWithRelations[];
+            parentAppointment?: AppointmentWithRelations;
+          })
+        | null;
 
       if (!appointmentChain) {
-        throw this.errors.appointmentNotFound(appointmentId, 'AppointmentsService.getAppointmentChain');
+        throw this.errors.appointmentNotFound(
+          appointmentId,
+          'AppointmentsService.getAppointmentChain'
+        );
       }
 
       const originalAppointment = appointmentChain;
@@ -1725,10 +1783,10 @@ export class AppointmentsService {
         followUps: followUpAppointments,
         totalAppointments: 1 + followUpAppointments.length,
         completed: followUpAppointments.filter(
-          (apt: { status?: string }) => apt.status === AppointmentStatus.COMPLETED
+          (apt: { status?: string }) => String(apt.status) === String(AppointmentStatus.COMPLETED)
         ).length,
         pending: followUpAppointments.filter(
-          (apt: { status?: string }) => apt.status !== AppointmentStatus.COMPLETED
+          (apt: { status?: string }) => String(apt.status) !== String(AppointmentStatus.COMPLETED)
         ).length,
       };
     } catch (_error) {
@@ -2061,11 +2119,7 @@ export class AppointmentsService {
   /**
    * Get recurring appointment series details
    */
-  async getRecurringSeries(
-    seriesId: string,
-    clinicId: string,
-    userId: string
-  ): Promise<unknown> {
+  async getRecurringSeries(seriesId: string, clinicId: string, userId: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
@@ -2083,23 +2137,34 @@ export class AppointmentsService {
 
       // Get appointments with seriesId (uses indexed field @@index([seriesId]) for efficient query)
       // Index ensures fast lookup even with 10M+ appointments
-      const appointments = await this.databaseService.findAppointmentsSafe(
-        {
-          clinicId,
-          seriesId,
-        },
-        {
-          orderBy: { seriesSequence: 'asc' }, // Order by sequence for proper series order
-        }
-      );
+      // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
+      const appointments = await this.databaseService.executeHealthcareRead(async client => {
+        const appointmentDelegate = client['appointment'] as unknown as {
+          findMany: (args: {
+            where: { clinicId: string; seriesId: string };
+            orderBy: { seriesSequence: 'asc' };
+          }) => Promise<AppointmentWithRelations[]>;
+        };
+        return await appointmentDelegate.findMany({
+          where: {
+            clinicId,
+            seriesId,
+          },
+          orderBy: { seriesSequence: 'asc' },
+        });
+      });
 
       // Get series metadata from first appointment or template service
       const seriesData = {
         seriesId,
         appointments,
         totalAppointments: appointments.length,
-        completed: appointments.filter(apt => apt.status === AppointmentStatus.COMPLETED).length,
-        pending: appointments.filter(apt => apt.status !== AppointmentStatus.COMPLETED).length,
+        completed: appointments.filter(
+          apt => String(apt.status) === String(AppointmentStatus.COMPLETED)
+        ).length,
+        pending: appointments.filter(
+          apt => String(apt.status) !== String(AppointmentStatus.COMPLETED)
+        ).length,
       };
 
       await this.loggingService.log(
@@ -2165,20 +2230,28 @@ export class AppointmentsService {
       if (updateDto.status === 'cancelled') {
         const now = new Date();
         // Get all appointments in series first (uses indexed seriesId)
-        const allAppointments = await this.databaseService.findAppointmentsSafe(
-          {
-            clinicId,
-            seriesId,
-          },
-          {
+        // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
+        const allAppointments = await this.databaseService.executeHealthcareRead(async client => {
+          const appointmentDelegate = client['appointment'] as unknown as {
+            findMany: (args: {
+              where: { clinicId: string; seriesId: string };
+              orderBy: { date: 'asc' };
+            }) => Promise<AppointmentWithRelations[]>;
+          };
+          return await appointmentDelegate.findMany({
+            where: {
+              clinicId,
+              seriesId,
+            },
             orderBy: { date: 'asc' },
-          }
-        );
-        
+          });
+        });
+
         // Filter future appointments in memory (small dataset per series, acceptable)
         // For very large series, consider database-level filtering with date range
         const futureAppointments = allAppointments.filter(
-          apt => new Date(apt.date) > now && apt.status !== AppointmentStatus.COMPLETED
+          apt =>
+            new Date(apt.date) > now && String(apt.status) !== String(AppointmentStatus.COMPLETED)
         );
 
         for (const appointment of futureAppointments) {

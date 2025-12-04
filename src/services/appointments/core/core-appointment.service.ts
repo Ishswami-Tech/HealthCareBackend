@@ -7,13 +7,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
-import {
-  QueueService,
-  APPOINTMENT_QUEUE,
-  NOTIFICATION_QUEUE,
-  ANALYTICS_QUEUE,
-  QUEUE_PRIORITIES,
-} from '@infrastructure/queue';
+import { QueueService } from '@infrastructure/queue';
 import { DatabaseService } from '@infrastructure/database';
 import { HealthcareErrorsService } from '@core/errors';
 
@@ -787,7 +781,7 @@ export class CoreAppointmentService {
     try {
       // Queue notification job using QueueService
       await this.queueService.addJob(
-        NOTIFICATION_QUEUE,
+        QueueService.NOTIFICATION_QUEUE as string,
         'APPOINTMENT_NOTIFICATION',
         {
           appointmentId: appointment.id,
@@ -795,7 +789,7 @@ export class CoreAppointmentService {
           context: _context,
         },
         {
-          priority: QUEUE_PRIORITIES.NORMAL,
+          priority: (QueueService.PRIORITIES as { NORMAL: number }).NORMAL,
           delay: 0,
           attempts: 3,
         }
@@ -803,7 +797,7 @@ export class CoreAppointmentService {
 
       // Queue analytics job using QueueService
       await this.queueService.addJob(
-        ANALYTICS_QUEUE,
+        QueueService.ANALYTICS_QUEUE as string,
         'APPOINTMENT_ANALYTICS',
         {
           appointmentId: appointment.id,
@@ -811,7 +805,7 @@ export class CoreAppointmentService {
           context: _context,
         },
         {
-          priority: QUEUE_PRIORITIES.LOW,
+          priority: (QueueService.PRIORITIES as { LOW: number }).LOW,
           delay: 5000, // 5 second delay
           attempts: 2,
         }
@@ -819,7 +813,7 @@ export class CoreAppointmentService {
 
       // Queue appointment processing job using QueueService
       await this.queueService.addJob(
-        APPOINTMENT_QUEUE,
+        QueueService.APPOINTMENT_QUEUE as string,
         'APPOINTMENT_PROCESSING',
         {
           appointmentId: appointment.id,
@@ -827,7 +821,7 @@ export class CoreAppointmentService {
           context: _context,
         },
         {
-          priority: QUEUE_PRIORITIES.HIGH,
+          priority: (QueueService.PRIORITIES as { HIGH: number }).HIGH,
           delay: 0,
           attempts: 3,
         }
@@ -970,10 +964,25 @@ export class CoreAppointmentService {
       const endDate = new Date(date);
       endDate.setDate(endDate.getDate() + 1);
 
-      const appointments = await this.databaseService.findAppointmentsSafe({
+      const appointmentsResult = await this.databaseService.findAppointmentsSafe({
         doctorId,
         status: 'SCHEDULED',
       });
+
+      // Ensure appointments is an array
+      // findAppointmentsSafe should return AppointmentWithRelations[], but handle edge cases
+      type AppointmentItem = Record<string, unknown> & { id?: string; time?: string };
+      let appointments: AppointmentItem[] = [];
+      if (Array.isArray(appointmentsResult)) {
+        appointments = appointmentsResult as unknown as AppointmentItem[];
+      } else if (
+        appointmentsResult &&
+        typeof appointmentsResult === 'object' &&
+        'data' in appointmentsResult
+      ) {
+        const data = (appointmentsResult as { data: unknown }).data;
+        appointments = Array.isArray(data) ? (data as AppointmentItem[]) : [];
+      }
 
       // Generate time slots (9 AM to 6 PM)
       const timeSlots = [];
@@ -981,17 +990,19 @@ export class CoreAppointmentService {
         for (let minute = 0; minute < 60; minute += 30) {
           const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
           const isBooked = appointments.some(
-            (apt: unknown) => (apt as Record<string, unknown>)['time'] === time
+            (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
           );
+
+          const bookedAppointment = isBooked
+            ? appointments.find(
+                (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
+              )
+            : null;
 
           timeSlots.push({
             time,
             available: !isBooked,
-            appointmentId: isBooked
-              ? appointments.find(
-                  (apt: unknown) => (apt as Record<string, unknown>)['time'] === time
-                )?.id
-              : null,
+            appointmentId: bookedAppointment?.id ?? null,
           });
         }
       }

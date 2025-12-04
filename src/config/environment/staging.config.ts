@@ -1,6 +1,7 @@
 import type { Config } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
 import { parseInteger, parseBoolean, removeTrailingSlash } from './utils';
+import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './validation';
 
 /**
  * Validates required environment variables for staging
@@ -9,7 +10,6 @@ import { parseInteger, parseBoolean, removeTrailingSlash } from './utils';
  * @throws Error if required variables are missing
  */
 function validateStagingConfig(): void {
-  const { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } = require('./validation');
   const result = validateEnvironmentConfig('staging', false);
 
   if (!result.isValid) {
@@ -20,16 +20,16 @@ function validateStagingConfig(): void {
 
 /**
  * Staging environment configuration
- * 
+ *
  * Staging is a production-like environment for testing before production deployment.
  * It uses production-like security settings but with debug logging enabled for troubleshooting.
- * 
+ *
  * Key differences from production:
  * - Debug logging enabled (for testing and troubleshooting)
  * - More lenient error messages
  * - Can use test/staging database
  * - Swagger may be enabled for API testing
- * 
+ *
  * @returns Staging configuration object
  */
 export default function createStagingConfig(): Config {
@@ -62,7 +62,7 @@ export default function createStagingConfig(): Config {
       url:
         process.env['DATABASE_URL_STAGING'] ||
         process.env[ENV_VARS.DATABASE_URL] ||
-        'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        'postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20',
       sqlInjectionPrevention: {
         enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], true), // Production-like security
       },
@@ -145,4 +145,3 @@ export default function createStagingConfig(): Config {
     },
   };
 }
-

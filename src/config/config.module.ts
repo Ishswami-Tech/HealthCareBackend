@@ -11,7 +11,10 @@ import rateLimitConfig from './rate-limit.config';
 import { healthcareConfig } from '@infrastructure/database/config/healthcare.config';
 import { ConfigService } from './config.service';
 import { ENV_VARS } from './constants';
-import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './environment/validation';
+import {
+  validateEnvironmentConfig,
+  getEnvironmentValidationErrorMessage,
+} from './environment/validation';
 
 /**
  * Load environment variables using dotenv with proper priority
@@ -40,7 +43,7 @@ loadEnvironmentVariables();
 /**
  * Get the appropriate config factory based on NODE_ENV
  * Supports: development, production, staging, test
- * 
+ *
  * @returns Config factory function
  */
 function getConfigFactory() {

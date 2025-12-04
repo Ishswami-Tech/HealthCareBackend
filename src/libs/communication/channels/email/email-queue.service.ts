@@ -3,7 +3,6 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
 import { LoggingService } from '@logging';
 import { QueueService } from '@infrastructure/queue';
-import { EMAIL_QUEUE } from '@infrastructure/queue';
 import { LogType, LogLevel } from '@core/types';
 
 export interface EmailQueueData {
@@ -50,7 +49,7 @@ export interface EmailQueueStats {
 export class EmailQueueService {
   constructor(
     @Optional()
-    @InjectQueue(EMAIL_QUEUE)
+    @InjectQueue(QueueService.EMAIL_QUEUE as string)
     private readonly emailQueue: Queue<EmailQueueData> | null,
     private readonly queueService: QueueService,
     private readonly loggingService: LoggingService
@@ -70,7 +69,7 @@ export class EmailQueueService {
     try {
       const priorityString = options?.priority || emailData.priority || 'normal';
       const job = await this.queueService.addJob<EmailQueueData>(
-        EMAIL_QUEUE,
+        QueueService.EMAIL_QUEUE as string,
         'send-email',
         emailData,
         {
@@ -133,7 +132,7 @@ export class EmailQueueService {
 
         for (const emailData of batch) {
           const job = await this.queueService.addJob<EmailQueueData>(
-            EMAIL_QUEUE,
+            QueueService.EMAIL_QUEUE as string,
             'send-bulk-email',
             {
               ...emailData,
@@ -338,7 +337,8 @@ export class EmailQueueService {
 
   async getQueueStats(): Promise<EmailQueueStats> {
     try {
-      const metrics = await this.queueService.getQueueMetrics(EMAIL_QUEUE);
+      // Using string literal that matches QueueService.EMAIL_QUEUE
+      const metrics = await this.queueService.getQueueMetrics('email-queue');
       return {
         waiting: metrics.waiting,
         active: metrics.active,
@@ -371,7 +371,9 @@ export class EmailQueueService {
 
   async getFailedJobs(start = 0, end = -1): Promise<Job<EmailQueueData>[]> {
     try {
-      const jobs = await this.queueService.getJobs(EMAIL_QUEUE, { status: ['failed'] });
+      const jobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE, {
+        status: ['failed'],
+      });
       // Apply start/end range if specified
       if (end === -1) {
         return jobs.slice(start) as Job<EmailQueueData>[];
@@ -435,7 +437,7 @@ export class EmailQueueService {
 
   async clearCompletedJobs(): Promise<number> {
     try {
-      const completedJobs = await this.queueService.getJobs(EMAIL_QUEUE, {
+      const completedJobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE as string, {
         status: ['completed'],
       });
       let clearedCount = 0;
@@ -580,8 +582,10 @@ export class EmailQueueService {
   }> {
     try {
       const stats = await this.getQueueStats();
-      const metrics = await this.queueService.getQueueMetrics(EMAIL_QUEUE);
-      const jobs = await this.queueService.getJobs(EMAIL_QUEUE, { status: ['completed'] });
+      const metrics = await this.queueService.getQueueMetrics(QueueService.EMAIL_QUEUE as string);
+      const jobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE, {
+        status: ['completed'],
+      });
       const completed = jobs.slice(0, 99);
 
       // Calculate performance metrics

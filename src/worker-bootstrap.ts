@@ -12,14 +12,14 @@
 
 import { NestFactory } from '@nestjs/core';
 import type { INestApplication } from '@nestjs/common';
+import { Module, forwardRef, type DynamicModule } from '@nestjs/common';
 import { ConfigService } from '@config';
+import { ConfigModule } from '@config';
 import { DatabaseModule } from '@infrastructure/database';
-import { CacheModule } from '@infrastructure/cache/cache.module';
-import { QueueModule } from '@infrastructure/queue/src/queue.module';
+import { CacheModule } from '@infrastructure/cache';
+import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
 import type { LoggingService } from '@infrastructure/logging';
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@config';
 import { ResilienceModule } from '@core/resilience';
 import { EventsModule } from '@infrastructure/events';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -45,7 +45,17 @@ import {
     DatabaseModule,
     LoggingModule,
     ErrorsModule, // Provides CacheErrorHandler globally - required before CacheModule
-    CacheModule,
+    // Use forRoot() to exclude CacheWarmingService in worker
+    // Worker only needs CacheService for queue processing, not cron jobs
+    // Note: forwardRef needed due to circular dependency with ConfigModule/DatabaseModule
+    forwardRef(() => {
+      // TypeScript has trouble inferring types in forwardRef with circular dependencies
+      // Use double assertion to work around this
+      const CacheModuleRef = CacheModule as unknown as {
+        forRoot: () => DynamicModule;
+      };
+      return CacheModuleRef.forRoot();
+    }),
     ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
     EventsModule, // Central event system - required for queue event emissions
     QueueModule.forRoot(),
@@ -76,6 +86,11 @@ async function bootstrap() {
       const { LogType, LogLevel } = await import('@core/types');
 
       if (logService) {
+        // Use ConfigService for all cache configuration (single source of truth)
+        const cacheProvider = configService.getCacheProvider();
+        const cacheHost = configService.getCacheHost();
+        const cachePort = configService.getCachePort();
+
         await logService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
@@ -83,25 +98,15 @@ async function bootstrap() {
           'WorkerBootstrap',
           {
             serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
-            redisHost: (() => {
-              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-              const useDragonfly = cacheProvider === 'dragonfly';
-              return useDragonfly
-                ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-                : process.env['REDIS_HOST'] || 'localhost';
-            })(),
-            redisPort: (() => {
-              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-              const useDragonfly = cacheProvider === 'dragonfly';
-              return useDragonfly
-                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-            })(),
+            cacheProvider,
+            cacheHost,
+            cachePort,
           }
         );
       }
-    } catch {
-      // Fallback to console.error/warn if LoggingService fails
+    } catch (error) {
+      // Fallback logging only if LoggingService completely fails
+      // This is acceptable as a last resort fallback when LoggingService is unavailable
       console.error('✅ Healthcare Worker initialized successfully');
       console.error(
         `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
@@ -111,8 +116,12 @@ async function bootstrap() {
       const cacheHost = configService.getCacheHost();
       const cachePort = configService.getCachePort();
       console.error(
-        `📊 ${cacheProvider === 'dragonfly' ? 'Dragonfly' : 'Redis'} Connection: ${cacheHost}:${cachePort}`
+        `📊 ${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`
       );
+      // Log the error that prevented LoggingService from being used
+      if (error instanceof Error) {
+        console.error(`⚠️ LoggingService initialization failed: ${error.message}`);
+      }
     }
 
     // Setup process error handlers using ProcessErrorHandlersService
@@ -165,6 +174,7 @@ async function bootstrap() {
               {}
             );
           } else {
+            // Fallback logging only if LoggingService is not available
             console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
           }
           try {
@@ -186,6 +196,7 @@ async function bootstrap() {
                 }
               );
             } else {
+              // Fallback logging only if LoggingService is not available
               console.error(`❌ Error during ${signal} shutdown:`, shutdownError);
             }
             process.exit(1);
@@ -204,7 +215,19 @@ async function bootstrap() {
 
     // Health check endpoint for Docker
     if (process.argv.includes('--healthcheck')) {
-      console.error('✅ Worker health check passed');
+      if (logService) {
+        const { LogType, LogLevel } = await import('@core/types');
+        await logService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Worker health check passed',
+          'WorkerBootstrap',
+          {}
+        );
+      } else {
+        // Fallback logging only if LoggingService is not available
+        console.error('✅ Worker health check passed');
+      }
       process.exit(0);
     }
 
@@ -219,6 +242,7 @@ async function bootstrap() {
         {}
       );
     } else {
+      // Fallback logging only if LoggingService is not available
       console.error('🔄 Worker is running and processing queues...');
     }
   } catch (error) {
@@ -232,6 +256,7 @@ async function bootstrap() {
         { error: error instanceof Error ? error.message : String(error) }
       );
     } else {
+      // Fallback logging only if LoggingService is not available
       console.error('❌ Worker failed to start:', error);
     }
     process.exit(1);
@@ -242,7 +267,8 @@ async function bootstrap() {
 // These fallback handlers are only used if ProcessErrorHandlersService is not available
 // They will be replaced once the service is initialized
 
-bootstrap().catch(error => {
-  console.error('🚨 Bootstrap failed:', error);
+bootstrap().catch((error: unknown) => {
+  // Bootstrap-level error handler - LoggingService may not be available yet
+  console.error('🚨 Bootstrap failed:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

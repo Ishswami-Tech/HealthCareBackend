@@ -8,7 +8,7 @@ import { ConfigModule } from '@config';
 import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { BullModule } from '@nestjs/bullmq';
-import { EMAIL_QUEUE } from '@infrastructure/queue';
+import { QueueService } from '@infrastructure/queue';
 
 /**
  * Email Module
@@ -37,7 +37,7 @@ import { EMAIL_QUEUE } from '@infrastructure/queue';
     ...(process.env['CACHE_ENABLED'] === 'true'
       ? [
           BullModule.registerQueue({
-            name: EMAIL_QUEUE,
+            name: QueueService.EMAIL_QUEUE,
           }), // Register queue for @InjectQueue decorator
         ]
       : []),

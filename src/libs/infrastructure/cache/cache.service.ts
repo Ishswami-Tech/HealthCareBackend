@@ -8,7 +8,14 @@
  * Provider is selected via configuration (CACHE_PROVIDER environment variable).
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 import { ConfigService } from '@config';
 
 // Interfaces - Centralized
@@ -25,6 +32,9 @@ import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-
 import { CacheErrorHandler } from '@core/errors';
 import { CacheOptionsBuilder } from '@infrastructure/cache/builders/cache-options.builder';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
+
+// Multi-Layer Cache (L1) - Optional
+import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cache.service';
 
 // Types
 import type { CacheOperationOptions, HealthcareCacheConfig } from '@core/types';
@@ -47,6 +57,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   private config!: HealthcareCacheConfig;
   private advancedProvider!: IAdvancedCacheProvider;
 
+  private enableL1: boolean;
+  private l1TTL: number;
+
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
@@ -65,16 +78,26 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => InMemoryCacheService))
+    private readonly l1CacheService: InMemoryCacheService | null
   ) {
     // Don't load config in constructor - wait for onModuleInit
     // ConfigService might not be fully initialized yet
+    // L1 cache configuration will be loaded in onModuleInit
+    this.enableL1 = false; // Will be set in onModuleInit
+    this.l1TTL = 30; // Default, will be overridden in onModuleInit
   }
 
   async onModuleInit(): Promise<void> {
     // Load config after module initialization when all dependencies are ready
     this.config = this.loadConfig();
     this.advancedProvider = this.providerFactory.getProvider();
+
+    // Load L1 cache configuration
+    this.enableL1 = this.configService.getEnvBoolean('L1_CACHE_ENABLED', true);
+    this.l1TTL = this.configService.getEnvNumber('L1_CACHE_DEFAULT_TTL', 30);
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -84,6 +107,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       {
         features: this.featureFlags.getFlags(),
         version: this.versioning.getCurrentVersion(),
+        l1CacheEnabled: this.enableL1 && this.l1CacheService !== null,
+        multiLayer: this.enableL1 && this.l1CacheService !== null,
       }
     );
   }
@@ -210,6 +235,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   /**
    * Cache data with automatic fetch on miss
    * This is the main method to use for all caching needs
+   *
+   * Now supports multi-layer caching (L1 → L2 → L3):
+   * - L1: In-memory cache (fastest, process-local)
+   * - L2: Distributed cache (Redis/Dragonfly - this service)
+   * - L3: Database (via fetchFn)
    */
   async cache<T>(
     key: string,
@@ -243,6 +273,22 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         return await fetchFn();
       }
 
+      // L1: Check in-memory cache first (if enabled)
+      if (this.enableL1 && this.l1CacheService && !options.forceRefresh) {
+        const l1Value = this.l1CacheService.get<T>(key);
+        if (l1Value !== null) {
+          // L1 hit - return immediately (fastest path)
+          const responseTime = Date.now() - startTime;
+          if (this.metrics) {
+            this.metrics.recordOperation(true, responseTime, true);
+          }
+          if (this.circuitBreaker) {
+            this.circuitBreaker.recordSuccess();
+          }
+          return l1Value;
+        }
+      }
+
       // Check if key exists before executing strategy (for hit tracking)
       let keyExists = false;
       try {
@@ -253,7 +299,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Execute cache operation (strategy handles hit/miss, stale data, SWR internally)
+      // This is L2 (distributed cache)
       const result = await this.cacheRepository.cache(key, fetchFn, options);
+
+      // Populate L1 after L2 cache operation (if enabled)
+      if (this.enableL1 && this.l1CacheService) {
+        // Use shorter TTL for L1 (typically 30s) vs L2 (longer TTL from options)
+        const l1TTL = options.ttl ? Math.min(options.ttl, this.l1TTL) : this.l1TTL;
+        this.l1CacheService.set(key, result, l1TTL);
+      }
 
       // Record success with hit/miss tracking
       if (this.circuitBreaker) {
@@ -361,13 +415,38 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async get<T>(key: string): Promise<T | null> {
     this.ensureConfigInitialized();
-    return this.cacheRepository.get<T>(key);
+
+    // L1: Check in-memory cache first (if enabled)
+    if (this.enableL1 && this.l1CacheService) {
+      const l1Value = this.l1CacheService.get<T>(key);
+      if (l1Value !== null) {
+        return l1Value;
+      }
+    }
+
+    // L2: Check distributed cache
+    const l2Value = await this.cacheRepository.get<T>(key);
+
+    // Populate L1 if L2 hit
+    if (l2Value !== null && this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.set(key, l2Value, this.l1TTL);
+    }
+
+    return l2Value;
   }
 
   async set<T>(key: string, value: T, ttl?: number): Promise<void> {
     this.ensureConfigInitialized();
     const options: CacheOperationOptions = ttl !== undefined ? { ttl } : {};
+
+    // Set in L2 (distributed cache)
     await this.cacheRepository.set(key, value, options);
+
+    // Set in L1 (in-memory cache) with shorter TTL
+    if (this.enableL1 && this.l1CacheService) {
+      const l1TTL = ttl ? Math.min(ttl, this.l1TTL) : this.l1TTL;
+      this.l1CacheService.set(key, value, l1TTL);
+    }
   }
 
   async del(...keys: string[]): Promise<number> {
@@ -404,7 +483,16 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidateCacheByPattern(pattern: string): Promise<number> {
-    return this.cacheRepository.invalidateByPattern(pattern);
+    // Invalidate L2 (distributed cache)
+    const count = await this.cacheRepository.invalidateByPattern(pattern);
+
+    // L1 doesn't support pattern matching, so clear it entirely
+    // This is acceptable since L1 is small and fast to rebuild
+    if (this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.clear();
+    }
+
+    return count;
   }
 
   async invalidateByPattern(pattern: string): Promise<number> {
@@ -416,7 +504,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidateCacheByTag(tag: string): Promise<number> {
-    return this.cacheRepository.invalidateByTags([tag]);
+    // Invalidate L2 (distributed cache)
+    const count = await this.cacheRepository.invalidateByTags([tag]);
+
+    // L1 doesn't support tags, so clear it entirely
+    if (this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.clear();
+    }
+
+    return count;
   }
 
   async invalidatePatientCache(patientId: string, clinicId?: string): Promise<number> {
@@ -661,7 +757,15 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async delete(key: string): Promise<boolean> {
-    return this.cacheRepository.delete(key);
+    // Delete from L2 (distributed cache)
+    const deleted = await this.cacheRepository.delete(key);
+
+    // Delete from L1 (in-memory cache)
+    if (this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.delete(key);
+    }
+
+    return deleted;
   }
 
   // ===== HASH OPERATIONS =====
@@ -830,14 +934,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  warmHealthcareCache(_clinicId: string): void {
-    // Placeholder for healthcare cache warming
-    void this.loggingService.log(
+  /**
+   * Warm healthcare-specific caches
+   * This method is a convenience wrapper that delegates to CacheWarmingService
+   * For comprehensive warming, use CacheWarmingService directly
+   *
+   * @param clinicId - Clinic ID to warm caches for
+   */
+  async warmHealthcareCache(clinicId: string): Promise<void> {
+    await this.loggingService.log(
       LogType.CACHE,
       LogLevel.INFO,
       'Healthcare cache warming initiated',
       'CacheService',
-      {}
+      { clinicId }
+    );
+
+    // Delegate to warmClinicCache which handles healthcare-specific warming
+    await this.warmClinicCache(clinicId);
+
+    await this.loggingService.log(
+      LogType.CACHE,
+      LogLevel.INFO,
+      'Healthcare cache warming completed',
+      'CacheService',
+      { clinicId }
     );
   }
 }

@@ -89,7 +89,8 @@ export class UsersController {
   })
   @ApiOperation({
     summary: 'Get user profile',
-    description: 'Retrieve the profile of the currently authenticated user. Cached for performance.',
+    description:
+      'Retrieve the profile of the currently authenticated user. Cached for performance.',
     operationId: 'getUserProfile',
   })
   @ApiResponse({

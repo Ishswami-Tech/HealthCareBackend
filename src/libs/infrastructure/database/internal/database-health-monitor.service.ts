@@ -60,7 +60,7 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
       'Database health monitor service initialized',
       this.serviceName
     );
-    
+
     // Wait for Prisma to be ready before starting health monitoring
     if (this.prismaService) {
       const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
@@ -165,8 +165,11 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
       };
 
       // Log success periodically (every 5 minutes) to confirm database is connected
+      // Use DEBUG level for routine checks to reduce log noise
       const now = Date.now();
-      if (!this.lastSuccessLogTime || now - this.lastSuccessLogTime > 300000) {
+      const shouldLogInfo = !this.lastSuccessLogTime || now - this.lastSuccessLogTime > 300000; // 5 minutes
+
+      if (shouldLogInfo) {
         this.lastSuccessLogTime = now;
         void this.loggingService.log(
           LogType.DATABASE,
@@ -178,6 +181,14 @@ export class DatabaseHealthMonitorService implements OnModuleInit, OnModuleDestr
             latency,
             connectionType: 'dedicated-health-check-pool',
           }
+        );
+      } else {
+        // Log routine checks at DEBUG level to reduce log noise
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Database health check: Connected (latency: ${latency}ms)`,
+          this.serviceName
         );
       }
     } catch (error) {

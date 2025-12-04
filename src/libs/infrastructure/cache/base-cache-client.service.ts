@@ -150,7 +150,7 @@ export abstract class BaseCacheClientService {
     }
 
     // Fallback to process.env if ConfigService not available
-      return process.env[this.PASSWORD_ENV_VAR] || undefined;
+    return process.env[this.PASSWORD_ENV_VAR] || undefined;
   }
 
   /**
