@@ -383,34 +383,34 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           const cacheTime = Date.now() - startTime;
           // Optimized: Record cache hit asynchronously to avoid blocking
           setImmediate(() => {
-          this.metricsService.recordCacheHit(cacheTime);
+            this.metricsService.recordCacheHit(cacheTime);
           });
           // Only log in debug mode for performance (10M+ users)
           if (process.env['LOG_LEVEL'] === 'DEBUG') {
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.DEBUG,
-            `Cache hit for read operation: ${cacheKey.substring(0, 100)}`,
-            this.serviceName,
-            { cacheTime }
-          );
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.DEBUG,
+              `Cache hit for read operation: ${cacheKey.substring(0, 100)}`,
+              this.serviceName,
+              { cacheTime }
+            );
           }
           return cached;
         }
         // Record cache miss asynchronously
         setImmediate(() => {
-        this.metricsService.recordCacheMiss(Date.now() - startTime);
+          this.metricsService.recordCacheMiss(Date.now() - startTime);
         });
       } catch (cacheError) {
         // Cache error should not block query execution
         // Log asynchronously to avoid blocking query path
         setImmediate(() => {
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.WARN,
-          `Cache check failed, proceeding with query: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
-          this.serviceName
-        );
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `Cache check failed, proceeding with query: ${cacheError instanceof Error ? cacheError.message : String(cacheError)}`,
+            this.serviceName
+          );
         });
       }
     }
@@ -506,16 +506,16 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             // Cache asynchronously to avoid blocking response
             setImmediate(() => {
               void this.queryCache.setCached(cacheKey, result, {
-              ttl,
-              containsPHI: queryOptions.hipaaCompliant === true,
-              priority:
+                ttl,
+                containsPHI: queryOptions.hipaaCompliant === true,
+                priority:
                   (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
                   'normal',
-              tags: [
-                'database',
-                'read',
-                ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
-              ],
+                tags: [
+                  'database',
+                  'read',
+                  ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
+                ],
               });
             });
           }
@@ -523,12 +523,12 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
         // Record metrics asynchronously (non-blocking)
         setImmediate(() => {
-        this.metricsService.recordQueryExecution(
-          operationName,
+          this.metricsService.recordQueryExecution(
+            operationName,
             Math.round(executionTime * 100) / 100,
-          true,
-          queryOptions.clinicId
-        );
+            true,
+            queryOptions.clinicId
+          );
         });
 
         return result;
@@ -552,16 +552,16 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             // Cache asynchronously to avoid blocking response
             setImmediate(() => {
               void this.queryCache.setCached(cacheKey, result, {
-              ttl,
-              containsPHI: queryOptions.hipaaCompliant === true,
-              priority:
+                ttl,
+                containsPHI: queryOptions.hipaaCompliant === true,
+                priority:
                   (queryOptions.priority === 'critical' ? 'high' : queryOptions.priority) ||
                   'normal',
-              tags: [
-                'database',
-                'read',
-                ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
-              ],
+                tags: [
+                  'database',
+                  'read',
+                  ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
+                ],
               });
             });
           }
@@ -569,12 +569,12 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
         // Record metrics asynchronously (non-blocking)
         setImmediate(() => {
-        this.metricsService.recordQueryExecution(
-          operationName,
+          this.metricsService.recordQueryExecution(
+            operationName,
             Math.round(executionTime * 100) / 100,
-          true,
-          queryOptions.clinicId
-        );
+            true,
+            queryOptions.clinicId
+          );
         });
 
         return result;
@@ -584,6 +584,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       const dbError = error instanceof Error ? error : new Error(String(error));
 
       // Record circuit breaker failure if applicable
+      // Note: CircuitBreakerService now has startup grace period built-in
       if (this.circuitBreaker) {
         this.circuitBreaker.recordFailure('database');
       }
@@ -593,13 +594,13 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       // Record metrics asynchronously (non-blocking)
       setImmediate(() => {
-      this.metricsService.recordQueryExecution(
-        operationName,
+        this.metricsService.recordQueryExecution(
+          operationName,
           Math.round(executionTime * 100) / 100,
-        false,
-        queryOptions.clinicId,
-        queryOptions.userId
-      );
+          false,
+          queryOptions.clinicId,
+          queryOptions.userId
+        );
       });
 
       void this.loggingService.log(
@@ -761,6 +762,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       const dbError = error instanceof Error ? error : new Error(String(error));
 
       // Record circuit breaker failure if applicable
+      // Note: CircuitBreakerService now has startup grace period built-in
       if (this.circuitBreaker) {
         this.circuitBreaker.recordFailure('database');
       }
@@ -1348,23 +1350,37 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         : 'Unknown';
 
     // Get staff count and location count in parallel (optimized for 2-7ms)
+    // OPTIMIZATION: Use Prisma count() methods instead of raw SQL for better optimization
     const [staffCount, locationCount] = await Promise.all([
-      // Count all staff types associated with clinic
-      this.executeRead(
+      // Count all staff types associated with clinic using optimized Prisma queries
+      this.executeRead<number>(
         async prisma => {
+          // Count doctors through DoctorClinic junction table using Prisma
+          // OPTIMIZATION: Use Prisma's groupBy to count distinct doctors
+          // Note: Prisma doesn't support distinct in count, so we use groupBy and count groups
+          // Use toTransactionClient to get the raw Prisma client with all models
           const client = this.toTransactionClient(prisma);
-          // Count doctors through DoctorClinic junction table
-          const doctorCountResult = await client.$queryRaw<Array<{ count: bigint }>>`
-            SELECT COUNT(DISTINCT "doctorId") as count FROM "DoctorClinic" WHERE "clinicId" = ${clinicId}
-          `;
-          const doctors = Number(doctorCountResult[0]?.count || 0);
+          const doctorGroups = await (
+            client as unknown as {
+              doctorClinic: {
+                groupBy: (args: {
+                  by: string[];
+                  where: { clinicId: string };
+                }) => Promise<Array<{ doctorId: string }>>;
+              };
+            }
+          ).doctorClinic.groupBy({
+            by: ['doctorId'],
+            where: { clinicId },
+          });
+          const doctors = doctorGroups.length;
 
-          // Count receptionists (direct relationship)
+          // Count receptionists (direct relationship) - already using Prisma count
           const receptionists = await prisma.receptionist.count({
             where: { clinicId },
           });
 
-          // Count clinic admins
+          // Count clinic admins - already using Prisma count
           const clinicAdmins = await prisma.clinicAdmin.count({
             where: { clinicId },
           });
@@ -1382,14 +1398,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         }
       ),
 
-      // Count locations
-      this.executeRead(
+      // Count locations using optimized Prisma count
+      this.executeRead<number>(
         async prisma => {
+          // OPTIMIZATION: Use Prisma's count() instead of raw SQL for better optimization
+          // Use toTransactionClient to get the raw Prisma client with all models
           const client = this.toTransactionClient(prisma);
-          const result = await client.$queryRaw<Array<{ count: bigint }>>`
-            SELECT COUNT(*) as count FROM "ClinicLocation" WHERE "clinicId" = ${clinicId}
-          `;
-          return Number(result[0]?.count || 0);
+          return await (
+            client as unknown as {
+              clinicLocation: {
+                count: (args: { where: { clinicId: string } }) => Promise<number>;
+              };
+            }
+          ).clinicLocation.count({
+            where: { clinicId },
+          });
         },
         {
           clinicId,
@@ -1717,6 +1740,13 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
   async findUserByEmailSafe(email: string): Promise<UserWithRelations | null> {
     return this.userMethods.findUserByEmailSafe(email);
+  }
+
+  async findUserByEmailForAuth(
+    email: string
+  ): Promise<(UserWithRelations & { password: string }) | null> {
+    const result = await this.userMethods.findUserByEmailForAuth(email);
+    return result as (UserWithRelations & { password: string }) | null;
   }
 
   async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
@@ -2164,14 +2194,14 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           { tags: uniqueTags, entityType, entityId, clinicId }
         );
       }
-      } catch (error) {
+    } catch (error) {
       // Cache invalidation failures should not block operations
       // Log warning but don't throw
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.WARN,
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.WARN,
         `Cache invalidation failed (non-blocking): ${error instanceof Error ? error.message : String(error)}`,
-          this.serviceName,
+        this.serviceName,
         {
           tags: uniqueTags,
           entityType,
@@ -2179,9 +2209,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           clinicId,
           error: error instanceof Error ? error.stack : String(error),
         }
-        );
-      }
+      );
     }
+  }
 
   /**
    * Automatically invalidate cache after write operations

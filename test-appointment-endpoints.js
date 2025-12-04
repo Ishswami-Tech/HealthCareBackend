@@ -2,7 +2,7 @@
  * Appointment Endpoints Test Script
  * Tests all appointment endpoints one by one
  * Run with: node test-appointment-endpoints.js
- * 
+ *
  * Prerequisites:
  * - Server must be running on http://localhost:8088
  * - You need valid clinic and doctor IDs (set via env vars or defaults)
@@ -64,10 +64,9 @@ async function tryGetClinicFromDatabase() {
 // Helper function to make HTTP requests
 async function makeRequest(method, endpoint, body = null, headers = {}) {
   const url = `${BASE_URL}${endpoint}`;
-  const authHeader = accessToken && typeof accessToken === 'string' 
-    ? `Bearer ${accessToken.trim()}` 
-    : null;
-  
+  const authHeader =
+    accessToken && typeof accessToken === 'string' ? `Bearer ${accessToken.trim()}` : null;
+
   const defaultHeaders = {
     'Content-Type': 'application/json',
     'X-API-Version': '1',
@@ -75,7 +74,7 @@ async function makeRequest(method, endpoint, body = null, headers = {}) {
     ...(clinicId && { 'X-Clinic-ID': clinicId }),
     ...headers,
   };
-  
+
   // Debug: Log token for first appointment request
   if (endpoint.includes('/appointments') && !endpoint.includes('/auth') && authHeader) {
     logInfo(`Sending token: ${authHeader.substring(0, 50)}...`);
@@ -96,7 +95,7 @@ async function makeRequest(method, endpoint, body = null, headers = {}) {
     const timeoutId = setTimeout(() => {
       controller.abort();
     }, 10000);
-    
+
     let response;
     try {
       response = await fetch(url, {
@@ -111,7 +110,7 @@ async function makeRequest(method, endpoint, body = null, headers = {}) {
       }
       throw fetchError;
     }
-    
+
     const data = await response.json().catch(() => ({ message: 'No JSON response' }));
 
     return {
@@ -173,7 +172,7 @@ async function getUserProfile() {
 
   // Use the unified profile endpoint
   const result = await makeRequest('GET', '/user/profile');
-  
+
   if (result.ok && (result.data?.data || result.data)) {
     const user = result.data?.data || result.data;
     // Try to get clinic ID from user profile
@@ -221,27 +220,29 @@ async function tryGetClinicsFromAPI() {
 
   // Try to get clinics (requires CLINIC_ADMIN or SUPER_ADMIN role)
   const result = await makeRequest('GET', '/clinics');
-  
+
   if (result.ok && result.data) {
-    const clinics = Array.isArray(result.data) ? result.data : (result.data?.data || []);
+    const clinics = Array.isArray(result.data) ? result.data : result.data?.data || [];
     if (clinics.length > 0) {
       clinicId = clinics[0].id;
       logSuccess(`Found clinic from API: ${clinics[0].name} (ID: ${clinicId})`);
-      
+
       // Try to get a doctor from this clinic
       if (!doctorId || doctorId === 'test-doctor-123') {
         const doctorsResult = await makeRequest('GET', `/clinics/${clinicId}/doctors`);
         if (doctorsResult.ok && doctorsResult.data) {
-          const doctors = Array.isArray(doctorsResult.data) 
-            ? doctorsResult.data 
-            : (doctorsResult.data?.data || []);
+          const doctors = Array.isArray(doctorsResult.data)
+            ? doctorsResult.data
+            : doctorsResult.data?.data || [];
           if (doctors.length > 0) {
             doctorId = doctors[0].id;
-            logSuccess(`Found doctor from clinic: ${doctors[0].name || 'Doctor'} (ID: ${doctorId})`);
+            logSuccess(
+              `Found doctor from clinic: ${doctors[0].name || 'Doctor'} (ID: ${doctorId})`
+            );
           }
         }
       }
-      
+
       return true;
     }
   } else if (result.status === 403) {
@@ -273,9 +274,11 @@ async function getDoctorIdFromDatabase() {
     });
 
     if (doctorsResult.ok && doctorsResult.data) {
-      const doctors = Array.isArray(doctorsResult.data) 
-        ? doctorsResult.data 
-        : (Array.isArray(doctorsResult.data?.data) ? doctorsResult.data.data : []);
+      const doctors = Array.isArray(doctorsResult.data)
+        ? doctorsResult.data
+        : Array.isArray(doctorsResult.data?.data)
+          ? doctorsResult.data.data
+          : [];
       if (doctors.length > 0) {
         doctorId = doctors[0].id;
         logSuccess(`Found doctor ID from doctors list: ${doctorId}`);
@@ -289,24 +292,29 @@ async function getDoctorIdFromDatabase() {
   // Method 2: Try doctor login with strict timeout (3 seconds max)
   try {
     logInfo('Attempting to login as doctor to get doctor ID (timeout: 3s)...');
-    
+
     // Create a timeout promise that rejects after 3 seconds (shorter timeout)
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Doctor login timeout')), 3000)
     );
-    
+
     // Create login promise with explicit timeout
     const loginPromise = (async () => {
       try {
-        return await makeRequest('POST', '/auth/login', {
-          email: 'doctor1@example.com',
-          password: 'test1234',
-        }, {});
+        return await makeRequest(
+          'POST',
+          '/auth/login',
+          {
+            email: 'doctor1@example.com',
+            password: 'test1234',
+          },
+          {}
+        );
       } catch (error) {
         return { ok: false, data: { message: error.message } };
       }
     })();
-    
+
     // Race between login and timeout
     const doctorLoginResult = await Promise.race([loginPromise, timeoutPromise]).catch(error => {
       if (error.message === 'Doctor login timeout') {
@@ -317,30 +325,42 @@ async function getDoctorIdFromDatabase() {
     });
 
     if (doctorLoginResult && doctorLoginResult.ok) {
-      const doctorToken = doctorLoginResult.data?.data?.accessToken || doctorLoginResult.data?.accessToken;
+      const doctorToken =
+        doctorLoginResult.data?.data?.accessToken || doctorLoginResult.data?.accessToken;
       if (doctorToken) {
         // Get doctor profile with timeout (3 seconds)
-        const profileTimeout = new Promise((_, reject) => 
+        const profileTimeout = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Profile timeout')), 3000)
         );
-        
+
         const profilePromise = (async () => {
           try {
-            return await makeRequest('GET', '/user/profile', {}, {
-              'Authorization': `Bearer ${doctorToken}`,
-              'X-Clinic-ID': clinicId,
-            });
+            return await makeRequest(
+              'GET',
+              '/user/profile',
+              {},
+              {
+                Authorization: `Bearer ${doctorToken}`,
+                'X-Clinic-ID': clinicId,
+              }
+            );
           } catch (error) {
             return { ok: false, data: { message: error.message } };
           }
         })();
-        
-        const doctorProfileResult = await Promise.race([profilePromise, profileTimeout]).catch(() => {
-          logWarning('Doctor profile fetch timed out');
-          return { ok: false, data: { message: 'Profile timeout' } };
-        });
 
-        if (doctorProfileResult && doctorProfileResult.ok && (doctorProfileResult.data?.data || doctorProfileResult.data)) {
+        const doctorProfileResult = await Promise.race([profilePromise, profileTimeout]).catch(
+          () => {
+            logWarning('Doctor profile fetch timed out');
+            return { ok: false, data: { message: 'Profile timeout' } };
+          }
+        );
+
+        if (
+          doctorProfileResult &&
+          doctorProfileResult.ok &&
+          (doctorProfileResult.data?.data || doctorProfileResult.data)
+        ) {
           const doctorUser = doctorProfileResult.data?.data || doctorProfileResult.data;
           doctorId = (doctorUser.id || '').trim();
           if (doctorId) {
@@ -357,21 +377,23 @@ async function getDoctorIdFromDatabase() {
   // Method 3: Try to get doctor ID from an existing appointment (with timeout)
   logInfo('Trying alternative method to get doctor ID...');
   try {
-    const timeoutPromise = new Promise((_, reject) => 
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Timeout')), 5000)
     );
-    
+
     const myAppointmentsPromise = makeRequest('GET', '/appointments/my-appointments', null, {
-      'Authorization': accessToken ? `Bearer ${accessToken}` : undefined,
+      Authorization: accessToken ? `Bearer ${accessToken}` : undefined,
     });
-    
-    const myAppointmentsResult = await Promise.race([myAppointmentsPromise, timeoutPromise]).catch(() => {
-      return { ok: false, data: { message: 'Timeout' } };
-    });
-    
+
+    const myAppointmentsResult = await Promise.race([myAppointmentsPromise, timeoutPromise]).catch(
+      () => {
+        return { ok: false, data: { message: 'Timeout' } };
+      }
+    );
+
     if (myAppointmentsResult && myAppointmentsResult.ok && myAppointmentsResult.data?.data) {
-      const appointments = Array.isArray(myAppointmentsResult.data.data) 
-        ? myAppointmentsResult.data.data 
+      const appointments = Array.isArray(myAppointmentsResult.data.data)
+        ? myAppointmentsResult.data.data
         : [];
       if (appointments.length > 0 && appointments[0].doctor?.id) {
         doctorId = appointments[0].doctor.id;
@@ -382,22 +404,24 @@ async function getDoctorIdFromDatabase() {
   } catch (error) {
     logInfo(`Could not get doctor ID from appointments: ${error.message}`);
   }
-  
+
   logWarning('Could not retrieve doctor ID. Some tests will be skipped.');
-  logInfo('Tip: Set TEST_DOCTOR_ID environment variable or ensure doctor1@example.com exists in database');
+  logInfo(
+    'Tip: Set TEST_DOCTOR_ID environment variable or ensure doctor1@example.com exists in database'
+  );
   return false;
 }
 
 async function testLoginOrRegister() {
   log('\n=== Test 1: Login/Register Test User ===', 'cyan');
-  
+
   // First, try to login with seeded user (has clinic access)
   const seededEmail = 'patient1@example.com';
   const seededPassword = 'test1234';
-  
+
   logInfo(`Attempting to login with seeded user: ${seededEmail}`);
   const loginResult = await testLogin(seededEmail, seededPassword);
-  
+
   if (loginResult) {
     logSuccess('Logged in with seeded user (has clinic access)');
     // Get clinic from profile
@@ -408,12 +432,12 @@ async function testLoginOrRegister() {
     }
     return true;
   }
-  
+
   // If seeded user doesn't work, try registration
   logInfo('Seeded user login failed, trying registration...');
-  const testEmail = `testpatient_${Date.now()}@test.com`;
+  const testEmail = `testappointment_${Date.now()}@test.com`;
   const testPassword = 'TestPassword123!';
-  
+
   const registerData = {
     email: testEmail,
     password: testPassword,
@@ -426,30 +450,45 @@ async function testLoginOrRegister() {
   };
 
   const result = await makeRequest('POST', '/auth/register', registerData, {});
-  
+
   if (result.ok) {
     // Try different response structures
-    const token = result.data?.data?.accessToken || result.data?.accessToken || result.data?.data?.tokens?.accessToken;
+    const token =
+      result.data?.data?.accessToken ||
+      result.data?.accessToken ||
+      result.data?.data?.tokens?.accessToken;
     const user = result.data?.data?.user || result.data?.user;
-    
+
     if (token) {
       logSuccess('Register: OK');
       accessToken = token;
       userId = user?.id || result.data?.data?.user?.id;
-      clinicId = user?.clinicId || result.data?.data?.user?.clinicId || user?.primaryClinicId || clinicId;
+      clinicId =
+        user?.clinicId || result.data?.data?.user?.clinicId || user?.primaryClinicId || clinicId;
       logInfo(`Registered user: ${testEmail}`);
-      logInfo(`Access Token: ${typeof token === 'string' ? token.substring(0, 30) + '...' : 'INVALID TYPE'}`);
+      logInfo(
+        `Access Token: ${typeof token === 'string' ? token.substring(0, 30) + '...' : 'INVALID TYPE'}`
+      );
       logInfo(`User ID: ${userId}`);
       logInfo(`Clinic ID from registration: ${clinicId}`);
-      
+
       // Try to get clinic from user profile
       await getUserProfile();
-      
+
       return true;
     } else {
       logWarning(`Register response missing token: ${JSON.stringify(result.data, null, 2)}`);
       return false;
     }
+  } else if (result.status === 409) {
+    // User already exists, try to login with that email
+    logInfo(`User ${testEmail} already exists, trying to login...`);
+    const loginResult = await testLogin(testEmail, testPassword);
+    if (loginResult) {
+      return true;
+    }
+    logWarning(`Register failed: ${result.status} - User exists but login also failed`);
+    return false;
   } else {
     logWarning(`Register failed: ${result.status} - ${JSON.stringify(result.data)}`);
     return false;
@@ -464,12 +503,15 @@ async function testLogin(email = 'patient@test.com', password = 'TestPassword123
   };
 
   const result = await makeRequest('POST', '/auth/login', loginData, {});
-  
+
   if (result.ok) {
     // Try different response structures
-    const token = result.data?.data?.accessToken || result.data?.accessToken || result.data?.data?.tokens?.accessToken;
+    const token =
+      result.data?.data?.accessToken ||
+      result.data?.accessToken ||
+      result.data?.data?.tokens?.accessToken;
     const user = result.data?.data?.user || result.data?.user;
-    
+
     if (token && typeof token === 'string') {
       logSuccess('Login: OK');
       accessToken = token;
@@ -509,12 +551,25 @@ async function testCreateAppointment() {
   }
 
   // Try to get doctor ID if not set
-  if (!doctorId || doctorId === 'test-doctor-123' || doctorId === 'null' || doctorId === 'undefined') {
+  if (
+    !doctorId ||
+    doctorId === 'test-doctor-123' ||
+    doctorId === 'null' ||
+    doctorId === 'undefined'
+  ) {
     logInfo('Doctor ID not set, attempting to get it...');
     const gotDoctorId = await getDoctorIdFromDatabase();
-    if (!gotDoctorId || !doctorId || doctorId === 'test-doctor-123' || doctorId === 'null' || doctorId === 'undefined') {
+    if (
+      !gotDoctorId ||
+      !doctorId ||
+      doctorId === 'test-doctor-123' ||
+      doctorId === 'null' ||
+      doctorId === 'undefined'
+    ) {
       logWarning(`Skipping - No valid doctor ID available (current: ${doctorId})`);
-      logInfo('Note: Set TEST_DOCTOR_ID environment variable to a real doctor ID from your database');
+      logInfo(
+        'Note: Set TEST_DOCTOR_ID environment variable to a real doctor ID from your database'
+      );
       return false;
     }
   }
@@ -523,7 +578,7 @@ async function testCreateAppointment() {
   if (!locationId && clinicId) {
     try {
       logInfo(`Attempting to get locations for clinic: ${clinicId}`);
-      
+
       // Try my-clinic endpoint first (patients can access this)
       let locationsResult = await Promise.race([
         makeRequest('GET', '/clinics/my-clinic'),
@@ -534,16 +589,20 @@ async function testCreateAppointment() {
         }
         throw error;
       });
-      
+
       // If my-clinic works, extract locations from it
       if (locationsResult.ok && locationsResult.data) {
         const clinicData = locationsResult.data?.data || locationsResult.data;
-        if (clinicData.locations && Array.isArray(clinicData.locations) && clinicData.locations.length > 0) {
+        if (
+          clinicData.locations &&
+          Array.isArray(clinicData.locations) &&
+          clinicData.locations.length > 0
+        ) {
           locationId = clinicData.locations[0].id;
           logSuccess(`Using location ID from my-clinic: ${locationId}`);
         }
       }
-      
+
       // If still no location, try direct locations endpoint (requires staff role)
       if (!locationId) {
         locationsResult = await Promise.race([
@@ -555,11 +614,13 @@ async function testCreateAppointment() {
           }
           throw error;
         });
-        
+
         if (locationsResult.ok && locationsResult.data) {
-          const locations = Array.isArray(locationsResult.data) 
-            ? locationsResult.data 
-            : (Array.isArray(locationsResult.data?.data) ? locationsResult.data.data : []);
+          const locations = Array.isArray(locationsResult.data)
+            ? locationsResult.data
+            : Array.isArray(locationsResult.data?.data)
+              ? locationsResult.data.data
+              : [];
           if (locations.length > 0) {
             locationId = locations[0].id;
             logSuccess(`Using location ID: ${locationId}`);
@@ -567,12 +628,16 @@ async function testCreateAppointment() {
             logWarning('Clinic has no locations');
           }
         } else {
-          logWarning(`Could not get locations: ${locationsResult.status || 'unknown error'} (may require staff role)`);
+          logWarning(
+            `Could not get locations: ${locationsResult.status || 'unknown error'} (may require staff role)`
+          );
         }
       }
-      
+
       if (!locationId) {
-        logInfo('Note: Appointment creation requires a valid location ID. Clinic may need to have locations created.');
+        logInfo(
+          'Note: Appointment creation requires a valid location ID. Clinic may need to have locations created.'
+        );
       }
     } catch (error) {
       logWarning(`Could not get location ID: ${error.message}`);
@@ -608,14 +673,16 @@ async function testCreateAppointment() {
   };
 
   const result = await makeRequest('POST', '/appointments', appointmentData);
-  
+
   if (result.ok && result.data?.data) {
     logSuccess('Create Appointment: OK');
     appointmentId = result.data.data.id || result.data.data.data?.id;
     logInfo(`Appointment ID: ${appointmentId}`);
     return true;
   } else {
-    logError(`Create Appointment failed: ${result.status} - ${JSON.stringify(result.data, null, 2)}`);
+    logError(
+      `Create Appointment failed: ${result.status} - ${JSON.stringify(result.data, null, 2)}`
+    );
     if (result.status === 403 && result.data?.message?.includes('clinic')) {
       logInfo('Tip: User needs to be associated with the clinic. Check clinic access permissions.');
     }
@@ -631,7 +698,7 @@ async function testGetMyAppointments() {
   }
 
   const result = await makeRequest('GET', '/appointments/my-appointments');
-  
+
   if (result.ok) {
     logSuccess('Get My Appointments: OK');
     const appointments = result.data?.data || result.data || [];
@@ -651,7 +718,7 @@ async function testGetAllAppointments() {
   }
 
   const result = await makeRequest('GET', '/appointments');
-  
+
   if (result.ok) {
     logSuccess('Get All Appointments: OK');
     const appointments = result.data?.data || result.data || [];
@@ -694,8 +761,11 @@ async function testGetDoctorAvailability() {
   tomorrow.setDate(tomorrow.getDate() + 1);
   const dateStr = tomorrow.toISOString().split('T')[0];
 
-  const result = await makeRequest('GET', `/appointments/doctor/${cleanDoctorId}/availability?date=${dateStr}`);
-  
+  const result = await makeRequest(
+    'GET',
+    `/appointments/doctor/${cleanDoctorId}/availability?date=${dateStr}`
+  );
+
   if (result.ok) {
     logSuccess('Get Doctor Availability: OK');
     logInfo(`Date checked: ${dateStr}`);
@@ -718,14 +788,18 @@ async function testGetUserUpcomingAppointments() {
   }
 
   const result = await makeRequest('GET', `/appointments/user/${userId}/upcoming`);
-  
+
   if (result.ok) {
     logSuccess('Get User Upcoming Appointments: OK');
     const appointments = result.data || [];
-    logInfo(`Found ${Array.isArray(appointments) ? appointments.length : 0} upcoming appointment(s)`);
+    logInfo(
+      `Found ${Array.isArray(appointments) ? appointments.length : 0} upcoming appointment(s)`
+    );
     return true;
   } else {
-    logError(`Get User Upcoming Appointments failed: ${result.status} - ${JSON.stringify(result.data)}`);
+    logError(
+      `Get User Upcoming Appointments failed: ${result.status} - ${JSON.stringify(result.data)}`
+    );
     return false;
   }
 }
@@ -738,7 +812,7 @@ async function testGetAppointmentById() {
   }
 
   const result = await makeRequest('GET', `/appointments/${appointmentId}`);
-  
+
   if (result.ok) {
     logSuccess('Get Appointment By ID: OK');
     logInfo(`Appointment ID: ${appointmentId}`);
@@ -762,7 +836,7 @@ async function testUpdateAppointment() {
   };
 
   const result = await makeRequest('PUT', `/appointments/${appointmentId}`, updateData);
-  
+
   if (result.ok) {
     logSuccess('Update Appointment: OK');
     return true;
@@ -780,7 +854,7 @@ async function testCancelAppointment() {
   }
 
   const result = await makeRequest('DELETE', `/appointments/${appointmentId}`);
-  
+
   if (result.ok) {
     logSuccess('Cancel Appointment: OK');
     return true;
@@ -798,7 +872,7 @@ async function testCreateVideoRoom() {
   }
 
   const result = await makeRequest('POST', `/appointments/${appointmentId}/video/create-room`);
-  
+
   if (result.ok) {
     logSuccess('Create Video Room: OK');
     return true;
@@ -819,7 +893,7 @@ async function testGenerateVideoJoinToken() {
   }
 
   const result = await makeRequest('POST', `/appointments/${appointmentId}/video/join-token`);
-  
+
   if (result.ok) {
     logSuccess('Generate Video Join Token: OK');
     return true;
@@ -837,7 +911,7 @@ async function testVideoStart() {
   }
 
   const result = await makeRequest('POST', `/appointments/${appointmentId}/video/start`);
-  
+
   if (result.ok) {
     logSuccess('Start Video Consultation: OK');
     return true;
@@ -855,7 +929,7 @@ async function testVideoStatus() {
   }
 
   const result = await makeRequest('GET', `/appointments/${appointmentId}/video/status`);
-  
+
   if (result.ok) {
     logSuccess('Get Video Status: OK');
     return true;
@@ -878,7 +952,7 @@ async function testVideoEnd() {
   const result = await makeRequest('POST', `/appointments/${appointmentId}/video/end`, {
     meetingNotes: 'Test consultation completed',
   });
-  
+
   if (result.ok) {
     logSuccess('End Video Consultation: OK');
     return true;
@@ -899,12 +973,14 @@ async function testReportTechnicalIssue() {
     issueType: 'connection',
     description: 'Test technical issue report',
   });
-  
+
   if (result.ok) {
     logSuccess('Report Technical Issue: OK');
     return true;
   } else {
-    logWarning(`Report Technical Issue failed: ${result.status} - May require active video session`);
+    logWarning(
+      `Report Technical Issue failed: ${result.status} - May require active video session`
+    );
     return false;
   }
 }
@@ -917,7 +993,7 @@ async function testAppointmentContext() {
   }
 
   const result = await makeRequest('GET', '/appointments/test/context');
-  
+
   if (result.ok) {
     logSuccess('Test Appointment Context: OK');
     logInfo(JSON.stringify(result.data, null, 2));
@@ -999,4 +1075,3 @@ runTests().catch(error => {
   console.error(error);
   process.exit(1);
 });
-

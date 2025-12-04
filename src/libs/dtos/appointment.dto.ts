@@ -1386,3 +1386,94 @@ export class UpdateFollowUpPlanDto {
   @IsString({ message: 'Status must be a string' })
   status?: 'scheduled' | 'completed' | 'cancelled' | 'overdue';
 }
+
+/**
+ * Appointment List Response DTO
+ * @class AppointmentListResponseDto
+ * @description Response DTO for list of appointments with pagination
+ */
+export class AppointmentListResponseDto {
+  @ApiProperty({
+    description: 'List of appointments',
+    type: [AppointmentResponseDto],
+  })
+  @IsArray({ message: 'Appointments must be an array' })
+  @ValidateNested({ each: true })
+  @Type(() => AppointmentResponseDto)
+  appointments!: AppointmentResponseDto[];
+
+  @ApiProperty({
+    description: 'Pagination metadata',
+    example: { page: 1, limit: 20, total: 100, totalPages: 5 },
+  })
+  pagination!: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrev: boolean;
+  };
+}
+
+/**
+ * Doctor Availability Response DTO
+ * @class DoctorAvailabilityResponseDto
+ * @description Response DTO for doctor availability information
+ */
+export class DoctorAvailabilityResponseDto {
+  @ApiProperty({
+    example: 'doctor-uuid-123',
+    description: 'Doctor ID',
+  })
+  @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
+  doctorId!: string;
+
+  @ApiProperty({
+    example: '2024-01-15',
+    description: 'Date for availability check',
+  })
+  @IsDateString({}, { message: 'Date must be a valid date string' })
+  date!: string;
+
+  @ApiProperty({
+    example: true,
+    description: 'Whether doctor has available slots',
+  })
+  @IsBoolean({ message: 'Available must be a boolean' })
+  available!: boolean;
+
+  @ApiProperty({
+    example: ['09:00', '10:00', '11:00'],
+    description: 'List of available time slots',
+    type: [String],
+  })
+  @IsArray({ message: 'Available slots must be an array' })
+  @IsString({ each: true, message: 'Each slot must be a string' })
+  availableSlots!: string[];
+
+  @ApiProperty({
+    example: ['14:00', '15:00'],
+    description: 'List of booked time slots',
+    type: [String],
+  })
+  @IsArray({ message: 'Booked slots must be an array' })
+  @IsString({ each: true, message: 'Each slot must be a string' })
+  bookedSlots!: string[];
+
+  @ApiProperty({
+    example: { start: '09:00', end: '18:00' },
+    description: 'Working hours',
+  })
+  workingHours!: {
+    start: string;
+    end: string;
+  };
+
+  @ApiProperty({
+    example: 'Doctor has available slots',
+    description: 'Status message',
+  })
+  @IsString({ message: 'Message must be a string' })
+  message!: string;
+}

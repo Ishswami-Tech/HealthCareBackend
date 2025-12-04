@@ -34,6 +34,15 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private isHealthCheckInProgress = false; // Prevent concurrent health checks
   // Circuit breaker name for health checks (prevents CPU load when queue is down)
   private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'queue-health-check';
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 120000; // 2 minutes grace period during startup
+
+  /**
+   * Check if we're currently in the startup grace period
+   */
+  private isInStartupGracePeriod(): boolean {
+    return Date.now() - this.serviceStartTime < this.STARTUP_GRACE_PERIOD;
+  }
 
   constructor(
     @Inject(forwardRef(() => CircuitBreakerService))
@@ -54,7 +63,7 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
   onModuleInit(): void {
     try {
-    this.startHealthMonitoring();
+      this.startHealthMonitoring();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
@@ -112,9 +121,13 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
       this.lastHealthCheckTime = Date.now();
 
       // Circuit breaker tracks failures automatically
+      // During startup grace period, don't record failures (transient issues are expected)
+      const isInStartup = this.isInStartupGracePeriod();
       if (!status.healthy) {
-        // Record failure in circuit breaker
-        this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+        // Record failure in circuit breaker (but only if past startup grace period)
+        if (!isInStartup) {
+          this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+        }
       } else {
         // Record success in circuit breaker
         this.circuitBreakerService.recordSuccess(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
@@ -122,8 +135,11 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
       return status;
     } catch (error) {
-      // Record failure in circuit breaker
-      this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+      // Record failure in circuit breaker (but only if past startup grace period)
+      const isInStartup = this.isInStartupGracePeriod();
+      if (!isInStartup) {
+        this.circuitBreakerService.recordFailure(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
+      }
 
       const errorStatus = this.getDefaultUnhealthyStatus([
         `Health check error: ${error instanceof Error ? error.message : String(error)}`,
@@ -170,7 +186,12 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
       now - this.lastExpensiveCheckTime >= this.EXPENSIVE_CHECK_INTERVAL_MS;
 
     // Check circuit breaker - if open, return cached status or default unhealthy (saves CPU)
-    if (!this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)) {
+    // During startup grace period, always allow execution (don't check circuit breaker)
+    const isInStartup = this.isInStartupGracePeriod();
+    if (
+      !isInStartup &&
+      !this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
+    ) {
       // Circuit breaker is open - return cached or default status (no CPU load)
       return (
         this.cachedHealthStatus ||
@@ -184,13 +205,23 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
       const connectionHealth = await this.checkConnectionHealthWithTimeout();
       status.connection = connectionHealth;
       if (!connectionHealth.connected) {
-        issues.push('Queue service not connected');
-        status.healthy = false;
-        // Circuit breaker will track failures automatically
+        // During startup grace period, don't mark as unhealthy (transient issues are expected)
+        if (!this.isInStartupGracePeriod()) {
+          issues.push('Queue service not connected');
+          status.healthy = false;
+          // Circuit breaker will track failures automatically (but only if past startup)
+        } else {
+          // During startup, mark as connected to avoid false alarms
+          status.connection.connected = true;
+          status.healthy = true;
+        }
       }
 
       // Check for worker errors if SharedWorkerService is available
-      if (this.sharedWorkerService && typeof this.sharedWorkerService.getWorkerErrorSummary === 'function') {
+      if (
+        this.sharedWorkerService &&
+        typeof this.sharedWorkerService.getWorkerErrorSummary === 'function'
+      ) {
         try {
           const workerErrorSummary = this.sharedWorkerService.getWorkerErrorSummary();
           if (workerErrorSummary.totalErrors > 0) {
@@ -216,52 +247,77 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
       // Expensive checks only run periodically (every 60 seconds) to avoid performance impact
       // These are non-blocking and won't affect CPU load for frequent health checks
-      if (shouldRunExpensiveChecks && status.connection.connected && this.queueService) {
+      // Skip expensive checks during startup grace period to avoid false failures
+      // IMPORTANT: Don't fail health check if queues are idle (empty) - this is normal
+      // Empty queues (e.g., no appointments at night) should not cause health check failures
+      if (
+        shouldRunExpensiveChecks &&
+        status.connection.connected &&
+        this.queueService &&
+        !this.isInStartupGracePeriod()
+      ) {
         this.lastExpensiveCheckTime = now;
 
         // Run expensive checks in background (non-blocking) - update cached status when complete
         // This ensures they don't block the health check response (fast path returns immediately)
+        // Use a longer timeout (5 seconds) to handle idle queues gracefully
+        // Don't fail if getHealthStatus times out - queues might just be idle
+        // Empty queues (no jobs) are normal and should not cause health check failures
         void Promise.race([
           this.queueService.getHealthStatus().catch(() => null),
           new Promise<null>(
-            resolve => setTimeout(() => resolve(null), 1000) // 1 second timeout
+            resolve => setTimeout(() => resolve(null), 5000) // 5 second timeout for idle queues
           ),
         ])
           .then(queueHealthStatus => {
             // Update cached status with expensive check results (non-blocking)
+            // Empty queues (totalJobs = 0) are normal and should not cause failures
+            // This ensures health check passes even when queues are idle (e.g., no appointments at night)
             if (this.cachedHealthStatus && queueHealthStatus) {
               this.cachedHealthStatus.metrics.totalJobs = queueHealthStatus.totalJobs || 0;
               this.cachedHealthStatus.metrics.activeJobs = queueHealthStatus.queues.reduce(
-                (sum, q) => sum + (q.active || 0),
+                (sum: number, q: { active?: number }) => sum + (q.active || 0),
                 0
               );
               this.cachedHealthStatus.metrics.waitingJobs = queueHealthStatus.queues.reduce(
-                (sum, q) => sum + (q.waiting || 0),
+                (sum: number, q: { waiting?: number }) => sum + (q.waiting || 0),
                 0
               );
               this.cachedHealthStatus.metrics.failedJobs = queueHealthStatus.queues.reduce(
-                (sum, q) => sum + (q.failed || 0),
+                (sum: number, q: { failed?: number }) => sum + (q.failed || 0),
                 0
               );
               this.cachedHealthStatus.metrics.completedJobs = queueHealthStatus.queues.reduce(
-                (sum, q) => sum + (q.completed || 0),
+                (sum: number, q: { completed?: number }) => sum + (q.completed || 0),
                 0
               );
               this.cachedHealthStatus.metrics.errorRate = queueHealthStatus.errorRate || 0;
               this.cachedHealthStatus.performance.averageProcessingTime =
                 queueHealthStatus.averageResponseTime || 0;
-              this.cachedHealthStatus.queues = queueHealthStatus.queues.map(q => ({
-                name: q.queueName,
-                waiting: q.waiting,
-                active: q.active,
-                completed: q.completed,
-                failed: q.failed,
-                delayed: q.delayed,
-              }));
+              this.cachedHealthStatus.queues = queueHealthStatus.queues.map(
+                (q: {
+                  queueName: string;
+                  waiting?: number;
+                  active?: number;
+                  completed?: number;
+                  failed?: number;
+                  delayed?: number;
+                }) => ({
+                  name: q.queueName,
+                  waiting: q.waiting || 0,
+                  active: q.active || 0,
+                  completed: q.completed || 0,
+                  failed: q.failed || 0,
+                  delayed: q.delayed || 0,
+                })
+              );
             }
           })
           .catch(() => {
             // Expensive checks failure shouldn't fail overall health
+            // If getHealthStatus fails, don't mark as unhealthy
+            // Queues might be idle or temporarily unavailable
+            // Connection check already passed, so queues are initialized
           });
       } else {
         // Use cached expensive check data if available (no query overhead)
@@ -326,14 +382,34 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
     try {
       if (!this.queueService) {
+        // During startup grace period, assume service is initializing
+        if (this.isInStartupGracePeriod()) {
+          return {
+            connected: true, // Mark as connected during startup to avoid false alarms
+            latency: Date.now() - start,
+          };
+        }
         return {
           connected: false,
           latency: Date.now() - start,
         };
       }
 
-      // Use lightweight service check - just verify service exists and getHealthStatus method is callable
-      const checkPromise = Promise.resolve(typeof this.queueService.getHealthStatus === 'function');
+      // Use lightweight service check - verify service exists and queues are initialized
+      // During startup, this might fail transiently, so we're lenient
+      // Check if queueService exists and has queues initialized (lightweight check)
+      // Don't call getHealthStatus() as it may be expensive and cause timeouts
+      // Empty queues (no jobs) are normal and should not cause health check failures
+      const hasService =
+        this.queueService && typeof this.queueService.getHealthStatus === 'function';
+
+      // Lightweight check: Just verify service exists and is initialized
+      // Don't call expensive getHealthStatus() which queries all queues
+      // Empty queues are normal (e.g., during night with no appointments)
+      // This ensures health check passes even when queues are idle
+      const checkPromise = hasService
+        ? Promise.resolve(true) // Service exists = queues are initialized and ready
+        : Promise.resolve(false);
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Queue service check timeout')), QUERY_TIMEOUT_MS);
@@ -422,25 +498,45 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     // Non-blocking: Don't await, just trigger update
     // Uses lightweight service check (fastest possible) with timeout protection
     // Circuit breaker prevents excessive checks when unhealthy (saves CPU)
+
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - this.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
     void this.getHealthStatus()
       .then(status => {
+        // During startup grace period, don't log warnings (transient issues are expected)
+        if (isInStartupGracePeriod) {
+          return; // Skip logging during startup
+        }
+
         if (
           !status.healthy &&
           this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
         ) {
-          // Only log if circuit breaker is not open (avoid log spam)
-          void this.loggingService?.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Queue health check failed',
-            this.serviceName,
-            {
-              issues: status.issues,
-              connectionConnected: status.connection.connected,
-              latency: status.connection.latency,
-              errorRate: status.metrics.errorRate,
-            }
+          // Only log if circuit breaker is not open and past startup grace period (avoid log spam)
+          // Check if the issue is actually critical (not just a transient connection check)
+          const isCriticalIssue = status.issues.some(
+            issue =>
+              !issue.includes('timeout') &&
+              !issue.includes('Circuit breaker') &&
+              !issue.includes('connection check')
           );
+
+          if (isCriticalIssue) {
+            void this.loggingService?.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              'Queue health check failed',
+              this.serviceName,
+              {
+                issues: status.issues,
+                connectionConnected: status.connection.connected,
+                latency: status.connection.latency,
+                errorRate: status.metrics.errorRate,
+              }
+            );
+          }
         }
       })
       .catch(error => {

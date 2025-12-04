@@ -16,7 +16,7 @@ import {
 } from '@nestjs/websockets';
 import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { QueueService } from '@infrastructure/queue/src/queue.service';
+import { QueueService } from '../queue.service';
 
 // Internal imports - Infrastructure
 import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';
@@ -93,13 +93,13 @@ export class QueueStatusGateway
         this.tenantSubscriptions = new Map<string, Set<string>>();
       }
 
-    // LoggingService is optional - if not available, we'll continue without logging
-    // This handles cases where LoggingService might not be initialized yet due to circular dependencies
-    if (this.loggingService) {
-      this.isInitialized = true;
-    } else {
-      // LoggingService not available yet - will retry in afterInit
-      this.isInitialized = false;
+      // LoggingService is optional - if not available, we'll continue without logging
+      // This handles cases where LoggingService might not be initialized yet due to circular dependencies
+      if (this.loggingService) {
+        this.isInitialized = true;
+      } else {
+        // LoggingService not available yet - will retry in afterInit
+        this.isInitialized = false;
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -167,16 +167,16 @@ export class QueueStatusGateway
 
       // Defensive check before calling .set()
       if (this.connectedClients && typeof this.connectedClients.set === 'function') {
-      this.connectedClients.set(client.id, session);
+        this.connectedClients.set(client.id, session);
       } else {
         throw new Error('connectedClients Map is not properly initialized');
       }
 
       // Setup tenant subscription
       if (this.tenantSubscriptions && typeof this.tenantSubscriptions.has === 'function') {
-      if (!this.tenantSubscriptions.has(tenantId)) {
+        if (!this.tenantSubscriptions.has(tenantId)) {
           if (typeof this.tenantSubscriptions.set === 'function') {
-        this.tenantSubscriptions.set(tenantId, new Set());
+            this.tenantSubscriptions.set(tenantId, new Set());
           } else {
             throw new Error('tenantSubscriptions Map is not properly initialized');
           }
@@ -283,9 +283,9 @@ export class QueueStatusGateway
 
       // Defensive check before calling .set()
       if (this.queueSubscriptions && typeof this.queueSubscriptions.has === 'function') {
-      if (!this.queueSubscriptions.has(queueName)) {
+        if (!this.queueSubscriptions.has(queueName)) {
           if (typeof this.queueSubscriptions.set === 'function') {
-        this.queueSubscriptions.set(queueName, new Set());
+            this.queueSubscriptions.set(queueName, new Set());
           } else {
             throw new Error('queueSubscriptions Map is not properly initialized');
           }

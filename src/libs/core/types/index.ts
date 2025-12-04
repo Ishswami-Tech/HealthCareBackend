@@ -93,6 +93,9 @@ export * from './logging.types';
 
 // Queue Types (centralized queue system types)
 export * from './queue.types';
+// Export queue constants for direct access
+export { QUEUE_NAMES, QUEUE_PRIORITIES } from './queue.types';
+export type { QueueName, QueuePriority } from './queue.types';
 
 // Session Types (centralized session management types)
 export * from './session.types';

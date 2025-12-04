@@ -1,6 +1,7 @@
 import type { ProductionConfig } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
 import { parseInteger, parseBoolean, removeTrailingSlash } from './utils';
+import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './validation';
 
 /**
  * Validates required environment variables for production
@@ -8,7 +9,6 @@ import { parseInteger, parseBoolean, removeTrailingSlash } from './utils';
  * @throws Error if required variables are missing
  */
 function validateProductionConfig(): void {
-  const { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } = require('./validation');
   const result = validateEnvironmentConfig('production', false);
 
   if (!result.isValid) {
@@ -60,7 +60,7 @@ export default function createProductionConfig(): ProductionConfig {
       url:
         process.env['DATABASE_URL_PROD'] ||
         process.env[ENV_VARS.DATABASE_URL] ||
-        'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
+        'postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20',
       sqlInjectionPrevention: {
         enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], true),
       },
