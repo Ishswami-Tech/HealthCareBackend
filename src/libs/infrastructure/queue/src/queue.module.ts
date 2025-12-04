@@ -112,12 +112,12 @@ export class QueueModule {
       global: true, // Make QueueModule global so QueueService is available everywhere
       imports: [
         forwardRef(() => DatabaseModule),
-        ConfigModule,
+        forwardRef(() => ConfigModule), // Use forwardRef to handle circular dependency with DatabaseModule
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
         BullModule.forRootAsync({
-          imports: [ConfigModule],
+          imports: [forwardRef(() => ConfigModule)],
           useFactory: (configService: ConfigService) => {
             // Use ConfigService for all cache configuration (single source of truth)
             if (!configService.isCacheEnabled()) {
@@ -146,45 +146,45 @@ export class QueueModule {
             }
 
             return {
-            connection: {
+              connection: {
                 ...redisConfig,
-              // Enterprise connection settings for 1M users
-              maxRetriesPerRequest: 5,
-              retryDelayOnFailover: 50,
-              enableReadyCheck: true,
-              connectTimeout: 30000,
-              commandTimeout: 15000,
-              lazyConnect: false,
-              family: 4,
-              keepAlive: 60000,
-              keepAliveInitialDelay: 0,
-              showFriendlyErrorStack: false,
-              enableAutoPipelining: true, // Enable for better performance
-              maxLoadingTimeout: 30000,
-              // Enterprise connection pooling for ultra-high concurrency
-              maxConnections: 200,
-              minConnections: 50,
-              // Load balancing
-              loadBalancing: 'round-robin',
-              // Failover support
-              failover: true,
-              // Performance optimization
-              maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB
-            },
-            defaultJobOptions: {
-              removeOnComplete: 1000, // Keep more completed jobs for monitoring
-              removeOnFail: 500, // Keep more failed jobs for debugging
-              attempts: 5, // More retries for reliability
-              backoff: {
-                type: 'exponential',
-                delay: 2000,
+                // Enterprise connection settings for 1M users
+                maxRetriesPerRequest: 5,
+                retryDelayOnFailover: 50,
+                enableReadyCheck: true,
+                connectTimeout: 30000,
+                commandTimeout: 15000,
+                lazyConnect: false,
+                family: 4,
+                keepAlive: 60000,
+                keepAliveInitialDelay: 0,
+                showFriendlyErrorStack: false,
+                enableAutoPipelining: true, // Enable for better performance
+                maxLoadingTimeout: 30000,
+                // Enterprise connection pooling for ultra-high concurrency
+                maxConnections: 200,
+                minConnections: 50,
+                // Load balancing
+                loadBalancing: 'round-robin',
+                // Failover support
+                failover: true,
+                // Performance optimization
+                maxMemoryUsage: 2 * 1024 * 1024 * 1024, // 2GB
               },
-              // Enterprise job options for 1M users
-              delay: 0,
-              priority: 0,
-              lifo: false,
-              timeout: 60000, // 60 second timeout for complex jobs
-            },
+              defaultJobOptions: {
+                removeOnComplete: 1000, // Keep more completed jobs for monitoring
+                removeOnFail: 500, // Keep more failed jobs for debugging
+                attempts: 5, // More retries for reliability
+                backoff: {
+                  type: 'exponential',
+                  delay: 2000,
+                },
+                // Enterprise job options for 1M users
+                delay: 0,
+                priority: 0,
+                lifo: false,
+                timeout: 60000, // 60 second timeout for complex jobs
+              },
             };
           },
           inject: [ConfigService],
@@ -273,7 +273,10 @@ export class QueueModule {
                   } = {
                     host: cacheHost,
                     port: cachePort,
-                    db: configService.getEnvNumber('REDIS_DB', workerServiceName === 'clinic' ? 2 : 1),
+                    db: configService.getEnvNumber(
+                      'REDIS_DB',
+                      workerServiceName === 'clinic' ? 2 : 1
+                    ),
                   };
 
                   if (cachePassword?.trim()) {

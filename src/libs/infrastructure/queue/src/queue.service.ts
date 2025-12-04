@@ -10,7 +10,7 @@
  * @since 2024
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
 import { ConfigService } from '@config';
 import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
@@ -141,10 +141,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    * sets up the internal queue and worker management systems.
    */
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject('BULLMQ_QUEUES') private readonly bullQueues: Queue[],
     @Inject('BULLMQ_WORKERS') private readonly bullWorkers: Worker[] = [],
     private readonly monitoringService: QueueMonitoringService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     void this.loggingService.log(

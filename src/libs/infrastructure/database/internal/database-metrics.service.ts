@@ -110,7 +110,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       'Database metrics service initialized',
       this.serviceName
     );
-    
+
     // Wait for Prisma to be ready before starting background monitoring
     if (this.prismaService) {
       const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
@@ -123,8 +123,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           void (async () => {
             const ready = await this.prismaService.waitUntilReady(30000);
             if (ready) {
-    this.startMetricsCollection();
-    this.startAlertMonitoring();
+              this.startMetricsCollection();
+              this.startAlertMonitoring();
             }
           })();
         }, 5000);
@@ -540,7 +540,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       type ClinicDelegate = { count: (args?: Record<string, never>) => Promise<number> };
 
       const patientDelegate = this.prismaService.getDelegateSafely<PatientDelegate>('patient');
-      const appointmentDelegate = this.prismaService.getDelegateSafely<AppointmentDelegate>('appointment');
+      const appointmentDelegate =
+        this.prismaService.getDelegateSafely<AppointmentDelegate>('appointment');
       const clinicDelegate = this.prismaService.getDelegateSafely<ClinicDelegate>('clinic');
 
       // If any delegate is not available, skip metrics collection
@@ -583,7 +584,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         }
       } catch (patientError) {
         // Suppress Prisma "Invalid invocation" errors - they're expected during startup
-        const errorMsg = patientError instanceof Error ? patientError.message : String(patientError);
+        const errorMsg =
+          patientError instanceof Error ? patientError.message : String(patientError);
         if (!errorMsg.includes('Invalid `prisma')) {
           void this.loggingService.log(
             LogType.DATABASE,
@@ -602,7 +604,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
         }
       } catch (appointmentError) {
         // Suppress Prisma "Invalid invocation" errors - they're expected during startup
-        const errorMsg = appointmentError instanceof Error ? appointmentError.message : String(appointmentError);
+        const errorMsg =
+          appointmentError instanceof Error ? appointmentError.message : String(appointmentError);
         if (!errorMsg.includes('Invalid `prisma')) {
           void this.loggingService.log(
             LogType.DATABASE,
@@ -639,7 +642,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
       // Update clinic-specific metrics (with error handling)
       try {
-      await this.updateClinicSpecificMetrics();
+        await this.updateClinicSpecificMetrics();
       } catch (clinicMetricsError) {
         void this.loggingService.log(
           LogType.DATABASE,
@@ -716,13 +719,13 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           // Suppress Prisma "Invalid invocation" errors during startup
           const errorMsg = _error instanceof Error ? _error.message : String(_error);
           if (!errorMsg.includes('Invalid `prisma')) {
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.ERROR,
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.ERROR,
               `Failed to collect metrics: ${errorMsg}`,
-            this.serviceName,
-            { error: _error instanceof Error ? _error.stack : String(_error) }
-          );
+              this.serviceName,
+              { error: _error instanceof Error ? _error.stack : String(_error) }
+            );
           }
         }
       })();
@@ -888,15 +891,15 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       let clinics: ClinicWithCount[] = [];
       try {
         clinics = await clinicDelegate.findMany({
-        select: {
-          id: true,
-          _count: {
-            select: {
-              appointments: true,
+          select: {
+            id: true,
+            _count: {
+              select: {
+                appointments: true,
+              },
             },
           },
-        },
-      } as Record<string, unknown>);
+        } as Record<string, unknown>);
       } catch (clinicError) {
         // Suppress Prisma "Invalid invocation" errors - they're expected during startup
         const errorMsg = clinicError instanceof Error ? clinicError.message : String(clinicError);
@@ -916,22 +919,23 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       const patientCounts = await Promise.allSettled(
         clinics.map(async (clinic: ClinicWithCount) => {
           try {
-          const patientCount = await patientDelegate.count({
-            where: {
-              appointments: {
-                some: {
-                  clinicId: clinic.id,
+            const patientCount = await patientDelegate.count({
+              where: {
+                appointments: {
+                  some: {
+                    clinicId: clinic.id,
+                  },
                 },
               },
-            },
-          } as Record<string, unknown>);
-          return {
-            clinicId: clinic.id,
-            patientCount,
-          };
+            } as Record<string, unknown>);
+            return {
+              clinicId: clinic.id,
+              patientCount,
+            };
           } catch (patientError) {
             // Suppress Prisma "Invalid invocation" errors
-            const errorMsg = patientError instanceof Error ? patientError.message : String(patientError);
+            const errorMsg =
+              patientError instanceof Error ? patientError.message : String(patientError);
             if (!errorMsg.includes('Invalid `prisma')) {
               void this.loggingService.log(
                 LogType.DATABASE,
@@ -951,7 +955,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           (result): result is PromiseFulfilledResult<{ clinicId: string; patientCount: number }> =>
             result.status === 'fulfilled' && result.value.clinicId === clinic.id
         );
-        const patientCountData = patientCountResult?.value || { clinicId: clinic.id, patientCount: 0 };
+        const patientCountData = patientCountResult?.value || {
+          clinicId: clinic.id,
+          patientCount: 0,
+        };
 
         const current = this.currentMetrics.clinicMetrics.get(clinic.id) || {
           clinicId: clinic.id,

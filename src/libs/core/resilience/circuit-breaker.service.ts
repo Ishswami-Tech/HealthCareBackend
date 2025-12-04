@@ -180,8 +180,8 @@ export class CircuitBreakerService {
 
     void this.loggingService.log(
       LogType.SYSTEM,
-      LogLevel.WARN,
-      'Circuit breaker opened',
+      LogLevel.INFO,
+      'Circuit breaker opened (expected behavior - protecting system from failures)',
       'CircuitBreakerService',
       { name, failures: state.failureCount, nextAttemptTime: new Date(state.nextAttemptTime) }
     );
@@ -263,8 +263,8 @@ export class CircuitBreakerService {
         const error = new Error(`Circuit breaker is open for ${options.name}`);
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
-          'Circuit breaker rejected execution',
+          LogLevel.INFO,
+          'Circuit breaker rejected execution (expected behavior - circuit is open)',
           'CircuitBreakerService',
           { name: options.name, state: state.state }
         );
@@ -306,8 +306,8 @@ export class CircuitBreakerService {
         options.onStateChange?.('open', options.name);
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
-          'Circuit opened',
+          LogLevel.INFO,
+          'Circuit opened (expected behavior - protecting system from failures)',
           'CircuitBreakerService',
           { name: options.name, failures: state.failureCount }
         );

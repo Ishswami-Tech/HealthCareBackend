@@ -31,8 +31,8 @@ import {
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
-  NotificationType,
 } from '@dtos/index';
+import { NotificationType } from '@dtos/notification.dto';
 import type {
   UnifiedNotificationResponse,
   ChatStatsResponse,

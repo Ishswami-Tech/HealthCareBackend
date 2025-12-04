@@ -71,7 +71,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
       'Enhanced connection pool manager initialized',
       this.serviceName
     );
-    
+
     // Wait for Prisma to be ready before starting health monitoring
     if (this.prismaService) {
       const isReady = await this.prismaService.waitUntilReady(10000); // Wait up to 10 seconds
@@ -443,8 +443,12 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           } catch (_queryError) {
             // Log warning but don't mark as unhealthy during startup
             // This is expected if Prisma is still initializing
-            const errorMessage = _queryError instanceof Error ? _queryError.message : String(_queryError);
-            if (errorMessage.includes('not initialized') || errorMessage.includes('not available')) {
+            const errorMessage =
+              _queryError instanceof Error ? _queryError.message : String(_queryError);
+            if (
+              errorMessage.includes('not initialized') ||
+              errorMessage.includes('not available')
+            ) {
               this.metrics.isHealthy = false;
               void this.loggingService.log(
                 LogType.DATABASE,
@@ -510,8 +514,11 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           }
 
           // Log success periodically (every 5 minutes) to confirm database connection
+          // Use DEBUG level for routine checks to reduce log noise
           const now = Date.now();
-          if (!this.lastHealthCheckSuccessLog || now - this.lastHealthCheckSuccessLog > 300000) {
+          const shouldLogInfo = !this.lastHealthCheckSuccessLog || now - this.lastHealthCheckSuccessLog > 300000; // 5 minutes
+
+          if (shouldLogInfo) {
             this.lastHealthCheckSuccessLog = now;
             void this.loggingService.log(
               LogType.DATABASE,
@@ -527,6 +534,14 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
                 utilization: `${(utilizationRate * 100).toFixed(1)}%`,
               }
             );
+          } else {
+            // Log routine checks at DEBUG level to reduce log noise
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.DEBUG,
+              `Database health check: Connected (latency: ${duration}ms)`,
+              this.serviceName
+            );
           }
         } catch (error) {
           this.metrics.isHealthy = false;
@@ -534,13 +549,13 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
           const errorMessage = (error as Error).message;
           // Suppress Prisma "Invalid invocation" errors - they're expected during startup
           if (!errorMessage.includes('Invalid `prisma')) {
-          void this.loggingService.log(
-            LogType.DATABASE,
+            void this.loggingService.log(
+              LogType.DATABASE,
               LogLevel.WARN,
               `Health check failed: ${errorMessage}`,
-            this.serviceName,
-            { error: (error as Error).stack }
-          );
+              this.serviceName,
+              { error: (error as Error).stack }
+            );
           }
         }
       })();

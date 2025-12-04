@@ -123,7 +123,7 @@ export const PHICache = (options: Omit<UnifiedCacheOptions, 'containsPHI' | 'com
  * @param options - Cache options (patientSpecific and containsPHI are automatically set)
  * @returns Decorator function that sets patient-specific cache metadata
  */
-export const PatientCache = (options: Omit<UnifiedCacheOptions, 'patientSpecific'>) => {
+export const PatientCache = (options: Omit<UnifiedCacheOptions, 'patientSpecific'> = {}) => {
   return Cache({
     ...options,
     patientSpecific: true,
@@ -367,12 +367,12 @@ export const InvalidateCache = (options: CacheInvalidationOptions) => {
  * @returns Decorator function that sets patient cache invalidation metadata
  */
 export const InvalidatePatientCache = (
-  options: Omit<CacheInvalidationOptions, 'invalidatePatient'>
+  options: Omit<CacheInvalidationOptions, 'invalidatePatient'> = { patterns: [] }
 ) => {
   return InvalidateCache({
     ...options,
     invalidatePatient: true,
-    patterns: [...options.patterns, 'patient:*'],
+    patterns: [...(options.patterns ?? []), 'patient:*'],
   });
 };
 
@@ -382,10 +382,12 @@ export const InvalidatePatientCache = (
  * @param options - Cache invalidation options
  * @returns Decorator function that sets appointment cache invalidation metadata
  */
-export const InvalidateAppointmentCache = (options: CacheInvalidationOptions) => {
+export const InvalidateAppointmentCache = (
+  options: CacheInvalidationOptions = { patterns: [] }
+) => {
   return InvalidateCache({
     ...options,
-    patterns: [...options.patterns, 'appointment:*', '*:appointments'],
+    patterns: [...(options.patterns ?? []), 'appointment:*', '*:appointments'],
     tags: options.tags ? [...options.tags, 'appointment_data'] : ['appointment_data'],
   });
 };

@@ -83,20 +83,31 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
           pluginData.notes
         );
 
-      case 'getPatientFollowUps':
+      case 'getPatientFollowUps': {
         if (!pluginData.patientId || !pluginData.clinicId) {
           throw new Error('Missing required fields for getPatientFollowUps');
+        }
+        const options: {
+          cursor?: string;
+          limit?: number;
+          includeCompleted?: boolean;
+        } = {};
+        if (pluginData.cursor !== undefined) {
+          options.cursor = pluginData.cursor;
+        }
+        if (pluginData.limit !== undefined) {
+          options.limit = pluginData.limit;
+        }
+        if (pluginData.includeCompleted !== undefined) {
+          options.includeCompleted = pluginData.includeCompleted;
         }
         return await this.followUpService.getPatientFollowUps(
           pluginData.patientId,
           pluginData.clinicId,
           pluginData.status || undefined,
-          {
-            cursor: pluginData.cursor,
-            limit: pluginData.limit,
-            includeCompleted: pluginData.includeCompleted,
-          }
+          options
         );
+      }
 
       case 'updateFollowUpStatus':
         if (!pluginData.followUpId || !pluginData.status) {
@@ -110,23 +121,50 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
           pluginData.notes
         );
 
-      case 'updateFollowUpPlan':
+      case 'updateFollowUpPlan': {
         if (!pluginData.followUpId) {
           throw new Error('Missing required field followUpId for updateFollowUpPlan');
         }
-        return await this.followUpService.updateFollowUpPlan(pluginData.followUpId, {
-          scheduledFor: pluginData.scheduledFor
-            ? new Date(pluginData.scheduledFor as string)
-            : undefined,
-          followUpType: pluginData.followUpType,
-          instructions: pluginData.instructions,
-          priority: pluginData.priority,
-          medications: pluginData.medications,
-          tests: pluginData.tests,
-          restrictions: pluginData.restrictions,
-          notes: pluginData.notes,
-          status: pluginData.status,
-        });
+        const updateData: {
+          scheduledFor?: string | Date;
+          followUpType?: string;
+          instructions?: string;
+          priority?: string;
+          medications?: string[];
+          tests?: string[];
+          restrictions?: string[];
+          notes?: string;
+          status?: 'scheduled' | 'completed' | 'cancelled' | 'overdue';
+        } = {};
+        if (pluginData.scheduledFor !== undefined) {
+          updateData.scheduledFor = new Date(pluginData.scheduledFor as string);
+        }
+        if (pluginData.followUpType !== undefined) {
+          updateData.followUpType = pluginData.followUpType;
+        }
+        if (pluginData.instructions !== undefined) {
+          updateData.instructions = pluginData.instructions;
+        }
+        if (pluginData.priority !== undefined) {
+          updateData.priority = pluginData.priority;
+        }
+        if (pluginData.medications !== undefined) {
+          updateData.medications = pluginData.medications;
+        }
+        if (pluginData.tests !== undefined) {
+          updateData.tests = pluginData.tests;
+        }
+        if (pluginData.restrictions !== undefined) {
+          updateData.restrictions = pluginData.restrictions;
+        }
+        if (pluginData.notes !== undefined) {
+          updateData.notes = pluginData.notes;
+        }
+        if (pluginData.status !== undefined) {
+          updateData.status = pluginData.status;
+        }
+        return await this.followUpService.updateFollowUpPlan(pluginData.followUpId, updateData);
+      }
 
       case 'getFollowUpTemplates':
         if (!pluginData.clinicId) {

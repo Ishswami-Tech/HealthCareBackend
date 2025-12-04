@@ -1476,33 +1476,32 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         // Check if we're in startup grace period for external services
         const timeSinceStart = Date.now() - this.serviceStartTime;
-        const isInStartupGracePeriod =
-          timeSinceStart < this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD;
+        const isInStartupGracePeriod = timeSinceStart < this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD;
 
         // Determine service URLs based on environment
         // Priority: Environment variables > Config service > Defaults
         // In Kubernetes: Use service names or external URLs from environment variables
         // In Docker: Use container names or localhost
         // In local: Use localhost
-        
+
         // Prisma Studio URL - typically runs on the same pod/container
-        const prismaStudioUrl = 
+        const prismaStudioUrl =
           process.env['PRISMA_STUDIO_URL'] ||
-          this.config?.get<string>('PRISMA_STUDIO_URL') || 
+          this.config?.get<string>('PRISMA_STUDIO_URL') ||
           'http://localhost:5555';
-        
+
         // pgAdmin URL - can be in different pod/service in Kubernetes
-        const pgAdminUrl = 
+        const pgAdminUrl =
           process.env['PGADMIN_URL'] ||
-          this.config?.get<string>('PGADMIN_URL') || 
+          this.config?.get<string>('PGADMIN_URL') ||
           // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
           // Fallback to localhost for local/Docker development
           'http://localhost:5050';
-        
+
         // Redis Commander URL - can be in different pod/service in Kubernetes
-        const redisCommanderUrl = 
+        const redisCommanderUrl =
           process.env['REDIS_COMMANDER_URL'] ||
-          this.config?.get<string>('REDIS_COMMANDER_URL') || 
+          this.config?.get<string>('REDIS_COMMANDER_URL') ||
           // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
           // Fallback to localhost for local/Docker development
           'http://localhost:8082';
@@ -1511,7 +1510,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // Only add Docker-specific fallbacks if we're in Docker (not Kubernetes)
         const isKubernetes = process.env['KUBERNETES_SERVICE_HOST'] !== undefined;
         const isDocker = process.env['DOCKER_ENV'] === 'true' && !isKubernetes;
-        
+
         // For pgAdmin: Try configured URL, then Kubernetes service name, then Docker container, then localhost
         const pgAdminUrls = [pgAdminUrl];
         if (isKubernetes) {
@@ -1546,7 +1545,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         // Check services with environment-aware fallback URLs
         const healthCheckPromises: Array<Promise<ServiceHealth>> = [
-          this.checkExternalServiceWithFallback('Prisma Studio', [prismaStudioUrl, 'http://localhost:5555'], 2000),
+          this.checkExternalServiceWithFallback(
+            'Prisma Studio',
+            [prismaStudioUrl, 'http://localhost:5555'],
+            2000
+          ),
           this.checkExternalServiceWithFallback('pgAdmin', pgAdminUrls, 2000),
         ];
 
@@ -1564,9 +1567,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // Redis Commander is included if Redis provider OR dev mode
         const prismaStudioHealth = healthCheckResults[0];
         const pgAdminHealth = healthCheckResults[1];
-        const redisCommanderHealth = (isRedisProvider || isDevMode) && healthCheckResults.length > 2
-          ? healthCheckResults[2]
-          : undefined;
+        const redisCommanderHealth =
+          (isRedisProvider || isDevMode) && healthCheckResults.length > 2
+            ? healthCheckResults[2]
+            : undefined;
 
         // Handle Prisma Studio health
         if (prismaStudioHealth && prismaStudioHealth.status === 'fulfilled') {
@@ -1589,7 +1593,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           // The service is likely starting up and will be available soon
           // In dev mode, we're more lenient since services might be accessible from host
           result.services.prismaStudio = {
-            status: (isInStartupGracePeriod || isDevMode) ? ('healthy' as const) : ('unhealthy' as const),
+            status:
+              isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
             responseTime: 0,
             lastChecked: new Date().toISOString(),
             details: errorDetails,
@@ -1617,7 +1622,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           // The service is likely starting up and will be available soon
           // In dev mode, we're more lenient since services might be accessible from host
           result.services.pgAdmin = {
-            status: (isInStartupGracePeriod || isDevMode) ? ('healthy' as const) : ('unhealthy' as const),
+            status:
+              isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
             responseTime: 0,
             lastChecked: new Date().toISOString(),
             details: errorDetails,
@@ -1633,14 +1639,16 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             // During startup grace period or in dev mode, mark as 'healthy' to avoid false negatives
             // The service is likely starting up and will be available soon
             // In dev mode, we're more lenient since services might be accessible from host
-            const errorDetails = redisCommanderHealth && redisCommanderHealth.status === 'rejected'
-              ? (redisCommanderHealth.reason instanceof Error
+            const errorDetails =
+              redisCommanderHealth && redisCommanderHealth.status === 'rejected'
+                ? redisCommanderHealth.reason instanceof Error
                   ? redisCommanderHealth.reason.message
-                  : String(redisCommanderHealth.reason))
-              : 'Redis Commander is not accessible';
-            
+                  : String(redisCommanderHealth.reason)
+                : 'Redis Commander is not accessible';
+
             result.services.redisCommander = {
-              status: (isInStartupGracePeriod || isDevMode) ? ('healthy' as const) : ('unhealthy' as const),
+              status:
+                isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
               responseTime: 0,
               lastChecked: new Date().toISOString(),
               details: errorDetails,
@@ -2777,7 +2785,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     timeout: number = 3000
   ): Promise<ServiceHealth> {
     const errors: string[] = [];
-    
+
     for (const url of urls) {
       try {
         const result = await Promise.race([
@@ -2786,7 +2794,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             setTimeout(() => reject(new Error('Request timeout')), timeout + 500)
           ),
         ]);
-        
+
         if (result.status === 'healthy') {
           return result;
         }
@@ -2797,7 +2805,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // Continue to next URL
       }
     }
-    
+
     // If all URLs failed, return unhealthy status with all error details
     return {
       status: 'unhealthy',
@@ -2847,10 +2855,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const responseTime = Math.round(performance.now() - startTime);
       let errorMessage = 'Unknown error';
-      
+
       if (error instanceof Error) {
         // Provide more specific error messages
-        if (error.message.includes('ECONNREFUSED') || error.message.includes('connect ECONNREFUSED')) {
+        if (
+          error.message.includes('ECONNREFUSED') ||
+          error.message.includes('connect ECONNREFUSED')
+        ) {
           errorMessage = 'Connection refused - service may not be running';
         } else if (error.message.includes('ETIMEDOUT') || error.message.includes('timeout')) {
           errorMessage = 'Connection timeout - service may be starting up';

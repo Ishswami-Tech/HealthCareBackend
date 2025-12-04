@@ -58,8 +58,9 @@ export const RateLimit = (config: RateLimitConfig) => SetMetadata(RATE_LIMIT_KEY
  * Standard API rate limiting decorator
  *
  * @description Applies moderate rate limiting suitable for general API endpoints.
- * Allows 100 requests per minute.
+ * Allows configurable requests per minute.
  *
+ * @param config - Optional rate limit configuration (points = max requests, duration = window in seconds)
  * @example
  * ```typescript
  * @RateLimitAPI()
@@ -67,12 +68,18 @@ export const RateLimit = (config: RateLimitConfig) => SetMetadata(RATE_LIMIT_KEY
  * getUsers() {
  *   return this.userService.findAll();
  * }
+ *
+ * @RateLimitAPI({ points: 20, duration: 60 })
+ * @Post('/api/appointments')
+ * createAppointment() {
+ *   return this.appointmentService.create();
+ * }
  * ```
  */
-export const RateLimitAPI = () =>
+export const RateLimitAPI = (config?: { points?: number; duration?: number }) =>
   RateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 100, // 100 requests per minute
+    windowMs: (config?.duration ?? 60) * 1000, // Default 1 minute
+    max: config?.points ?? 100, // Default 100 requests per minute
     message: 'Too many API requests',
   });
 

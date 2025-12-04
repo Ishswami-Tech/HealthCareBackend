@@ -1,8 +1,9 @@
-import { Module, MiddlewareConsumer, RequestMethod, DynamicModule } from '@nestjs/common';
+import { Module, MiddlewareConsumer, RequestMethod, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { ConfigModule, ConfigService, isCacheEnabled } from '@config';
+import { LoggingModule } from '@infrastructure/logging';
 import { BullBoardService } from './bull-board.service';
 import {
   SERVICE_QUEUE,
@@ -48,9 +49,9 @@ export class BullBoardModule {
       // Return minimal module without queue registrations when cache is disabled
       return {
         module: BullBoardModule,
+        imports: [forwardRef(() => LoggingModule)],
         providers: [BullBoardService],
         exports: [BullBoardService],
-        imports: [],
       };
     }
 
@@ -60,6 +61,7 @@ export class BullBoardModule {
       providers: [BullBoardService],
       exports: [BullBoardService],
       imports: [
+        forwardRef(() => LoggingModule),
         BullBoardNestModule.forRootAsync({
           imports: [ConfigModule],
           useFactory: (config: ConfigService) => ({

@@ -172,16 +172,23 @@ export class ProcessErrorHandlersService {
    */
   setupErrorHandlers(): void {
     // Enhanced error handling for uncaught exceptions
-    process.on('uncaughtException', error => {
+    process.on('uncaughtException', (error: Error) => {
       void (async () => {
         try {
-          await this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            `Uncaught Exception: ${error.message}`,
-            'Process',
-            { error: error.stack }
-          );
+          if (this.loggingService) {
+            await this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              `Uncaught Exception: ${error.message}`,
+              'Process',
+              { error: error.stack }
+            ).catch(() => {
+              // If logging fails, fall back to console
+              console.error('Uncaught Exception:', error);
+            });
+          } else {
+            console.error('Uncaught Exception (LoggingService not available):', error);
+          }
         } catch (logError) {
           console.error('Failed to log uncaught exception:', logError);
           console.error('Original error:', error);
@@ -191,7 +198,7 @@ export class ProcessErrorHandlersService {
     });
 
     // Enhanced error handling for unhandled rejections
-    process.on('unhandledRejection', (reason, promise) => {
+    process.on('unhandledRejection', (reason: unknown, promise: Promise<unknown>) => {
       void (async () => {
         try {
           if (this.loggingService) {
@@ -201,10 +208,13 @@ export class ProcessErrorHandlersService {
               'Unhandled Rejection',
               'Process',
               {
-                reason: reason instanceof Error ? reason.stack : reason,
-                promise: promise,
+                reason: reason instanceof Error ? reason.stack : String(reason),
+                promise: String(promise),
               }
-            );
+            ).catch(() => {
+              // If logging fails, fall back to console
+              console.error('Unhandled Rejection:', reason);
+            });
           } else {
             console.error('Unhandled Rejection (LoggingService not available):', reason);
           }

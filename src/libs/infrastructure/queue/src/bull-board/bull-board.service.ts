@@ -1,4 +1,4 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bull';
 import { Queue } from 'bull';
 
@@ -56,7 +56,6 @@ export class BullBoardService {
    * @param chequpQueue - Chequp queue instance (optional)
    */
   constructor(
-    private readonly loggingService: LoggingService,
     @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue | null,
     @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue | null,
     @Optional() @InjectQueue(EMAIL_QUEUE) private emailQueue: Queue | null,
@@ -65,7 +64,8 @@ export class BullBoardService {
     private notificationQueue: Queue | null,
     @Optional() @InjectQueue(VIDHAKARMA_QUEUE) private vidhakarmaQueue: Queue | null,
     @Optional() @InjectQueue(PANCHAKARMA_QUEUE) private panchakarmaQueue: Queue | null,
-    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue | null
+    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue | null,
+    @Optional() @Inject(forwardRef(() => LoggingService)) private readonly loggingService?: LoggingService
   ) {}
 
   /**
@@ -120,17 +120,19 @@ export class BullBoardService {
           total: waiting.length + active.length + completed.length + failed.length + delayed.length,
         };
       } catch (error) {
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.ERROR,
-          `Failed to get stats for queue ${name}`,
-          'BullBoardService',
-          {
-            queueName: name,
-            error: error instanceof Error ? error.message : String(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          }
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.ERROR,
+            `Failed to get stats for queue ${name}`,
+            'BullBoardService',
+            {
+              queueName: name,
+              error: error instanceof Error ? error.message : String(error),
+              stack: error instanceof Error ? error.stack : undefined,
+            }
+          );
+        }
         stats[name] = {
           error: error instanceof Error ? error.message : 'Unknown error',
         };
@@ -181,17 +183,19 @@ export class BullBoardService {
         },
       };
     } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to get details for queue ${queueName}`,
-        'BullBoardService',
-        {
-          queueName,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Failed to get details for queue ${queueName}`,
+          'BullBoardService',
+          {
+            queueName,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
+      }
       if (error instanceof HealthcareError) {
         throw error;
       }
@@ -247,17 +251,19 @@ export class BullBoardService {
         return results;
       }
     } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to retry jobs in queue ${queueName}`,
-        'BullBoardService',
-        {
-          queueName,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Failed to retry jobs in queue ${queueName}`,
+          'BullBoardService',
+          {
+            queueName,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
+      }
       if (error instanceof HealthcareError) {
         throw error;
       }
@@ -305,17 +311,19 @@ export class BullBoardService {
       }
       return results;
     } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to remove jobs from queue ${queueName}`,
-        'BullBoardService',
-        {
-          queueName,
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Failed to remove jobs from queue ${queueName}`,
+          'BullBoardService',
+          {
+            queueName,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
+      }
       if (error instanceof HealthcareError) {
         throw error;
       }
@@ -353,37 +361,43 @@ export class BullBoardService {
     try {
       if (pause) {
         await queue.pause();
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.INFO,
-          `Queue ${queueName} paused`,
-          'BullBoardService',
-          { queueName }
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.INFO,
+            `Queue ${queueName} paused`,
+            'BullBoardService',
+            { queueName }
+          );
+        }
       } else {
         await queue.resume();
-        void this.loggingService.log(
-          LogType.QUEUE,
-          LogLevel.INFO,
-          `Queue ${queueName} resumed`,
-          'BullBoardService',
-          { queueName }
-        );
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.INFO,
+            `Queue ${queueName} resumed`,
+            'BullBoardService',
+            { queueName }
+          );
+        }
       }
       return { queueName, paused: pause };
     } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}`,
-        'BullBoardService',
-        {
-          queueName,
-          action: pause ? 'pause' : 'resume',
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-        }
-      );
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.QUEUE,
+          LogLevel.ERROR,
+          `Failed to ${pause ? 'pause' : 'resume'} queue ${queueName}`,
+          'BullBoardService',
+          {
+            queueName,
+            action: pause ? 'pause' : 'resume',
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
+      }
       if (error instanceof HealthcareError) {
         throw error;
       }

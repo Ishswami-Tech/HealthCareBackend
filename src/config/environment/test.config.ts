@@ -4,17 +4,17 @@ import { parseInteger, parseBoolean } from './utils';
 
 /**
  * Test environment configuration
- * 
+ *
  * Test environment is optimized for running unit and integration tests.
  * It uses minimal security settings, in-memory or test databases, and fast execution.
- * 
+ *
  * Key characteristics:
  * - Minimal security (for faster test execution)
  * - Can use in-memory database or test database
  * - Debug logging enabled
  * - No external service dependencies (can be mocked)
  * - Fast execution (no heavy processing)
- * 
+ *
  * @returns Test configuration object
  */
 export default function createTestConfig(): Config {
@@ -124,4 +124,3 @@ export default function createTestConfig(): Config {
     },
   };
 }
-
