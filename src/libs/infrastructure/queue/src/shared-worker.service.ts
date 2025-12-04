@@ -5,7 +5,7 @@
  * Handles all queue types with domain-specific processing
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { existsSync } from 'fs';
 
 import { Worker, Job } from 'bullmq';
@@ -80,8 +80,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
     new Map();
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     // Defensive check: ensure workers Map is initialized

@@ -252,7 +252,7 @@ export class ApplicationLifecycleManager {
       try {
         // app.listen() internally calls app.init() if not already initialized
         // This triggers all OnModuleInit hooks, which might cause errors
-      await this.app.listen(port, host);
+        await this.app.listen(port, host);
         this.logger.log('app.listen() completed successfully');
       } catch (listenError) {
         const errorMessage = listenError instanceof Error ? listenError.message : 'Unknown error';

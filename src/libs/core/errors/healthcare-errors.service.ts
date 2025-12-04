@@ -91,6 +91,27 @@ export class HealthcareErrorsService {
     return this.createError(ErrorCode.AUTH_OTP_INVALID, HttpStatus.BAD_REQUEST, context);
   }
 
+  /**
+   * Creates an error for authentication failure
+   *
+   * @param message - Error message
+   * @param context - Optional context for debugging
+   * @param metadata - Optional metadata
+   * @returns HealthcareError with AUTH_INVALID_CREDENTIALS code
+   */
+  authenticationError(
+    message: string,
+    context?: string,
+    metadata?: ErrorMetadata
+  ): HealthcareError {
+    return this.createError(
+      ErrorCode.AUTH_INVALID_CREDENTIALS,
+      HttpStatus.UNAUTHORIZED,
+      context,
+      metadata ? { message, ...metadata } : { message }
+    );
+  }
+
   // User Management Errors
 
   /**
@@ -239,12 +260,17 @@ export class HealthcareErrorsService {
   }
 
   // Validation Errors
-  validationError(field: string, message?: string, context?: string): HealthcareError {
+  validationError(
+    field: string,
+    message?: string,
+    context?: string,
+    metadata?: ErrorMetadata
+  ): HealthcareError {
     return this.createError(
       ErrorCode.VALIDATION_REQUIRED_FIELD,
       HttpStatus.BAD_REQUEST,
       context,
-      { field },
+      metadata ? { field, ...metadata } : { field },
       message
     );
   }
@@ -301,6 +327,40 @@ export class HealthcareErrorsService {
       HttpStatus.NOT_FOUND,
       context,
       table ? { table } : undefined
+    );
+  }
+
+  /**
+   * Creates an error for resource not found (generic)
+   *
+   * @param resource - Resource name (e.g., 'Follow-up plan')
+   * @param id - Optional resource ID
+   * @param context - Optional context for debugging
+   * @returns HealthcareError with DATABASE_RECORD_NOT_FOUND code
+   */
+  notFound(resource: string, id?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.DATABASE_RECORD_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      id ? { resource, id } : { resource }
+    );
+  }
+
+  /**
+   * Creates an error for resource not found (alias for notFound)
+   *
+   * @param resource - Resource name
+   * @param context - Optional context for debugging
+   * @param metadata - Optional metadata
+   * @returns HealthcareError with DATABASE_RECORD_NOT_FOUND code
+   */
+  notFoundError(resource: string, context?: string, metadata?: ErrorMetadata): HealthcareError {
+    return this.createError(
+      ErrorCode.DATABASE_RECORD_NOT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      metadata ? { resource, ...metadata } : { resource }
     );
   }
 

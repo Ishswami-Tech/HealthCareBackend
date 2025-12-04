@@ -70,4 +70,3 @@ export function isDockerEnvironment(): boolean {
 export function getDefaultRedisHost(): string {
   return isDockerEnvironment() ? 'redis' : 'localhost';
 }
-

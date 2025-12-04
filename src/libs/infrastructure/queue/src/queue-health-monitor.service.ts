@@ -34,6 +34,8 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private isHealthCheckInProgress = false; // Prevent concurrent health checks
   // Circuit breaker name for health checks (prevents CPU load when queue is down)
   private readonly HEALTH_CHECK_CIRCUIT_BREAKER_NAME = 'queue-health-check';
+  private readonly serviceStartTime = Date.now(); // Track when service started
+  private readonly STARTUP_GRACE_PERIOD = 120000; // 2 minutes grace period during startup
 
   constructor(
     @Inject(forwardRef(() => CircuitBreakerService))
@@ -54,7 +56,7 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
   onModuleInit(): void {
     try {
-    this.startHealthMonitoring();
+      this.startHealthMonitoring();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
@@ -190,7 +192,10 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
       }
 
       // Check for worker errors if SharedWorkerService is available
-      if (this.sharedWorkerService && typeof this.sharedWorkerService.getWorkerErrorSummary === 'function') {
+      if (
+        this.sharedWorkerService &&
+        typeof this.sharedWorkerService.getWorkerErrorSummary === 'function'
+      ) {
         try {
           const workerErrorSummary = this.sharedWorkerService.getWorkerErrorSummary();
           if (workerErrorSummary.totalErrors > 0) {
@@ -422,13 +427,19 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     // Non-blocking: Don't await, just trigger update
     // Uses lightweight service check (fastest possible) with timeout protection
     // Circuit breaker prevents excessive checks when unhealthy (saves CPU)
+    
+    // Check if we're in startup grace period
+    const timeSinceStart = Date.now() - this.serviceStartTime;
+    const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+    
     void this.getHealthStatus()
       .then(status => {
         if (
           !status.healthy &&
-          this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
+          this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME) &&
+          !isInStartupGracePeriod // Don't log warnings during startup grace period
         ) {
-          // Only log if circuit breaker is not open (avoid log spam)
+          // Only log if circuit breaker is not open and past startup grace period (avoid log spam)
           void this.loggingService?.log(
             LogType.SYSTEM,
             LogLevel.WARN,
