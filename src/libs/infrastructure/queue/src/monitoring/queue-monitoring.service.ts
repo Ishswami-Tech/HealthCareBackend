@@ -76,7 +76,7 @@ export class QueueMonitoringService {
 
       // Defensive check before calling .set()
       if (this.metrics && typeof this.metrics.set === 'function') {
-      this.metrics.set(queueName, updatedMetrics);
+        this.metrics.set(queueName, updatedMetrics);
       } else {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -182,7 +182,7 @@ export class QueueMonitoringService {
     alert.resolvedAt = new Date();
     // Defensive check before calling .set()
     if (this.alerts && typeof this.alerts.set === 'function') {
-    this.alerts.set(alertId, alert);
+      this.alerts.set(alertId, alert);
     } else {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -360,7 +360,7 @@ export class QueueMonitoringService {
           const updatedMetrics = { ...metrics, health };
           // Defensive check before calling .set()
           if (this.metrics && typeof this.metrics.set === 'function') {
-          this.metrics.set(queueName, updatedMetrics);
+            this.metrics.set(queueName, updatedMetrics);
           }
 
           // Emit health changed event via centralized EventService
@@ -482,7 +482,7 @@ export class QueueMonitoringService {
     for (const alert of alerts) {
       // Defensive check before calling .set()
       if (this.alerts && typeof this.alerts.set === 'function') {
-      this.alerts.set(alert.id, alert);
+        this.alerts.set(alert.id, alert);
       } else {
         void this.loggingService.log(
           LogType.SYSTEM,

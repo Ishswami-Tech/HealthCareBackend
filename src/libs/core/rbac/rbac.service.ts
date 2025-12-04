@@ -94,11 +94,8 @@ export class RbacService {
       const hasPermission = hasDirectPermission || hasRolePermission || hasOwnershipAccess;
 
       // Build roles array - include RBAC roles or fallback to user's role
-      const rolesArray = userRoles.length > 0 
-        ? userRoles.map(r => r.roleName)
-        : userRoleName 
-          ? [userRoleName]
-          : [];
+      const rolesArray =
+        userRoles.length > 0 ? userRoles.map(r => r.roleName) : userRoleName ? [userRoleName] : [];
 
       const result: PermissionCheck = {
         hasPermission,

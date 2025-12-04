@@ -1072,7 +1072,7 @@ async function bootstrap() {
               'prisma',
               'schema.prisma'
             );
-            
+
             const prismaStudioProcess = spawn(
               'npx',
               [
@@ -1133,7 +1133,9 @@ async function bootstrap() {
             // Wait a bit to see if Prisma Studio starts successfully
             setTimeout(() => {
               if (prismaStudioProcess.killed) {
-                logger.warn('Prisma Studio process was killed. You can start it manually with: pnpm prisma:studio');
+                logger.warn(
+                  'Prisma Studio process was killed. You can start it manually with: pnpm prisma:studio'
+                );
               } else {
                 logger.log('Prisma Studio started automatically in background');
                 logger.log(`Access Prisma Studio at: ${envConfig.urls.prismaStudio}`);
@@ -1265,7 +1267,7 @@ async function bootstrap() {
   }
 }
 
-bootstrap().catch(_error => {
+bootstrap().catch((_error: unknown) => {
   console.error('CRITICAL: Fatal error during bootstrap:', _error);
   process.exit(1);
 });

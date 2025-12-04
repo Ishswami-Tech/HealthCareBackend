@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit, Optional, Inject, forwardRef } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
@@ -9,10 +9,10 @@ import { LogType, LogLevel } from '@core/types';
 
 /**
  * Comprehensive Cache Warming Service
- * 
+ *
  * Pre-populates cache with frequently accessed data to improve performance.
  * Optimized for 10M+ users by warming popular caches before peak usage.
- * 
+ *
  * @see https://docs.nestjs.com/techniques/task-scheduling - NestJS scheduling
  */
 @Injectable()
@@ -22,13 +22,16 @@ export class CacheWarmingService implements OnModuleInit {
 
   constructor(
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Optional() private readonly queueService?: QueueService
   ) {}
 
-  async onModuleInit(): Promise<void> {
+  onModuleInit(): void {
     // Initial cache warming on startup (non-blocking)
     setImmediate(() => {
       void this.warmPopularCaches().catch(error => {
@@ -296,14 +299,16 @@ export class CacheWarmingService implements OnModuleInit {
       // Warm clinic doctors list
       const keyFactory = this.cacheService.getKeyFactory();
       const doctorsKey = keyFactory.clinic(clinicId, 'doctors');
-      
+
       // Fetch and cache doctors list
       const doctors = await this.databaseService.executeHealthcareRead(async client => {
-        return await (client as unknown as {
-          doctor: {
-            findMany: <T>(args: T) => Promise<unknown[]>;
-          };
-        }).doctor.findMany({
+        return await (
+          client as unknown as {
+            doctor: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).doctor.findMany({
           where: {
             clinicId,
             isActive: true,
@@ -326,11 +331,13 @@ export class CacheWarmingService implements OnModuleInit {
       // Warm clinic locations
       const locationsKey = keyFactory.clinic(clinicId, 'locations');
       const locations = await this.databaseService.executeHealthcareRead(async client => {
-        return await (client as unknown as {
-          clinicLocation: {
-            findMany: <T>(args: T) => Promise<unknown[]>;
-          };
-        }).clinicLocation.findMany({
+        return await (
+          client as unknown as {
+            clinicLocation: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).clinicLocation.findMany({
           where: {
             clinicId,
             isActive: true,
@@ -369,11 +376,14 @@ export class CacheWarmingService implements OnModuleInit {
     try {
       const keyFactory = this.cacheService.getKeyFactory();
       const dateKey = startDate.toISOString().split('T')[0] || '';
-      const cacheKey = keyFactory.fromTemplate('doctor:{doctorId}:clinic:{clinicId}:availability:{date}', {
-        doctorId,
-        clinicId: 'all', // Will be clinic-specific when called from context
-        date: dateKey,
-      });
+      const cacheKey = keyFactory.fromTemplate(
+        'doctor:{doctorId}:clinic:{clinicId}:availability:{date}',
+        {
+          doctorId,
+          clinicId: 'all', // Will be clinic-specific when called from context
+          date: dateKey,
+        }
+      );
 
       // Check if already cached
       const cached = await this.cacheService.get(cacheKey);
@@ -383,11 +393,13 @@ export class CacheWarmingService implements OnModuleInit {
 
       // Fetch appointments for date range
       const appointments = await this.databaseService.executeHealthcareRead(async client => {
-        return await (client as unknown as {
-          appointment: {
-            findMany: <T>(args: T) => Promise<unknown[]>;
-          };
-        }).appointment.findMany({
+        return await (
+          client as unknown as {
+            appointment: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).appointment.findMany({
           where: {
             doctorId,
             date: {
@@ -433,11 +445,13 @@ export class CacheWarmingService implements OnModuleInit {
   private async getActiveClinics(): Promise<string[]> {
     try {
       const clinics = await this.databaseService.executeHealthcareRead(async client => {
-        return await (client as unknown as {
-          clinic: {
-            findMany: <T>(args: T) => Promise<Array<{ id: string }>>;
-          };
-        }).clinic.findMany({
+        return await (
+          client as unknown as {
+            clinic: {
+              findMany: <T>(args: T) => Promise<Array<{ id: string }>>;
+            };
+          }
+        ).clinic.findMany({
           where: {
             isActive: true,
           },
@@ -469,11 +483,13 @@ export class CacheWarmingService implements OnModuleInit {
   private async getActiveDoctors(): Promise<string[]> {
     try {
       const doctors = await this.databaseService.executeHealthcareRead(async client => {
-        return await (client as unknown as {
-          doctor: {
-            findMany: <T>(args: T) => Promise<Array<{ id: string }>>;
-          };
-        }).doctor.findMany({
+        return await (
+          client as unknown as {
+            doctor: {
+              findMany: <T>(args: T) => Promise<Array<{ id: string }>>;
+            };
+          }
+        ).doctor.findMany({
           where: {
             isActive: true,
           },
@@ -525,4 +541,3 @@ export class CacheWarmingService implements OnModuleInit {
     }
   }
 }
-

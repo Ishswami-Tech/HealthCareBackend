@@ -311,44 +311,11 @@ export class DatabaseModule implements OnModuleInit {
       }
 
       // Initialize clinic isolation service for full data separation
-      // This may fail gracefully if database tables don't exist yet (migrations not run)
-      try {
-        await this.clinicIsolationService.initializeClinicCaching();
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        // Check if this is a "table does not exist" error - this is expected if migrations haven't been run
-        const isTableMissingError =
-          errorMessage.includes('does not exist') ||
-          errorMessage.includes('relation') ||
-          errorMessage.includes('table') ||
-          (error as { code?: string })?.code === 'P2021' ||
-          (error as { code?: string })?.code === '42P01';
-
-        if (isTableMissingError) {
-          // Log as warning - this is expected if migrations haven't been run
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.WARN,
-            'Clinic caching initialization skipped: Database tables not found. Application will continue without clinic caching. Please run migrations: npx prisma migrate deploy',
-            this.serviceName,
-            {
-              error: errorMessage,
-              action: 'Run database migrations: npx prisma migrate deploy',
-            }
-          );
-          // Don't throw - allow application to start without clinic caching
-        } else {
-          // For other errors, log and rethrow
-          void this.loggingService.log(
-            LogType.DATABASE,
-            LogLevel.ERROR,
-            `Failed to initialize clinic caching: ${errorMessage}`,
-            this.serviceName,
-            { error: errorMessage }
-          );
-          throw error;
-        }
-      }
+      // NOTE: ClinicIsolationService already initializes itself in onModuleInit()
+      // We skip duplicate initialization here to avoid redundant cache loading and log noise
+      // The service will handle initialization automatically via its lifecycle hook
+      // If initialization fails, it will be logged by ClinicIsolationService itself
+      // No need to duplicate the initialization logic here
 
       // Log initialization completion
       const poolMetrics = this.connectionPoolManager.getMetrics();

@@ -52,36 +52,28 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
     }
   ): Promise<AppointmentWithRelations[]> {
-    return await this.executeRead<AppointmentWithRelations[]>(
-      async prisma => {
-        return await prisma.appointment.findMany({
-          where,
-          ...(options?.skip !== undefined && { skip: options.skip }),
-          ...(options?.take !== undefined && { take: options.take }),
-          ...(options?.orderBy && { orderBy: options.orderBy }),
-          include: {
-            patient: {
-              include: {
-                user: true,
-              },
+    return await this.executeRead<AppointmentWithRelations[]>(async prisma => {
+      return await prisma.appointment.findMany({
+        where,
+        ...(options?.skip !== undefined && { skip: options.skip }),
+        ...(options?.take !== undefined && { take: options.take }),
+        ...(options?.orderBy && { orderBy: options.orderBy }),
+        include: {
+          patient: {
+            include: {
+              user: true,
             },
-            doctor: {
-              include: {
-                user: true,
-              },
-            },
-            clinic: true,
-            location: true,
           },
-        });
-      },
-      this.queryOptionsBuilder
-        .useCache(true)
-        .cacheStrategy('short')
-        .priority('normal')
-        .hipaaCompliant(true)
-        .build()
-    );
+          doctor: {
+            include: {
+              user: true,
+            },
+          },
+          clinic: true,
+          location: true,
+        },
+      });
+    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**

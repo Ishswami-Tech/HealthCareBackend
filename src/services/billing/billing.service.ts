@@ -116,13 +116,13 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-    const plan = await this.databaseService.findBillingPlanByIdSafe(id);
+        const plan = await this.databaseService.findBillingPlanByIdSafe(id);
 
-    if (!plan) {
-      throw new NotFoundException(`Billing plan with ID ${id} not found`);
-    }
+        if (!plan) {
+          throw new NotFoundException(`Billing plan with ID ${id} not found`);
+        }
 
-    return plan;
+        return plan;
       },
       {
         ttl: 3600, // 1 hour
@@ -280,13 +280,13 @@ export class BillingService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(id);
+        const subscription = await this.databaseService.findSubscriptionByIdSafe(id);
 
-    if (!subscription) {
-      throw new NotFoundException(`Subscription with ID ${id} not found`);
-    }
+        if (!subscription) {
+          throw new NotFoundException(`Subscription with ID ${id} not found`);
+        }
 
-    return subscription;
+        return subscription;
       },
       {
         ttl: 1800, // 30 minutes
