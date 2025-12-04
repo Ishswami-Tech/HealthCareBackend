@@ -406,8 +406,8 @@ export const validateHealthcareConfig = (config: unknown) => {
 
   // Validate security settings (only in production)
   if (isProduction) {
-  const authentication = asRecord(security?.['authentication']);
-  if (authentication?.['jwtSecret'] === 'your-healthcare-jwt-secret') {
+    const authentication = asRecord(security?.['authentication']);
+    if (authentication?.['jwtSecret'] === 'your-healthcare-jwt-secret') {
       errors.push('JWT_SECRET must be changed from default value in production');
     }
   }
@@ -419,10 +419,10 @@ export const validateHealthcareConfig = (config: unknown) => {
 
   // Validate performance settings for scale (only in production)
   if (isProduction) {
-  const connectionPool = asRecord(database?.['connectionPool']);
-  const primaryPool = asRecord(connectionPool?.['primary']);
-  const poolMax = typeof primaryPool?.['max'] === 'number' ? primaryPool['max'] : undefined;
-  if (poolMax === undefined || poolMax < 50) {
+    const connectionPool = asRecord(database?.['connectionPool']);
+    const primaryPool = asRecord(connectionPool?.['primary']);
+    const poolMax = typeof primaryPool?.['max'] === 'number' ? primaryPool['max'] : undefined;
+    if (poolMax === undefined || poolMax < 50) {
       errors.push('DB_POOL_MAX should be at least 50 for handling 10 lakh users in production');
     }
   }

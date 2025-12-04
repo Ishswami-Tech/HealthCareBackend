@@ -15,6 +15,24 @@ export * from './common-response.dto';
 export * from './appointment.dto';
 export * from './clinic.dto';
 export * from './health.dto';
-export * from './notification.dto';
+// Export notification DTOs with explicit naming to avoid conflicts
+export {
+  NotificationType as NotificationChannelType,
+  MessageType,
+  Platform,
+  SendPushNotificationDto,
+  SendMultiplePushNotificationsDto,
+  SendTopicNotificationDto,
+  SendEmailDto,
+  AppointmentReminderDto,
+  PrescriptionNotificationDto,
+  ChatBackupDto,
+  UnifiedNotificationDto,
+  SubscribeToTopicDto,
+  GetMessageHistoryDto,
+  NotificationResponseDto,
+  MessageHistoryResponseDto,
+  NotificationStatsResponseDto,
+} from './notification.dto';
 export * from './permission.dto';
 export * from './role.dto';

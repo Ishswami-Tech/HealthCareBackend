@@ -50,7 +50,6 @@ import {
   PatientCache,
   InvalidatePatientCache,
   InvalidateAppointmentCache,
-  AppointmentCache,
 } from '@core/decorators';
 import {
   CreateAppointmentDto,
@@ -144,7 +143,12 @@ export class AppointmentsController {
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create')
   @InvalidateAppointmentCache({
-    patterns: ['appointments:*', 'patient:*:appointments', 'doctor:*:appointments', 'clinic:*:appointments'],
+    patterns: [
+      'appointments:*',
+      'patient:*:appointments',
+      'doctor:*:appointments',
+      'clinic:*:appointments',
+    ],
     tags: ['appointments', 'appointment_data'],
   })
   @ApiOperation({
@@ -300,7 +304,14 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return user appointments',
-    type: AppointmentListResponseDto,
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        data: { $ref: '#/components/schemas/AppointmentListResponseDto' },
+        message: { type: 'string' },
+      },
+    },
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -439,7 +450,14 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return all appointments',
-    type: AppointmentListResponseDto,
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        data: { $ref: '#/components/schemas/AppointmentListResponseDto' },
+        message: { type: 'string' },
+      },
+    },
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -514,14 +532,74 @@ export class AppointmentsController {
         }
       );
 
-      return {
-        success: result.success,
-        ...(result.data && {
-          data: result.data as unknown as AppointmentListResponseDto,
-        }),
-        message: result.message,
-        ...(result.error && { error: result.error }),
+      // Transform result.data to AppointmentListResponseDto format
+      // getAppointments returns { appointments: AppointmentWithRelations[], pagination: {...} }
+      // Use type-safe transformation without relying on error-prone type assertions
+      type AppointmentListData = {
+        appointments: AppointmentResponseDto[];
+        pagination: {
+          page: number;
+          limit: number;
+          total: number;
+          totalPages: number;
+          hasNext: boolean;
+          hasPrev: boolean;
+        };
       };
+      let transformedData: AppointmentListData | undefined;
+
+      if (result.data) {
+        const data = result.data;
+        if (data && typeof data === 'object' && 'appointments' in data && 'pagination' in data) {
+          const appointments = data['appointments'];
+          const pagination = data['pagination'];
+          if (Array.isArray(appointments) && pagination && typeof pagination === 'object') {
+            const paginationObj = pagination as Record<string, unknown>;
+            transformedData = {
+              appointments: appointments as AppointmentResponseDto[],
+              pagination: {
+                page: (paginationObj['page'] as number) || 1,
+                limit: (paginationObj['limit'] as number) || 20,
+                total: (paginationObj['total'] as number) || 0,
+                totalPages: (paginationObj['totalPages'] as number) || 0,
+                hasNext: (paginationObj['hasNext'] as boolean) || false,
+                hasPrev: (paginationObj['hasPrev'] as boolean) || false,
+              },
+            };
+          }
+        }
+
+        // Fallback: create structure from array if data is just an array
+        if (!transformedData && Array.isArray(data)) {
+          transformedData = {
+            appointments: data as AppointmentResponseDto[],
+            pagination: {
+              page: 1,
+              limit: data.length,
+              total: data.length,
+              totalPages: 1,
+              hasNext: false,
+              hasPrev: false,
+            },
+          };
+        }
+      }
+
+      const response: ServiceResponse<AppointmentListData> = {
+        success: result.success,
+        message: result.message,
+      };
+
+      if (transformedData) {
+        response.data = transformedData;
+      }
+
+      if (result.error) {
+        response.error = result.error;
+      }
+
+      // Type assertion is safe here because we've validated the structure matches AppointmentListResponseDto
+      return response as ServiceResponse<AppointmentListResponseDto>;
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, context);
@@ -581,7 +659,9 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return doctor availability',
-    type: DoctorAvailabilityResponseDto,
+    schema: {
+      $ref: '#/components/schemas/DoctorAvailabilityResponseDto',
+    },
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -646,22 +726,81 @@ export class AppointmentsController {
         { doctorId, date }
       );
 
-      const result = (await this.appointmentService.getDoctorAvailability(
+      const result = await this.appointmentService.getDoctorAvailability(
         doctorId,
         date,
         clinicId,
         req.user?.sub || '',
         req.user?.role || Role.PATIENT
-      )) as DoctorAvailabilityResponseDto;
+      );
+
+      // Extract data from result (service returns { success: true, data: availabilityData })
+      const resultData =
+        result && typeof result === 'object' && 'data' in result
+          ? (result as { data?: unknown }).data
+          : result;
+
+      // Type guard function to validate DoctorAvailabilityResponseDto structure
+      const isValidAvailabilityResult = (
+        value: unknown
+      ): value is {
+        availableSlots: string[];
+        bookedSlots: string[];
+        workingHours: { start: string; end: string };
+        message?: string;
+      } => {
+        if (typeof value !== 'object' || value === null) {
+          return false;
+        }
+        const obj = value as Record<string, unknown>;
+        return (
+          'availableSlots' in obj &&
+          Array.isArray(obj['availableSlots']) &&
+          'bookedSlots' in obj &&
+          Array.isArray(obj['bookedSlots']) &&
+          'workingHours' in obj &&
+          typeof obj['workingHours'] === 'object'
+        );
+      };
+
+      if (!resultData || !isValidAvailabilityResult(resultData)) {
+        throw new BadRequestException('Invalid availability response');
+      }
+
+      // Create properly typed result object with all required fields
+      // After type guard validation, we know resultData has the required structure
+      const validatedData = resultData as {
+        availableSlots: string[];
+        bookedSlots: string[];
+        workingHours: { start: string; end: string };
+        message?: string;
+      };
+
+      // Construct the response DTO with all required fields
+      const slotsArray = validatedData.availableSlots;
+      const bookedArray = validatedData.bookedSlots;
+      const workingHoursObj = validatedData.workingHours;
+
+      const availabilityResult: DoctorAvailabilityResponseDto = {
+        doctorId,
+        date,
+        available: slotsArray.length > 0,
+        availableSlots: slotsArray,
+        bookedSlots: bookedArray,
+        workingHours: workingHoursObj,
+        message: validatedData.message || 'Availability retrieved',
+      };
+
+      const slotsCount = slotsArray.length;
 
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        `Retrieved availability for doctor ${doctorId}: ${result.availableSlots?.length || 0} slots available`,
+        `Retrieved availability for doctor ${doctorId}: ${slotsCount} slots available`,
         'AppointmentsController',
-        { doctorId, slotsCount: result.availableSlots?.length || 0 }
+        { doctorId, slotsCount }
       );
-      return result;
+      return availabilityResult;
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
@@ -849,7 +988,7 @@ export class AppointmentsController {
         const patient = (await this.appointmentService.getPatientByUserId(currentUserId)) as {
           id: string;
         } | null;
-        if (result.patient?.id !== patient?.id) {
+        if (result.patientId !== patient?.id) {
           throw new ForbiddenException('Patients can only access their own appointments');
         }
       }
@@ -970,9 +1109,11 @@ export class AppointmentsController {
           id: string;
         } | null;
         const appointment = (await this.appointmentService.getAppointmentById(id, clinicId)) as {
-          patientId: string;
+          patientId?: string;
+          patient?: { id: string };
         };
-        if (appointment.patientId !== patient?.id) {
+        const appointmentPatientId = appointment.patientId || appointment.patient?.id;
+        if (appointmentPatientId !== patient?.id) {
           throw new ForbiddenException('Patients can only update their own appointments');
         }
       }
@@ -1111,9 +1252,11 @@ export class AppointmentsController {
           id: string;
         } | null;
         const appointment = (await this.appointmentService.getAppointmentById(id, clinicId)) as {
-          patientId: string;
+          patientId?: string;
+          patient?: { id: string };
         };
-        if (appointment.patientId !== patient?.id) {
+        const appointmentPatientId = appointment.patientId || appointment.patient?.id;
+        if (appointmentPatientId !== patient?.id) {
           throw this.errors.insufficientPermissions(
             'Patients can only cancel their own appointments'
           );
@@ -1799,10 +1942,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to complete appointment: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -1889,10 +2029,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -1980,10 +2117,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to start consultation: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2036,7 +2170,7 @@ export class AppointmentsController {
   async scanLocationQRAndCheckIn(
     @Body() scanDto: ScanLocationQRDto,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<ServiceResponse<ScanLocationQRResponseDto>> {
+  ): Promise<ServiceResponse<ScanLocationQRResponseDto['data']>> {
     const context = 'AppointmentsController.scanLocationQRAndCheckIn';
     const startTime = Date.now();
 
@@ -2068,7 +2202,10 @@ export class AppointmentsController {
       // First, try to parse QR code as JSON (LocationQrService format)
       let locationIdFromQR: string | null = null;
       try {
-        const qrData = JSON.parse(scanDto.qrCode);
+        const qrData = JSON.parse(scanDto.qrCode) as {
+          locationId?: string;
+          type?: string;
+        };
         if (qrData.locationId && qrData.type === 'LOCATION_CHECK_IN') {
           locationIdFromQR = qrData.locationId;
           // Verify QR code is valid
@@ -2082,12 +2219,9 @@ export class AppointmentsController {
       const location = await this.checkInLocationService.getLocationByQRCode(scanDto.qrCode);
 
       if (!location.isActive) {
-        throw this.errors.validationError(
-          'location',
-          'Check-in location is not active',
-          context,
-          { locationId: location.id }
-        );
+        throw this.errors.validationError('location', 'Check-in location is not active', context, {
+          locationId: location.id,
+        });
       }
 
       // If QR code was in JSON format, verify it matches the location
@@ -2122,15 +2256,7 @@ export class AppointmentsController {
 
         return {
           success: false,
-          data: undefined,
-          error: {
-            code: 'NO_APPOINTMENT_FOUND',
-            message: 'No appointment found for this location',
-            details: {
-              locationId: location.id,
-              locationName: location.locationName,
-            },
-          },
+          error: `No appointment found for location ${location.locationName}`,
         };
       }
 
@@ -2161,6 +2287,13 @@ export class AppointmentsController {
 
       const appointment = sortedAppointments[0];
 
+      if (!appointment) {
+        return {
+          success: false,
+          error: 'No appointment found for this location',
+        };
+      }
+
       // Step 4: Validate appointment
       if (appointment.locationId !== location.id) {
         throw this.errors.validationError(
@@ -2178,43 +2311,55 @@ export class AppointmentsController {
       if (appointment.checkedInAt) {
         return {
           success: false,
-          data: undefined,
-          error: {
-            code: 'ALREADY_CHECKED_IN',
-            message: 'Appointment already checked in',
-            details: {
-              appointmentId: appointment.id,
-              checkedInAt: appointment.checkedInAt,
-            },
-          },
+          error: `Appointment already checked in at ${appointment.checkedInAt.toISOString()}`,
         };
       }
 
       // Step 5: Process check-in using CheckInLocationService
-      const checkInData = {
+      // Use the interface type from @core/types which has all required properties
+      const checkInData: {
+        appointmentId: string;
+        locationId: string;
+        patientId: string;
+        coordinates?: { lat: number; lng: number };
+        deviceInfo?: Record<string, unknown>;
+      } = {
         appointmentId: appointment.id,
         locationId: location.id,
         patientId: userId,
-        coordinates: scanDto.coordinates,
-        deviceInfo: scanDto.deviceInfo,
       };
+      if (scanDto.coordinates !== undefined) {
+        checkInData.coordinates = scanDto.coordinates;
+      }
+      if (scanDto.deviceInfo !== undefined) {
+        checkInData.deviceInfo = scanDto.deviceInfo;
+      }
 
       const checkIn = await this.checkInLocationService.processCheckIn(checkInData);
 
       // Step 6: Add to doctor queue
-      let queuePosition: { position: number; totalInQueue: number; estimatedWaitTime: number } | null = null;
+      let queuePosition: {
+        position: number;
+        totalInQueue: number;
+        estimatedWaitTime: number;
+      } | null = null;
 
       try {
         const queueResponse = await this.appointmentQueueService.getPatientQueuePosition(
           appointment.id,
-          appointment.domain || 'healthcare'
+          'healthcare' // Use default domain since appointment.domain doesn't exist
         );
 
         if (queueResponse && typeof queueResponse === 'object' && 'position' in queueResponse) {
+          const response = queueResponse as {
+            position?: number;
+            totalInQueue?: number;
+            estimatedWaitTime?: number;
+          };
           queuePosition = {
-            position: (queueResponse.position as number) || 0,
-            totalInQueue: (queueResponse.totalInQueue as number) || 0,
-            estimatedWaitTime: (queueResponse.estimatedWaitTime as number) || 0,
+            position: response.position || 0,
+            totalInQueue: response.totalInQueue || 0,
+            estimatedWaitTime: response.estimatedWaitTime || 0,
           };
         }
       } catch (queueError) {
@@ -2233,7 +2378,10 @@ export class AppointmentsController {
 
       // Step 7: Get doctor information
       const doctorName = appointment.doctor?.user?.name || 'Doctor';
-      const doctorId = appointment.doctorId;
+      const doctorId =
+        (appointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
+        appointment.doctor?.id ||
+        '';
 
       await this.loggingService.log(
         LogType.APPOINTMENT,
@@ -2256,7 +2404,7 @@ export class AppointmentsController {
           appointmentId: appointment.id,
           locationId: location.id,
           locationName: location.locationName,
-          checkedInAt: checkIn.checkedInAt.toISOString(),
+          checkedInAt: checkIn.checkInTime.toISOString(),
           queuePosition: queuePosition?.position || 0,
           totalInQueue: queuePosition?.totalInQueue || 0,
           estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
@@ -2284,10 +2432,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to process QR check-in: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2345,7 +2490,7 @@ export class AppointmentsController {
   async generateLocationQRCode(
     @Param('locationId', ParseUUIDPipe) locationId: string,
     @Query('format') format: 'png' | 'svg' | 'base64' = 'base64',
-    @Query('size') size: number = 300,
+    @Query('size') _size: number = 300,
     @Request() req: ClinicAuthenticatedRequest,
     @Res() res: FastifyReply
   ): Promise<void> {
@@ -2364,7 +2509,7 @@ export class AppointmentsController {
       const location = locations.find(loc => loc.id === locationId);
 
       if (!location) {
-        throw this.errors.notFoundError('Location not found', context, { locationId });
+        throw this.errors.notFoundError('Location', context, { locationId });
       }
 
       // Generate QR code data string using LocationQrService
@@ -2390,6 +2535,9 @@ export class AppointmentsController {
       if (format === 'png' || format === 'svg') {
         // Extract base64 data and return as image
         const base64Data = qrCodeDataUrl.split(',')[1];
+        if (!base64Data) {
+          throw this.errors.validationError('qrCode', 'Invalid QR code data URL format', context);
+        }
         const imageBuffer = Buffer.from(base64Data, 'base64');
 
         res.type(`image/${format === 'png' ? 'png' : 'svg+xml'}`);
@@ -2421,10 +2569,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to generate QR code: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2554,8 +2699,8 @@ export class AppointmentsController {
 
       const result = (await this.appointmentService.createFollowUpPlan(
         appointmentId,
-        appointment.patientId,
-        appointment.doctorId,
+        appointment.patient?.id || '',
+        appointment.doctor?.id || '',
         clinicId,
         createDto.followUpType,
         createDto.daysAfter,
@@ -2586,10 +2731,15 @@ export class AppointmentsController {
         data: {
           id: result.followUpId,
           appointmentId,
-          patientId: appointment.patientId,
-          doctorId: appointment.doctorId,
+          patientId: appointment.patient?.id || '',
+          doctorId: appointment.doctor?.id || '',
           clinicId,
-          followUpType: createDto.followUpType as 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery',
+          followUpType: createDto.followUpType as
+            | 'routine'
+            | 'urgent'
+            | 'specialist'
+            | 'therapy'
+            | 'surgery',
           scheduledFor: result.scheduledFor,
           status: 'scheduled',
           priority: (createDto.priority || 'normal') as 'low' | 'normal' | 'high' | 'urgent',
@@ -2620,10 +2770,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to create follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2718,10 +2865,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to get appointment chain: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2762,11 +2906,11 @@ export class AppointmentsController {
     status: HttpStatus.UNAUTHORIZED,
     description: 'User not authenticated',
   })
-  @PatientCache()
+  @PatientCache({})
   async getPatientFollowUpPlans(
+    @Request() req: ClinicAuthenticatedRequest,
     @Param('patientId', ParseUUIDPipe) patientId: string,
-    @Query('status') status?: string,
-    @Request() req: ClinicAuthenticatedRequest
+    @Query('status') status?: string
   ): Promise<ServiceResponse<FollowUpPlanResponseDto[]>> {
     const startTime = Date.now();
     const context = 'AppointmentsController.getPatientFollowUpPlans';
@@ -2815,10 +2959,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to get patient follow-up plans: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -2880,7 +3021,6 @@ export class AppointmentsController {
           appointmentDate: scheduleDto.appointmentDate,
           doctorId: scheduleDto.doctorId,
           locationId: scheduleDto.locationId,
-          time: scheduleDto.time,
         },
         userId,
         clinicId
@@ -2922,10 +3062,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to schedule follow-up from plan: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3009,10 +3146,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to get appointment follow-ups: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3100,10 +3234,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to update follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3181,10 +3312,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to cancel follow-up plan: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3272,10 +3400,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to create recurring series: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3358,10 +3483,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to get recurring series: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3451,10 +3573,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to update recurring series: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 
@@ -3532,10 +3651,7 @@ export class AppointmentsController {
         throw error;
       }
 
-      throw this.errors.internalServerError(
-        `Failed to cancel recurring series: ${error instanceof Error ? error.message : String(error)}`,
-        context
-      );
+      throw this.errors.internalServerError(context);
     }
   }
 }

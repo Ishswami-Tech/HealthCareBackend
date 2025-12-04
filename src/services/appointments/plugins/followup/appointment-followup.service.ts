@@ -102,11 +102,13 @@ export class AppointmentFollowUpService {
       // 1. Create in database FIRST (source of truth)
       const followUpPlan = await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (client as unknown as {
-            followUpPlan: {
-              create: <T>(args: T) => Promise<unknown>;
-            };
-          }).followUpPlan.create({
+          return await (
+            client as unknown as {
+              followUpPlan: {
+                create: <T>(args: T) => Promise<unknown>;
+              };
+            }
+          ).followUpPlan.create({
             data: followUpPlanData,
           });
         },
@@ -126,13 +128,15 @@ export class AppointmentFollowUpService {
       await this.cacheService.set(cacheKey, followUpPlan, this.FOLLOWUP_CACHE_TTL);
 
       // 3. Invalidate patient follow-ups cache to ensure fresh data
-      await this.cacheService.invalidateCacheByPattern(`patient_followups:${patientId}:${clinicId}:*`);
+      await this.cacheService.invalidateCacheByPattern(
+        `patient_followups:${patientId}:${clinicId}:*`
+      );
 
       // Schedule follow-up reminders
-      await this.scheduleFollowUpReminders(followUpPlan);
+      await this.scheduleFollowUpReminders(followUpPlan as FollowUpPlan);
 
       // Send initial follow-up notification
-      await this.sendFollowUpNotification(followUpPlan);
+      await this.sendFollowUpNotification(followUpPlan as FollowUpPlan);
 
       return {
         success: true,
@@ -140,14 +144,14 @@ export class AppointmentFollowUpService {
         scheduledFor,
         message: `Follow-up plan created for ${scheduledFor.toISOString()}`,
       };
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create follow-up plan ${followUpId}`,
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
           appointmentId,
         }
       );
@@ -156,7 +160,7 @@ export class AppointmentFollowUpService {
         success: false,
         followUpId,
         scheduledFor,
-        error: _error instanceof Error ? _error.message : 'Unknown _error',
+        error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
   }
@@ -302,7 +306,6 @@ export class AppointmentFollowUpService {
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         };
-      };
       });
 
       // Cursor-based pagination: Check if there are more results
@@ -315,14 +318,14 @@ export class AppointmentFollowUpService {
       // Cache paginated result
       await this.cacheService.set(cacheKey, result, this.FOLLOWUP_CACHE_TTL);
       return result;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get patient follow-ups',
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
           patientId,
         }
       );
@@ -369,14 +372,14 @@ export class AppointmentFollowUpService {
         'AppointmentFollowUpService'
       );
       return true;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update follow-up status ${followUpId}`,
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
         }
       );
       return false;
@@ -480,14 +483,14 @@ export class AppointmentFollowUpService {
       );
 
       return updatedFollowUp;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to update follow-up plan ${followUpId}`,
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown error',
+          error: error instanceof Error ? error.message : 'Unknown error',
         }
       );
       return null;
@@ -545,14 +548,14 @@ export class AppointmentFollowUpService {
 
       await this.cacheService.set(cacheKey, templates, this.TEMPLATE_CACHE_TTL);
       return templates;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get follow-up templates',
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
           clinicId,
         }
       );
@@ -588,18 +591,18 @@ export class AppointmentFollowUpService {
         }
       );
       return newTemplate;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to create follow-up template`,
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
           templateName: template.name,
         }
       );
-      throw _error;
+      throw error;
     }
   }
 
@@ -635,14 +638,14 @@ export class AppointmentFollowUpService {
 
       await this.cacheService.set(cacheKey, overdueFollowUps, this.FOLLOWUP_CACHE_TTL);
       return overdueFollowUps;
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         'Failed to get overdue follow-ups',
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
           clinicId,
         }
       );
@@ -736,14 +739,14 @@ export class AppointmentFollowUpService {
       };
 
       await this.notificationService.sendNotification(notificationData);
-    } catch (_error) {
+    } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to send follow-up notification for ${followUp.id}`,
         'AppointmentFollowUpService',
         {
-          error: _error instanceof Error ? _error.message : 'Unknown _error',
+          error: error instanceof Error ? error.message : 'Unknown error',
         }
       );
     }

@@ -4,17 +4,17 @@ import { parseInteger, parseBoolean } from './utils';
 
 /**
  * Test environment configuration
- * 
+ *
  * Test environment is optimized for running unit and integration tests.
  * It uses minimal security settings, in-memory or test databases, and fast execution.
- * 
+ *
  * Key characteristics:
  * - Minimal security (for faster test execution)
  * - Can use in-memory database or test database
  * - Debug logging enabled
  * - No external service dependencies (can be mocked)
  * - Fast execution (no heavy processing)
- * 
+ *
  * @returns Test configuration object
  */
 export default function createTestConfig(): Config {
@@ -45,7 +45,7 @@ export default function createTestConfig(): Config {
       url:
         process.env[ENV_VARS.DATABASE_URL] ||
         process.env['TEST_DATABASE_URL'] ||
-        'postgresql://postgres:postgres@localhost:5432/test_userdb?schema=public',
+        'postgresql://postgres:postgres@localhost:5432/test_userdb?connection_limit=50&pool_timeout=20',
       sqlInjectionPrevention: {
         enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], false), // Disabled for tests
       },
@@ -124,4 +124,3 @@ export default function createTestConfig(): Config {
     },
   };
 }
-

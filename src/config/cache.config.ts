@@ -65,7 +65,6 @@ function validateRedisConfig(config: RedisConfig): void {
   }
 }
 
-
 /**
  * Cache configuration factory
  * This is registered with NestJS ConfigModule as 'cache'

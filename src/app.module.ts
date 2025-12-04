@@ -11,10 +11,9 @@ import { ClinicModule } from './services/clinic/clinic.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
-import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
-import { QueueModule } from '@infrastructure/queue/src/queue.module';
+import { QueueModule } from '@infrastructure/queue';
 import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
@@ -57,7 +56,8 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     // Core modules
     DatabaseModule,
     // CacheModule - Required for caching functionality (Dragonfly/Redis)
-    CacheModule,
+    // Use forRoot() to conditionally include CacheWarmingService (only in API, not worker)
+    CacheModule.forRoot(),
     // SessionModule - Required for FastifySessionStoreAdapter
     // TEMPORARILY DISABLED: SessionModule disabled for debugging
     // SessionModule,
@@ -71,7 +71,6 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     CommunicationModule,
     // Support modules
     HealthModule,
-    BullBoardModule.forRoot(),
   ],
   controllers: [AppController],
   providers: [AppService],

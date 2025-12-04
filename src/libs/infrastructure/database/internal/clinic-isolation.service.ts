@@ -3,8 +3,6 @@ import { ConfigService } from '@config';
 import { PrismaService } from '../prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
 import type { ClinicContext } from '@core/types/clinic.types';
 import type { ClinicIsolationResult } from '@core/types/database.types';
 
@@ -37,6 +35,7 @@ export class ClinicIsolationService implements OnModuleInit {
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly STARTUP_GRACE_PERIOD = 90000; // 90 seconds grace period during startup
   private isInitializing = false; // Prevent concurrent initialization
+  private isFirstInitialization = true; // Track if this is the first initialization
 
   constructor(
     @Inject(forwardRef(() => PrismaService))
@@ -73,14 +72,19 @@ export class ClinicIsolationService implements OnModuleInit {
 
     this.isInitializing = true;
 
+    // Track if this is the first initialization
+    // Note: Reserved for future use if needed for initialization logic
+    const _isFirstInit = this.isFirstInitialization;
+
     // Check if we're in startup grace period
     const timeSinceStart = Date.now() - this.serviceStartTime;
     const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
 
     try {
       // Wait for Prisma to be ready before attempting to load clinics
-      // Increased timeout to 45 seconds to ensure Prisma is fully initialized
-      const isReady = await this.prismaService.waitUntilReady(45000); // 45 second timeout
+      // Use longer timeout during startup grace period (60s) vs normal (45s)
+      const timeoutMs = isInStartupGracePeriod ? 60000 : 45000;
+      const isReady = await this.prismaService.waitUntilReady(timeoutMs);
       if (!isReady) {
         // During startup grace period, silently skip (don't log warnings)
         if (!isInStartupGracePeriod) {
@@ -212,12 +216,19 @@ export class ClinicIsolationService implements OnModuleInit {
       // Load user-clinic mappings
       await this.loadUserClinicMappings();
 
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.INFO,
-        `Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`,
-        this.serviceName
-      );
+      // Only log at INFO level on first initialization, use DEBUG for refreshes
+      const isFirstInit = this.isFirstInitialization;
+      const logLevel = isFirstInit ? LogLevel.INFO : LogLevel.DEBUG;
+      const logMessage = isFirstInit
+        ? `Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`
+        : `Clinic cache refreshed: ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`;
+
+      void this.loggingService.log(LogType.DATABASE, logLevel, logMessage, this.serviceName);
+
+      // Mark that first initialization is complete
+      if (isFirstInit) {
+        this.isFirstInitialization = false;
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;

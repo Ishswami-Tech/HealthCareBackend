@@ -75,6 +75,8 @@ interface InternalCircuitState {
 export class CircuitBreakerService {
   private readonly defaultThreshold: number = 10;
   private readonly defaultTimeout: number = 30000;
+  private readonly serviceStartTime = Date.now();
+  private readonly STARTUP_GRACE_PERIOD = 90000; // 90 seconds grace period during startup
 
   constructor(
     @Inject(forwardRef(() => LoggingService))
@@ -156,6 +158,16 @@ export class CircuitBreakerService {
    * @param name - Optional circuit breaker name (defaults to 'default')
    */
   recordFailure(name: string = 'default'): void {
+    // Don't count failures during startup grace period (first 90 seconds)
+    // This prevents circuit breaker from opening during application initialization
+    const timeSinceStart = Date.now() - this.serviceStartTime;
+    const isDuringStartup = timeSinceStart < this.STARTUP_GRACE_PERIOD;
+
+    if (isDuringStartup) {
+      // During startup, don't count failures to avoid false circuit breaker openings
+      return;
+    }
+
     const state = this.getInternalState(name);
     state.failureCount++;
     state.failures++;
@@ -180,8 +192,8 @@ export class CircuitBreakerService {
 
     void this.loggingService.log(
       LogType.SYSTEM,
-      LogLevel.WARN,
-      'Circuit breaker opened',
+      LogLevel.INFO,
+      'Circuit breaker opened (expected behavior - protecting system from failures)',
       'CircuitBreakerService',
       { name, failures: state.failureCount, nextAttemptTime: new Date(state.nextAttemptTime) }
     );
@@ -263,8 +275,8 @@ export class CircuitBreakerService {
         const error = new Error(`Circuit breaker is open for ${options.name}`);
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
-          'Circuit breaker rejected execution',
+          LogLevel.INFO,
+          'Circuit breaker rejected execution (expected behavior - circuit is open)',
           'CircuitBreakerService',
           { name: options.name, state: state.state }
         );
@@ -306,8 +318,8 @@ export class CircuitBreakerService {
         options.onStateChange?.('open', options.name);
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
-          'Circuit opened',
+          LogLevel.INFO,
+          'Circuit opened (expected behavior - protecting system from failures)',
           'CircuitBreakerService',
           { name: options.name, failures: state.failureCount }
         );

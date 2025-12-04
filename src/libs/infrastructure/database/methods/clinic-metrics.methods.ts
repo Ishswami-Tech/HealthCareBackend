@@ -5,6 +5,7 @@
  */
 
 import { DatabaseMethodsBase } from './database-methods.base';
+import { LogType, LogLevel } from '@core/types';
 import type {
   ClinicDashboardStats,
   ClinicPatientOptions,
@@ -101,19 +102,19 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
         ),
 
         // Total locations count (cached, long TTL)
-        this.executeRead(async prisma => {
-          const client = (
+        // OPTIMIZATION: Use Prisma count() instead of raw SQL for better optimization
+        // Access clinicLocation through prisma parameter (PrismaService)
+        this.executeRead<number>(async prisma => {
+          // Access clinicLocation through PrismaService
+          return await (
             prisma as unknown as {
-              $queryRaw: <T>(
-                query: TemplateStringsArray | string,
-                ...values: unknown[]
-              ) => Promise<T>;
+              clinicLocation: {
+                count: (args: { where: { clinicId: string } }) => Promise<number>;
+              };
             }
-          ).$queryRaw;
-          const result = await client<Array<{ count: bigint }>>`
-              SELECT COUNT(*) as count FROM "ClinicLocation" WHERE "clinicId" = ${clinicId}
-            `;
-          return Number(result[0]?.count || 0);
+          ).clinicLocation.count({
+            where: { clinicId },
+          });
         }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('long').priority('normal').build()),
 
         // Recent activity (last 10, limited for performance)
@@ -171,8 +172,8 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
     } catch (error) {
       const dbError = error instanceof Error ? error : new Error(String(error));
       void this.loggingService.log(
-        'DATABASE' as never,
-        'ERROR' as never,
+        LogType.DATABASE,
+        LogLevel.ERROR,
         `Failed to get clinic dashboard stats: ${dbError.message}`,
         this.serviceName,
         { error: dbError.stack, clinicId }
@@ -189,123 +190,135 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
     clinicId: string,
     options?: ClinicPatientOptions
   ): Promise<ClinicPatientResult> {
-    const page = options?.page || 1;
-    const limit = Math.min(options?.limit || 50, 100); // Max 100 for performance
-    const skip = (page - 1) * limit;
+    try {
+      const page = options?.page || 1;
+      const limit = Math.min(options?.limit || 50, 100); // Max 100 for performance
+      const skip = (page - 1) * limit;
 
-    // Build optimized where clause
-    const where = {
-      clinicId,
-      ...(options?.locationId && { locationId: options.locationId }),
-      ...(options?.searchTerm && {
-        OR: [
-          { firstName: { contains: options.searchTerm, mode: 'insensitive' } },
-          { lastName: { contains: options.searchTerm, mode: 'insensitive' } },
-          { email: { contains: options.searchTerm, mode: 'insensitive' } },
-          { phone: { contains: options.searchTerm, mode: 'insensitive' } },
-        ],
-      }),
-      ...(options?.includeInactive === false && { isActive: true }),
-    } as Record<string, unknown>;
-
-    // Parallel queries for optimal performance
-    const [patients, total] = await Promise.all([
-      // Get patients with pagination (optimized with select)
-      this.executeRead(
-        async prisma =>
-          prisma.patient.findMany({
-            where: where as never,
-            skip,
-            take: limit,
-            orderBy: { createdAt: 'desc' },
-            select: {
-              id: true,
-              firstName: true,
-              lastName: true,
-              email: true,
-              phone: true,
-              dateOfBirth: true,
-              gender: true,
-              address: true,
-              isActive: true,
-              createdAt: true,
-              updatedAt: true,
-              clinicId: true,
-              locationId: true,
-              user: {
-                select: { id: true, email: true, name: true, role: true },
-              },
-            },
-          }),
-        this.queryOptionsBuilder
-          .clinicId(clinicId)
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .build()
-      ),
-
-      // Get total count (cached separately for performance)
-      this.executeRead(
-        async prisma => prisma.patient.count({ where: where as never }),
-        this.queryOptionsBuilder
-          .clinicId(clinicId)
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .build()
-      ),
-    ]);
-
-    // Map to PatientWithUser type
-    const mappedPatients = patients.map(p => {
-      const patientData = p as unknown as {
-        id: string;
-        firstName: string | null;
-        lastName: string | null;
-        email: string | null;
-        phone: string | null;
-        dateOfBirth: Date | null;
-        gender: string | null;
-        address: string | null;
-        isActive: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-        clinicId: string;
-        locationId: string | null;
-        user: {
-          id: string;
-          email: string;
-          name: string | null;
-          role: string;
-        } | null;
+      // Build optimized where clause
+      const where = {
+        clinicId,
+        ...(options?.locationId && { locationId: options.locationId }),
+        ...(options?.searchTerm && {
+          OR: [
+            { firstName: { contains: options.searchTerm, mode: 'insensitive' } },
+            { lastName: { contains: options.searchTerm, mode: 'insensitive' } },
+            { email: { contains: options.searchTerm, mode: 'insensitive' } },
+            { phone: { contains: options.searchTerm, mode: 'insensitive' } },
+          ],
+        }),
+        ...(options?.includeInactive === false && { isActive: true }),
       };
 
-      return {
-        ...patientData,
-        userId: patientData.user?.id || '',
-        user: patientData.user || {
-          id: '',
-          email: patientData.email || '',
-          name: `${patientData.firstName || ''} ${patientData.lastName || ''}`.trim() || null,
-          firstName: patientData.firstName || undefined,
-          lastName: patientData.lastName || undefined,
-          phone: patientData.phone || undefined,
-          dateOfBirth: patientData.dateOfBirth || undefined,
-          gender: patientData.gender || undefined,
-          address: patientData.address || undefined,
-          emergencyContact: undefined,
-          isVerified: false,
-        },
-      } as unknown as PatientWithUser;
-    });
+      // Parallel queries for optimal performance
+      const [patients, total] = await Promise.all([
+        // Get patients with pagination (optimized with select)
+        this.executeRead(
+          async prisma =>
+            prisma.patient.findMany({
+              where: where as never,
+              skip,
+              take: limit,
+              orderBy: { createdAt: 'desc' },
+              select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                phone: true,
+                dateOfBirth: true,
+                gender: true,
+                address: true,
+                isActive: true,
+                createdAt: true,
+                updatedAt: true,
+                clinicId: true,
+                locationId: true,
+                user: {
+                  select: { id: true, email: true, name: true, role: true },
+                },
+              },
+            }),
+          this.queryOptionsBuilder
+            .clinicId(clinicId)
+            .useCache(true)
+            .cacheStrategy('short')
+            .priority('normal')
+            .build()
+        ),
 
-    return {
-      patients: mappedPatients,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    };
+        // Get total count (cached separately for performance)
+        this.executeRead(
+          async prisma => prisma.patient.count({ where: where as never }),
+          this.queryOptionsBuilder
+            .clinicId(clinicId)
+            .useCache(true)
+            .cacheStrategy('short')
+            .priority('normal')
+            .build()
+        ),
+      ]);
+
+      // Map to PatientWithUser type
+      const mappedPatients: PatientWithUser[] = patients.map(p => {
+        const patientData = p as unknown as {
+          id: string;
+          firstName: string | null;
+          lastName: string | null;
+          email: string | null;
+          phone: string | null;
+          dateOfBirth: Date | null;
+          gender: string | null;
+          address: string | null;
+          isActive: boolean;
+          createdAt: Date;
+          updatedAt: Date;
+          clinicId: string;
+          locationId: string | null;
+          user: {
+            id: string;
+            email: string;
+            name: string | null;
+            role: string;
+          } | null;
+        };
+
+        return {
+          ...patientData,
+          userId: patientData.user?.id || '',
+          user: patientData.user || {
+            id: '',
+            email: patientData.email || '',
+            name: `${patientData.firstName || ''} ${patientData.lastName || ''}`.trim() || null,
+            firstName: patientData.firstName || undefined,
+            lastName: patientData.lastName || undefined,
+            phone: patientData.phone || undefined,
+            dateOfBirth: patientData.dateOfBirth || undefined,
+            gender: patientData.gender || undefined,
+            address: patientData.address || undefined,
+            emergencyContact: undefined as string | undefined,
+            isVerified: false,
+          },
+        } as unknown as PatientWithUser;
+      });
+
+      return {
+        patients: mappedPatients,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      };
+    } catch (error) {
+      const dbError = error instanceof Error ? error : new Error(String(error));
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to get clinic patients: ${dbError.message}`,
+        this.serviceName,
+        { error: dbError.stack, clinicId, options }
+      );
+      throw dbError;
+    }
   }
 
   /**
@@ -316,86 +329,98 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
     clinicId: string,
     options?: ClinicAppointmentOptions
   ): Promise<ClinicAppointmentResult> {
-    const page = options?.page || 1;
-    const limit = Math.min(options?.limit || 50, 100); // Max 100 for performance
-    const skip = (page - 1) * limit;
+    try {
+      const page = options?.page || 1;
+      const limit = Math.min(options?.limit || 50, 100); // Max 100 for performance
+      const skip = (page - 1) * limit;
 
-    // Build optimized where clause
-    const where = {
-      clinicId,
-      ...(options?.locationId && { locationId: options.locationId }),
-      ...(options?.doctorId && { doctorId: options.doctorId }),
-      ...(options?.status && { status: options.status }),
-      ...((options?.dateFrom || options?.dateTo) && {
-        appointmentDate: {
-          ...(options.dateFrom && { gte: options.dateFrom }),
-          ...(options.dateTo && {
-            lte: (() => {
-              const endDate = new Date(options.dateTo);
-              endDate.setHours(23, 59, 59, 999);
-              return endDate;
-            })(),
-          }),
-        },
-      }),
-    } as Record<string, unknown>;
+      // Build optimized where clause
+      const where = {
+        clinicId,
+        ...(options?.locationId && { locationId: options.locationId }),
+        ...(options?.doctorId && { doctorId: options.doctorId }),
+        ...(options?.status && { status: options.status }),
+        ...((options?.dateFrom || options?.dateTo) && {
+          appointmentDate: {
+            ...(options.dateFrom && { gte: options.dateFrom }),
+            ...(options.dateTo && {
+              lte: (() => {
+                const endDate = new Date(options.dateTo);
+                endDate.setHours(23, 59, 59, 999);
+                return endDate;
+              })(),
+            }),
+          },
+        }),
+      };
 
-    // Parallel queries for optimal performance
-    const [appointments, total] = await Promise.all([
-      // Get appointments with pagination (optimized with select and relations)
-      this.executeRead(
-        async prisma =>
-          prisma.appointment.findMany({
-            where: where as never,
-            skip,
-            take: limit,
-            orderBy: { appointmentDate: 'asc' },
-            include: {
-              patient: {
-                select: { id: true, firstName: true, lastName: true, email: true, phone: true },
-              },
-              doctor: {
-                select: {
-                  id: true,
-                  firstName: true,
-                  lastName: true,
-                  email: true,
-                  specialization: true,
+      // Parallel queries for optimal performance
+      const [appointments, total] = await Promise.all([
+        // Get appointments with pagination (optimized with select and relations)
+        this.executeRead(
+          async prisma =>
+            prisma.appointment.findMany({
+              where: where as never,
+              skip,
+              take: limit,
+              orderBy: { appointmentDate: 'asc' },
+              include: {
+                patient: {
+                  select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+                },
+                doctor: {
+                  select: {
+                    id: true,
+                    firstName: true,
+                    lastName: true,
+                    email: true,
+                    specialization: true,
+                  },
+                },
+                clinic: {
+                  select: { id: true, name: true },
+                },
+                location: {
+                  select: { id: true, name: true, address: true },
                 },
               },
-              clinic: {
-                select: { id: true, name: true },
-              },
-              location: {
-                select: { id: true, name: true, address: true },
-              },
-            },
-          }),
-        this.queryOptionsBuilder
-          .clinicId(clinicId)
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .build()
-      ),
+            }),
+          this.queryOptionsBuilder
+            .clinicId(clinicId)
+            .useCache(true)
+            .cacheStrategy('short')
+            .priority('normal')
+            .build()
+        ),
 
-      // Get total count (cached separately for performance)
-      this.executeRead(
-        async prisma => prisma.appointment.count({ where: where as never }),
-        this.queryOptionsBuilder
-          .clinicId(clinicId)
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .build()
-      ),
-    ]);
+        // Get total count (cached separately for performance)
+        this.executeRead(
+          async prisma => prisma.appointment.count({ where: where as never }),
+          this.queryOptionsBuilder
+            .clinicId(clinicId)
+            .useCache(true)
+            .cacheStrategy('short')
+            .priority('normal')
+            .build()
+        ),
+      ]);
 
-    return {
-      appointments: appointments as unknown as AppointmentWithRelations[],
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-    };
+      return {
+        appointments: appointments as unknown as AppointmentWithRelations[],
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      };
+    } catch (error) {
+      const dbError = error instanceof Error ? error : new Error(String(error));
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.ERROR,
+        `Failed to get clinic appointments: ${dbError.message}`,
+        this.serviceName,
+        { error: dbError.stack, clinicId, options }
+      );
+      throw dbError;
+    }
   }
 }

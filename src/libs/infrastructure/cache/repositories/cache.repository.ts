@@ -47,7 +47,7 @@ export class CacheRepository implements ICacheRepository {
           'CacheProviderFactory is not initialized. Cannot get cache provider. This may indicate cache service initialization failure.'
         );
       }
-    // Get provider from factory (provider-agnostic)
+      // Get provider from factory (provider-agnostic)
       const provider = this.providerFactory.getBasicProvider();
       if (!provider || typeof provider.set !== 'function') {
         throw new Error(

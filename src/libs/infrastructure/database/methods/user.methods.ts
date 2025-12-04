@@ -50,9 +50,77 @@ export class UserMethods extends DatabaseMethodsBase {
           receptionists: true,
           clinicAdmins: true,
           superAdmin: true,
+          pharmacist: true,
+          therapist: true,
+          labTechnician: true,
+          financeBilling: true,
+          supportStaff: true,
+          nurse: true,
+          counselor: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
+  }
+
+  /**
+   * Find user by email for authentication - explicitly includes password field
+   *
+   * OPTIMIZED FOR AUTH: Uses optimized Prisma query with all database optimizations
+   * - Uses Prisma's findUnique with include (all fields including password are included by default)
+   * - Uses optimized Prisma query with eager loading for relations (with query optimization)
+   * - Includes all optimization layers: query optimization, metrics, security checks
+   * - Bypasses caching (sensitive auth data)
+   * - Prisma includes password field automatically when not using select
+   *
+   * Performance: Optimized for 2-7ms target with single optimized query
+   */
+  async findUserByEmailForAuth(
+    email: string
+  ): Promise<(UserWithRelations & { password: string }) | null> {
+    return await this.executeRead<(UserWithRelations & { password: string }) | null>(
+      async prisma => {
+        // OPTIMIZATION: Use Prisma's findUnique with include (all fields including password)
+        // This uses all optimization layers (query optimizer, metrics, security checks)
+        // Prisma includes all fields by default when using include, including password
+        const user = await prisma.user.findUnique({
+          where: { email },
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            nurse: true,
+            counselor: true,
+            clinics: true,
+          },
+        });
+
+        // Early return if user not found
+        if (!user) {
+          return null;
+        }
+
+        // Early return if password not found (user exists but no password - invalid state)
+        // Prisma includes password field automatically, but check for safety
+        if (!user.password) {
+          return null;
+        }
+
+        // Return user with password - Prisma includes password field automatically
+        return user as UserWithRelations & { password: string };
+      },
+      this.queryOptionsBuilder
+        .useCache(false) // Do not cache sensitive auth data
+        .priority('high') // High priority for auth operations
+        .hipaaCompliant(false) // Auth operations don't need HIPAA compliance checks (internal)
+        .build()
+    );
   }
 
   /**
@@ -68,16 +136,23 @@ export class UserMethods extends DatabaseMethodsBase {
           receptionists: true,
           clinicAdmins: true,
           superAdmin: true,
+          pharmacist: true,
+          therapist: true,
+          labTechnician: true,
+          financeBilling: true,
+          supportStaff: true,
+          nurse: true,
+          counselor: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 
   /**
-   * Create user with full relations
+   * Create user
    */
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {
-    const result = await this.executeWrite<UserWithRelations>(
+    return await this.executeWrite<UserWithRelations>(
       async prisma => {
         return await prisma.user.create({
           data,
@@ -100,31 +175,26 @@ export class UserMethods extends DatabaseMethodsBase {
       {
         userId: 'system',
         userRole: 'system',
+        operation: 'CREATE',
+        resourceType: 'User',
+        resourceId: 'new',
         clinicId: '',
-        operation: 'CREATE_USER',
-        resourceType: 'USER',
-        resourceId: 'pending',
-        timestamp: new Date(),
-      }
+        details: {
+          email:
+            typeof data === 'object' && 'email' in data && typeof data.email === 'string'
+              ? data.email
+              : '',
+        },
+      },
+      this.queryOptionsBuilder.useCache(false).build()
     );
-
-    // Invalidate cache after creation
-    if (result?.id) {
-      await this.invalidateCache([
-        this.queryKeyFactory.user(result.id),
-        `user:email:${result.email || ''}`,
-        'users',
-      ]);
-    }
-
-    return result;
   }
 
   /**
-   * Update user with full relations
+   * Update user
    */
   async updateUserSafe(id: string, data: UserUpdateInput): Promise<UserWithRelations> {
-    const result = await this.executeWrite<UserWithRelations>(
+    return await this.executeWrite<UserWithRelations>(
       async prisma => {
         return await prisma.user.update({
           where: { id },
@@ -148,26 +218,20 @@ export class UserMethods extends DatabaseMethodsBase {
       {
         userId: 'system',
         userRole: 'system',
-        clinicId: '',
-        operation: 'UPDATE_USER',
-        resourceType: 'USER',
+        operation: 'UPDATE',
+        resourceType: 'User',
         resourceId: id,
-        timestamp: new Date(),
-      }
+        clinicId: '',
+      },
+      this.queryOptionsBuilder.useCache(false).build()
     );
-
-    // NOTE: Cache invalidation is now automatic via DatabaseService.executeWrite()
-    // Manual invalidation kept for backward compatibility but not required
-    // await this.invalidateCache([this.queryKeyFactory.user(id), 'users']);
-
-    return result;
   }
 
   /**
-   * Delete user with full relations
+   * Delete user
    */
   async deleteUserSafe(id: string): Promise<UserWithRelations> {
-    const result = await this.executeWrite<UserWithRelations>(
+    return await this.executeWrite<UserWithRelations>(
       async prisma => {
         return await prisma.user.delete({
           where: { id },
@@ -190,18 +254,13 @@ export class UserMethods extends DatabaseMethodsBase {
       {
         userId: 'system',
         userRole: 'system',
-        clinicId: '',
-        operation: 'DELETE_USER',
-        resourceType: 'USER',
+        operation: 'DELETE',
+        resourceType: 'User',
         resourceId: id,
-        timestamp: new Date(),
-      }
+        clinicId: '',
+      },
+      this.queryOptionsBuilder.useCache(false).build()
     );
-
-    // Invalidate cache after deletion
-    await this.invalidateCache([this.queryKeyFactory.user(id), 'users']);
-
-    return result;
   }
 
   /**
@@ -209,7 +268,9 @@ export class UserMethods extends DatabaseMethodsBase {
    */
   async countUsersSafe(where: UserWhereInput): Promise<number> {
     return await this.executeRead<number>(async prisma => {
-      return await prisma.user.count({ where });
+      return await prisma.user.count({
+        where,
+      });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
   }
 }

@@ -10,7 +10,7 @@
  * @since 2024
  */
 
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
 import { ConfigService } from '@config';
 import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
@@ -23,25 +23,25 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
 import {
-  SERVICE_QUEUE,
-  APPOINTMENT_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  DOCTOR_AVAILABILITY_QUEUE,
-  QUEUE_MANAGEMENT_QUEUE,
-  PAYMENT_PROCESSING_QUEUE,
-  ANALYTICS_QUEUE,
-  ENHANCED_APPOINTMENT_QUEUE,
-  WAITING_LIST_QUEUE,
-  CALENDAR_SYNC_QUEUE,
-  AYURVEDA_THERAPY_QUEUE,
-  PATIENT_PREFERENCE_QUEUE,
-  REMINDER_QUEUE,
-  FOLLOW_UP_QUEUE,
-  RECURRING_APPOINTMENT_QUEUE,
+  SERVICE_QUEUE as SERVICE_QUEUE_CONST,
+  APPOINTMENT_QUEUE as APPOINTMENT_QUEUE_CONST,
+  VIDHAKARMA_QUEUE as VIDHAKARMA_QUEUE_CONST,
+  PANCHAKARMA_QUEUE as PANCHAKARMA_QUEUE_CONST,
+  CHEQUP_QUEUE as CHEQUP_QUEUE_CONST,
+  EMAIL_QUEUE as EMAIL_QUEUE_CONST,
+  NOTIFICATION_QUEUE as NOTIFICATION_QUEUE_CONST,
+  DOCTOR_AVAILABILITY_QUEUE as DOCTOR_AVAILABILITY_QUEUE_CONST,
+  QUEUE_MANAGEMENT_QUEUE as QUEUE_MANAGEMENT_QUEUE_CONST,
+  PAYMENT_PROCESSING_QUEUE as PAYMENT_PROCESSING_QUEUE_CONST,
+  ANALYTICS_QUEUE as ANALYTICS_QUEUE_CONST,
+  ENHANCED_APPOINTMENT_QUEUE as ENHANCED_APPOINTMENT_QUEUE_CONST,
+  WAITING_LIST_QUEUE as WAITING_LIST_QUEUE_CONST,
+  CALENDAR_SYNC_QUEUE as CALENDAR_SYNC_QUEUE_CONST,
+  AYURVEDA_THERAPY_QUEUE as AYURVEDA_THERAPY_QUEUE_CONST,
+  PATIENT_PREFERENCE_QUEUE as PATIENT_PREFERENCE_QUEUE_CONST,
+  REMINDER_QUEUE as REMINDER_QUEUE_CONST,
+  FOLLOW_UP_QUEUE as FOLLOW_UP_QUEUE_CONST,
+  RECURRING_APPOINTMENT_QUEUE as RECURRING_APPOINTMENT_QUEUE_CONST,
 } from './queue.constants';
 
 // Internal imports - Types
@@ -56,7 +56,7 @@ import type {
   AuditAction,
 } from '@core/types/queue.types';
 
-// Re-export for backward compatibility
+// Re-export types for convenience
 export type JobType = string;
 export type { JobData, QueueFilters, ClientSession, EnterpriseJobOptions, BulkJobData };
 export { AuditAction };
@@ -117,6 +117,46 @@ export enum DomainType {
  */
 @Injectable()
 export class QueueService implements OnModuleInit, OnModuleDestroy {
+  // ========================================
+  // STATIC PROPERTIES - SINGLE SOURCE OF TRUTH
+  // ========================================
+  // These static properties expose all queue constants and configurations
+  // Access via: QueueService.ANALYTICS_QUEUE, QueueService.PRIORITIES, etc.
+
+  // Queue Names - Single source of truth
+  // These values match QUEUE_NAMES from @core/types/queue.types.ts for consistency
+  // Using string literals directly for proper type inference
+  static readonly APPOINTMENT_QUEUE = 'appointment-queue';
+  static readonly EMAIL_QUEUE = 'email-queue';
+  static readonly NOTIFICATION_QUEUE = 'notification-queue';
+  static readonly SERVICE_QUEUE = 'service-queue';
+  static readonly VIDHAKARMA_QUEUE = 'vidhakarma-queue';
+  static readonly PANCHAKARMA_QUEUE = 'panchakarma-queue';
+  static readonly CHEQUP_QUEUE = 'chequp-queue';
+  static readonly DOCTOR_AVAILABILITY_QUEUE = 'doctor-availability-queue';
+  static readonly QUEUE_MANAGEMENT_QUEUE = 'queue-management-queue';
+  static readonly PAYMENT_PROCESSING_QUEUE = 'payment-processing-queue';
+  static readonly ANALYTICS_QUEUE = 'analytics-queue';
+  static readonly ENHANCED_APPOINTMENT_QUEUE = 'enhanced-appointment-queue';
+  static readonly WAITING_LIST_QUEUE = 'waiting-list-queue';
+  static readonly CALENDAR_SYNC_QUEUE = 'calendar-sync-queue';
+  static readonly AYURVEDA_THERAPY_QUEUE = 'ayurveda-therapy-queue';
+  static readonly PATIENT_PREFERENCE_QUEUE = 'patient-preference-queue';
+  static readonly REMINDER_QUEUE = 'reminder-queue';
+  static readonly FOLLOW_UP_QUEUE = 'follow-up-queue';
+  static readonly RECURRING_APPOINTMENT_QUEUE = 'recurring-appointment-queue';
+
+  // Queue Priorities - Access via QueueService.PRIORITIES
+  // These values match QUEUE_PRIORITIES from @core/types/queue.types.ts for consistency
+  static readonly PRIORITIES = {
+    CRITICAL: 10,
+    HIGH: 7,
+    NORMAL: 5,
+    LOW: 3,
+    BACKGROUND: 1,
+  } as const;
+
+  // Instance properties
   // Initialize Maps with defensive checks to prevent undefined errors
   private readonly queues: Map<string, Queue> = new Map<string, Queue>();
   private readonly workers: Map<string, Worker[]> = new Map<string, Worker[]>();
@@ -141,10 +181,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    * sets up the internal queue and worker management systems.
    */
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Inject('BULLMQ_QUEUES') private readonly bullQueues: Queue[],
     @Inject('BULLMQ_WORKERS') private readonly bullWorkers: Worker[] = [],
     private readonly monitoringService: QueueMonitoringService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     void this.loggingService.log(
@@ -222,12 +264,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    */
   private getAvailableQueues(): string[] {
     const baseQueues = [
-      SERVICE_QUEUE,
-      EMAIL_QUEUE,
-      NOTIFICATION_QUEUE,
-      ANALYTICS_QUEUE,
-      PAYMENT_PROCESSING_QUEUE,
-      QUEUE_MANAGEMENT_QUEUE,
+      SERVICE_QUEUE_CONST,
+      EMAIL_QUEUE_CONST,
+      NOTIFICATION_QUEUE_CONST,
+      ANALYTICS_QUEUE_CONST,
+      PAYMENT_PROCESSING_QUEUE_CONST,
+      QUEUE_MANAGEMENT_QUEUE_CONST,
     ];
 
     const currentDomain = this.getCurrentDomain();
@@ -236,43 +278,43 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       case DomainType.CLINIC:
         return [
           ...baseQueues,
-          APPOINTMENT_QUEUE,
-          VIDHAKARMA_QUEUE,
-          PANCHAKARMA_QUEUE,
-          CHEQUP_QUEUE,
-          DOCTOR_AVAILABILITY_QUEUE,
-          ENHANCED_APPOINTMENT_QUEUE,
-          WAITING_LIST_QUEUE,
-          CALENDAR_SYNC_QUEUE,
-          AYURVEDA_THERAPY_QUEUE,
-          PATIENT_PREFERENCE_QUEUE,
-          REMINDER_QUEUE,
-          FOLLOW_UP_QUEUE,
-          RECURRING_APPOINTMENT_QUEUE,
+          APPOINTMENT_QUEUE_CONST,
+          VIDHAKARMA_QUEUE_CONST,
+          PANCHAKARMA_QUEUE_CONST,
+          CHEQUP_QUEUE_CONST,
+          DOCTOR_AVAILABILITY_QUEUE_CONST,
+          ENHANCED_APPOINTMENT_QUEUE_CONST,
+          WAITING_LIST_QUEUE_CONST,
+          CALENDAR_SYNC_QUEUE_CONST,
+          AYURVEDA_THERAPY_QUEUE_CONST,
+          PATIENT_PREFERENCE_QUEUE_CONST,
+          REMINDER_QUEUE_CONST,
+          FOLLOW_UP_QUEUE_CONST,
+          RECURRING_APPOINTMENT_QUEUE_CONST,
         ];
       // FASHION domain removed - healthcare application only
       case DomainType.WORKER:
         // Worker can access all queues
         return [
           ...baseQueues,
-          APPOINTMENT_QUEUE,
-          VIDHAKARMA_QUEUE,
-          PANCHAKARMA_QUEUE,
-          CHEQUP_QUEUE,
-          DOCTOR_AVAILABILITY_QUEUE,
-          ENHANCED_APPOINTMENT_QUEUE,
-          WAITING_LIST_QUEUE,
-          CALENDAR_SYNC_QUEUE,
-          AYURVEDA_THERAPY_QUEUE,
-          PATIENT_PREFERENCE_QUEUE,
-          REMINDER_QUEUE,
-          FOLLOW_UP_QUEUE,
-          RECURRING_APPOINTMENT_QUEUE,
-          APPOINTMENT_QUEUE,
-          NOTIFICATION_QUEUE,
-          EMAIL_QUEUE,
-          PAYMENT_PROCESSING_QUEUE,
-          ANALYTICS_QUEUE,
+          APPOINTMENT_QUEUE_CONST,
+          VIDHAKARMA_QUEUE_CONST,
+          PANCHAKARMA_QUEUE_CONST,
+          CHEQUP_QUEUE_CONST,
+          DOCTOR_AVAILABILITY_QUEUE_CONST,
+          ENHANCED_APPOINTMENT_QUEUE_CONST,
+          WAITING_LIST_QUEUE_CONST,
+          CALENDAR_SYNC_QUEUE_CONST,
+          AYURVEDA_THERAPY_QUEUE_CONST,
+          PATIENT_PREFERENCE_QUEUE_CONST,
+          REMINDER_QUEUE_CONST,
+          FOLLOW_UP_QUEUE_CONST,
+          RECURRING_APPOINTMENT_QUEUE_CONST,
+          APPOINTMENT_QUEUE_CONST,
+          NOTIFICATION_QUEUE_CONST,
+          EMAIL_QUEUE_CONST,
+          PAYMENT_PROCESSING_QUEUE_CONST,
+          ANALYTICS_QUEUE_CONST,
         ];
       default:
         return baseQueues;

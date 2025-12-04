@@ -390,3 +390,55 @@ export interface QueueHealthMonitorStatus {
   }>;
   issues: string[];
 }
+
+// ============================================================================
+// Queue Constants - Single Source of Truth
+// ============================================================================
+
+/**
+ * Queue name constants
+ * These are the canonical queue names used throughout the application
+ */
+export const QUEUE_NAMES = {
+  APPOINTMENT_QUEUE: 'appointment-queue',
+  EMAIL_QUEUE: 'email-queue',
+  NOTIFICATION_QUEUE: 'notification-queue',
+  SERVICE_QUEUE: 'service-queue',
+  VIDHAKARMA_QUEUE: 'vidhakarma-queue',
+  PANCHAKARMA_QUEUE: 'panchakarma-queue',
+  CHEQUP_QUEUE: 'chequp-queue',
+  DOCTOR_AVAILABILITY_QUEUE: 'doctor-availability-queue',
+  QUEUE_MANAGEMENT_QUEUE: 'queue-management-queue',
+  PAYMENT_PROCESSING_QUEUE: 'payment-processing-queue',
+  ANALYTICS_QUEUE: 'analytics-queue',
+  ENHANCED_APPOINTMENT_QUEUE: 'enhanced-appointment-queue',
+  WAITING_LIST_QUEUE: 'waiting-list-queue',
+  CALENDAR_SYNC_QUEUE: 'calendar-sync-queue',
+  AYURVEDA_THERAPY_QUEUE: 'ayurveda-therapy-queue',
+  PATIENT_PREFERENCE_QUEUE: 'patient-preference-queue',
+  REMINDER_QUEUE: 'reminder-queue',
+  FOLLOW_UP_QUEUE: 'follow-up-queue',
+  RECURRING_APPOINTMENT_QUEUE: 'recurring-appointment-queue',
+} as const;
+
+/**
+ * Queue priority constants
+ * These are the canonical priority values used throughout the application
+ */
+export const QUEUE_PRIORITIES = {
+  CRITICAL: 10,
+  HIGH: 7,
+  NORMAL: 5,
+  LOW: 3,
+  BACKGROUND: 1,
+} as const;
+
+/**
+ * Type for queue names
+ */
+export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
+
+/**
+ * Type for queue priorities
+ */
+export type QueuePriority = (typeof QUEUE_PRIORITIES)[keyof typeof QUEUE_PRIORITIES];

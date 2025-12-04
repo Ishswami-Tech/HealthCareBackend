@@ -1,11 +1,16 @@
-// Import PrismaClient - use adapter pattern like quick-seed.ts for Prisma 7
+// Import PrismaClient - use adapter pattern for Prisma 7 with engine type "client"
 import { PrismaClient } from './generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { faker } from '@faker-js/faker';
-import * as bcrypt from 'bcrypt';
+import * as bcrypt from 'bcryptjs'; // Use bcryptjs to match AuthService
 import * as fs from 'fs';
 import * as path from 'path';
+import { createRequire } from 'module';
+
+// Use __filename for CommonJS compatibility (ts-node uses CommonJS)
+// Note: Reserved for future use if dynamic module loading is needed
+const _requireModule = createRequire(__filename);
 // Import enums from centralized location
 import {
   PaymentStatus,
@@ -71,12 +76,32 @@ if (connectionString.includes('supabase') || connectionString.includes('pooler.s
 console.log('Initializing PrismaClient with adapter...');
 const pool = new Pool(poolConfig);
 const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({
-  log: process.env['NODE_ENV'] === 'development' ? ['error', 'warn'] : ['error'],
+
+// Create PrismaClient with adapter - simplified initialization
+// Clear require cache to ensure fresh PrismaClient
+try {
+  const modulePath = require.resolve('./generated/client');
+  delete require.cache[modulePath];
+  Object.keys(require.cache).forEach(key => {
+    if (key.includes('prisma') || key.includes('.prisma')) {
+      delete require.cache[key];
+    }
+  });
+} catch {
+  // Module not in cache yet, that's fine
+}
+
+const prismaConstructorArgs = {
+  log: (process.env['NODE_ENV'] === 'development' ? ['error', 'warn'] : ['error']) as Array<
+    'error' | 'warn'
+  >,
   errorFormat: 'minimal' as const,
-  adapter,
-});
-console.log('PrismaClient initialized');
+  adapter: adapter,
+};
+
+console.log('Creating PrismaClient instance...');
+const prisma = new PrismaClient(prismaConstructorArgs);
+console.log('PrismaClient initialized successfully');
 
 let userIdCounter = 1;
 const generateUserId = () => `UID${String(userIdCounter++).padStart(6, '0')}`;
@@ -102,98 +127,331 @@ function exportTestIds(testIds: Record<string, unknown>) {
 }
 
 /**
+ * Helper function to assign RBAC role to user
+ * Creates role if it doesn't exist, then assigns it to the user
+ */
+async function assignRoleToUser(
+  userId: string,
+  roleName: string,
+  clinicId: string
+): Promise<void> {
+  try {
+    // Find or create RBAC role
+    let rbacRole = await prisma.rbacRole.findFirst({
+      where: {
+        name: roleName,
+        domain: 'healthcare',
+        clinicId: null, // System roles have null clinicId
+      },
+    });
+
+    if (!rbacRole) {
+      console.log(`Creating RBAC role: ${roleName}...`);
+      rbacRole = await prisma.rbacRole.create({
+        data: {
+          name: roleName,
+          displayName: roleName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          description: `${roleName} role`,
+          domain: 'healthcare',
+          clinicId: null, // System role
+          isSystemRole: true,
+          isActive: true,
+        },
+      });
+      console.log(`✓ Created RBAC role: ${roleName}`);
+    }
+
+    // Check if role is already assigned
+    const existingAssignment = await prisma.userRole.findFirst({
+      where: {
+        userId,
+        roleId: rbacRole.id,
+        clinicId,
+        isActive: true,
+      },
+    });
+
+    if (!existingAssignment) {
+      console.log(`Assigning RBAC role ${roleName} to user ${userId}...`);
+      await prisma.userRole.create({
+        data: {
+          userId,
+          roleId: rbacRole.id,
+          clinicId,
+          assignedBy: 'SYSTEM',
+          isActive: true,
+          isPrimary: true, // Primary role for the user
+        },
+      });
+      console.log(`✓ Assigned RBAC role ${roleName} to user`);
+    } else {
+      console.log(`✓ RBAC role ${roleName} already assigned to user`);
+    }
+  } catch (error) {
+    console.error(`Failed to assign role ${roleName} to user ${userId}:`, error);
+    // Don't throw - allow seed to continue even if role assignment fails
+  }
+}
+
+/**
  * Quick seed - creates only demo users if clinics exist
+ * Enhanced to also create clinic locations if missing
  */
 async function quickSeed() {
-  const clinic = await prisma.clinic.findFirst({});
-  if (!clinic) {
-    throw new Error('Clinic not found');
+  try {
+    console.log('Starting quick seed...');
+    const clinic = await prisma.clinic.findFirst({});
+    if (!clinic) {
+      throw new Error('Clinic not found');
+    }
+    console.log(`Using clinic: ${clinic.name} (Clinic ID: ${clinic.clinicId})`);
+
+    // Ensure clinic has at least one location (required for appointments)
+    let clinicLocation = await prisma.clinicLocation.findFirst({
+      where: { clinicId: clinic.id },
+    });
+
+    if (!clinicLocation) {
+      console.log('Creating clinic location...');
+      clinicLocation = await prisma.clinicLocation.create({
+        data: {
+          name: `${clinic.name} Main Branch`,
+          address: 'Main Street',
+          city: 'Pune',
+          state: 'Maharashtra',
+          country: 'India',
+          zipCode: '411001',
+          phone: clinic.phone || '+91-9876543210',
+          email: clinic.email || 'main@clinic.com',
+          clinicId: clinic.id,
+          locationId: generateLocationId(),
+          isActive: true,
+        },
+      });
+      console.log(`✓ Created clinic location: ${clinicLocation.name}`);
+    } else {
+      console.log(`✓ Clinic location already exists: ${clinicLocation.name}`);
+    }
+
+    // Create demo patient if missing
+    let demoPatient = await prisma.user.findUnique({
+      where: { email: 'patient1@example.com' },
+    });
+
+    if (!demoPatient) {
+      console.log('Creating demo patient...');
+      const hashedPassword = await bcrypt.hash('test1234', 12); // Use 12 rounds to match AuthService
+      console.log('Password hashed, creating user...');
+      demoPatient = await prisma.user.create({
+        data: {
+          email: 'patient1@example.com',
+          password: hashedPassword,
+          name: 'Demo Patient',
+          age: 30,
+          firstName: 'Demo',
+          lastName: 'Patient',
+          phone: '9000000003',
+          role: RoleValues.PATIENT,
+          gender: Gender.OTHER,
+          isVerified: true,
+          userid: generateUserId(),
+          clinics: { connect: { id: clinic.id } },
+          primaryClinicId: clinic.id,
+        },
+      });
+      console.log(`User created with ID: ${demoPatient.id}`);
+      console.log('Creating patient record...');
+      await prisma.patient.create({
+        data: {
+          userId: demoPatient.id,
+          prakriti: Prakriti.VATA,
+          dosha: Dosha.PITTA,
+        },
+      });
+      // Double-check clinic association was created
+      const patientClinicCheck = await prisma.user.findUnique({
+        where: { id: demoPatient.id },
+        include: { clinics: true },
+      });
+      if (!patientClinicCheck?.clinics?.some(c => c.id === clinic.id)) {
+        console.log('Ensuring patient-clinic association...');
+        await prisma.user.update({
+          where: { id: demoPatient.id },
+          data: {
+            clinics: { connect: { id: clinic.id } },
+            primaryClinicId: clinic.id,
+          },
+        });
+      }
+      // Assign RBAC role to patient
+      await assignRoleToUser(demoPatient.id, RoleValues.PATIENT, clinic.id);
+      console.log(`✓ Created demo patient: ${demoPatient.email}`);
+    } else {
+      console.log(`✓ Demo patient already exists: patient1@example.com`);
+      // Ensure patient is associated with clinic
+      const patientClinics = await prisma.user.findUnique({
+        where: { email: 'patient1@example.com' },
+        include: { clinics: true },
+      });
+      if (!patientClinics?.clinics?.some(c => c.id === clinic.id)) {
+        console.log('Associating patient with clinic...');
+        await prisma.user.update({
+          where: { id: demoPatient.id },
+          data: {
+            clinics: { connect: { id: clinic.id } },
+            primaryClinicId: clinic.id,
+          },
+        });
+        console.log('✓ Patient associated with clinic');
+      }
+      // Ensure RBAC role is assigned
+      await assignRoleToUser(demoPatient.id, RoleValues.PATIENT, clinic.id);
+    }
+
+    // Create demo doctor if missing
+    let demoDoctor = await prisma.user.findUnique({
+      where: { email: 'doctor1@example.com' },
+    });
+
+    if (!demoDoctor) {
+      console.log('Creating demo doctor...');
+      const hashedPassword = await bcrypt.hash('test1234', 12); // Use 12 rounds to match AuthService
+      console.log('Password hashed, creating user...');
+      demoDoctor = await prisma.user.create({
+        data: {
+          email: 'doctor1@example.com',
+          password: hashedPassword,
+          name: 'Demo Doctor',
+          age: 45,
+          firstName: 'Demo',
+          lastName: 'Doctor',
+          phone: '9000000002',
+          role: RoleValues.DOCTOR,
+          gender: Gender.FEMALE,
+          isVerified: true,
+          userid: generateUserId(),
+          clinics: { connect: { id: clinic.id } },
+          primaryClinicId: clinic.id,
+        },
+      });
+      console.log(`User created with ID: ${demoDoctor.id}`);
+      // Ensure clinic association is created (sometimes Prisma doesn't create the junction table entry)
+      const doctorClinicCheckAfterCreate = await prisma.user.findUnique({
+        where: { id: demoDoctor.id },
+        include: { clinics: true },
+      });
+      if (!doctorClinicCheckAfterCreate?.clinics?.some(c => c.id === clinic.id)) {
+        console.log('Ensuring doctor-clinic association...');
+        await prisma.user.update({
+          where: { id: demoDoctor.id },
+          data: {
+            clinics: { connect: { id: clinic.id } },
+            primaryClinicId: clinic.id,
+          },
+        });
+      }
+      console.log('Creating doctor record...');
+      await prisma.doctor.create({
+        data: {
+          id: demoDoctor.id,
+          userId: demoDoctor.id,
+          specialization: 'General Medicine',
+          experience: 10,
+          qualification: 'MBBS',
+          rating: 4.5,
+          isAvailable: true,
+          consultationFee: 1000,
+        },
+      });
+      console.log('Creating doctor-clinic relationship...');
+      await prisma.doctorClinic.create({
+        data: {
+          doctorId: demoDoctor.id,
+          clinicId: clinic.id,
+          locationId: clinicLocation.id,
+          startTime: new Date(),
+          endTime: new Date(),
+        },
+      });
+      // Assign RBAC role to doctor
+      await assignRoleToUser(demoDoctor.id, RoleValues.DOCTOR, clinic.id);
+      console.log(`✓ Created demo doctor: ${demoDoctor.email}`);
+    } else {
+      console.log(`✓ Demo doctor already exists: doctor1@example.com`);
+      // Ensure doctor is associated with clinic
+      const doctorClinics = await prisma.user.findUnique({
+        where: { email: 'doctor1@example.com' },
+        include: { clinics: true },
+      });
+      if (!doctorClinics?.clinics?.some(c => c.id === clinic.id)) {
+        console.log('Associating doctor with clinic...');
+        await prisma.user.update({
+          where: { id: demoDoctor.id },
+          data: {
+            clinics: { connect: { id: clinic.id } },
+            primaryClinicId: clinic.id,
+          },
+        });
+        console.log('✓ Doctor associated with clinic');
+      }
+      // Ensure doctor record exists
+      const doctorRecord = await prisma.doctor.findUnique({
+        where: { userId: demoDoctor.id },
+      });
+      if (!doctorRecord) {
+        console.log('Creating doctor record...');
+        await prisma.doctor.create({
+          data: {
+            id: demoDoctor.id,
+            userId: demoDoctor.id,
+            specialization: 'General Medicine',
+            experience: 10,
+            qualification: 'MBBS',
+            rating: 4.5,
+            isAvailable: true,
+            consultationFee: 1000,
+          },
+        });
+        console.log('✓ Doctor record created');
+      }
+      // Ensure doctor-clinic relationship exists
+      const doctorClinicRel = await prisma.doctorClinic.findFirst({
+        where: {
+          doctorId: demoDoctor.id,
+          clinicId: clinic.id,
+        },
+      });
+      if (!doctorClinicRel) {
+        console.log('Creating doctor-clinic relationship...');
+        await prisma.doctorClinic.create({
+          data: {
+            doctorId: demoDoctor.id,
+            clinicId: clinic.id,
+            locationId: clinicLocation.id,
+            startTime: new Date(),
+            endTime: new Date(),
+          },
+        });
+        console.log('✓ Doctor-clinic relationship created');
+      }
+      // Ensure RBAC role is assigned
+      await assignRoleToUser(demoDoctor.id, RoleValues.DOCTOR, clinic.id);
+    }
+
+    console.log('\n✓ Quick seed completed!');
+    console.log('Test credentials:');
+    console.log('  Patient: patient1@example.com / test1234');
+    console.log('  Doctor:  doctor1@example.com / test1234');
+    console.log(`  Clinic ID: ${clinic.id}`);
+    console.log(`  Location ID: ${clinicLocation.id}`);
+  } catch (error) {
+    console.error('Error in quickSeed:', error);
+    if (error instanceof Error) {
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
+    throw error;
   }
-  console.log(`Using clinic: ${clinic.name} (Clinic ID: ${clinic.clinicId})`);
-
-  // Create demo patient if missing
-  let demoPatient = await prisma.user.findUnique({
-    where: { email: 'patient1@example.com' },
-  });
-
-  if (!demoPatient) {
-    console.log('Creating demo patient...');
-    const hashedPassword = await bcrypt.hash('test1234', 10);
-    demoPatient = await prisma.user.create({
-      data: {
-        email: 'patient1@example.com',
-        password: hashedPassword,
-        name: 'Demo Patient',
-        age: 30,
-        firstName: 'Demo',
-        lastName: 'Patient',
-        phone: '9000000003',
-        role: RoleValues.PATIENT,
-        gender: Gender.OTHER,
-        isVerified: true,
-        userid: generateUserId(),
-        clinics: { connect: { id: clinic.id } },
-        primaryClinicId: clinic.id,
-      },
-    });
-    await prisma.patient.create({
-      data: {
-        userId: demoPatient.id,
-        prakriti: Prakriti.VATA,
-        dosha: Dosha.PITTA,
-      },
-    });
-    console.log(`✓ Created demo patient: ${demoPatient.email}`);
-  } else {
-    console.log(`✓ Demo patient already exists: patient1@example.com`);
-  }
-
-  // Create demo doctor if missing
-  let demoDoctor = await prisma.user.findUnique({
-    where: { email: 'doctor1@example.com' },
-  });
-
-  if (!demoDoctor) {
-    console.log('Creating demo doctor...');
-    const hashedPassword = await bcrypt.hash('test1234', 10);
-    demoDoctor = await prisma.user.create({
-      data: {
-        email: 'doctor1@example.com',
-        password: hashedPassword,
-        name: 'Demo Doctor',
-        age: 45,
-        firstName: 'Demo',
-        lastName: 'Doctor',
-        phone: '9000000002',
-        role: RoleValues.DOCTOR,
-        gender: Gender.FEMALE,
-        isVerified: true,
-        userid: generateUserId(),
-        clinics: { connect: { id: clinic.id } },
-        primaryClinicId: clinic.id,
-      },
-    });
-    await prisma.doctor.create({
-      data: {
-        id: demoDoctor.id,
-        userId: demoDoctor.id,
-        specialization: 'General Medicine',
-        experience: 10,
-        qualification: 'MBBS',
-        rating: 4.5,
-        isAvailable: true,
-        consultationFee: 1000,
-      },
-    });
-    console.log(`✓ Created demo doctor: ${demoDoctor.email}`);
-  } else {
-    console.log(`✓ Demo doctor already exists: doctor1@example.com`);
-  }
-
-  console.log('\n✓ Quick seed completed!');
-  console.log('Test credentials:');
-  console.log('  Patient: patient1@example.com / test1234');
-  console.log('  Doctor:  doctor1@example.com / test1234');
 }
 
 /**
@@ -207,7 +465,7 @@ async function createClinicIfNeeded() {
 
   if (!superAdmin) {
     console.log('Creating super admin...');
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const hashedPassword = await bcrypt.hash('admin123', 12); // Use 12 rounds to match AuthService
     superAdmin = await prisma.user.create({
       data: {
         email: 'admin@example.com',
@@ -255,10 +513,14 @@ async function createClinicIfNeeded() {
 
 async function main() {
   try {
+    console.log('=== Starting seed script ===');
     await waitForDatabase();
+    console.log('Database connection verified');
 
     // Auto-detect scenario: check if clinics exist
+    console.log('Checking for existing clinics...');
     const existingClinics = await prisma.clinic.findMany({ take: 1 });
+    console.log(`Found ${existingClinics.length} clinic(s)`);
 
     if (existingClinics.length === 0) {
       // No clinics exist - create initial clinic and super admin
@@ -269,6 +531,7 @@ async function main() {
     }
 
     // Check if demo users already exist (quick seed scenario)
+    console.log('Checking for existing demo users...');
     const existingDemoPatient = await prisma.user.findUnique({
       where: { email: 'patient1@example.com' },
     });
@@ -276,11 +539,28 @@ async function main() {
       where: { email: 'doctor1@example.com' },
     });
 
+    console.log(`Patient exists: ${!!existingDemoPatient}`);
+    console.log(`Doctor exists: ${!!existingDemoDoctor}`);
+
     if (!existingDemoPatient || !existingDemoDoctor) {
       // Clinics exist but demo users don't - quick seed
-      console.log('Clinics found but demo users missing. Creating demo users...');
-      await quickSeed();
-      return;
+      console.log('Clinics found but demo users missing. Running quick seed...');
+      try {
+        await quickSeed();
+        console.log('\n✓ Quick seed completed successfully!');
+        console.log('Demo users created. Run "pnpm seed:dev" again for full data seeding (50 users per role).');
+        return;
+      } catch (error) {
+        console.error('\n✗ Quick seed failed:', error);
+        if (error instanceof Error) {
+          console.error('Error message:', error.message);
+        }
+        console.error('Falling back to full seed...');
+        // Fall through to full seed if quick seed fails
+      }
+    } else {
+      console.log('✓ Demo users already exist. Skipping quick seed.');
+      console.log('To run full seed with 50 users per role, delete demo users first or run with FORCE_FULL_SEED=true');
     }
 
     // Full seed scenario - clean and seed everything
@@ -291,7 +571,7 @@ async function main() {
 
     // ===== SUPER ADMIN CREATION =====
     console.log('Creating SuperAdmin user...');
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    const hashedPassword = await bcrypt.hash('admin123', 12); // Use 12 rounds to match AuthService
 
     const superAdminUser = (await (prisma.user.create({
       data: {
@@ -465,7 +745,7 @@ async function main() {
     const clinicAdminUser = (await (prisma.user.create({
       data: {
         email: 'clinicadmin@example.com',
-        password: await bcrypt.hash('admin123', 10),
+        password: await bcrypt.hash('admin123', 12), // Use 12 rounds to match AuthService
         name: 'Clinic Admin',
         age: 35,
         firstName: 'Clinic',
@@ -492,7 +772,7 @@ async function main() {
     const demoClinicAdmin = (await (prisma.user.create({
       data: {
         email: 'clinicadmin1@example.com',
-        password: await bcrypt.hash('test1234', 10),
+        password: await bcrypt.hash('test1234', 12), // Use 12 rounds to match AuthService
         name: 'Demo Clinic Admin',
         age: 40,
         firstName: 'Demo',
@@ -789,7 +1069,7 @@ async function main() {
     const demoDoctor = (await (prisma.user.create({
       data: {
         email: 'doctor1@example.com',
-        password: await bcrypt.hash('test1234', 10),
+        password: await bcrypt.hash('test1234', 12), // Use 12 rounds to match AuthService
         name: 'Demo Doctor',
         age: 45,
         firstName: 'Demo',
@@ -838,7 +1118,7 @@ async function main() {
     const demoPatient = (await (prisma.user.create({
       data: {
         email: 'patient1@example.com',
-        password: await bcrypt.hash('test1234', 10),
+        password: await bcrypt.hash('test1234', 12), // Use 12 rounds to match AuthService
         name: 'Demo Patient',
         age: 30,
         firstName: 'Demo',
@@ -864,7 +1144,7 @@ async function main() {
     const demoReceptionist = (await (prisma.user.create({
       data: {
         email: 'receptionist1@example.com',
-        password: await bcrypt.hash('test1234', 10),
+        password: await bcrypt.hash('test1234', 12), // Use 12 rounds to match AuthService
         name: 'Demo Receptionist',
         age: 28,
         firstName: 'Demo',
@@ -1171,10 +1451,12 @@ async function main() {
 
 // Function to wait for database to be ready
 async function waitForDatabase() {
+  console.log('Waiting for database connection...');
   let retries = 5;
   while (retries > 0) {
     try {
-      await (prisma.$connect() as unknown as Promise<void>);
+      // Try a simple query to verify database is ready
+      await prisma.clinic.findFirst({ take: 1 });
       console.log('Database connection established.');
       return;
     } catch (error) {
@@ -1254,7 +1536,17 @@ main()
   })
   .finally(async () => {
     console.log('Disconnecting from database...');
-    await prisma.$disconnect();
-    await pool.end();
+    try {
+      await prisma.$disconnect();
+    } catch (error) {
+      console.error('Error disconnecting Prisma:', error);
+    }
+    try {
+      if (pool) {
+        await pool.end();
+      }
+    } catch (error) {
+      console.error('Error closing pool:', error);
+    }
     console.log('Disconnected');
   });

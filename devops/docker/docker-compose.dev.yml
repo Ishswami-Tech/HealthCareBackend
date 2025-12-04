@@ -23,7 +23,10 @@ services:
       # Database Configuration
       # Connection pool parameters: connection_limit=50, pool_timeout=20
       # Increased for 10M+ users scalability and to prevent connection pool exhaustion
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=20
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20
+      # DIRECT_URL: Clean connection string for Prisma Studio (without Prisma-specific parameters)
+      # Prisma Studio needs this to connect properly without "unrecognized configuration parameter" errors
+      DIRECT_URL: postgresql://postgres:postgres@postgres:5432/userdb
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is default)
@@ -132,8 +135,9 @@ services:
         pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed' &&
         echo 'Fixing Prisma types...' &&
         (pnpm exec ts-node -r tsconfig-paths/register scripts/fix-prisma-types.ts || echo 'Fix script completed') &&
-        echo 'Running Prisma Migrations...' &&
-        pnpm prisma:migrate || echo 'Migration failed or already applied' &&
+        echo 'Running Prisma Database Sync (Development Mode)...' &&
+        echo 'Using db push for development (no migration history required)...' &&
+        pnpm prisma:db:push || echo 'Database push completed or skipped' &&
         echo 'Starting application...' &&
         pnpm start:dev
       "
@@ -262,7 +266,7 @@ services:
       DOCKER_ENV: "true"
       
       # Database Configuration
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=20
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is default)
@@ -330,7 +334,7 @@ services:
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost/misc/ping || exit 1"]
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost/misc/ping').read()\" || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -25,7 +25,7 @@ services:
       FRONTEND_URL: https://ishswami.in
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
       # Cache Provider Configuration (Dragonfly is default)
       CACHE_PROVIDER: dragonfly
       
@@ -272,7 +272,7 @@ services:
       DOCKER_ENV: "true"
       
       # Database Configuration
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?schema=public&connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is default)

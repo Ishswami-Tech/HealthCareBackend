@@ -13,7 +13,7 @@
  * - CACHE_PROVIDER=redis
  */
 
-import { Module, Global, forwardRef } from '@nestjs/common';
+import { Module, Global, forwardRef, DynamicModule, Provider } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config';
@@ -34,6 +34,10 @@ import { CacheVersioningService } from '@infrastructure/cache/services/cache-ver
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import { CacheWarmingService } from '@infrastructure/cache/services/cache-warming.service';
 // CacheErrorHandler is now provided by global ErrorsModule
+
+// Multi-Layer Cache Services (L1)
+import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cache.service';
+import { MultiLayerCacheService } from '@infrastructure/cache/layers/multi-layer-cache.service';
 
 // Factories
 import { CacheKeyFactory } from '@infrastructure/cache/factories/cache-key.factory';
@@ -63,7 +67,7 @@ import { HealthcareCacheInterceptor } from '@core/interceptors';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 // Dragonfly Module
 import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.module';
-// Schedule Module for cron jobs
+// Schedule Module for cron jobs (only needed for CacheWarmingService, not in worker)
 import { ScheduleModule } from '@nestjs/schedule';
 // Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
 
@@ -75,73 +79,112 @@ import { ScheduleModule } from '@nestjs/schedule';
  * - DragonflyCacheProvider depends on DragonflyService
  * When using one provider, the other module still needs to be available but won't be used.
  * This is acceptable as both providers can coexist.
+ *
+ * IMPORTANT: CacheWarmingService uses @Cron decorators and requires ScheduleModule.
+ * This should only run in the API service, not in the worker service.
+ * Worker service only needs CacheService for queue processing.
  */
 @Global()
-@Module({
-  imports: [
-    forwardRef(() => ConfigModule),
-    EventEmitterModule,
-    forwardRef(() => EventsModule),
-    RedisModule, // Required for RedisCacheProvider (even if using Dragonfly)
-    DragonflyModule, // Required for DragonflyCacheProvider (even if using Redis)
-    ResilienceModule, // Provides CircuitBreakerService
-    ScheduleModule, // For cron jobs in CacheWarmingService
-    // QueueModule is @Global() and already available - QueueService can be injected
-    // LoggingModule is @Global() and already available - no need to import
-    // DatabaseModule is @Global() but needs explicit import for CacheWarmingService dependency resolution
-    forwardRef(() => DatabaseModule),
-  ],
-  controllers: [CacheController],
-  providers: [
-    // Core Services
-    CacheService,
+@Module({})
+export class CacheModule {
+  static forRoot(): DynamicModule {
+    // Check if this is a worker service - workers don't need CacheWarmingService or ScheduleModule
+    const serviceName = process.env['SERVICE_NAME'] || 'clinic';
+    const isWorker = serviceName === 'worker';
 
-    // Infrastructure Services
-    // CircuitBreakerService is now provided by ResilienceModule
-    CacheMetricsService,
-    FeatureFlagsService,
-    CacheVersioningService,
-    CacheHealthMonitorService,
-    CacheWarmingService, // Comprehensive cache warming with cron jobs
-    // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
+    const baseImports = [
+      forwardRef(() => ConfigModule),
+      EventEmitterModule,
+      forwardRef(() => EventsModule),
+      RedisModule, // Required for RedisCacheProvider (even if using Dragonfly)
+      DragonflyModule, // Required for DragonflyCacheProvider (even if using Redis)
+      ResilienceModule, // Provides CircuitBreakerService
+      // QueueModule is @Global() and already available - QueueService can be injected
+      // LoggingModule is @Global() and already available - no need to import
+      // DatabaseModule is @Global() but needs forwardRef due to circular dependency with ConfigModule
+      forwardRef(() => DatabaseModule),
+    ];
 
-    // Factories
-    CacheKeyFactory,
+    // Only include ScheduleModule and CacheWarmingService in non-worker services
+    if (!isWorker) {
+      baseImports.push(ScheduleModule); // For cron jobs in CacheWarmingService
+    }
 
-    // Providers (adapters) - Provider-agnostic architecture
-    RedisCacheProvider,
-    DragonflyCacheProvider,
-    CacheProviderFactory,
+    const baseProviders: Provider[] = [
+      // Core Services
+      CacheService,
 
-    // Strategies
-    // Note: Individual strategies are instantiated manually in CacheStrategyManager
-    // They don't need to be providers since they're created with dependencies in the manager
-    CacheStrategyManager,
+      // Multi-Layer Cache Services (L1)
+      InMemoryCacheService, // L1: In-memory cache
+      MultiLayerCacheService, // Multi-layer orchestrator
 
-    // Middleware
-    ValidationCacheMiddleware,
-    MetricsCacheMiddleware,
-    CacheMiddlewareChain,
+      // Infrastructure Services
+      // CircuitBreakerService is now provided by ResilienceModule
+      CacheMetricsService,
+      FeatureFlagsService,
+      CacheVersioningService,
+      CacheHealthMonitorService,
+      // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 
-    // Repository
-    CacheRepository,
+      // Factories
+      CacheKeyFactory,
 
-    // Global Interceptor - useClass with proper dependency injection
-    // CacheService and LoggingService are available via @Global() modules
-    {
-      provide: APP_INTERCEPTOR,
-      useClass: HealthcareCacheInterceptor,
-    },
-  ],
-  exports: [
-    // Only export CacheService as single entry point
-    CacheService,
-    // Export key factory for convenience
-    CacheKeyFactory,
-    // Export health monitor for HealthService
-    CacheHealthMonitorService,
-    // Export cache warming service for manual warming
-    CacheWarmingService,
-  ],
-})
-export class CacheModule {}
+      // Providers (adapters) - Provider-agnostic architecture
+      RedisCacheProvider,
+      DragonflyCacheProvider,
+      CacheProviderFactory,
+
+      // Strategies
+      // Note: Individual strategies are instantiated manually in CacheStrategyManager
+      // They don't need to be providers since they're created with dependencies in the manager
+      CacheStrategyManager,
+
+      // Middleware
+      ValidationCacheMiddleware,
+      MetricsCacheMiddleware,
+      CacheMiddlewareChain,
+
+      // Repository
+      CacheRepository,
+
+      // Global Interceptor - useClass with proper dependency injection
+      // CacheService and LoggingService are available via @Global() modules
+      {
+        provide: APP_INTERCEPTOR,
+        useClass: HealthcareCacheInterceptor,
+      } as Provider,
+    ];
+
+    // Only include CacheWarmingService in non-worker services (it uses @Cron decorators)
+    if (!isWorker) {
+      baseProviders.push(CacheWarmingService); // Comprehensive cache warming with cron jobs
+    }
+
+    const baseExports: Array<
+      typeof CacheService | typeof MultiLayerCacheService | typeof CacheKeyFactory | typeof CacheHealthMonitorService | typeof CacheWarmingService
+    > = [
+      // Only export CacheService as single entry point (L2: Distributed cache)
+      CacheService,
+      // Export MultiLayerCacheService for advanced multi-layer usage
+      MultiLayerCacheService,
+      // Export key factory for convenience
+      CacheKeyFactory,
+      // Export health monitor for HealthService
+      CacheHealthMonitorService,
+    ];
+
+    // Only export CacheWarmingService in non-worker services
+    if (!isWorker) {
+      baseExports.push(CacheWarmingService); // Export cache warming service for manual warming
+    }
+
+    return {
+      module: CacheModule,
+      global: true,
+      imports: baseImports,
+      controllers: [CacheController],
+      providers: baseProviders,
+      exports: baseExports,
+    };
+  }
+}

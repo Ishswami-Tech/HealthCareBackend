@@ -21,6 +21,9 @@ export * from './controllers/cache.controller';
 export { CacheOptionsBuilder } from './builders/cache-options.builder';
 export { CacheKeyFactory } from './factories/cache-key.factory';
 
+// Multi-Layer Cache (L1)
+export { InMemoryCacheService, MultiLayerCacheService } from './layers';
+
 // Providers (for advanced usage)
 export { CacheProviderFactory } from './providers/cache-provider.factory';
 export { RedisCacheProvider } from './providers/redis-cache.provider';

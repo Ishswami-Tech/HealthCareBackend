@@ -1,35 +1,77 @@
 // ========================================
-// ENTERPRISE QUEUE INFRASTRUCTURE EXPORTS
+// QUEUE MODULE - SINGLE SOURCE OF TRUTH
 // ========================================
+//
+// This module exports ONLY QueueService and QueueModule.
+// QueueService is the single entry point for all queue operations.
+// All other components are internal and accessed through QueueService.
+//
+// Usage:
+//   import { QueueService, QueueModule } from '@infrastructure/queue';
+//   // or
+//   import { QueueService } from '@queue';
+//
+// QueueService provides:
+//   - All queue operations (addJob, getJob, etc.)
+//   - Queue constants (QueueService.ANALYTICS_QUEUE, etc.)
+//   - Queue priorities (QueueService.PRIORITIES, etc.)
+//   - All types and interfaces
+//   - Health monitoring
+//   - Metrics and monitoring
+//
+// Example:
+//   await queueService.addJob(QueueService.ANALYTICS_QUEUE, 'job-type', data, {
+//     priority: QueueService.PRIORITIES.NORMAL
+//   });
 
-// Core queue infrastructure
-export { QueueModule } from './src/queue.module';
+// Main exports - Single Source of Truth
 export { QueueService } from './src/queue.service';
-export { QueueProcessor } from './src/queue.processor';
-export { SharedWorkerService } from './src/shared-worker.service';
+export { QueueModule } from './src/queue.module';
 
-// Enterprise interfaces and types
-export * from './src/interfaces/enterprise-queue.interface';
+// Re-export types from @core/types for convenience
+export type {
+  JobData,
+  QueueFilters,
+  ClientSession,
+  EnterpriseJobOptions,
+  BulkJobData,
+  QueueName,
+  QueuePriority,
+} from '@core/types/queue.types';
 
-// Advanced feature implementations
-export * from './src/implementations/advanced-implementations';
+export { AuditAction } from '@core/types/queue.types';
+export { JobPriority, DomainType } from './src/queue.service';
 
-// Real-time Socket Gateway
-export { QueueStatusGateway } from './src/sockets/queue-status.gateway';
+// Re-export queue constants for convenience
+// Note: Prefer using QueueService static properties (QueueService.ANALYTICS_QUEUE, etc.)
+// These are exported here for direct access when needed
+export {
+  APPOINTMENT_QUEUE,
+  EMAIL_QUEUE,
+  NOTIFICATION_QUEUE,
+  SERVICE_QUEUE,
+  VIDHAKARMA_QUEUE,
+  PANCHAKARMA_QUEUE,
+  CHEQUP_QUEUE,
+  DOCTOR_AVAILABILITY_QUEUE,
+  QUEUE_MANAGEMENT_QUEUE,
+  PAYMENT_PROCESSING_QUEUE,
+  ANALYTICS_QUEUE,
+  ENHANCED_APPOINTMENT_QUEUE,
+  WAITING_LIST_QUEUE,
+  CALENDAR_SYNC_QUEUE,
+  AYURVEDA_THERAPY_QUEUE,
+  PATIENT_PREFERENCE_QUEUE,
+  REMINDER_QUEUE,
+  FOLLOW_UP_QUEUE,
+  RECURRING_APPOINTMENT_QUEUE,
+  PAYMENT_QUEUE,
+  EMERGENCY_QUEUE,
+  VIP_QUEUE,
+  QUEUE_PRIORITIES,
+} from './src/queue.constants';
 
-// Bull Board exports
-export { BullBoardModule } from './src/bull-board/bull-board.module';
-export { BullBoardService } from './src/bull-board/bull-board.service';
-
-// Payment processors
-export * from './src/processors/payment-processing.processor';
-export * from './src/processors/payment-notifications.processor';
-export * from './src/processors/payment-analytics.processor';
-
-// Queue constants
-export * from './src/queue.constants';
-
-// Monitoring and health
-export { QueueMonitoringService } from './src/monitoring/queue-monitoring.service';
-export { QueueMonitoringModule } from './src/monitoring/queue-monitoring.module';
+// Internal exports - Only for module registration, not for direct use
+// QueueHealthMonitorService is exported only for HealthService integration
+// Prefer using QueueService.getHealthStatus() instead
 export { QueueHealthMonitorService } from './src/queue-health-monitor.service';

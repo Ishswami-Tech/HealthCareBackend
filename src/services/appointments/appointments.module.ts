@@ -120,8 +120,8 @@ import { CommunicationModule } from '@communication/communication.module';
     // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
     // Only register BullModule if cache is enabled (Bull requires Redis/Dragonfly)
     // Cache check will be done in useFactory via ConfigService
-          BullModule.forRootAsync({
-            imports: [ConfigModule],
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
         // Use ConfigService for all cache configuration (single source of truth)
         if (!configService.isCacheEnabled()) {
@@ -132,38 +132,38 @@ import { CommunicationModule } from '@communication/communication.module';
         const cachePort = configService.getCachePort();
         const cachePassword = configService.getCachePassword();
 
-              return {
-                redis: {
-                  host: cacheHost,
-                  port: cachePort,
-                  ...(cachePassword?.trim() && {
-                    password: cachePassword.trim(),
-                  }),
+        return {
+          redis: {
+            host: cacheHost,
+            port: cachePort,
+            ...(cachePassword?.trim() && {
+              password: cachePassword.trim(),
+            }),
             db: configService.getEnvNumber('REDIS_DB', 0),
-                },
-                defaultJobOptions: {
-                  removeOnComplete: 1000,
-                  removeOnFail: 500,
-                  attempts: 5,
-                  timeout: 60000,
-                },
-                settings: {
-                  stalledInterval: 30000,
-                  maxStalledCount: 1,
-                },
-              };
-            },
-            inject: [ConfigService],
-          }),
-          BullModule.registerQueue(
-            { name: 'clinic-appointment' },
-            { name: 'clinic-notification' },
-            { name: 'clinic-payment' },
-            { name: 'clinic-video-call' },
-            { name: 'clinic-analytics' },
-            { name: 'clinic-reminder' },
-            { name: 'clinic-followup' }
-          ),
+          },
+          defaultJobOptions: {
+            removeOnComplete: 1000,
+            removeOnFail: 500,
+            attempts: 5,
+            timeout: 60000,
+          },
+          settings: {
+            stalledInterval: 30000,
+            maxStalledCount: 1,
+          },
+        };
+      },
+      inject: [ConfigService],
+    }),
+    BullModule.registerQueue(
+      { name: 'clinic-appointment' },
+      { name: 'clinic-notification' },
+      { name: 'clinic-payment' },
+      { name: 'clinic-video-call' },
+      { name: 'clinic-analytics' },
+      { name: 'clinic-reminder' },
+      { name: 'clinic-followup' }
+    ),
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentsController, AppointmentPluginController],

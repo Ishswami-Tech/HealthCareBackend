@@ -622,7 +622,18 @@ export class SessionManagementService implements OnModuleInit {
       this.config?.maxSessionsPerUser || parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10);
     if (sessions.length >= maxSessionsPerUser) {
       // Sort by lastActivity (oldest first)
-      sessions.sort((a, b) => a.lastActivity.getTime() - b.lastActivity.getTime());
+      // Ensure lastActivity is a Date object (may be string when deserialized from cache)
+      sessions.sort((a, b) => {
+        const aTime =
+          a.lastActivity instanceof Date
+            ? a.lastActivity.getTime()
+            : new Date(a.lastActivity).getTime();
+        const bTime =
+          b.lastActivity instanceof Date
+            ? b.lastActivity.getTime()
+            : new Date(b.lastActivity).getTime();
+        return aTime - bTime;
+      });
 
       // Remove oldest sessions
       const sessionsToRemove = sessions.slice(0, sessions.length - maxSessionsPerUser + 1);
