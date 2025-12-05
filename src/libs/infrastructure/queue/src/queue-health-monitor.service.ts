@@ -502,7 +502,6 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     // Check if we're in startup grace period
     const timeSinceStart = Date.now() - this.serviceStartTime;
     const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
-
     void this.getHealthStatus()
       .then(status => {
         // During startup grace period, don't log warnings (transient issues are expected)
@@ -512,7 +511,8 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
         if (
           !status.healthy &&
-          this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME)
+          this.circuitBreakerService.canExecute(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME) &&
+          !isInStartupGracePeriod // Don't log warnings during startup grace period
         ) {
           // Only log if circuit breaker is not open and past startup grace period (avoid log spam)
           // Check if the issue is actually critical (not just a transient connection check)

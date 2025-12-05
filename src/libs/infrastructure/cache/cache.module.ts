@@ -133,7 +133,6 @@ export class CacheModule {
       RedisCacheProvider,
       DragonflyCacheProvider,
       CacheProviderFactory,
-
       // Strategies
       // Note: Individual strategies are instantiated manually in CacheStrategyManager
       // They don't need to be providers since they're created with dependencies in the manager
