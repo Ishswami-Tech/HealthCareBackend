@@ -160,7 +160,11 @@ export class CacheModule {
     }
 
     const baseExports: Array<
-      typeof CacheService | typeof MultiLayerCacheService | typeof CacheKeyFactory | typeof CacheHealthMonitorService | typeof CacheWarmingService
+      | typeof CacheService
+      | typeof MultiLayerCacheService
+      | typeof CacheKeyFactory
+      | typeof CacheHealthMonitorService
+      | typeof CacheWarmingService
     > = [
       // Only export CacheService as single entry point (L2: Distributed cache)
       CacheService,

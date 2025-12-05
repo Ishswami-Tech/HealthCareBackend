@@ -14,7 +14,6 @@ export class HealthController {
     // Note: This check is performed at construction time before LoggingService is available
     // Using console.error is acceptable here as it's a critical initialization error
     if (!this.healthService) {
-      // eslint-disable-next-line no-console
       console.error('[HealthController] HealthService is not injected!');
     }
   }
