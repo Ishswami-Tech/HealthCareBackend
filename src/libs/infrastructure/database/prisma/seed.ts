@@ -130,11 +130,7 @@ function exportTestIds(testIds: Record<string, unknown>) {
  * Helper function to assign RBAC role to user
  * Creates role if it doesn't exist, then assigns it to the user
  */
-async function assignRoleToUser(
-  userId: string,
-  roleName: string,
-  clinicId: string
-): Promise<void> {
+async function assignRoleToUser(userId: string, roleName: string, clinicId: string): Promise<void> {
   try {
     // Find or create RBAC role
     let rbacRole = await prisma.rbacRole.findFirst({
@@ -548,7 +544,9 @@ async function main() {
       try {
         await quickSeed();
         console.log('\n✓ Quick seed completed successfully!');
-        console.log('Demo users created. Run "pnpm seed:dev" again for full data seeding (50 users per role).');
+        console.log(
+          'Demo users created. Run "pnpm seed:dev" again for full data seeding (50 users per role).'
+        );
         return;
       } catch (error) {
         console.error('\n✗ Quick seed failed:', error);
@@ -560,7 +558,9 @@ async function main() {
       }
     } else {
       console.log('✓ Demo users already exist. Skipping quick seed.');
-      console.log('To run full seed with 50 users per role, delete demo users first or run with FORCE_FULL_SEED=true');
+      console.log(
+        'To run full seed with 50 users per role, delete demo users first or run with FORCE_FULL_SEED=true'
+      );
     }
 
     // Full seed scenario - clean and seed everything

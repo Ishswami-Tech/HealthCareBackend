@@ -72,9 +72,6 @@ export class ClinicIsolationService implements OnModuleInit {
 
     this.isInitializing = true;
 
-    // Track if this is the first initialization
-    const isFirstInit = this.isFirstInitialization;
-
     // Check if we're in startup grace period
     const timeSinceStart = Date.now() - this.serviceStartTime;
     const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
@@ -222,12 +219,7 @@ export class ClinicIsolationService implements OnModuleInit {
         ? `Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`
         : `Clinic cache refreshed: ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`;
 
-      void this.loggingService.log(
-        LogType.DATABASE,
-        logLevel,
-        logMessage,
-        this.serviceName
-      );
+      void this.loggingService.log(LogType.DATABASE, logLevel, logMessage, this.serviceName);
 
       // Mark that first initialization is complete
       if (isFirstInit) {
