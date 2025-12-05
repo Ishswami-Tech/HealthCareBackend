@@ -4,8 +4,6 @@ import { UsersModule } from './services/users/users.module';
 import { AuthModule } from './services/auth/auth.module';
 import { HealthModule } from './services/health/health.module';
 import { AppController } from './app.controller';
-// CacheModule disabled - using database only (Supabase)
-// import { CacheModule } from '@infrastructure/cache/cache.module';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
