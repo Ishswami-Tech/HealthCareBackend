@@ -1,4 +1,11 @@
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable } from 'rxjs';
 import { RbacService } from './rbac.service';
@@ -7,13 +14,16 @@ import { RBAC_METADATA_KEY } from './rbac.decorators';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { RequestWithAuth } from '@core/types/guard.types';
+import { DatabaseService } from '@infrastructure/database';
 
 @Injectable()
 export class RbacGuard implements CanActivate {
   constructor(
     private readonly rbacService: RbacService,
     private readonly reflector: Reflector,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService: DatabaseService
   ) {}
 
   canActivate(context: ExecutionContext): boolean | Promise<boolean> | Observable<boolean> {
@@ -277,27 +287,221 @@ export class RbacGuard implements CanActivate {
 
   /**
    * Check appointment ownership
+   * Verifies if user owns the appointment (as patient or doctor) or has clinic staff access
    */
-  private checkAppointmentOwnership(_appointmentId: string, _userId: string): Promise<boolean> {
-    // This would typically query the database to check if the user owns the appointment
-    // For now, we'll implement a basic check
-    // In a real implementation, you would inject the appointment service
-    return Promise.resolve(true); // Placeholder implementation
+  private async checkAppointmentOwnership(appointmentId: string, userId: string): Promise<boolean> {
+    try {
+      const appointment = await this.databaseService.executeHealthcareRead<{
+        patientId: string;
+        doctorId: string | null;
+        clinicId: string;
+      } | null>(async client => {
+        const result = await client.appointment.findUnique({
+          where: { id: appointmentId },
+          select: {
+            patientId: true,
+            doctorId: true,
+            clinicId: true,
+          },
+        });
+        return result as { patientId: string; doctorId: string | null; clinicId: string } | null;
+      });
+
+      if (!appointment) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Appointment not found for ownership check',
+          'RbacGuard',
+          { appointmentId, userId }
+        );
+        return false;
+      }
+
+      // Patient owns appointment if they are the patient
+      if (appointment.patientId === userId) {
+        return true;
+      }
+
+      // Doctor owns appointment if they are the assigned doctor
+      if (appointment.doctorId === userId) {
+        return true;
+      }
+
+      // Check if user is clinic staff with access
+      const hasClinicAccess = await this.checkClinicStaffAccess(userId, appointment.clinicId);
+      if (hasClinicAccess) {
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Appointment ownership check failed',
+        'RbacGuard',
+        {
+          appointmentId,
+          userId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+      return false; // Fail secure
+    }
   }
 
   /**
    * Check medical record ownership
+   * Verifies if user owns the medical record (as patient) or has clinic staff access
    */
-  private checkMedicalRecordOwnership(_recordId: string, _userId: string): Promise<boolean> {
-    // This would typically query the database to check if the user owns the medical record
-    return Promise.resolve(true); // Placeholder implementation
+  private async checkMedicalRecordOwnership(recordId: string, userId: string): Promise<boolean> {
+    try {
+      const record = await this.databaseService.executeHealthcareRead<{
+        patientId: string;
+        clinicId: string;
+      } | null>(async client => {
+        const result = await client.healthRecord.findUnique({
+          where: { id: recordId },
+          select: {
+            patientId: true,
+            clinicId: true,
+          },
+        });
+        return result as { patientId: string; clinicId: string } | null;
+      });
+
+      if (!record) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          'Medical record not found for ownership check',
+          'RbacGuard',
+          { recordId, userId }
+        );
+        return false;
+      }
+
+      // Patient owns their medical records
+      if (record.patientId === userId) {
+        return true;
+      }
+
+      // Check if user is clinic staff with access
+      return await this.checkClinicStaffAccess(userId, record.clinicId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Medical record ownership check failed',
+        'RbacGuard',
+        {
+          recordId,
+          userId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+      return false; // Fail secure
+    }
   }
 
   /**
    * Check patient ownership
+   * Verifies if user is the patient or has clinic staff access
    */
-  private checkPatientOwnership(patientId: string, userId: string): Promise<boolean> {
-    // Check if the user is the patient or has access to the patient
-    return Promise.resolve(patientId === userId); // Simplified check
+  private async checkPatientOwnership(patientId: string, userId: string): Promise<boolean> {
+    try {
+      // If user is the patient themselves
+      if (patientId === userId) {
+        return true;
+      }
+
+      // Check if user has clinic staff access to this patient
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      if (!user) {
+        return false;
+      }
+
+      // Get patient's clinic
+      const patient = await this.databaseService.executeHealthcareRead<{
+        primaryClinicId: string | null;
+      } | null>(async client => {
+        const result = await client.user.findUnique({
+          where: { id: patientId },
+          select: { primaryClinicId: true },
+        });
+        return result as { primaryClinicId: string | null } | null;
+      });
+
+      if (!patient || !patient.primaryClinicId) {
+        return false;
+      }
+
+      return await this.checkClinicStaffAccess(userId, patient.primaryClinicId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Patient ownership check failed',
+        'RbacGuard',
+        {
+          patientId,
+          userId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+      return false; // Fail secure
+    }
+  }
+
+  /**
+   * Check if user is clinic staff with access to the clinic
+   */
+  private async checkClinicStaffAccess(userId: string, clinicId: string): Promise<boolean> {
+    try {
+      const user = await this.databaseService.findUserByIdSafe(userId);
+      if (!user) {
+        return false;
+      }
+
+      const role = user.role;
+      const clinicAccessRoles = ['RECEPTIONIST', 'CLINIC_ADMIN', 'DOCTOR', 'NURSE', 'SUPER_ADMIN'];
+
+      if (!clinicAccessRoles.includes(role)) {
+        return false;
+      }
+
+      // Super Admin has access to all clinics
+      if (role === 'SUPER_ADMIN') {
+        return true;
+      }
+
+      // Clinic Admin has access to their clinic
+      if (role === 'CLINIC_ADMIN') {
+        const userClinicId = user.primaryClinicId;
+        return userClinicId === clinicId;
+      }
+
+      // For clinic-scoped roles, verify clinic membership
+      if (role === 'DOCTOR' || role === 'RECEPTIONIST' || role === 'NURSE') {
+        const userClinicId = user.primaryClinicId;
+        return userClinicId === clinicId;
+      }
+
+      return false;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Clinic staff access check failed',
+        'RbacGuard',
+        {
+          userId,
+          clinicId,
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+      return false; // Fail secure
+    }
   }
 }

@@ -12,6 +12,7 @@ import {
   HttpStatus,
   Res,
   NotFoundException,
+  Request,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import * as fs from 'fs';
@@ -29,12 +30,15 @@ import {
 } from '@services/billing/dto/billing.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
+import type { AuthenticatedRequest } from '@core/types';
 
 @Controller('billing')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,
@@ -44,17 +48,24 @@ export class BillingController {
   // ============ Billing Plans ============
 
   @Get('plans')
+  @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plans:{clinicId}',
     ttl: 3600, // 1 hour
     tags: ['billing', 'billing_plans'],
     enableSWR: true,
   })
-  async getBillingPlans(@Query('clinicId') clinicId?: string) {
-    return this.billingService.getBillingPlans(clinicId);
+  async getBillingPlans(
+    @Query('clinicId') clinicId?: string,
+    @Request() req?: AuthenticatedRequest
+  ) {
+    const role = req?.user?.['role'];
+    const userId = req?.user?.['sub'] as string | undefined;
+    return this.billingService.getBillingPlans(clinicId, role, userId);
   }
 
   @Get('plans/:id')
+  @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plan:{id}',
     ttl: 3600, // 1 hour
@@ -67,12 +78,14 @@ export class BillingController {
 
   @Post('plans')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'create')
   async createBillingPlan(@Body() createBillingPlanDto: CreateBillingPlanDto) {
     return this.billingService.createBillingPlan(createBillingPlanDto);
   }
 
   @Put('plans/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'update')
   async updateBillingPlan(
     @Param('id') id: string,
     @Body() updateBillingPlanDto: UpdateBillingPlanDto
@@ -82,6 +95,7 @@ export class BillingController {
 
   @Delete('plans/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('billing', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteBillingPlan(@Param('id') id: string) {
     await this.billingService.deleteBillingPlan(id);
@@ -91,21 +105,30 @@ export class BillingController {
 
   @Post('subscriptions')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
+  @RequireResourcePermission('subscriptions', 'create')
   async createSubscription(@Body() createSubscriptionDto: CreateSubscriptionDto) {
     return this.billingService.createSubscription(createSubscriptionDto);
   }
 
   @Get('subscriptions/user/:userId')
-  async getUserSubscriptions(@Param('userId') userId: string) {
-    return this.billingService.getUserSubscriptions(userId);
+  @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
+  async getUserSubscriptions(
+    @Param('userId') userId: string,
+    @Request() req?: AuthenticatedRequest
+  ) {
+    const role = req?.user?.['role'];
+    const requestingUserId = req?.user?.['sub'] as string | undefined;
+    return this.billingService.getUserSubscriptions(userId, role, requestingUserId);
   }
 
   @Get('subscriptions/:id')
+  @RequireResourcePermission('subscriptions', 'read')
   async getSubscription(@Param('id') id: string) {
     return this.billingService.getSubscription(id);
   }
 
   @Put('subscriptions/:id')
+  @RequireResourcePermission('subscriptions', 'update')
   async updateSubscription(
     @Param('id') id: string,
     @Body() updateSubscriptionDto: UpdateSubscriptionDto
@@ -114,11 +137,13 @@ export class BillingController {
   }
 
   @Post('subscriptions/:id/cancel')
+  @RequireResourcePermission('subscriptions', 'delete')
   async cancelSubscription(@Param('id') id: string, @Query('immediate') immediate?: string) {
     return this.billingService.cancelSubscription(id, immediate === 'true');
   }
 
   @Post('subscriptions/:id/renew')
+  @RequireResourcePermission('subscriptions', 'update')
   async renewSubscription(@Param('id') id: string) {
     return this.billingService.renewSubscription(id);
   }
@@ -127,28 +152,35 @@ export class BillingController {
 
   @Post('invoices')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('invoices', 'create')
   async createInvoice(@Body() createInvoiceDto: CreateInvoiceDto) {
     return this.billingService.createInvoice(createInvoiceDto);
   }
 
   @Get('invoices/user/:userId')
-  async getUserInvoices(@Param('userId') userId: string) {
-    return this.billingService.getUserInvoices(userId);
+  @RequireResourcePermission('invoices', 'read', { requireOwnership: true })
+  async getUserInvoices(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
+    const role = req?.user?.['role'];
+    const requestingUserId = req?.user?.['sub'] as string | undefined;
+    return this.billingService.getUserInvoices(userId, role, requestingUserId);
   }
 
   @Get('invoices/:id')
+  @RequireResourcePermission('invoices', 'read')
   async getInvoice(@Param('id') id: string) {
     return this.billingService.getInvoice(id);
   }
 
   @Put('invoices/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('invoices', 'update')
   async updateInvoice(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
     return this.billingService.updateInvoice(id, updateInvoiceDto);
   }
 
   @Post('invoices/:id/mark-paid')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('invoices', 'update')
   async markInvoiceAsPaid(@Param('id') id: string) {
     return this.billingService.markInvoiceAsPaid(id);
   }
@@ -156,22 +188,28 @@ export class BillingController {
   // ============ Payments ============
 
   @Post('payments')
+  @RequireResourcePermission('payments', 'create')
   async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.billingService.createPayment(createPaymentDto);
   }
 
   @Get('payments/user/:userId')
-  async getUserPayments(@Param('userId') userId: string) {
-    return this.billingService.getUserPayments(userId);
+  @RequireResourcePermission('payments', 'read', { requireOwnership: true })
+  async getUserPayments(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
+    const role = req?.user?.['role'];
+    const requestingUserId = req?.user?.['sub'] as string | undefined;
+    return this.billingService.getUserPayments(userId, role, requestingUserId);
   }
 
   @Get('payments/:id')
+  @RequireResourcePermission('payments', 'read')
   async getPayment(@Param('id') id: string) {
     return this.billingService.getPayment(id);
   }
 
   @Put('payments/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'update')
   async updatePayment(@Param('id') id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
     return this.billingService.updatePayment(id, updatePaymentDto);
   }
@@ -180,27 +218,40 @@ export class BillingController {
 
   @Get('analytics/revenue')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('reports', 'read')
   async getClinicRevenue(
     @Query('clinicId') clinicId: string,
     @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string
+    @Query('endDate') endDate?: string,
+    @Request() req?: AuthenticatedRequest
   ) {
+    const role = req?.user?.['role'];
+    const userId = req?.user?.['sub'] as string | undefined;
     return this.billingService.getClinicRevenue(
       clinicId,
       startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined
+      endDate ? new Date(endDate) : undefined,
+      role,
+      userId
     );
   }
 
   @Get('analytics/subscriptions')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  async getSubscriptionMetrics(@Query('clinicId') clinicId: string) {
-    return this.billingService.getSubscriptionMetrics(clinicId);
+  @RequireResourcePermission('reports', 'read')
+  async getSubscriptionMetrics(
+    @Query('clinicId') clinicId: string,
+    @Request() req?: AuthenticatedRequest
+  ) {
+    const role = req?.user?.['role'];
+    const userId = req?.user?.['sub'] as string | undefined;
+    return this.billingService.getSubscriptionMetrics(clinicId, role, userId);
   }
 
   // ============ Subscription Appointments ============
 
   @Get('subscriptions/:id/can-book-appointment')
+  @RequireResourcePermission('subscriptions', 'read')
   async canBookAppointment(
     @Param('id') subscriptionId: string,
     @Query('appointmentType') appointmentType?: string
@@ -209,6 +260,7 @@ export class BillingController {
   }
 
   @Post('subscriptions/:id/check-coverage')
+  @RequireResourcePermission('subscriptions', 'read')
   async checkAppointmentCoverage(
     @Param('id') subscriptionId: string,
     @Body() body: { appointmentType: string }
@@ -217,6 +269,7 @@ export class BillingController {
   }
 
   @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
+  @RequireResourcePermission('subscriptions', 'update')
   async bookAppointmentWithSubscription(
     @Param('subscriptionId') subscriptionId: string,
     @Param('appointmentId') appointmentId: string
@@ -227,12 +280,14 @@ export class BillingController {
 
   @Post('appointments/:appointmentId/cancel-subscription')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
+  @RequireResourcePermission('subscriptions', 'update')
   async cancelSubscriptionAppointment(@Param('appointmentId') appointmentId: string) {
     await this.billingService.cancelSubscriptionAppointment(appointmentId);
     return { message: 'Subscription appointment cancelled, quota restored' };
   }
 
   @Get('subscriptions/user/:userId/active')
+  @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
   async getActiveUserSubscription(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -241,12 +296,14 @@ export class BillingController {
   }
 
   @Get('subscriptions/:id/usage-stats')
+  @RequireResourcePermission('subscriptions', 'read')
   async getSubscriptionUsageStats(@Param('id') subscriptionId: string) {
     return this.billingService.getSubscriptionUsageStats(subscriptionId);
   }
 
   @Post('subscriptions/:id/reset-quota')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('subscriptions', 'update')
   async resetSubscriptionQuota(@Param('id') subscriptionId: string) {
     await this.billingService.resetSubscriptionQuota(subscriptionId);
     return { message: 'Subscription quota reset' };
@@ -256,6 +313,7 @@ export class BillingController {
 
   @Post('invoices/:id/generate-pdf')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('invoices', 'read')
   async generateInvoicePDF(@Param('id') invoiceId: string) {
     await this.billingService.generateInvoicePDF(invoiceId);
     return { message: 'Invoice PDF generated successfully' };
@@ -263,6 +321,7 @@ export class BillingController {
 
   @Post('invoices/:id/send-whatsapp')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('invoices', 'read')
   async sendInvoiceViaWhatsApp(@Param('id') invoiceId: string) {
     const success = await this.billingService.sendInvoiceViaWhatsApp(invoiceId);
     return {
@@ -274,6 +333,7 @@ export class BillingController {
   }
 
   @Get('invoices/download/:fileName')
+  @RequireResourcePermission('invoices', 'read')
   downloadInvoice(@Param('fileName') fileName: string, @Res() res: FastifyReply) {
     // Check if file exists
     if (!this.invoicePDFService.invoicePDFExists(fileName)) {
@@ -290,6 +350,7 @@ export class BillingController {
 
   @Post('subscriptions/:id/send-confirmation')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('subscriptions', 'read')
   async sendSubscriptionConfirmation(@Param('id') subscriptionId: string) {
     await this.billingService.sendSubscriptionConfirmation(subscriptionId);
     return { message: 'Subscription confirmation sent successfully' };

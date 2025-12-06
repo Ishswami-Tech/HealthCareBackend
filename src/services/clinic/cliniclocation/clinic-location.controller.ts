@@ -21,6 +21,8 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
@@ -35,13 +37,14 @@ import type {
 @ApiTags('clinic locations')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 @Controller('clinics/:clinicId/locations')
 export class ClinicLocationController {
   constructor(private readonly locationService: ClinicLocationService) {}
 
   @Post()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('clinics', 'create')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}'],
     patterns: ['clinic_locations:*', 'clinic_location:*'],
@@ -78,6 +81,7 @@ export class ClinicLocationController {
 
   @Get()
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @RequireResourcePermission('clinics', 'read')
   @CacheDecorator({
     keyTemplate: 'clinic_locations:{clinicId}:false',
     ttl: 1800, // 30 minutes
@@ -124,6 +128,7 @@ export class ClinicLocationController {
 
   @Put(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('clinics', 'update')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
     patterns: ['clinic_locations:*', 'clinic_location:*'],
@@ -173,6 +178,7 @@ export class ClinicLocationController {
 
   @Delete(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('clinics', 'delete')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
     patterns: ['clinic_locations:*', 'clinic_location:*'],

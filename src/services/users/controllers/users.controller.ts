@@ -36,7 +36,7 @@ import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 @Controller('user')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
@@ -45,8 +45,8 @@ export class UsersController {
 
   @Get('all')
   @RateLimitAPI()
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('users', 'read')
   @PatientCache({
     keyTemplate: 'users:all:{role}',
     ttl: 1800, // 30 minutes
@@ -78,6 +78,7 @@ export class UsersController {
   }
 
   @Get('profile')
+  @RequireResourcePermission('profile', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'user:{userId}:profile',
     ttl: 1800, // 30 minutes
@@ -115,6 +116,7 @@ export class UsersController {
   }
 
   @Get(':id')
+  @RequireResourcePermission('users', 'read')
   @PatientCache({
     keyTemplate: 'users:one:{id}',
     ttl: 3600, // 1 hour
@@ -184,8 +186,8 @@ export class UsersController {
   }
 
   @Delete(':id')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
+  @RequireResourcePermission('users', 'delete')
   @ApiOperation({
     summary: 'Delete user',
     description: 'Permanently delete a user. Only accessible by Super Admin.',
@@ -200,6 +202,7 @@ export class UsersController {
   }
 
   @Get('role/patient')
+  @RequireResourcePermission('patients', 'read')
   @ApiOperation({
     summary: 'Get all patients',
     description: 'Retrieve a list of all users with the patient role. No parameters required.',
@@ -218,6 +221,7 @@ export class UsersController {
   }
 
   @Get('role/doctors')
+  @RequireResourcePermission('users', 'read')
   @ApiOperation({
     summary: 'Get all doctors',
     description: 'Retrieves a list of all users with the Doctor role. No parameters required.',
@@ -236,8 +240,8 @@ export class UsersController {
   }
 
   @Get('role/receptionists')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('users', 'read')
   @ApiOperation({
     summary: 'Get all receptionists',
     description:
@@ -261,8 +265,8 @@ export class UsersController {
   }
 
   @Get('role/clinic-admins')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
+  @RequireResourcePermission('users', 'read')
   @ApiOperation({
     summary: 'Get all clinic admins',
     description:
@@ -286,8 +290,8 @@ export class UsersController {
   }
 
   @Put(':id/role')
-  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.SUPER_ADMIN)
+  @RequireResourcePermission('users', 'update')
   @ApiOperation({
     summary: 'Update user role',
     description:

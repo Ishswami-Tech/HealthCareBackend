@@ -223,7 +223,7 @@ export class ClinicController {
   @Get()
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
-  @RequireResourcePermission('clinics', 'create')
+  @RequireResourcePermission('clinics', 'read')
   @Cache({
     keyTemplate: 'clinics:list:{userId}',
     ttl: 1800, // 30 minutes
@@ -435,7 +435,7 @@ export class ClinicController {
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN)
-  @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
+  @RequireResourcePermission('clinics', 'delete', { requireOwnership: true })
   @ApiOperation({
     summary: 'Delete a clinic',
     description:
@@ -701,7 +701,7 @@ export class ClinicController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @UseGuards(JwtAuthGuard)
+  @RequireResourcePermission('patients', 'create')
   @ApiOperation({
     summary: 'Register a patient to a clinic',
     description:
@@ -947,6 +947,7 @@ export class ClinicController {
   @Get('test/context')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @RequireResourcePermission('clinics', 'read')
   @ApiOperation({
     summary: 'Test clinic context',
     description: 'Test endpoint to debug clinic context and permissions',
