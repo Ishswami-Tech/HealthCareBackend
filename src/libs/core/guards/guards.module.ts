@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, forwardRef, Global } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@config';
 import { JwtAuthGuard } from './jwt-auth.guard';
@@ -88,4 +88,5 @@ import { SignOptions } from 'jsonwebtoken';
     RbacModule, // Export RbacModule so RbacGuard and RbacService are available
   ],
 })
+@Global() // Make GuardsModule global so JwtService is available to all modules
 export class GuardsModule {}

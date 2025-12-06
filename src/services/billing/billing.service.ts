@@ -91,14 +91,66 @@ export class BillingService {
     }
   }
 
-  async getBillingPlans(clinicId?: string) {
-    const cacheKey = `billing_plans:${clinicId || 'all'}`;
+  /**
+   * Build role-based where clause for billing queries
+   */
+  private buildBillingWhereClause(
+    role: string,
+    userId: string,
+    clinicId?: string
+  ): Record<string, unknown> {
+    const where: Record<string, unknown> = {};
+
+    // Apply role-based filtering
+    switch (role) {
+      case 'SUPER_ADMIN':
+        // Super admin can see all (no filter)
+        if (clinicId) {
+          where['clinicId'] = clinicId;
+        }
+        break;
+      case 'CLINIC_ADMIN':
+      case 'FINANCE_BILLING':
+        // Clinic admin and finance staff can see their clinic's data
+        if (clinicId) {
+          where['clinicId'] = clinicId;
+        }
+        break;
+      case 'PATIENT':
+        // Patients can only see their own data
+        where['userId'] = userId;
+        break;
+      case 'RECEPTIONIST':
+        // Receptionists can see their clinic's data
+        if (clinicId) {
+          where['clinicId'] = clinicId;
+        }
+        break;
+      default:
+        // For other roles, restrict to user's own data
+        where['userId'] = userId;
+        break;
+    }
+
+    return where;
+  }
+
+  async getBillingPlans(clinicId?: string, role?: string, userId?: string) {
+    // Apply role-based filtering
+    const whereClause =
+      role && userId
+        ? this.buildBillingWhereClause(role, userId, clinicId)
+        : clinicId
+          ? { clinicId }
+          : {};
+
+    const cacheKey = `billing_plans:${clinicId || 'all'}:${role || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
         return await this.databaseService.findBillingPlansSafe({
-          ...(clinicId ? { clinicId } : {}),
+          ...whereClause,
           isActive: true,
         });
       },
@@ -256,15 +308,31 @@ export class BillingService {
     }
   }
 
-  async getUserSubscriptions(userId: string) {
+  async getUserSubscriptions(userId: string, role?: string, requestingUserId?: string) {
+    // Apply role-based filtering
+    // Patients can only see their own subscriptions
+    // Clinic staff can see subscriptions for their clinic
+    if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
+      throw new BadRequestException('You can only view your own subscriptions');
+    }
+
     const cacheKey = `billing_subscriptions:user:${userId}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findSubscriptionsSafe({
-          userId,
-        });
+        const whereClause: Record<string, unknown> = { userId };
+
+        // If clinic staff, also filter by clinic
+        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
+          // Get user's clinic to filter subscriptions
+          const user = await this.databaseService.findUserByIdSafe(userId);
+          if (user?.primaryClinicId) {
+            whereClause['clinicId'] = user.primaryClinicId;
+          }
+        }
+
+        return await this.databaseService.findSubscriptionsSafe(whereClause);
       },
       {
         ttl: 1800, // 30 minutes
@@ -454,15 +522,31 @@ export class BillingService {
     }
   }
 
-  async getUserInvoices(userId: string) {
+  async getUserInvoices(userId: string, role?: string, requestingUserId?: string) {
+    // Apply role-based filtering
+    // Patients can only see their own invoices
+    // Clinic staff can see invoices for their clinic
+    if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
+      throw new BadRequestException('You can only view your own invoices');
+    }
+
     const cacheKey = `user_invoices:${userId}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findInvoicesSafe({
-          userId,
-        });
+        const whereClause: Record<string, unknown> = { userId };
+
+        // If clinic staff, also filter by clinic
+        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
+          // Get user's clinic to filter invoices
+          const user = await this.databaseService.findUserByIdSafe(userId);
+          if (user?.primaryClinicId) {
+            whereClause['clinicId'] = user.primaryClinicId;
+          }
+        }
+
+        return await this.databaseService.findInvoicesSafe(whereClause);
       },
       {
         ttl: 900,
@@ -636,15 +720,31 @@ export class BillingService {
     return payment;
   }
 
-  async getUserPayments(userId: string) {
+  async getUserPayments(userId: string, role?: string, requestingUserId?: string) {
+    // Apply role-based filtering
+    // Patients can only see their own payments
+    // Clinic staff can see payments for their clinic
+    if (role === 'PATIENT' && requestingUserId && requestingUserId !== userId) {
+      throw new BadRequestException('You can only view your own payments');
+    }
+
     const cacheKey = `user_payments:${userId}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findPaymentsSafe({
-          userId,
-        });
+        const whereClause: Record<string, unknown> = { userId };
+
+        // If clinic staff, also filter by clinic
+        if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
+          // Get user's clinic to filter payments
+          const user = await this.databaseService.findUserByIdSafe(userId);
+          if (user?.primaryClinicId) {
+            whereClause['clinicId'] = user.primaryClinicId;
+          }
+        }
+
+        return await this.databaseService.findPaymentsSafe(whereClause);
       },
       {
         ttl: 900,
@@ -1000,7 +1100,22 @@ export class BillingService {
 
   // ============ Analytics ============
 
-  async getClinicRevenue(clinicId: string, startDate?: Date, endDate?: Date) {
+  async getClinicRevenue(
+    clinicId: string,
+    startDate?: Date,
+    endDate?: Date,
+    role?: string,
+    userId?: string
+  ) {
+    // Apply role-based filtering - only clinic staff and super admin can access
+    if (role && role !== 'SUPER_ADMIN' && role !== 'CLINIC_ADMIN' && role !== 'FINANCE_BILLING') {
+      throw new BadRequestException('Insufficient permissions to view clinic revenue');
+    }
+
+    // Build role-based where clause for additional filtering
+    const roleBasedFilter =
+      role && userId ? this.buildBillingWhereClause(role, userId, clinicId) : {};
+
     const where: {
       clinicId: string;
       status: typeof PaymentStatus.COMPLETED;
@@ -1008,9 +1123,11 @@ export class BillingService {
         gte?: Date;
         lte?: Date;
       };
+      userId?: string;
     } = {
       clinicId,
       status: PaymentStatus.COMPLETED,
+      ...roleBasedFilter,
     };
 
     if (startDate || endDate) {
@@ -1034,8 +1151,15 @@ export class BillingService {
     };
   }
 
-  async getSubscriptionMetrics(clinicId: string) {
+  async getSubscriptionMetrics(clinicId: string, role?: string, userId?: string) {
+    // Apply role-based filtering - only clinic staff and super admin can access
+    if (role && role !== 'SUPER_ADMIN' && role !== 'CLINIC_ADMIN' && role !== 'FINANCE_BILLING') {
+      throw new BadRequestException('Insufficient permissions to view subscription metrics');
+    }
+
+    const whereClause = this.buildBillingWhereClause(role || 'SUPER_ADMIN', userId || '', clinicId);
     const subscriptions = await this.databaseService.findSubscriptionsSafe({
+      ...whereClause,
       clinicId,
     });
 

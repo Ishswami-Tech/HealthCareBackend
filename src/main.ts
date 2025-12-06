@@ -6,6 +6,8 @@
  * - Critical error handling (when LoggingService fails)
  * - All other logging uses LoggingService
  */
+// Register tsconfig-paths for path alias resolution at runtime
+import 'tsconfig-paths/register';
 import { SwaggerModule } from '@nestjs/swagger';
 import { Logger, INestApplication, ValidationPipeOptions } from '@nestjs/common';
 import { AppModule } from './app.module';

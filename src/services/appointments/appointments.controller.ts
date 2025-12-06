@@ -3654,4 +3654,47 @@ export class AppointmentsController {
       throw this.errors.internalServerError(context);
     }
   }
+
+  @Get('test/context')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @ApiOperation({
+    summary: 'Test appointment context',
+    description: 'Test endpoint to debug appointment context and permissions',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Returns the current appointment context and user info.',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'Unauthorized',
+  })
+  testAppointmentContext(@Request() req: ClinicAuthenticatedRequest) {
+    const clinicContext = req.clinicContext;
+    const user = req.user;
+
+    return {
+      message: 'Appointment context test',
+      timestamp: new Date().toISOString(),
+      user: {
+        id: user?.sub,
+        sub: user?.sub,
+        role: user?.role,
+        email: user?.['email'],
+      },
+      clinicContext: {
+        identifier: clinicContext?.identifier,
+        clinicId: clinicContext?.clinicId,
+        subdomain: clinicContext?.subdomain,
+        appName: clinicContext?.appName,
+        isValid: clinicContext?.isValid,
+      },
+      headers: {
+        'x-clinic-id': req.headers['x-clinic-id'],
+        'x-clinic-identifier': req.headers['x-clinic-identifier'],
+        authorization: req.headers.authorization ? 'Bearer ***' : 'none',
+      },
+    };
+  }
 }

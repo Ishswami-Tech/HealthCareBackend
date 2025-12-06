@@ -1,15 +1,23 @@
-import { Controller, Get, Post, Body, Param, Logger } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { EnterprisePluginManager } from '@core/plugin-interface';
 import { PluginConfigService } from './config/plugin-config.service';
 import { PluginHealthService } from './health/plugin-health.service';
 import type { PluginOperationResult, BasePlugin } from '@core/types';
 import type { PluginConfig } from './config/plugin-config.service';
+import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
+import { Roles } from '@core/decorators/roles.decorator';
+import { Role } from '@core/types/enums.types';
 
 @ApiTags('appointment plugins')
 @Controller('api/appointments/plugins')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
 export class AppointmentPluginController {
   private readonly logger = new Logger(AppointmentPluginController.name);
 
@@ -20,6 +28,7 @@ export class AppointmentPluginController {
   ) {}
 
   @Get('info')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get plugin information',
     description: 'Get information about all registered plugins',
@@ -51,6 +60,7 @@ export class AppointmentPluginController {
   }
 
   @Get('domain/:domain')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get domain plugins',
     description: 'Get all plugins for a specific domain',
@@ -89,6 +99,7 @@ export class AppointmentPluginController {
   }
 
   @Get('domain/:domain/features')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get domain features',
     description: 'Get all available features for a specific domain',
@@ -122,6 +133,7 @@ export class AppointmentPluginController {
   }
 
   @Post('execute')
+  @RequireResourcePermission('plugins', 'execute')
   @ApiOperation({
     summary: 'Execute plugin operation',
     description: 'Execute a plugin operation for a specific domain and feature',
@@ -200,6 +212,7 @@ export class AppointmentPluginController {
   }
 
   @Post('execute-batch')
+  @RequireResourcePermission('plugins', 'execute')
   @ApiOperation({
     summary: 'Execute multiple plugin operations',
     description: 'Execute multiple plugin operations in sequence',
@@ -256,6 +269,7 @@ export class AppointmentPluginController {
   }
 
   @Get('health')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get plugin system health',
     description: 'Get health status of the plugin system',
@@ -306,6 +320,7 @@ export class AppointmentPluginController {
   }
 
   @Get('health/metrics')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get detailed plugin health metrics',
     description: 'Get detailed health metrics for all plugins',
@@ -337,6 +352,7 @@ export class AppointmentPluginController {
   }
 
   @Get('health/domain/:domain')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get domain plugin health',
     description: 'Get health metrics for plugins in a specific domain',
@@ -370,6 +386,7 @@ export class AppointmentPluginController {
   }
 
   @Get('health/alerts')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get plugin performance alerts',
     description: 'Get performance alerts for plugins',
@@ -436,6 +453,7 @@ export class AppointmentPluginController {
   }
 
   @Get('config/:pluginName')
+  @RequireResourcePermission('plugins', 'read')
   @ApiOperation({
     summary: 'Get plugin configuration',
     description: 'Get configuration for a specific plugin',
@@ -478,6 +496,7 @@ export class AppointmentPluginController {
   }
 
   @Post('config/:pluginName')
+  @RequireResourcePermission('plugins', 'manage')
   @ApiOperation({
     summary: 'Update plugin configuration',
     description: 'Update configuration for a specific plugin',
