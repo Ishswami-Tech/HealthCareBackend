@@ -633,6 +633,12 @@ export class PermissionService {
           description: 'Update clinic settings',
         },
         {
+          name: 'Delete Clinics',
+          resource: 'clinics',
+          action: 'delete',
+          description: 'Delete clinics',
+        },
+        {
           name: 'Manage Clinics',
           resource: 'clinics',
           action: '*',
@@ -733,6 +739,410 @@ export class PermissionService {
           resource: 'profile',
           action: 'update',
           description: 'Update own profile',
+        },
+
+        // EHR Permissions
+        {
+          name: 'Read EHR',
+          resource: 'ehr',
+          action: 'read',
+          description: 'View electronic health records',
+        },
+        {
+          name: 'Create EHR',
+          resource: 'ehr',
+          action: 'create',
+          description: 'Create EHR entries',
+        },
+        {
+          name: 'Update EHR',
+          resource: 'ehr',
+          action: 'update',
+          description: 'Update EHR entries',
+        },
+        {
+          name: 'Delete EHR',
+          resource: 'ehr',
+          action: 'delete',
+          description: 'Delete EHR entries',
+        },
+        {
+          name: 'Manage EHR',
+          resource: 'ehr',
+          action: '*',
+          description: 'Full EHR access',
+        },
+
+        // Queue Permissions
+        {
+          name: 'Read Queue',
+          resource: 'queue',
+          action: 'read',
+          description: 'View queue',
+        },
+        {
+          name: 'Create Queue',
+          resource: 'queue',
+          action: 'create',
+          description: 'Add to queue',
+        },
+        {
+          name: 'Update Queue',
+          resource: 'queue',
+          action: 'update',
+          description: 'Update queue',
+        },
+        {
+          name: 'Manage Queue',
+          resource: 'queue',
+          action: '*',
+          description: 'Full queue management',
+        },
+
+        // Plugin Permissions
+        {
+          name: 'Read Plugins',
+          resource: 'plugins',
+          action: 'read',
+          description: 'View plugins',
+        },
+        {
+          name: 'Execute Plugins',
+          resource: 'plugins',
+          action: 'execute',
+          description: 'Execute plugins',
+        },
+        {
+          name: 'Manage Plugins',
+          resource: 'plugins',
+          action: 'manage',
+          description: 'Manage plugins',
+        },
+
+        // Video Permissions
+        {
+          name: 'Read Video',
+          resource: 'video',
+          action: 'read',
+          description: 'View video sessions',
+        },
+        {
+          name: 'Create Video',
+          resource: 'video',
+          action: 'create',
+          description: 'Start video sessions',
+        },
+        {
+          name: 'Update Video',
+          resource: 'video',
+          action: 'update',
+          description: 'Update video sessions',
+        },
+        {
+          name: 'Manage Video',
+          resource: 'video',
+          action: '*',
+          description: 'Full video access',
+        },
+
+        // Check-in Permissions
+        {
+          name: 'Read Check-in',
+          resource: 'check-in',
+          action: 'read',
+          description: 'View check-ins',
+        },
+        {
+          name: 'Create Check-in',
+          resource: 'check-in',
+          action: 'create',
+          description: 'Process check-ins',
+        },
+        {
+          name: 'Update Check-in',
+          resource: 'check-in',
+          action: 'update',
+          description: 'Update check-ins',
+        },
+
+        // Waitlist Permissions
+        {
+          name: 'Read Waitlist',
+          resource: 'waitlist',
+          action: 'read',
+          description: 'View waitlist',
+        },
+        {
+          name: 'Create Waitlist',
+          resource: 'waitlist',
+          action: 'create',
+          description: 'Add to waitlist',
+        },
+        {
+          name: 'Update Waitlist',
+          resource: 'waitlist',
+          action: 'update',
+          description: 'Update waitlist',
+        },
+        {
+          name: 'Delete Waitlist',
+          resource: 'waitlist',
+          action: 'delete',
+          description: 'Remove from waitlist',
+        },
+
+        // Therapy Permissions
+        {
+          name: 'Read Therapy',
+          resource: 'therapy',
+          action: 'read',
+          description: 'View therapy sessions',
+        },
+        {
+          name: 'Create Therapy',
+          resource: 'therapy',
+          action: 'create',
+          description: 'Create therapy sessions',
+        },
+        {
+          name: 'Update Therapy',
+          resource: 'therapy',
+          action: 'update',
+          description: 'Update therapy sessions',
+        },
+        {
+          name: 'Manage Therapy',
+          resource: 'therapy',
+          action: '*',
+          description: 'Full therapy access',
+        },
+
+        // Lab Reports Permissions
+        {
+          name: 'Read Lab Reports',
+          resource: 'lab-reports',
+          action: 'read',
+          description: 'View lab reports',
+        },
+        {
+          name: 'Create Lab Reports',
+          resource: 'lab-reports',
+          action: 'create',
+          description: 'Create lab reports',
+        },
+        {
+          name: 'Update Lab Reports',
+          resource: 'lab-reports',
+          action: 'update',
+          description: 'Update lab reports',
+        },
+        {
+          name: 'Manage Lab Reports',
+          resource: 'lab-reports',
+          action: '*',
+          description: 'Full lab access',
+        },
+
+        // Inventory Permissions
+        {
+          name: 'Read Inventory',
+          resource: 'inventory',
+          action: 'read',
+          description: 'View inventory',
+        },
+        {
+          name: 'Create Inventory',
+          resource: 'inventory',
+          action: 'create',
+          description: 'Add to inventory',
+        },
+        {
+          name: 'Update Inventory',
+          resource: 'inventory',
+          action: 'update',
+          description: 'Update inventory',
+        },
+        {
+          name: 'Manage Inventory',
+          resource: 'inventory',
+          action: '*',
+          description: 'Full inventory access',
+        },
+
+        // Medications Permissions
+        {
+          name: 'Read Medications',
+          resource: 'medications',
+          action: 'read',
+          description: 'View medications',
+        },
+        {
+          name: 'Create Medications',
+          resource: 'medications',
+          action: 'create',
+          description: 'Prescribe medications',
+        },
+        {
+          name: 'Update Medications',
+          resource: 'medications',
+          action: 'update',
+          description: 'Update medications',
+        },
+        {
+          name: 'Manage Medications',
+          resource: 'medications',
+          action: '*',
+          description: 'Full medication access',
+        },
+
+        // Invoice Permissions
+        {
+          name: 'Read Invoices',
+          resource: 'invoices',
+          action: 'read',
+          description: 'View invoices',
+        },
+        {
+          name: 'Create Invoices',
+          resource: 'invoices',
+          action: 'create',
+          description: 'Create invoices',
+        },
+        {
+          name: 'Update Invoices',
+          resource: 'invoices',
+          action: 'update',
+          description: 'Update invoices',
+        },
+        {
+          name: 'Manage Invoices',
+          resource: 'invoices',
+          action: '*',
+          description: 'Full invoice access',
+        },
+
+        // Payment Permissions
+        {
+          name: 'Read Payments',
+          resource: 'payments',
+          action: 'read',
+          description: 'View payments',
+        },
+        {
+          name: 'Create Payments',
+          resource: 'payments',
+          action: 'create',
+          description: 'Process payments',
+        },
+        {
+          name: 'Update Payments',
+          resource: 'payments',
+          action: 'update',
+          description: 'Update payments',
+        },
+        {
+          name: 'Manage Payments',
+          resource: 'payments',
+          action: '*',
+          description: 'Full payment access',
+        },
+
+        // Counseling Permissions
+        {
+          name: 'Read Counseling',
+          resource: 'counseling',
+          action: 'read',
+          description: 'View counseling sessions',
+        },
+        {
+          name: 'Create Counseling',
+          resource: 'counseling',
+          action: 'create',
+          description: 'Create counseling sessions',
+        },
+        {
+          name: 'Update Counseling',
+          resource: 'counseling',
+          action: 'update',
+          description: 'Update counseling sessions',
+        },
+        {
+          name: 'Manage Counseling',
+          resource: 'counseling',
+          action: '*',
+          description: 'Full counseling access',
+        },
+
+        // Scheduling Permissions
+        {
+          name: 'Read Scheduling',
+          resource: 'scheduling',
+          action: 'read',
+          description: 'View schedules',
+        },
+        {
+          name: 'Create Scheduling',
+          resource: 'scheduling',
+          action: 'create',
+          description: 'Create schedules',
+        },
+        {
+          name: 'Update Scheduling',
+          resource: 'scheduling',
+          action: 'update',
+          description: 'Update schedules',
+        },
+        {
+          name: 'Manage Scheduling',
+          resource: 'scheduling',
+          action: '*',
+          description: 'Full scheduling access',
+        },
+
+        // Notification Permissions
+        {
+          name: 'Read Notifications',
+          resource: 'notifications',
+          action: 'read',
+          description: 'View notifications',
+        },
+        {
+          name: 'Create Notifications',
+          resource: 'notifications',
+          action: 'create',
+          description: 'Send notifications',
+        },
+        {
+          name: 'Manage Notifications',
+          resource: 'notifications',
+          action: '*',
+          description: 'Full notification access',
+        },
+
+        // Subscription Permissions
+        {
+          name: 'Read Subscriptions',
+          resource: 'subscriptions',
+          action: 'read',
+          description: 'View subscriptions',
+        },
+        {
+          name: 'Create Subscriptions',
+          resource: 'subscriptions',
+          action: 'create',
+          description: 'Create subscriptions',
+        },
+        {
+          name: 'Update Subscriptions',
+          resource: 'subscriptions',
+          action: 'update',
+          description: 'Update subscriptions',
+        },
+        {
+          name: 'Delete Subscriptions',
+          resource: 'subscriptions',
+          action: 'delete',
+          description: 'Cancel subscriptions',
         },
 
         {

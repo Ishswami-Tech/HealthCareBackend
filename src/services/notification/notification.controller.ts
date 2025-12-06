@@ -41,15 +41,18 @@ import type {
   NotificationServiceHealthStatus,
 } from '@core/types/notification.types';
 
-// Import guards - adjust import paths based on your auth setup
-// import { JwtAuthGuard } from '@libs/core/guards/jwt-auth.guard';
-// import { RolesGuard } from '@libs/core/guards/roles.guard';
-// import { Roles } from '@libs/core/decorators/roles.decorator';
+import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
+import { Roles } from '@core/decorators/roles.decorator';
+import { Role } from '@core/types/enums.types';
 
 @ApiTags('notifications')
 @Controller('notifications')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
-// @UseGuards(JwtAuthGuard) // Uncomment when authentication is needed
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class NotificationController {
   constructor(
     private readonly communicationService: CommunicationService,
@@ -58,6 +61,7 @@ export class NotificationController {
   ) {}
 
   @Post('push')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send push notification to a single device',
     description:
@@ -103,6 +107,7 @@ export class NotificationController {
   }
 
   @Post('push/multiple')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send push notification to multiple devices',
     description:
@@ -144,6 +149,8 @@ export class NotificationController {
   }
 
   @Post('push/topic')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send push notification to a topic',
     description:
@@ -173,6 +180,7 @@ export class NotificationController {
   }
 
   @Post('push/subscribe')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Subscribe device to topic',
     description: 'Subscribe a device token to a specific topic for topic-based messaging',
@@ -196,6 +204,7 @@ export class NotificationController {
   }
 
   @Post('push/unsubscribe')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Unsubscribe device from topic',
     description: 'Unsubscribe a device token from a specific topic',
@@ -219,6 +228,7 @@ export class NotificationController {
   }
 
   @Post('email')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send email notification',
     description: 'Send an email notification using CommunicationService (AWS SES with fallback)',
@@ -258,6 +268,8 @@ export class NotificationController {
   }
 
   @Post('appointment-reminder')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send appointment reminder',
     description: 'Send appointment reminder via email and optionally push notification',
@@ -303,6 +315,8 @@ export class NotificationController {
   }
 
   @Post('prescription-ready')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PHARMACIST)
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send prescription ready notification',
     description: 'Send prescription ready notification via email and optionally push notification',
@@ -345,6 +359,7 @@ export class NotificationController {
   }
 
   @Post('unified')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send unified notification',
     description:
@@ -413,6 +428,7 @@ export class NotificationController {
   }
 
   @Post('chat-backup')
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Backup chat message',
     description: 'Backup a chat message to Firebase Realtime Database',
@@ -442,6 +458,7 @@ export class NotificationController {
   }
 
   @Get('chat-history/:userId')
+  @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   @ApiOperation({
     summary: 'Get chat message history',
     description: 'Retrieve chat message history for a specific user and conversation',
@@ -492,6 +509,8 @@ export class NotificationController {
   }
 
   @Get('stats')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
   @ApiOperation({
     summary: 'Get notification statistics',
     description: 'Retrieve notification system statistics and health status',
@@ -523,6 +542,7 @@ export class NotificationController {
   }
 
   @Get('health')
+  @Roles(Role.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Check notification services health',
     description: 'Check the health status of all notification services',
@@ -550,6 +570,8 @@ export class NotificationController {
   }
 
   @Get('chat-stats')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
   @ApiOperation({
     summary: 'Get chat backup statistics',
     description: 'Retrieve statistics about chat message backups',
@@ -575,6 +597,8 @@ export class NotificationController {
   }
 
   @Post('test')
+  @Roles(Role.SUPER_ADMIN)
+  @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Test notification system',
     description: 'Send test notifications to verify system functionality',

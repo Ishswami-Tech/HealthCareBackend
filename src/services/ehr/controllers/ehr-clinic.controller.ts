@@ -2,12 +2,14 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { EHRService } from '@services/ehr/ehr.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
 @Controller('ehr/clinic')
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class EHRClinicController {
   constructor(private readonly ehrService: EHRService) {}
 
@@ -15,6 +17,7 @@ export class EHRClinicController {
 
   @Get('comprehensive/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   async getComprehensiveHealthRecordWithClinic(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -26,6 +29,7 @@ export class EHRClinicController {
 
   @Get(':clinicId/patients/records')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('ehr', 'read')
   async getClinicPatientsRecords(
     @Param('clinicId') clinicId: string,
     @Query('recordType') recordType?: string,
@@ -52,18 +56,21 @@ export class EHRClinicController {
 
   @Get(':clinicId/analytics')
   @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('reports', 'read')
   async getClinicEHRAnalytics(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicEHRAnalytics(clinicId);
   }
 
   @Get(':clinicId/patients/summary')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('ehr', 'read')
   async getClinicPatientsSummary(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicPatientsSummary(clinicId);
   }
 
   @Get(':clinicId/search')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('ehr', 'read')
   async searchClinicRecords(
     @Param('clinicId') clinicId: string,
     @Query('q') searchTerm: string,
@@ -75,6 +82,7 @@ export class EHRClinicController {
 
   @Get(':clinicId/alerts/critical')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('ehr', 'read')
   async getClinicCriticalAlerts(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicCriticalAlerts(clinicId);
   }
