@@ -6,6 +6,7 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 import type {
   IAdvancedCacheProvider,
   CacheMetrics,
@@ -36,7 +37,8 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
 
   constructor(
     @Inject(forwardRef(() => DragonflyService))
-    private readonly dragonflyService: DragonflyService
+    private readonly dragonflyService: DragonflyService,
+    @Inject(ConfigService) private readonly configService: ConfigService
   ) {
     // DragonflyService injected via forwardRef to handle circular dependencies
   }
@@ -335,7 +337,8 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     options: RateLimitOptions = {}
   ): Promise<boolean> {
     // Check if in development mode
-    const isDevelopment = process.env['NODE_ENV'] !== 'production';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const isDevelopment = this.configService.isDevelopment();
     if (isDevelopment && !options.bypassDev) {
       return false;
     }
@@ -391,7 +394,8 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
     limit?: number,
     windowSeconds?: number
   ): Promise<RateLimitResult> {
-    const isDevelopment = process.env['NODE_ENV'] !== 'production';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const isDevelopment = this.configService.isDevelopment();
     if (isDevelopment) {
       return {
         remaining: 999999,

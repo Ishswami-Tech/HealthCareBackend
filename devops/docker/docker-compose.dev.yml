@@ -66,7 +66,7 @@ services:
       FRONTEND_URL: http://localhost:3000
       
       # CORS Configuration
-      CORS_ORIGIN: http://localhost:3000,http://localhost:8088,http://localhost:5050,http://localhost:8082
+      CORS_ORIGIN: http://localhost:3000,http://localhost:8088,http://localhost:5050,http://localhost:8082,http://localhost:8443
       CORS_CREDENTIALS: "true"
       
       # Service URLs
@@ -76,6 +76,23 @@ services:
       REDIS_COMMANDER_URL: http://localhost:8082
       PRISMA_STUDIO_URL: http://localhost:5555
       PGADMIN_URL: http://localhost:5050
+      
+      # Jitsi Meet Configuration (Self-hosted) - Loaded from .env files
+      JITSI_DOMAIN: ${JITSI_DOMAIN:-localhost:8443}
+      JITSI_BASE_DOMAIN: ${JITSI_BASE_DOMAIN:-localhost}
+      JITSI_SUBDOMAIN: ${JITSI_SUBDOMAIN:-localhost}
+      JITSI_APP_ID: ${JITSI_APP_ID:-healthcare-jitsi-app}
+      JITSI_APP_SECRET: ${JITSI_APP_SECRET:-dev-jitsi-secret-change-in-production}
+      JITSI_BASE_URL: ${JITSI_BASE_URL:-https://localhost:8443}
+      JITSI_WS_URL: ${JITSI_WS_URL:-wss://localhost:8443/xmpp-websocket}
+      VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
+      JITSI_ENABLE_RECORDING: ${JITSI_ENABLE_RECORDING:-true}
+      JITSI_ENABLE_WAITING_ROOM: ${JITSI_ENABLE_WAITING_ROOM:-true}
+      
+      # Google OAuth Configuration
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: http://localhost:8088/auth/google/callback
       
       # API Configuration
       API_PREFIX: /api/v1
@@ -236,7 +253,7 @@ services:
   #   restart: unless-stopped
 
   redis-commander:
-    image: ghcr.io/joeferner/redis-commander:latest
+    image: rediscommander/redis-commander:latest
     container_name: healthcare-redis-ui
     ports:
       - "8082:8081"
@@ -341,6 +358,166 @@ services:
       start_period: 40s
     restart: unless-stopped
 
+  # Jitsi Meet Services
+  jitsi-prosody:
+    image: jitsi/prosody:latest
+    container_name: healthcare-jitsi-prosody
+    environment:
+      - AUTH_TYPE=internal
+      - ENABLE_AUTH=1
+      - ENABLE_GUESTS=1
+      - GUEST_DOMAIN=guest.localhost
+      - XMPP_DOMAIN=localhost
+      - XMPP_AUTH_DOMAIN=auth.localhost
+      - XMPP_GUEST_DOMAIN=guest.localhost
+      - XMPP_MUC_DOMAIN=muc.localhost
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.localhost
+      - XMPP_RECORDER_DOMAIN=recorder.localhost
+      - JICOFO_COMPONENT_SECRET=dev-jicofo-secret-change-in-production
+      - JICOFO_AUTH_USER=focus
+      - JICOFO_AUTH_PASSWORD=dev-focus-password-change-in-production
+      - JVB_AUTH_PASSWORD=dev-jvb-password-change-in-production
+      - JIGASI_XMPP_PASSWORD=dev-jigasi-password-change-in-production
+      - JIBRI_RECORDER_PASSWORD=dev-jibri-password-change-in-production
+      - JIBRI_XMPP_PASSWORD=dev-jibri-xmpp-password-change-in-production
+      - JWT_APP_ID=${JITSI_APP_ID:-healthcare-jitsi-app}
+      - JWT_APP_SECRET=${JITSI_APP_SECRET:-dev-jitsi-secret-change-in-production}
+      - JWT_ACCEPTED_ISSUERS=healthcare-jitsi-app
+      - JWT_ACCEPTED_AUDIENCES=healthcare-jitsi-app
+      - ENABLE_JWT=1
+      - PUBLIC_URL=${JITSI_BASE_URL:-https://localhost:8443}
+      - TZ=UTC
+    volumes:
+      - jitsi_prosody_config:/config
+      - jitsi_prosody_plugins:/prosody-plugins-custom
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+
+  jitsi-web:
+    image: jitsi/web:latest
+    container_name: healthcare-jitsi-web
+    ports:
+      - "8443:443"
+      - "8080:80"
+    environment:
+      - ENABLE_AUTH=1
+      - ENABLE_GUESTS=1
+      - ENABLE_LETSENCRYPT=0
+      - ENABLE_HTTP_REDIRECT=1
+      - DISABLE_HTTPS=0
+      - JICOFO_AUTH_USER=focus
+      - XMPP_DOMAIN=localhost
+      - XMPP_AUTH_DOMAIN=auth.localhost
+      - XMPP_BOSH_URL_BASE=http://localhost:5280
+      - XMPP_GUEST_DOMAIN=guest.localhost
+      - XMPP_MUC_DOMAIN=muc.localhost
+      - XMPP_RECORDER_DOMAIN=recorder.localhost
+      - ENABLE_PREJOIN_PAGE=1
+      - ENABLE_WELCOME_PAGE=1
+      - ENABLE_CLOSE_PAGE=1
+      - ENABLE_RECORDING=1
+      - ENABLE_WAITING_ROOM=1
+      - ENABLE_BREAKOUT_ROOMS=1
+      - ENABLE_LOBBY=1
+      - ENABLE_NOISY_MIC_DETECTION=1
+      - ENABLE_TRANSCRIPTIONS=0
+      - ENABLE_REMB=1
+      - ENABLE_TCC=1
+      - RESOLUTION=720
+      - FRAME_RATE=30
+      - CHANNEL_LAST_N=20
+      - START_AUDIO_MUTED=10
+      - START_VIDEO_MUTED=10
+      - START_AUDIO_ONLY=0
+      - DISABLE_DOMAIN_VERIFICATION=1
+      - PUBLIC_URL=${JITSI_BASE_URL:-https://localhost:8443}
+      - TZ=UTC
+      - JWT_APP_ID=${JITSI_APP_ID:-healthcare-jitsi-app}
+      - JWT_APP_SECRET=${JITSI_APP_SECRET:-dev-jitsi-secret-change-in-production}
+      - JWT_ACCEPTED_ISSUERS=healthcare-jitsi-app
+      - JWT_ACCEPTED_AUDIENCES=healthcare-jitsi-app
+      - ENABLE_JWT=1
+      - JWT_ASAP_KEYSERVER=${JITSI_BASE_URL:-https://localhost:8443}/asap
+      - JWT_ALLOW_EMPTY=0
+      - JWT_AUTH_TYPE=token
+      - JWT_TOKEN_AUTH_MODULE=token_verification
+    volumes:
+      - jitsi_web_config:/config
+      - jitsi_web_letsencrypt:/etc/letsencrypt
+    depends_on:
+      - jitsi-prosody
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+
+  jitsi-jicofo:
+    image: jitsi/jicofo:latest
+    container_name: healthcare-jitsi-jicofo
+    environment:
+      - AUTH_TYPE=internal
+      - ENABLE_AUTH=1
+      - XMPP_DOMAIN=localhost
+      - XMPP_AUTH_DOMAIN=auth.localhost
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.localhost
+      - XMPP_SERVER=jitsi-prosody
+      - JICOFO_COMPONENT_SECRET=dev-jicofo-secret-change-in-production
+      - JICOFO_AUTH_USER=focus
+      - JICOFO_AUTH_PASSWORD=dev-focus-password-change-in-production
+      - JICOFO_RESERVATION_REST_BASE_URL=
+      - JVB_BREWERY_MUC=jvbbrewery
+      - JIGASI_BREWERY_MUC=jigasibrewery
+      - JIGASI_SIP_URI=
+      - JIBRI_BREWERY_MUC=jibribrewery
+      - JIBRI_PENDING_TIMEOUT=90
+      - TZ=UTC
+    volumes:
+      - jitsi_jicofo_config:/config
+    depends_on:
+      - jitsi-prosody
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+
+  jitsi-jvb:
+    image: jitsi/jvb:latest
+    container_name: healthcare-jitsi-jvb
+    ports:
+      - "10000:10000/udp"
+      - "4443:4443"
+    environment:
+      - DOCKER_HOST_ADDRESS=127.0.0.1
+      - XMPP_AUTH_DOMAIN=auth.localhost
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.localhost
+      - XMPP_SERVER=jitsi-prosody
+      - JVB_AUTH_USER=jvb
+      - JVB_AUTH_PASSWORD=dev-jvb-password-change-in-production
+      - JVB_BREWERY_MUC=jvbbrewery
+      - JVB_PORT=10000
+      - JVB_TCP_HARVESTER_DISABLED=true
+      - JVB_TCP_PORT=4443
+      - JVB_STUN_SERVERS=stun.l.google.com:19302,stun1.l.google.com:19302
+      - JVB_ENABLE_APIS=rest,colibri
+      - JVB_WS_DOMAIN=localhost
+      - JVB_WS_SERVER_ID=
+      - TZ=UTC
+    volumes:
+      - jitsi_jvb_config:/config
+    depends_on:
+      - jitsi-prosody
+      - jitsi-jicofo
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
 volumes:
   postgres_data:
     name: healthcare_postgres_data
@@ -350,6 +527,18 @@ volumes:
     name: healthcare_redis_data
   pgadmin_data:
     name: healthcare_pgadmin_data
+  jitsi_prosody_config:
+    name: healthcare_jitsi_prosody_config
+  jitsi_prosody_plugins:
+    name: healthcare_jitsi_prosody_plugins
+  jitsi_web_config:
+    name: healthcare_jitsi_web_config
+  jitsi_web_letsencrypt:
+    name: healthcare_jitsi_web_letsencrypt
+  jitsi_jicofo_config:
+    name: healthcare_jitsi_jicofo_config
+  jitsi_jvb_config:
+    name: healthcare_jitsi_jvb_config
 
 networks:
   healthcare-network:

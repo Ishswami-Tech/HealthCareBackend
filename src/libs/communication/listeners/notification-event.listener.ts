@@ -177,6 +177,54 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    // Queue Position Updates
+    {
+      eventPattern: /^appointment\.queue\.(position\.updated|updated|reordered)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push'], // Real-time only, no email
+      priority: CommunicationPriority.NORMAL,
+      template: 'queue_position_update',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Get appointmentId from metadata to find patient
+        const appointmentId = payload.metadata?.['appointmentId'] as string | undefined;
+        if (appointmentId) {
+          // Add appointment-specific room for real-time updates
+          recipients.push({
+            socketRoom: `appointment:${appointmentId}`,
+          });
+        }
+        // Add user-specific room if userId is in payload
+        if (payload.userId) {
+          recipients.push({
+            userId: payload.userId,
+            socketRoom: `user:${payload.userId}`,
+          });
+        }
+        // Add clinic room for staff monitoring
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: payload => {
+        // Only notify if position changed significantly (e.g., moved up by 2+ positions)
+        const position = payload.metadata?.['position'] as number | undefined;
+        const previousPosition = payload.metadata?.['previousPosition'] as number | undefined;
+        if (position !== undefined && previousPosition !== undefined) {
+          // Notify if moved up by 2+ positions or reached position 1
+          return position < previousPosition - 1 || position === 1;
+        }
+        // Always notify if no previous position (first update)
+        return true;
+      },
+    },
     // Billing Events
     {
       eventPattern: /^billing\.(payment|invoice)\.(created|paid)$/,
@@ -480,6 +528,30 @@ export class NotificationEventListener implements OnModuleInit {
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';
       body = 'You have a new billing notification';
+    } else if (eventType.startsWith('appointment.queue.')) {
+      const position = _payload.metadata?.['position'] as number | undefined;
+      const totalInQueue = _payload.metadata?.['totalInQueue'] as number | undefined;
+      const estimatedWaitTime = _payload.metadata?.['estimatedWaitTime'] as number | undefined;
+      if (eventType.includes('.position.updated')) {
+        title = 'Queue Position Update';
+        if (position === 1) {
+          body = 'You are next in line! The doctor will see you shortly.';
+        } else if (position !== undefined) {
+          const waitTimeText =
+            estimatedWaitTime !== undefined
+              ? `Estimated wait time: ${estimatedWaitTime} minutes`
+              : '';
+          body = `Your position in queue: ${position}${totalInQueue ? ` of ${totalInQueue}` : ''}. ${waitTimeText}`;
+        } else {
+          body = 'Your queue position has been updated';
+        }
+      } else if (eventType.includes('.reordered')) {
+        title = 'Queue Updated';
+        body = 'The queue order has been updated';
+      } else {
+        title = 'Queue Update';
+        body = 'Your appointment queue status has changed';
+      }
     }
 
     return { title, body };

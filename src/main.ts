@@ -21,6 +21,13 @@ import productionConfig from './config/environment/production.config';
 import stagingConfig from './config/environment/staging.config';
 import testConfig from './config/environment/test.config';
 import { ConfigService, isCacheEnabled } from '@config';
+import {
+  getEnv,
+  getEnvWithDefault,
+  getEnvBoolean,
+  isProduction,
+  getEnvironment,
+} from '@config/environment/utils';
 import { LoggingInterceptor } from '@infrastructure/logging/logging.interceptor';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import cluster from 'cluster';
@@ -335,10 +342,9 @@ async function _setupWebSocketAdapter(
 
         createIOServer(port: number, options?: Record<string, unknown>): unknown {
           // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
-          const corsOrigin =
-            configService?.get<string>('CORS_ORIGIN', process.env['CORS_ORIGIN'] || '*') ||
-            process.env['CORS_ORIGIN'] ||
-            '*';
+          // Use ConfigService (which uses dotenv) for environment variable access
+          const corsConfig = configService?.getCorsConfig();
+          const corsOrigin = corsConfig?.origin || '*';
           const corsOrigins =
             corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
 
@@ -389,10 +395,11 @@ async function _setupWebSocketAdapter(
           const healthNamespace = server.of?.('/health');
           if (healthNamespace && typeof healthNamespace.on === 'function') {
             healthNamespace.on('connection', (socket: SocketConnection) => {
+              // Use ConfigService (which uses dotenv) for environment variable access
               socket.emit('health', {
                 status: 'healthy',
                 timestamp: new Date(),
-                environment: process.env['NODE_ENV'],
+                environment: configService?.getEnvironment() || 'development',
               });
             });
           }
@@ -405,10 +412,11 @@ async function _setupWebSocketAdapter(
               let heartbeat: NodeJS.Timeout;
 
               const startHeartbeat = () => {
+                // Use ConfigService (which uses dotenv) for environment variable access
                 socket.emit('welcome', {
                   message: 'Connected to WebSocket server',
                   timestamp: new Date().toISOString(),
-                  environment: process.env['NODE_ENV'],
+                  environment: configService?.getEnvironment() || 'development',
                 });
 
                 heartbeat = setInterval(() => {
@@ -494,10 +502,11 @@ async function _setupWebSocketAdapter(
  * Production clustering setup for high concurrency
  */
 function setupProductionClustering(): boolean {
-  const isProduction = process.env['NODE_ENV'] === 'production';
-  const enableClustering = process.env['ENABLE_CLUSTERING'] === 'true';
+  // Use helper functions (which use dotenv) for environment variable access
+  const isProductionEnv = isProduction();
+  const enableClustering = getEnvBoolean('ENABLE_CLUSTERING', false);
 
-  if (!isProduction || !enableClustering) {
+  if (!isProductionEnv || !enableClustering) {
     return false;
   }
 
@@ -588,6 +597,8 @@ function setupProductionClustering(): boolean {
   } else {
     // Worker process
     process.title = `healthcare-worker-${cluster.worker?.id}`;
+    // Note: WORKER_ID is set via process.env for cluster communication
+    // This is acceptable as it's for Node.js cluster module inter-process communication
     process.env['WORKER_ID'] = cluster.worker?.id?.toString() || '0';
 
     console.warn(` Worker ${process.pid} (ID: ${cluster.worker?.id}) initialized`);
@@ -602,9 +613,10 @@ async function bootstrap() {
   }
 
   // Detect horizontal scaling mode (Docker containers)
-  const isHorizontalScaling = process.env['CLUSTER_MODE'] === 'horizontal';
-  const instanceId = process.env['INSTANCE_ID'] || process.env['WORKER_ID'] || '1';
-  const workerId = process.env['WORKER_ID'] || cluster.worker?.id || instanceId;
+  // Use helper functions (which use dotenv) for environment variable access
+  const isHorizontalScaling = getEnv('CLUSTER_MODE') === 'horizontal';
+  const instanceId = getEnvWithDefault('INSTANCE_ID', getEnvWithDefault('WORKER_ID', '1'));
+  const workerId = getEnvWithDefault('WORKER_ID', String(cluster.worker?.id || instanceId));
 
   const logger = new Logger(`Bootstrap-${instanceId}`);
   let app: INestApplication | undefined;
@@ -620,7 +632,8 @@ async function bootstrap() {
       process.title = `healthcare-api-${instanceId}`;
     }
 
-    const environment = process.env['NODE_ENV'] as Environment;
+    // Use helper function (which uses dotenv) for environment variable access
+    const environment = getEnvironment() as Environment;
     if (!validEnvironments.includes(environment)) {
       throw new Error(
         `Invalid NODE_ENV: ${environment}. Must be one of: ${validEnvironments.join(', ')}`
@@ -664,7 +677,7 @@ async function bootstrap() {
       keepAliveTimeout: environment === 'production' ? 65000 : 5000,
       connectionTimeout: environment === 'production' ? 60000 : 30000,
       requestTimeout: environment === 'production' ? 30000 : 10000,
-      enableHttp2: environment === 'production' && process.env['ENABLE_HTTP2'] !== 'false',
+      enableHttp2: environment === 'production' && getEnvBoolean('ENABLE_HTTP2', true),
     };
 
     app = await lifecycleManager.createApplication(AppModule, basicApplicationConfig);
@@ -727,9 +740,8 @@ async function bootstrap() {
     // Configure middleware using MiddlewareManager
     const middlewareManager = lifecycleManager.getMiddlewareManager();
 
-    // TEMPORARILY DISABLED: All session and cookie configuration disabled for debugging
-    // TODO: Debug and fix session store wrapper issue
-    logger.warn('Session and cookie configuration temporarily disabled for debugging');
+    // Session and cookie configuration
+    logger.log('Session and cookie configuration initialized');
     // Configure production security middleware
     // if (environment === 'production') {
     //   await securityConfigService.configureProductionSecurity(app, logger);
@@ -749,25 +761,21 @@ async function bootstrap() {
     // Configure Fastify session with cache-backed store (for all environments)
     // Session store uses CacheService if cache is enabled, otherwise uses in-memory store
     // IMPORTANT: Cookies must be registered before session (done above)
-    // TEMPORARILY DISABLED: Commenting out session configuration to isolate the error
-    // TODO: Debug and fix session store wrapper issue
-    // try {
-    //   // For now, always use in-memory store to ensure app starts successfully
-    //   await securityConfigService.configureSession(app);
-    //   logger.log('Fastify session configured (using in-memory store)');
-    // } catch (sessionError) {
-    //   logger.error(
-    //     `Failed to configure Fastify session: ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
-    //   );
-    //   // Don't throw - allow app to continue without session support
-    //   logger.warn('Application will continue without session support');
-    // }
+    try {
+      await securityConfigService.configureSession(app);
+      logger.log('Fastify session configured');
+    } catch (sessionError) {
+      logger.error(
+        `Failed to configure Fastify session: ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
+      );
+      // Don't throw - allow app to continue without session support
+      logger.warn('Application will continue without session support');
+    }
 
     // Prepare middleware configuration
-    const apiPrefixRaw =
-      configService?.get<string>('API_PREFIX', process.env['API_PREFIX'] || '/api/v1') ||
-      process.env['API_PREFIX'] ||
-      '/api/v1';
+    // Get app config early for middleware setup
+    const appConfigForMiddleware = configService?.getAppConfig();
+    const apiPrefixRaw = appConfigForMiddleware?.apiPrefix || '/api/v1';
     // Ensure prefix has leading slash for NestJS
     const apiPrefix = apiPrefixRaw.startsWith('/') ? apiPrefixRaw : `/${apiPrefixRaw}`;
 
@@ -860,36 +868,48 @@ async function bootstrap() {
       );
     }
 
-    // TEMPORARILY DISABLED: WebSocket adapter setup disabled for debugging
-    // TODO: Debug and fix Socket.IO adapter issue
-    logger.warn('WebSocket adapter setup temporarily disabled for debugging');
-    customWebSocketAdapter = null;
-    // customWebSocketAdapter = await setupWebSocketAdapter(
-    //   app,
-    //   configService,
-    //   logger,
-    //   loggingService
-    // );
+    // Setup WebSocket adapter with Redis for horizontal scaling
+    logger.log('Setting up WebSocket adapter with Redis...');
+    try {
+      customWebSocketAdapter = await _setupWebSocketAdapter(
+        app,
+        configService,
+        logger,
+        loggingService
+      );
+      if (customWebSocketAdapter) {
+        logger.log('WebSocket adapter configured successfully');
+      } else {
+        logger.warn('WebSocket adapter setup returned null (cache may be disabled)');
+      }
+    } catch (wsError) {
+      const wsErrorMessage = wsError instanceof Error ? wsError.message : 'Unknown error';
+      logger.error(`Failed to setup WebSocket adapter: ${wsErrorMessage}`);
+      logger.warn('Application will continue without WebSocket horizontal scaling');
+      customWebSocketAdapter = null;
+      // Don't throw - allow application to continue without WebSocket adapter
+    }
 
     // Configure CORS using SecurityConfigService
     // SecurityConfigService is now framework-agnostic and uses the framework adapter
-    // TEMPORARILY DISABLED: CORS configuration disabled to debug "Cannot read properties of undefined (reading 'set')" error
-    // TODO: Re-enable CORS after fixing the undefined .set() error
-    logger.warn('CORS configuration temporarily disabled for debugging');
-    /*
     logger.log('Configuring CORS...');
     if (app && securityConfigService) {
       try {
+        // Ensure framework adapter is set before configuring CORS
+        if (frameworkAdapter) {
+          securityConfigService.setFrameworkAdapter(frameworkAdapter);
+        }
         // Check if app has enableCors method before calling
         if (typeof app.enableCors === 'function') {
           logger.log('Calling securityConfigService.configureCORS...');
-      securityConfigService.configureCORS(app);
+          securityConfigService.configureCORS(app);
           logger.log('CORS configured successfully');
         } else {
           logger.warn('Application does not have enableCors method, skipping CORS configuration');
+          logger.warn('This may be expected if using a custom framework adapter');
         }
-      // securityConfigService.addCorsPreflightHandler(app);
-      // securityConfigService.addBotDetectionHook(app);
+        // securityConfigService.addCorsPreflightHandler(app);
+        // securityConfigService.addBotDetectionHook(app);
       } catch (corsError) {
         const corsErrorMessage = corsError instanceof Error ? corsError.message : 'Unknown error';
         const corsErrorStack = corsError instanceof Error ? corsError.stack : 'No stack trace';
@@ -907,54 +927,24 @@ async function bootstrap() {
       }
     }
     logger.log('CORS configuration completed');
-    */
 
-    // Configure Swagger with environment variables
-    // ConfigService.get<T>() returns T | undefined, using generic type parameter for type safety
-    const _port =
-      configService?.get<number | string>(
-        'PORT',
-        process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088
-      ) ||
-      configService?.get<number | string>('VIRTUAL_PORT', process.env['VIRTUAL_PORT'] || 8088) ||
-      process.env['PORT'] ||
-      process.env['VIRTUAL_PORT'] ||
-      8088;
-    const _virtualHost =
-      configService?.get<string>('VIRTUAL_HOST', process.env['VIRTUAL_HOST'] || 'localhost') ||
-      process.env['VIRTUAL_HOST'] ||
-      'localhost';
-    const _apiUrl =
-      configService?.get<string>('API_URL', process.env['API_URL']) || process.env['API_URL'];
-    const _swaggerUrl =
-      configService?.get<string>('SWAGGER_URL', process.env['SWAGGER_URL'] || '/docs') ||
-      process.env['SWAGGER_URL'] ||
-      '/docs';
-    const _bullBoardUrl =
-      configService?.get<string>(
-        'BULL_BOARD_URL',
-        process.env['BULL_BOARD_URL'] || '/queue-dashboard'
-      ) ||
-      process.env['BULL_BOARD_URL'] ||
-      '/queue-dashboard';
-    const _socketUrl =
-      configService?.get<string>('SOCKET_URL', process.env['SOCKET_URL'] || '/socket.io') ||
-      process.env['SOCKET_URL'] ||
-      '/socket.io';
-    const _redisCommanderUrl =
-      configService?.get<string>(
-        'REDIS_COMMANDER_URL',
-        process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
-      ) || process.env['REDIS_COMMANDER_URL'];
-    const _prismaStudioUrl =
-      configService?.get<string>(
-        'PRISMA_STUDIO_URL',
-        process.env['PRISMA_STUDIO_URL'] || 'http://localhost:5555'
-      ) || process.env['PRISMA_STUDIO_URL'];
-    const _loggerUrl =
-      configService?.get<string>('LOGGER_URL', process.env['LOGGER_URL'] || '/logger') ||
-      process.env['LOGGER_URL'] ||
-      '/logger';
+    // Configure Swagger with ConfigService (centralized configuration)
+    if (!configService) {
+      throw new Error('ConfigService is required for Swagger configuration');
+    }
+
+    const appConfig = configService.getAppConfig();
+    const urlsConfig = configService.getUrlsConfig();
+
+    const _port = appConfig.port;
+    const _virtualHost = appConfig.host;
+    const _apiUrl = appConfig.apiUrl || appConfig.baseUrl;
+    const _swaggerUrl = urlsConfig.swagger;
+    const _bullBoardUrl = urlsConfig.bullBoard;
+    const _socketUrl = urlsConfig.socket;
+    const _redisCommanderUrl = urlsConfig.redisCommander || 'http://localhost:8082';
+    const _prismaStudioUrl = urlsConfig.prismaStudio || 'http://localhost:5555';
+    const _loggerUrl = '/logger';
 
     // Check if app is available before configuring Swagger
     if (!app) {
@@ -991,13 +981,13 @@ async function bootstrap() {
           urls: [
             {
               url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${String(_swaggerUrl || '/docs')}/swagger.json`,
-              name: process.env['NODE_ENV'] === 'production' ? 'Production' : 'Development',
+              name: appConfig.environment === 'production' ? 'Production' : 'Development',
             },
           ],
         },
       });
 
-      logger.log(`Swagger API documentation configured for ${process.env['NODE_ENV']} environment`);
+      logger.log(`Swagger API documentation configured for ${appConfig.environment} environment`);
     } catch (swaggerError) {
       const swaggerErrorMessage =
         swaggerError instanceof Error ? swaggerError.message : 'Unknown error';
@@ -1043,10 +1033,9 @@ async function bootstrap() {
       await lifecycleManager.startServer(serverConfig);
       logger.log('lifecycleManager.startServer() completed successfully');
 
-      // Debug: Log configuration values to identify URL concatenation issue
-      logger.log(`DEBUG - envConfig.app.baseUrl: "${envConfig.app.baseUrl}"`);
-      logger.log(`DEBUG - envConfig.urls.swagger: "${envConfig.urls.swagger}"`);
-      logger.log(`DEBUG - Concatenated URL: "${envConfig.app.baseUrl}${envConfig.urls.swagger}"`);
+      // Log configuration values
+      logger.log(`Application base URL: "${envConfig.app.baseUrl}"`);
+      logger.log(`Swagger URL: "${envConfig.urls.swagger}"`);
 
       logger.log(
         `Application is running in ${envConfig.app.environment} mode on port ${serverConfig.port}`
@@ -1062,7 +1051,8 @@ async function bootstrap() {
         logger.log(`- PgAdmin: ${envConfig.urls.pgAdmin}`);
 
         // Auto-start Prisma Studio in development mode
-        if (process.env['ENABLE_PRISMA_STUDIO'] !== 'false') {
+        // Use ConfigService (which uses dotenv) for environment variable access
+        if (configService?.getEnvBoolean('ENABLE_PRISMA_STUDIO', true)) {
           // Function to start Prisma Studio with retry logic
           const startPrismaStudio = (retryCount = 0): void => {
             const maxRetries = 3;
@@ -1108,9 +1098,10 @@ async function bootstrap() {
                     PRISMA_SCHEMA_PATH: path.join(prismaDir, 'schema.prisma'),
                     // Use DIRECT_URL if available (clean connection string), otherwise clean DATABASE_URL
                     // Prisma Studio needs a clean PostgreSQL connection string without Prisma-specific parameters
+                    // Use ConfigService (which uses dotenv) for environment variable access
                     DATABASE_URL:
-                      process.env['DIRECT_URL'] ||
-                      (process.env['DATABASE_URL'] || '').replace(
+                      configService?.getEnv('DIRECT_URL') ||
+                      (configService?.getDatabaseConfig()?.url || '').replace(
                         /[?&](connection_limit|pool_timeout|statement_timeout|idle_in_transaction_session_timeout|connect_timeout|pool_size|max_connections)=[^&]*/g,
                         ''
                       ),
@@ -1272,11 +1263,10 @@ async function bootstrap() {
         }
       }
 
-      // Try to get more context about what was undefined
+      // Log error context for troubleshooting
       if (errorMessage.includes("Cannot read properties of undefined (reading 'set')")) {
-        logger.error('DEBUG: Error is about undefined .set() method');
-        logger.error('DEBUG: This suggests something is trying to call .set() on undefined');
-        logger.error('DEBUG: Common causes: app.set(), app.getHttpAdapter().set(), or similar');
+        logger.error('Error: Attempting to call .set() on undefined object');
+        logger.error('Common causes: app.set(), app.getHttpAdapter().set(), or similar');
       }
 
       await loggingService?.log(

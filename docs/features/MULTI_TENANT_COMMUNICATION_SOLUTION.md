@@ -4,7 +4,12 @@
 
 This document outlines the **architecture and design** for clinic-specific email and WhatsApp configuration in the Healthcare platform. Each clinic can use their own communication providers and credentials, supporting multiple vendors and integration flexibility.
 
-**⚠️ Note**: This is a **DESIGN DOCUMENT ONLY**. No implementation is included. This provides the architectural blueprint for multi-tenant communication with provider flexibility.
+**📊 Current Status:**
+- ✅ **Foundation Exists**: `CommunicationConfigService`, `CredentialEncryptionService`, `Clinic.settings` JSONB field
+- ✅ **Infrastructure Ready**: Existing clinic endpoints can be used (no new REST endpoints needed)
+- ❌ **Core Implementation Pending**: Provider adapters, service layer updates, database integration
+
+**⚠️ Implementation Status**: Foundation complete, core features pending implementation. See "Implementation Timeline" section for details.
 
 ---
 
@@ -884,13 +889,16 @@ class RateLimiter {
 
 ## 🗄️ Database Schema Design
 
-### **Approach 1: Extend `Clinic.settings` JSONB** (Recommended)
+### **Approach 1: Extend `Clinic.settings` JSONB** (✅ Selected - Already Exists)
+
+**Status:** ✅ **IMPLEMENTED** - `Clinic.settings` JSONB field already exists in Prisma schema
 
 **Pros:**
 - ✅ Single source of truth
 - ✅ Flexible schema evolution
 - ✅ Easier to query and update
 - ✅ Built-in versioning capability
+- ✅ **Already integrated with existing clinic endpoints**
 
 **Structure:**
 
@@ -1168,7 +1176,9 @@ CREATE INDEX idx_clinic_comm_providers_priority ON clinic_communication_provider
 CREATE INDEX idx_clinic_comm_providers_health ON clinic_communication_providers("healthStatus");
 ```
 
-**Recommendation**: Use **Approach 1 (JSONB in Clinic.settings)** for initial implementation, migrate to **Approach 2** if needed for scale.
+**✅ Decision**: Using **Approach 1 (JSONB in Clinic.settings)** - Already exists in schema. No migration needed.
+
+**Implementation Note:** `CommunicationConfigService` needs to be updated to read/write from `Clinic.settings.communicationSettings` instead of a separate table.
 
 ---
 
@@ -1272,24 +1282,112 @@ clinic:communication:delete         → Remove provider config
 
 **Services to Create:**
 
-#### **1. CommunicationService** (Configuration Manager)
+#### **1. CommunicationConfigService** (Configuration Manager) ✅ EXISTS
+
+**Current Status:** ✅ Foundation exists, needs database integration
 
 **Responsibilities:**
-- Fetch clinic-specific provider configurations from database
-- Decrypt credentials using encryption service
-- Cache configurations in Redis (1-hour TTL)
-- Provide fallback to global configuration
-- Handle connection pool management
-- Track provider health status
+- Fetch clinic-specific provider configurations from `Clinic.settings.communicationSettings` (JSONB)
+- Decrypt credentials using `CredentialEncryptionService` ✅ (already implemented)
+- Cache configurations in Redis (1-hour TTL) ✅ (already implemented)
+- Provide fallback to global configuration ✅ (already implemented)
+- Handle connection pool management (to be implemented)
+- Track provider health status (to be implemented)
 
-**Key Methods:**
+**Key Methods (Current Implementation Status):**
 ```
-getEmailConfig(clinicId): Promise<ClinicEmailConfig>
-getWhatsAppConfig(clinicId): Promise<ClinicWhatsAppConfig>
-getSMSConfig(clinicId): Promise<ClinicSMSConfig>
-updateConfig(clinicId, channel, config): Promise<void>
-testConfig(clinicId, channel): Promise<TestResult>
-invalidateCache(clinicId): Promise<void>
+getClinicConfig(clinicId): Promise<ClinicCommunicationConfig | null> ✅ FULLY IMPLEMENTED
+  - Implements caching (Redis/Dragonfly) with 1-hour TTL
+  - Calls fetchFromDatabase() if cache miss
+  - Returns getDefaultConfig() if no clinic config found
+  - Handles credential decryption automatically
+  - Error handling with fallback to default config
+
+saveClinicConfig(config): Promise<void> ✅ FULLY IMPLEMENTED
+  - Encrypts credentials before saving
+  - Calls saveToDatabase() to persist
+  - Invalidates cache on save
+  - Full error handling and logging
+
+fetchFromDatabase(clinicId): Promise<ClinicCommunicationConfig | null> ❌ STUB (returns null)
+  - Currently: return Promise.resolve(null)
+  - Needs: Read from Clinic.settings.communicationSettings (JSONB)
+  - Implementation: Use DatabaseService.executeHealthcareRead()
+  - Query: SELECT settings->'communicationSettings' FROM Clinic WHERE id = clinicId
+
+saveToDatabase(config): Promise<void> ❌ STUB (logs warning)
+  - Currently: logger.warn('Database save not yet implemented')
+  - Needs: Write to Clinic.settings.communicationSettings (JSONB)
+  - Implementation: Use DatabaseService.executeHealthcareWrite()
+  - Update: UPDATE Clinic SET settings = jsonb_set(settings, '{communicationSettings}', ...) WHERE id = clinicId
+  - Note: Should use ClinicService.updateClinic() for consistency and audit logging
+
+testEmailConfig(clinicId, testEmail): Promise<TestResult> ❌ TO BE ADDED
+  - Purpose: Test email provider configuration before saving
+  - Implementation: Use provider adapter to send test email
+  - Returns: { success: boolean, message: string, error?: string }
+
+testWhatsAppConfig(clinicId, testPhone): Promise<TestResult> ❌ TO BE ADDED
+  - Purpose: Test WhatsApp provider configuration before saving
+  - Implementation: Use provider adapter to send test message
+  - Returns: { success: boolean, message: string, error?: string }
+
+invalidateCache(clinicId): Promise<void> ✅ EXISTS (via saveClinicConfig)
+  - Automatically called when saveClinicConfig() is invoked
+  - Cache key: `communication:config:${clinicId}`
+```
+
+**Implementation Details for Database Integration:**
+
+```typescript
+// fetchFromDatabase() implementation needed:
+private async fetchFromDatabase(clinicId: string): Promise<ClinicCommunicationConfig | null> {
+  return await this.databaseService.executeHealthcareRead(async (client) => {
+    const clinic = await client.clinic.findUnique({
+      where: { id: clinicId },
+      select: { settings: true },
+    });
+
+    if (!clinic?.settings || typeof clinic.settings !== 'object') {
+      return null;
+    }
+
+    const settings = clinic.settings as Record<string, unknown>;
+    const communicationSettings = settings.communicationSettings;
+
+    if (!communicationSettings || typeof communicationSettings !== 'object') {
+      return null;
+    }
+
+    // Map to ClinicCommunicationConfig format
+    return this.mapToClinicCommunicationConfig(clinicId, communicationSettings);
+  });
+}
+
+// saveToDatabase() implementation needed:
+// Option 1: Direct database update (not recommended - bypasses audit logging)
+private async saveToDatabase(config: ClinicCommunicationConfig): Promise<void> {
+  await this.databaseService.executeHealthcareWrite(async (client) => {
+    await client.clinic.update({
+      where: { id: config.clinicId },
+      data: {
+        settings: {
+          communicationSettings: this.mapFromClinicCommunicationConfig(config),
+        },
+      },
+    });
+  });
+}
+
+// Option 2: Use ClinicService.updateClinic() (RECOMMENDED - includes audit logging)
+private async saveToDatabase(config: ClinicCommunicationConfig): Promise<void> {
+  // Inject ClinicService and use it for consistency
+  await this.clinicService.updateClinic(config.clinicId, {
+    settings: {
+      communicationSettings: this.mapFromClinicCommunicationConfig(config),
+    },
+  });
+}
 ```
 
 ---
@@ -1364,10 +1462,42 @@ class ProviderFactory {
 
 **Changes Required:**
 - Accept optional `clinicId` parameter in all send methods
-- Fetch clinic config via `CommunicationService`
+- Fetch clinic config via `CommunicationConfigService.getClinicConfig(clinicId)`
 - Use `ProviderFactory` to get appropriate adapter
 - Implement connection pooling per clinic
-- Handle fallback logic
+- Handle fallback logic (fallback to global config if clinic config not found)
+
+**Current Status:** ❌ Uses global config only, needs multi-tenant support
+
+**Required Changes:**
+```typescript
+// Current signature (global config only)
+async sendEmail(options: EmailOptions): Promise<EmailResult>
+
+// New signature (with clinicId)
+async sendEmail(options: EmailOptions, clinicId?: string): Promise<EmailResult>
+
+// Implementation pattern:
+async sendEmail(options: EmailOptions, clinicId?: string): Promise<EmailResult> {
+  // 1. Get clinic config if clinicId provided
+  let emailConfig: ClinicEmailConfig | null = null;
+  if (clinicId) {
+    const clinicConfig = await this.communicationConfigService.getClinicConfig(clinicId);
+    emailConfig = clinicConfig?.email;
+  }
+
+  // 2. Fallback to global config if no clinic config
+  if (!emailConfig) {
+    emailConfig = this.getGlobalEmailConfig(); // From ConfigService
+  }
+
+  // 3. Get provider adapter from factory
+  const adapter = this.providerFactory.createEmailAdapter(emailConfig);
+
+  // 4. Use adapter to send email
+  return await adapter.send(options);
+}
+```
 
 **Connection Pooling Strategy:**
 ```
@@ -1385,19 +1515,133 @@ clinic-c → { smtp: SMTPAdapter }
 
 **Changes Required:**
 - Similar to EmailService changes
+- Fetch clinic config via `CommunicationConfigService.getClinicConfig(clinicId)`
 - Handle Meta API rate limits per clinic
 - Support template messages with clinic-specific templates
 - Implement fallback to SMS if WhatsApp fails
 
+**Current Status:** ❌ Uses global config only, needs multi-tenant support
+
 ---
 
-#### **6. Update CommunicationService**
+#### **6. Update CommunicationService** (Orchestrator)
 
 **Changes Required:**
-- Extract `clinicId` from request metadata
-- Pass `clinicId` to all channel services
+- Extract `clinicId` from request metadata (already done via `ClinicGuard`)
+- Pass `clinicId` to all channel services (`EmailService`, `WhatsAppService`)
 - Handle cross-channel fallback (WhatsApp → SMS → Email)
 - Track per-clinic delivery statistics
+
+**Current Status:** ❌ Needs to pass `clinicId` to channel services
+
+**Current Implementation:**
+- `CommunicationService.send()` receives `CommunicationRequest` with optional `metadata.clinicId`
+- `sendToChannel()` method routes to channel-specific methods (`sendEmail()`, `sendWhatsApp()`, etc.)
+- Channel services (`EmailService`, `WhatsAppService`) currently use global config only
+- `clinicId` is NOT extracted or passed to channel services
+
+**Required Changes:**
+
+**1. Extract clinicId in CommunicationService:**
+```typescript
+// In CommunicationService.send()
+async send(request: CommunicationRequest): Promise<CommunicationDeliveryResult> {
+  // Extract clinicId from request metadata or ClinicGuard context
+  const clinicId = request.metadata?.clinicId || 
+                   this.getClinicIdFromContext() || // From ClinicGuard/ClinicContextService
+                   undefined;
+
+  // Pass clinicId through to sendToChannel()
+  // ... existing code ...
+}
+
+// In CommunicationService.sendToChannel()
+private async sendToChannel(
+  channel: CommunicationChannel,
+  request: CommunicationRequest,
+  recipient: CommunicationRequest['recipients'][0]
+): Promise<ChannelDeliveryResult> {
+  const clinicId = request.metadata?.clinicId; // Extract from request
+
+  switch (channel) {
+    case 'email':
+      return await this.sendEmail(request, recipient, new Date(), clinicId); // ← Pass clinicId
+    case 'whatsapp':
+      return await this.sendWhatsApp(request, recipient, new Date(), clinicId); // ← Pass clinicId
+    // ... other channels
+  }
+}
+
+// In CommunicationService.sendEmail()
+private async sendEmail(
+  request: CommunicationRequest,
+  recipient: CommunicationRequest['recipients'][0],
+  timestamp: Date,
+  clinicId?: string // ← Add clinicId parameter
+): Promise<ChannelDeliveryResult> {
+  // Pass clinicId to EmailService
+  const result = await this.emailService.sendEmail(
+    {
+      to: recipient.email!,
+      subject: request.title,
+      html: request.body,
+      // ... other options
+    },
+    clinicId // ← Pass clinicId
+  );
+  // ... rest of method
+}
+```
+
+**2. Update EmailService to accept clinicId:**
+```typescript
+// In EmailService
+async sendEmail(options: EmailOptions, clinicId?: string): Promise<EmailResult> {
+  // Get clinic config if clinicId provided
+  let emailConfig: ClinicEmailConfig | null = null;
+  if (clinicId) {
+    const clinicConfig = await this.communicationConfigService.getClinicConfig(clinicId);
+    emailConfig = clinicConfig?.email;
+  }
+
+  // Fallback to global config if no clinic config
+  if (!emailConfig) {
+    emailConfig = this.getGlobalEmailConfig(); // From ConfigService
+  }
+
+  // Use provider adapter to send
+  const adapter = this.providerFactory.createEmailAdapter(emailConfig);
+  return await adapter.send(options);
+}
+```
+
+**3. Update WhatsAppService similarly:**
+```typescript
+// In WhatsAppService
+async sendMessage(options: WhatsAppOptions, clinicId?: string): Promise<WhatsAppResult> {
+  // Similar pattern to EmailService
+  const clinicConfig = clinicId 
+    ? await this.communicationConfigService.getClinicConfig(clinicId)
+    : null;
+  
+  const whatsappConfig = clinicConfig?.whatsapp || this.getGlobalWhatsAppConfig();
+  const adapter = this.providerFactory.createWhatsAppAdapter(whatsappConfig);
+  return await adapter.sendMessage(options);
+}
+```
+
+**Integration Points:**
+- ✅ `CommunicationRequest.metadata.clinicId` - Already available in request structure
+- ✅ `ClinicGuard` - Can extract `clinicId` from request context
+- ✅ `ClinicContextService` - Can provide `clinicId` from current context
+- ❌ Need to extract `clinicId` and pass it through the call chain
+- ❌ Channel services need to accept optional `clinicId` parameter
+
+**Current Code Location:**
+- `src/libs/communication/communication.service.ts` - Line 649-700 (`sendEmail()` method)
+- `src/libs/communication/communication.service.ts` - Line 705-741 (`sendWhatsApp()` method)
+- `src/libs/communication/channels/email/email.service.ts` - `sendSimpleEmail()` method (needs `clinicId` parameter)
+- `src/libs/communication/channels/whatsapp/whatsapp.service.ts` - `sendCustomMessage()` method (needs `clinicId` parameter)
 
 ---
 
@@ -1435,22 +1679,37 @@ Others        → No access
 
 ### **Phase 4: Admin Interface & APIs**
 
-#### **9. REST API Endpoints**
+#### **9. Integration with Existing Clinic Endpoints**
+
+**✅ NO NEW REST ENDPOINTS NEEDED** - Use existing clinic management infrastructure:
 
 ```
-GET    /api/v1/clinics/:clinicId/communication/email
-PUT    /api/v1/clinics/:clinicId/communication/email
-POST   /api/v1/clinics/:clinicId/communication/email/test
-DELETE /api/v1/clinics/:clinicId/communication/email
+# Update clinic communication settings via existing endpoint
+PUT /api/v1/clinics/:clinicId
+Body: {
+  "settings": {
+    "communicationSettings": {
+      "email": { ... },
+      "whatsapp": { ... },
+      "sms": { ... }
+    }
+  }
+}
 
-GET    /api/v1/clinics/:clinicId/communication/whatsapp
-PUT    /api/v1/clinics/:clinicId/communication/whatsapp
-POST   /api/v1/clinics/:clinicId/communication/whatsapp/test
-DELETE /api/v1/clinics/:clinicId/communication/whatsapp
+# Get clinic settings (includes communicationSettings)
+GET /api/v1/clinics/:clinicId
+Response includes: { ..., "settings": { "communicationSettings": { ... } } }
 
-GET    /api/v1/clinics/:clinicId/communication/stats
-GET    /api/v1/clinics/:clinicId/communication/health
+# Test communication config (helper method in CommunicationConfigService)
+CommunicationConfigService.testEmailConfig(clinicId, testEmail)
+CommunicationConfigService.testWhatsAppConfig(clinicId, testPhone)
 ```
+
+**Benefits:**
+- ✅ Reuses existing RBAC guards on clinic endpoints
+- ✅ Reuses existing audit logging in `ClinicService.updateClinic()`
+- ✅ Consistent API pattern with other clinic settings
+- ✅ No additional endpoints to maintain
 
 ---
 
@@ -1510,165 +1769,205 @@ GET    /api/v1/clinics/:clinicId/communication/health
 ### **Example 1: Clinic Using Gmail SMTP**
 
 ```json
-POST /api/v1/clinics/clinic-a-id/communication/email
+PUT /api/v1/clinics/clinic-a-id
 
 {
-  "provider": "smtp",
-  "providers": {
-    "smtp": {
-      "host": "smtp.gmail.com",
-      "port": 587,
-      "secure": false,
-      "user": "appointments@clinic-a.com",
-      "password": "app-specific-password",
-      "from": "Clinic A <appointments@clinic-a.com>",
-      "maxConnections": 5
-    }
-  },
-  "fallbackStrategy": {
-    "enabled": true,
-    "fallbackProvider": "global",
-    "retryAttempts": 2
-  },
   "settings": {
-    "dailyLimit": 5000,
-    "hourlyLimit": 500,
-    "enableBounceTracking": true
+    "communicationSettings": {
+      "email": {
+        "provider": "smtp",
+        "providers": {
+          "smtp": {
+            "host": "smtp.gmail.com",
+            "port": 587,
+            "secure": false,
+            "user": "appointments@clinic-a.com",
+            "password": "app-specific-password",
+            "from": "Clinic A <appointments@clinic-a.com>",
+            "maxConnections": 5
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": true,
+          "fallbackProvider": "global",
+          "retryAttempts": 2
+        },
+        "settings": {
+          "dailyLimit": 5000,
+          "hourlyLimit": 500,
+          "enableBounceTracking": true
+        }
+      }
+    }
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint. No new endpoints needed.
 
 ---
 
 ### **Example 2: Clinic Using AWS SES**
 
 ```json
-POST /api/v1/clinics/clinic-b-id/communication/email
+PUT /api/v1/clinics/clinic-b-id
 
 {
-  "provider": "ses",
-  "providers": {
-    "ses": {
-      "region": "us-east-1",
-      "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
-      "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-      "fromEmail": "notify@clinic-b.com",
-      "fromName": "Clinic B Notifications",
-      "configurationSet": "clinic-b-tracking"
-    }
-  },
-  "fallbackStrategy": {
-    "enabled": false
-  },
   "settings": {
-    "enableBounceTracking": true,
-    "enableClickTracking": true,
-    "enableOpenTracking": true
+    "communicationSettings": {
+      "email": {
+        "provider": "ses",
+        "providers": {
+          "ses": {
+            "region": "us-east-1",
+            "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+            "secretAccessKey": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "fromEmail": "notify@clinic-b.com",
+            "fromName": "Clinic B Notifications",
+            "configurationSet": "clinic-b-tracking"
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": false
+        },
+        "settings": {
+          "enableBounceTracking": true,
+          "enableClickTracking": true,
+          "enableOpenTracking": true
+        }
+      }
+    }
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint.
 
 ---
 
 ### **Example 3: Clinic Using SendGrid**
 
 ```json
-POST /api/v1/clinics/clinic-c-id/communication/email
+PUT /api/v1/clinics/clinic-c-id
 
 {
-  "provider": "sendgrid",
-  "providers": {
-    "sendgrid": {
-      "apiKey": "SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "fromEmail": "hello@clinic-c.com",
-      "fromName": "Clinic C",
-      "templateId": "d-1234567890abcdef"
+  "settings": {
+    "communicationSettings": {
+      "email": {
+        "provider": "sendgrid",
+        "providers": {
+          "sendgrid": {
+            "apiKey": "SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "fromEmail": "hello@clinic-c.com",
+            "fromName": "Clinic C",
+            "templateId": "d-1234567890abcdef"
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": true,
+          "fallbackProvider": "smtp"
+        }
+      }
     }
-  },
-  "fallbackStrategy": {
-    "enabled": true,
-    "fallbackProvider": "smtp"
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint.
 
 ---
 
 ### **Example 4: Meta WhatsApp Business API**
 
 ```json
-POST /api/v1/clinics/clinic-a-id/communication/whatsapp
+PUT /api/v1/clinics/clinic-a-id
 
 {
-  "enabled": true,
-  "provider": "meta",
-  "providers": {
-    "meta": {
-      "apiUrl": "https://graph.facebook.com/v17.0",
-      "apiKey": "EAAxxxxxxxxxxxxxxxxxxxxxxxx",
-      "phoneNumberId": "123456789012345",
-      "businessAccountId": "987654321098765",
-      "templates": {
-        "otp": "clinic_a_otp_verification",
-        "appointmentReminder": "clinic_a_appointment_reminder_24h",
-        "appointmentConfirmation": "clinic_a_booking_confirmation",
-        "appointmentCancellation": "clinic_a_cancellation_notice",
-        "prescriptionReady": "clinic_a_prescription_ready",
-        "followUpReminder": "clinic_a_followup_reminder"
-      },
-      "webhookUrl": "https://api.clinic-a.com/webhooks/whatsapp",
-      "webhookSecret": "webhook_secret_key"
-    }
-  },
-  "fallbackStrategy": {
-    "enabled": true,
-    "fallbackProvider": "sms",
-    "retryAttempts": 2
-  },
-  "rateLimit": {
-    "enabled": true,
-    "maxPerMinute": 80,
-    "maxPerHour": 1000,
-    "maxPerDay": 10000,
-    "burstLimit": 10
-  },
   "settings": {
-    "enableDeliveryReceipts": true,
-    "enableReadReceipts": true,
-    "defaultLanguage": "en"
+    "communicationSettings": {
+      "whatsapp": {
+        "enabled": true,
+        "provider": "meta",
+        "providers": {
+          "meta": {
+            "apiUrl": "https://graph.facebook.com/v17.0",
+            "apiKey": "EAAxxxxxxxxxxxxxxxxxxxxxxxx",
+            "phoneNumberId": "123456789012345",
+            "businessAccountId": "987654321098765",
+            "templates": {
+              "otp": "clinic_a_otp_verification",
+              "appointmentReminder": "clinic_a_appointment_reminder_24h",
+              "appointmentConfirmation": "clinic_a_booking_confirmation",
+              "appointmentCancellation": "clinic_a_cancellation_notice",
+              "prescriptionReady": "clinic_a_prescription_ready",
+              "followUpReminder": "clinic_a_followup_reminder"
+            },
+            "webhookUrl": "https://api.clinic-a.com/webhooks/whatsapp",
+            "webhookSecret": "webhook_secret_key"
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": true,
+          "fallbackProvider": "sms",
+          "retryAttempts": 2
+        },
+        "rateLimit": {
+          "enabled": true,
+          "maxPerMinute": 80,
+          "maxPerHour": 1000,
+          "maxPerDay": 10000,
+          "burstLimit": 10
+        },
+        "settings": {
+          "enableDeliveryReceipts": true,
+          "enableReadReceipts": true,
+          "defaultLanguage": "en"
+        }
+      }
+    }
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint.
 
 ---
 
 ### **Example 5: Twilio WhatsApp (Alternative)**
 
 ```json
-POST /api/v1/clinics/clinic-d-id/communication/whatsapp
+PUT /api/v1/clinics/clinic-d-id
 
 {
-  "enabled": true,
-  "provider": "twilio",
-  "providers": {
-    "twilio": {
-      "accountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-      "authToken": "your_auth_token_here",
-      "fromNumber": "whatsapp:+14155238886",
-      "messagingServiceSid": "MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  "settings": {
+    "communicationSettings": {
+      "whatsapp": {
+        "enabled": true,
+        "provider": "twilio",
+        "providers": {
+          "twilio": {
+            "accountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "authToken": "your_auth_token_here",
+            "fromNumber": "whatsapp:+14155238886",
+            "messagingServiceSid": "MGxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": true,
+          "fallbackProvider": "global"
+        },
+        "rateLimit": {
+          "enabled": true,
+          "maxPerMinute": 60,
+          "maxPerDay": 5000
+        }
+      }
     }
-  },
-  "fallbackStrategy": {
-    "enabled": true,
-    "fallbackProvider": "global"
-  },
-  "rateLimit": {
-    "enabled": true,
-    "maxPerMinute": 60,
-    "maxPerDay": 5000
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint.
 
 ---
 
@@ -1677,32 +1976,40 @@ POST /api/v1/clinics/clinic-d-id/communication/whatsapp
 **Scenario**: Clinic wants SendGrid as primary, Gmail SMTP as fallback
 
 ```json
-POST /api/v1/clinics/clinic-e-id/communication/email
+PUT /api/v1/clinics/clinic-e-id
 
 {
-  "provider": "sendgrid",
-  "providers": {
-    "sendgrid": {
-      "apiKey": "SG.xxxxxxxxxxxxxxxx",
-      "fromEmail": "noreply@clinic-e.com",
-      "fromName": "Clinic E"
-    },
-    "smtp": {
-      "host": "smtp.gmail.com",
-      "port": 587,
-      "secure": false,
-      "user": "backup@clinic-e.com",
-      "password": "backup-password",
-      "from": "Clinic E Backup <backup@clinic-e.com>"
+  "settings": {
+    "communicationSettings": {
+      "email": {
+        "provider": "sendgrid",
+        "providers": {
+          "sendgrid": {
+            "apiKey": "SG.xxxxxxxxxxxxxxxx",
+            "fromEmail": "noreply@clinic-e.com",
+            "fromName": "Clinic E"
+          },
+          "smtp": {
+            "host": "smtp.gmail.com",
+            "port": 587,
+            "secure": false,
+            "user": "backup@clinic-e.com",
+            "password": "backup-password",
+            "from": "Clinic E Backup <backup@clinic-e.com>"
+          }
+        },
+        "fallbackStrategy": {
+          "enabled": true,
+          "fallbackProvider": "smtp",
+          "retryAttempts": 3
+        }
+      }
     }
-  },
-  "fallbackStrategy": {
-    "enabled": true,
-    "fallbackProvider": "smtp",
-    "retryAttempts": 3
   }
 }
 ```
+
+**Note:** Uses existing `PUT /api/v1/clinics/:id` endpoint.
 
 ---
 
@@ -1734,13 +2041,14 @@ POST /api/v1/communication/send
 ```
 
 **System Behavior:**
-1. `CommunicationService` receives request with `clinicId: "clinic-a-id"`
-2. `CommunicationService` fetches Clinic A's email config from cache/DB
-3. Finds: Clinic A uses Gmail SMTP (`smtp.gmail.com`)
-4. `EmailService` uses `SMTPEmailAdapter` with Clinic A's credentials
-5. Email sent from `appointments@clinic-a.com`
-6. Similarly for WhatsApp: Uses Clinic A's Meta API credentials
-7. WhatsApp sent from Clinic A's phone number
+1. `CommunicationService` receives request with `clinicId: "clinic-a-id"` (from `ClinicGuard` or request metadata)
+2. `CommunicationService` calls `CommunicationConfigService.getClinicConfig("clinic-a-id")`
+3. `CommunicationConfigService` reads from `Clinic.settings.communicationSettings` (cached)
+4. Finds: Clinic A uses Gmail SMTP (`smtp.gmail.com`)
+5. `EmailService` uses `SMTPEmailAdapter` with Clinic A's credentials
+6. Email sent from `appointments@clinic-a.com`
+7. Similarly for WhatsApp: Uses Clinic A's Meta API credentials
+8. WhatsApp sent from Clinic A's phone number
 
 ---
 
@@ -1752,13 +2060,14 @@ POST /api/v1/communication/send
 Request: clinicId = "clinic-z-id"
 
 Behavior:
-1. CommunicationService checks database
-2. No config found for Clinic Z
-3. Checks fallbackStrategy.enabled = true (default)
-4. Falls back to global configuration:
-   - Email: Global SMTP (noreply@healthcare.com)
-   - WhatsApp: Global Meta API (global phone number)
+1. CommunicationConfigService.getClinicConfig("clinic-z-id") checks Clinic.settings.communicationSettings
+2. No communicationSettings found in Clinic.settings (or null/empty)
+3. CommunicationConfigService.getDefaultConfig() returns global fallback config
+4. Falls back to global configuration (from ConfigService):
+   - Email: Global SMTP (noreply@healthcare.com) from EMAIL_HOST, EMAIL_USER, etc.
+   - WhatsApp: Global Meta API (global phone number) from WHATSAPP_API_KEY, etc.
 5. Message sent successfully using global credentials
+6. No breaking changes - existing clinics continue working
 ```
 
 ---
@@ -1766,12 +2075,12 @@ Behavior:
 ## 🔄 Migration & Rollout Strategy
 
 ### **Phase 1: Foundation (Weeks 1-2)**
-- ✅ Update database schema (`Clinic.settings` JSONB)
-- ✅ Create `CommunicationService`
-- ✅ Implement credential encryption
-- ✅ Add provider adapter interfaces
-- ✅ Deploy with global fallback (no breaking changes)
-- ✅ All existing clinics continue using global config
+- ✅ Update database schema (`Clinic.settings` JSONB) - **ALREADY EXISTS**
+- ✅ Create `CommunicationConfigService` - **ALREADY EXISTS** (needs database integration)
+- ✅ Implement credential encryption - **ALREADY EXISTS** (`CredentialEncryptionService`)
+- ❌ Add provider adapter interfaces - **TO BE IMPLEMENTED**
+- ❌ Deploy with global fallback (no breaking changes) - **TO BE IMPLEMENTED**
+- ✅ All existing clinics continue using global config - **CURRENT STATE**
 
 ### **Phase 2: Provider Adapters (Weeks 3-4)**
 - ✅ Implement SMTP adapter
@@ -1788,12 +2097,14 @@ Behavior:
 - ✅ Implement connection pooling per clinic
 - ✅ Add health checks for providers
 
-### **Phase 4: API & Admin Interface (Week 6)**
-- ✅ Create REST API endpoints
-- ✅ Add RBAC guards
-- ✅ Implement test/validation endpoints
-- ✅ Create admin UI for config management
-- ✅ Add audit logging
+### **Phase 4: Integration with Existing Clinic Endpoints (Week 6)**
+- ✅ Extend `ClinicSettings` interface to include `communicationSettings`
+- ✅ Update `UpdateClinicDto` to support nested communication settings
+- ✅ Add validation for communication settings in clinic update
+- ✅ Use existing `PUT /api/v1/clinics/:id` endpoint (no new endpoints needed)
+- ✅ Add RBAC guards (already exists on clinic endpoints)
+- ✅ Add test/validation helper methods in `CommunicationConfigService`
+- ✅ Add audit logging (already handled by `ClinicService.updateClinic()`)
 
 ### **Phase 5: Pilot Testing (Weeks 7-8)**
 - ✅ Select 2-3 pilot clinics
@@ -2040,43 +2351,57 @@ GET /health/communication/providers/:provider
 
 ## 📚 API Documentation
 
-### **Endpoints**
+### **Endpoints** (Using Existing Clinic Endpoints)
+
+**✅ NO NEW ENDPOINTS NEEDED** - Use existing clinic management endpoints:
 
 ```typescript
-// Get current email config
-GET /api/v1/clinics/:clinicId/communication/email
+// Get clinic settings (includes communicationSettings)
+GET /api/v1/clinics/:clinicId
 Authorization: Bearer <token>
-Permissions: clinic:communication:view
-
-// Update email config
-PUT /api/v1/clinics/:clinicId/communication/email
-Authorization: Bearer <token>
-Permissions: clinic:communication:manage
-Body: ClinicEmailConfigDto
-
-// Test email config
-POST /api/v1/clinics/:clinicId/communication/email/test
-Authorization: Bearer <token>
-Permissions: clinic:communication:manage
-Body: { testEmail: string }
-
-// Get current WhatsApp config
-GET /api/v1/clinics/:clinicId/communication/whatsapp
-
-// Update WhatsApp config
-PUT /api/v1/clinics/:clinicId/communication/whatsapp
-
-// Test WhatsApp config
-POST /api/v1/clinics/:clinicId/communication/whatsapp/test
-Body: { testPhone: string }
-
-// Get communication statistics
-GET /api/v1/clinics/:clinicId/communication/stats
-Returns: {
-  email: { sent: number, failed: number, lastSent: Date },
-  whatsapp: { sent: number, failed: number, lastSent: Date }
+Permissions: clinic:view (existing RBAC)
+Response: {
+  ...clinicData,
+  settings: {
+    ...otherSettings,
+    communicationSettings: {
+      email: { ... },
+      whatsapp: { ... },
+      sms: { ... }
+    }
+  }
 }
+
+// Update clinic communication settings
+PUT /api/v1/clinics/:clinicId
+Authorization: Bearer <token>
+Permissions: clinic:manage (existing RBAC)
+Body: {
+  settings: {
+    communicationSettings: {
+      email: { ... },
+      whatsapp: { ... },
+      sms: { ... }
+    }
+  }
+}
+
+// Test communication config (helper methods in CommunicationConfigService)
+// Can be called internally or exposed via a helper endpoint if needed
+CommunicationConfigService.testEmailConfig(clinicId, testEmail)
+CommunicationConfigService.testWhatsAppConfig(clinicId, testPhone)
+
+// Get communication statistics (can be added to clinic stats endpoint)
+GET /api/v1/clinics/:clinicId/stats
+// Extend existing stats to include communication metrics
 ```
+
+**Benefits:**
+- ✅ Reuses existing RBAC guards (`clinic:view`, `clinic:manage`)
+- ✅ Reuses existing audit logging in `ClinicService.updateClinic()`
+- ✅ Consistent API pattern with other clinic settings
+- ✅ No additional endpoints to maintain
+- ✅ Easier for frontend (single endpoint for all clinic settings)
 
 ---
 
@@ -2155,27 +2480,79 @@ Returns: {
 - [x] Migration plan
 
 ### **Development Tasks** (To Be Implemented)
-- [ ] Extend `ClinicSettings` type definition
-- [ ] Create `CredentialEncryptionService`
-- [ ] Create `CommunicationService`
-- [ ] Implement provider adapter interfaces
+
+#### **✅ Already Completed:**
+- [x] `Clinic.settings` JSONB field exists in Prisma schema
+- [x] `CredentialEncryptionService` - Fully implemented (`src/libs/communication/config/credential-encryption.service.ts`)
+- [x] `CommunicationConfigService` - Foundation exists (`src/libs/communication/config/communication-config.service.ts`)
+  - ✅ `getClinicConfig()` - Fully implemented with caching and decryption
+  - ✅ `saveClinicConfig()` - Fully implemented with encryption and cache invalidation
+  - ✅ `encryptConfig()` / `decryptConfig()` - Fully implemented
+  - ✅ `getDefaultConfig()` - Fully implemented
+  - ❌ `fetchFromDatabase()` - Stub (returns null, needs implementation)
+  - ❌ `saveToDatabase()` - Stub (logs warning, needs implementation)
+- [x] `PUT /api/v1/clinics/:id` endpoint exists (`src/services/clinic/clinic.controller.ts`)
+- [x] `ClinicService.updateClinic()` supports settings updates (`src/services/clinic/clinic.service.ts`)
+- [x] RBAC guards on clinic endpoints (`clinic:view`, `clinic:manage`)
+- [x] `CommunicationConfigModule` - Registered in `CommunicationModule`
+- [x] `CommunicationService` - Orchestrator exists but doesn't pass `clinicId` to channel services
+
+#### **❌ To Be Implemented:**
+
+**Phase 1: Type Definitions & Database Integration**
+- [ ] Extend `ClinicSettings` interface in `src/libs/core/types/clinic.types.ts` to include `communicationSettings?: ClinicCommunicationConfig` property
+- [ ] Update `CommunicationConfigService.fetchFromDatabase()` to:
+  - Read from `Clinic.settings.communicationSettings` using `DatabaseService.executeHealthcareRead()`
+  - Map JSONB data to `ClinicCommunicationConfig` interface
+  - Handle null/undefined cases gracefully
+- [ ] Update `CommunicationConfigService.saveToDatabase()` to:
+  - **Option A (Recommended):** Use `ClinicService.updateClinic()` for consistency and audit logging
+  - **Option B:** Direct database update using `DatabaseService.executeHealthcareWrite()`
+  - Write to `Clinic.settings.communicationSettings` (JSONB field)
+  - Perform deep merge with existing settings (don't overwrite other settings)
+- [ ] Update `UpdateClinicDto` in `src/services/clinic/dto/update-clinic.dto.ts`:
+  - Add validation for nested `communicationSettings` structure
+  - Ensure `settings.communicationSettings` is properly typed
+- [ ] Add helper methods in `CommunicationConfigService`:
+  - `mapToClinicCommunicationConfig()` - Convert JSONB to typed config
+  - `mapFromClinicCommunicationConfig()` - Convert typed config to JSONB
+
+**Phase 2: Provider Adapter Interfaces**
+- [ ] Implement `EmailProviderAdapter` interface
+- [ ] Implement `WhatsAppProviderAdapter` interface
+- [ ] Implement `SMSProviderAdapter` interface
+- [ ] Create base adapter classes with common logic (DRY)
+
+**Phase 3: Provider Adapter Implementations**
 - [ ] Create SMTP email adapter
 - [ ] Create AWS SES adapter
 - [ ] Create SendGrid adapter
+- [ ] Create Mailgun adapter (optional)
+- [ ] Create Postmark adapter (optional)
 - [ ] Create Meta WhatsApp adapter
 - [ ] Create Twilio WhatsApp adapter
-- [ ] Update `EmailService` for multi-tenant
-- [ ] Update `WhatsAppService` for multi-tenant
-- [ ] Update `CommunicationService` to pass clinicId
-- [ ] Implement connection pooling
-- [ ] Create REST API endpoints
-- [ ] Add RBAC guards
-- [ ] Create admin UI components
-- [ ] Write unit tests
-- [ ] Write integration tests
+- [ ] Create Twilio SMS adapter
+- [ ] Create AWS SNS adapter
+
+**Phase 4: Service Layer Updates**
+- [ ] Update `EmailService` to accept `clinicId` and use `CommunicationConfigService`
+- [ ] Update `WhatsAppService` to accept `clinicId` and use `CommunicationConfigService`
+- [ ] Update `CommunicationService` (orchestrator) to pass `clinicId` to channel services
+- [ ] Implement connection pooling per clinic
+- [ ] Add fallback logic (clinic config → global config)
+
+**Phase 5: Testing & Validation**
+- [ ] Add `testEmailConfig()` method to `CommunicationConfigService`
+- [ ] Add `testWhatsAppConfig()` method to `CommunicationConfigService`
+- [ ] Write unit tests for adapters
+- [ ] Write integration tests for multi-tenant flow
+- [ ] Write tests for fallback logic
+
+**Phase 6: Monitoring & Documentation**
 - [ ] Setup monitoring dashboards
-- [ ] Create migration scripts
-- [ ] Write deployment docs
+- [ ] Add health check endpoints for providers
+- [ ] Update API documentation
+- [ ] Create migration guide for clinics
 
 ### **Testing & Rollout**
 - [ ] Test with pilot clinics (2-3)
@@ -2207,16 +2584,71 @@ Returns: {
 - [ ] **Product Team**: Feature requirements
 - [ ] **Compliance Team**: HIPAA/healthcare regulations
 
-**Estimated Timeline:** 12 weeks (3 months) for full implementation and rollout
+**Estimated Timeline:** 10-12 weeks (2.5-3 months) for full implementation and rollout
 
 **Priority:** High (Critical for true multi-tenant healthcare platform)
+
+**Implementation Start:** TBD (Pending stakeholder approval and resource allocation)
+
+**Current Foundation Status:**
+- ✅ Database schema ready (`Clinic.settings` JSONB)
+- ✅ Encryption service implemented (`CredentialEncryptionService`)
+- ✅ Config service foundation exists (`CommunicationConfigService`)
+- ✅ Clinic endpoints ready (no new endpoints needed)
+- ❌ Provider adapters need implementation
+- ❌ Service layer needs multi-tenant updates
 
 ---
 
 ## 📝 Document Version
 
-- **Version**: 1.0.0
-- **Last Updated**: December 3, 2025
-- **Status**: Design/Architecture (No Implementation)
+- **Version**: 1.1.0
+- **Last Updated**: December 6, 2025
+- **Status**: Design/Architecture (Foundation Exists, Core Implementation Pending)
+- **Implementation Start**: TBD (Pending stakeholder approval and resource allocation)
 - **Next Review**: After stakeholder approval
+
+## 🚀 Implementation Timeline
+
+### **When to Start Implementation**
+
+**Prerequisites:**
+1. ✅ Multi-tenant infrastructure exists (`ClinicIsolationService`, `ClinicService`)
+2. ✅ `Clinic.settings` JSONB field exists
+3. ✅ `CredentialEncryptionService` implemented
+4. ✅ `CommunicationConfigService` foundation exists
+5. ❌ Provider adapters need to be implemented
+6. ❌ Service layer needs multi-tenant updates
+
+**Recommended Start Date:** After core appointment and user management features are stable
+
+**Estimated Duration:** 8-12 weeks (2-3 months) for full implementation
+
+**Priority:** High (Critical for true multi-tenant healthcare platform with clinic-specific branding)
+
+### **Implementation Phases Summary**
+
+| Phase | Duration | Status | Key Deliverables |
+|-------|----------|--------|------------------|
+| **Phase 1: Foundation** | 2 weeks | 🟡 Partial | Type definitions, database integration |
+| **Phase 2: Provider Interfaces** | 1 week | ❌ Pending | Adapter interfaces, base classes |
+| **Phase 3: Provider Adapters** | 3-4 weeks | ❌ Pending | SMTP, SES, SendGrid, Meta WhatsApp, Twilio |
+| **Phase 4: Service Integration** | 2 weeks | ❌ Pending | EmailService, WhatsAppService updates |
+| **Phase 5: Testing** | 1-2 weeks | ❌ Pending | Unit tests, integration tests |
+| **Phase 6: Monitoring** | 1 week | ❌ Pending | Dashboards, health checks |
+
+**Total Estimated Time:** 10-12 weeks
+
+### **Decision: Use Existing Clinic Endpoints**
+
+✅ **CONFIRMED:** No separate REST endpoints needed. Use existing:
+- `PUT /api/v1/clinics/:id` - Update clinic settings (includes communicationSettings)
+- `GET /api/v1/clinics/:id` - Get clinic settings (includes communicationSettings)
+
+This approach:
+- ✅ Reuses existing RBAC guards
+- ✅ Reuses existing audit logging
+- ✅ Maintains consistent API patterns
+- ✅ Reduces code duplication
+- ✅ Easier to maintain
 

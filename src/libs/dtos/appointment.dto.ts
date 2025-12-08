@@ -728,6 +728,15 @@ export class ScanLocationQRDto {
     platform?: string;
     model?: string;
   };
+
+  @ApiPropertyOptional({
+    description:
+      'Optional appointment ID to check into when multiple appointments are available at the same location',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
+  appointmentId?: string;
 }
 
 /**

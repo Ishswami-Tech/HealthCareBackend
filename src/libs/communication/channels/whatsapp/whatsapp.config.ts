@@ -5,11 +5,19 @@ import { ConfigService } from '@config';
 export class WhatsAppConfig {
   constructor(private readonly configService: ConfigService) {}
 
+  // Use ConfigService (which uses dotenv) for all environment variable access
   private getConfig<T>(key: string, defaultValue: T): T {
     try {
-      return this.configService?.get<T>(key) ?? (process.env[key] as T) ?? defaultValue;
+      if (typeof defaultValue === 'number') {
+        return this.configService.getEnvNumber(key, defaultValue as number) as unknown as T;
+      }
+      if (typeof defaultValue === 'boolean') {
+        return this.configService.getEnvBoolean(key, defaultValue as boolean) as unknown as T;
+      }
+      return this.configService.getEnv(key, defaultValue as string) as unknown as T;
     } catch {
-      return (process.env[key] as T) ?? defaultValue;
+      // Defensive fallback - should rarely be needed
+      return defaultValue;
     }
   }
 

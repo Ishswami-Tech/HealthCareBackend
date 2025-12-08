@@ -79,16 +79,8 @@ export class EmailService implements OnModuleInit {
    */
   async onModuleInit(): Promise<void> {
     try {
-      // Safely get provider with fallback to process.env
-      let provider: string;
-      try {
-        provider =
-          this.configService?.get<string>('EMAIL_PROVIDER') ||
-          process.env['EMAIL_PROVIDER'] ||
-          'smtp';
-      } catch {
-        provider = process.env['EMAIL_PROVIDER'] || 'smtp';
-      }
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const provider = this.configService.getEnv('EMAIL_PROVIDER', 'smtp');
       this.provider = provider as 'smtp' | 'api';
 
       if (this.provider === 'smtp') {
@@ -119,14 +111,15 @@ export class EmailService implements OnModuleInit {
       try {
         emailConfig = this.configService?.get<EmailConfig>('email');
       } catch {
-        // Fallback to process.env if ConfigService fails
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const emailConfigData = this.configService.getEmailConfig();
         emailConfig = {
-          host: process.env['EMAIL_HOST'] || '',
-          port: parseInt(process.env['EMAIL_PORT'] || '587', 10),
-          secure: process.env['EMAIL_SECURE'] === 'true',
-          user: process.env['EMAIL_USER'] || '',
-          password: process.env['EMAIL_PASSWORD'] || '',
-          from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
+          host: emailConfigData.host || '',
+          port: emailConfigData.port || 587,
+          secure: emailConfigData.secure || false,
+          user: emailConfigData.user || '',
+          password: emailConfigData.password || '',
+          from: emailConfigData.from || 'noreply@healthcare.com',
         } as EmailConfig;
       }
 
@@ -182,9 +175,10 @@ export class EmailService implements OnModuleInit {
       // Safely get token with fallback to process.env
       let token: string | undefined;
       try {
-        token = this.configService?.get<string>('MAILTRAP_API_TOKEN');
+        token = this.configService.getEnv('MAILTRAP_API_TOKEN');
       } catch {
-        token = process.env['MAILTRAP_API_TOKEN'];
+        // Use ConfigService (which uses dotenv) for environment variable access
+        token = this.configService.getEnv('MAILTRAP_API_TOKEN');
       }
 
       if (!token) {
@@ -354,14 +348,15 @@ export class EmailService implements OnModuleInit {
       try {
         emailConfig = this.configService?.get<EmailConfig>('email');
       } catch {
-        // Fallback to process.env if ConfigService fails
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const emailConfigData = this.configService.getEmailConfig();
         emailConfig = {
-          host: process.env['EMAIL_HOST'] || '',
-          port: parseInt(process.env['EMAIL_PORT'] || '587', 10),
-          secure: process.env['EMAIL_SECURE'] === 'true',
-          user: process.env['EMAIL_USER'] || '',
-          password: process.env['EMAIL_PASSWORD'] || '',
-          from: process.env['EMAIL_FROM'] || 'noreply@healthcare.com',
+          host: emailConfigData.host || '',
+          port: emailConfigData.port || 587,
+          secure: emailConfigData.secure || false,
+          user: emailConfigData.user || '',
+          password: emailConfigData.password || '',
+          from: emailConfigData.from || 'noreply@healthcare.com',
         } as EmailConfig;
       }
       const mailOptions = {
@@ -465,10 +460,11 @@ export class EmailService implements OnModuleInit {
       case EmailTemplate.PASSWORD_RESET:
         return generatePasswordResetRequestTemplate(context as PasswordResetEmailContext);
       case EmailTemplate.PASSWORD_RESET_CONFIRMATION: {
-        const fallbackLoginUrl =
-          this.configService?.get<string>('APP_LOGIN_URL') ||
-          process.env['APP_LOGIN_URL'] ||
-          'https://app.healthcare/login';
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const fallbackLoginUrl = this.configService.getEnv(
+          'APP_LOGIN_URL',
+          'https://app.healthcare/login'
+        );
         const loginUrl = context['loginUrl'] as string | undefined;
         return generatePasswordResetConfirmationTemplate(
           context as PasswordResetEmailContext,

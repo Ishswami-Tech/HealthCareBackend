@@ -1,5 +1,6 @@
 // External imports
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config';
 
 // Internal imports - Infrastructure
 import { DatabaseService } from '@infrastructure/database';
@@ -115,6 +116,7 @@ export class LoggingService {
   private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
 
   constructor(
+    @Inject(ConfigService) private readonly configService: ConfigService,
     @Optional()
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService?: DatabaseService,
@@ -125,14 +127,17 @@ export class LoggingService {
     @Inject(forwardRef(() => LoggingHealthMonitorService))
     private readonly healthMonitor?: LoggingHealthMonitorService
   ) {
-    this.serviceName = process.env['SERVICE_NAME'] || 'healthcare';
+    // Use ConfigService (which uses dotenv) for all environment variable access
+    this.serviceName = this.configService.getEnv('SERVICE_NAME', 'healthcare') || 'healthcare';
     this.configuredSystemUserId =
-      process.env['LOGGING_SYSTEM_USER_ID'] || process.env['SYSTEM_USER_ID'] || null;
+      this.configService?.getEnv('LOGGING_SYSTEM_USER_ID') ||
+      this.configService?.getEnv('SYSTEM_USER_ID') ||
+      null;
     const disableLookupEnv =
-      process.env['LOGGING_DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
-      process.env['DISABLE_SYSTEM_USER_LOOKUP'] === 'true' ||
-      (process.env['NODE_ENV'] !== 'production' &&
-        process.env['LOGGING_DISABLE_SYSTEM_USER_LOOKUP'] !== 'false');
+      this.configService?.getEnvBoolean('LOGGING_DISABLE_SYSTEM_USER_LOOKUP', false) ||
+      this.configService?.getEnvBoolean('DISABLE_SYSTEM_USER_LOOKUP', false) ||
+      (!this.configService?.isProduction() &&
+        !this.configService?.getEnvBoolean('LOGGING_DISABLE_SYSTEM_USER_LOOKUP', false));
 
     if (disableLookupEnv) {
       LoggingService.globalSystemUserLookupDisabled = true;
@@ -329,10 +334,10 @@ export class LoggingService {
       metadata: {
         ...(metadata || {}),
         timestamp: timestamp.toISOString(),
-        environment: process.env['NODE_ENV'] || 'development',
+        environment: this.configService?.getEnvironment() || 'development',
         service: this.serviceName,
-        nodeId: process.env['NODE_ID'] || 'unknown',
-        version: process.env['APP_VERSION'] || '1.0.0',
+        nodeId: this.configService?.getEnv('NODE_ID', 'unknown') || 'unknown',
+        version: this.configService?.getEnv('APP_VERSION', '1.0.0') || '1.0.0',
         correlationId: this.getContext()?.correlationId,
         traceId: this.getContext()?.traceId,
         userId: this.getContext()?.userId,
@@ -344,7 +349,8 @@ export class LoggingService {
     try {
       // Development-only colored console output for debugging
       // In production, all logging goes through Redis/database only
-      if (process.env['NODE_ENV'] === 'development' && level !== LogLevel.DEBUG) {
+      // Use ConfigService (which uses dotenv) for environment variable access
+      if (this.configService?.isDevelopment() && level !== LogLevel.DEBUG) {
         const levelColor = this.getLevelColor(level);
         const contextColor = '\x1b[36m'; // Cyan
         const resetColor = '\x1b[0m';
@@ -1125,7 +1131,8 @@ export class LoggingService {
   async logEmergency(message: string, details: Record<string, unknown>): Promise<void> {
     // Emergency logs bypass normal processing for immediate visibility
     // In development, output to console for immediate visibility
-    if (process.env['NODE_ENV'] === 'development') {
+    // Use ConfigService (which uses dotenv) for environment variable access
+    if (this.configService?.isDevelopment()) {
       console.error(`🚨 EMERGENCY: ${message}`, details);
     }
 

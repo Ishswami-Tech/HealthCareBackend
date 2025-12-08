@@ -42,17 +42,11 @@ import { SignOptions } from 'jsonwebtoken';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (configService: ConfigService): JwtModuleOptions => {
-        const expiresIn: string =
-          configService?.get<string>(
-            'JWT_ACCESS_EXPIRES_IN',
-            process.env['JWT_ACCESS_EXPIRES_IN'] || '24h'
-          ) || '24h';
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const jwtConfig = configService.getJwtConfig();
+        const expiresIn = configService.getEnv('JWT_ACCESS_EXPIRES_IN', '24h') || '24h';
         return {
-          secret:
-            configService?.get<string>(
-              'JWT_SECRET',
-              process.env['JWT_SECRET'] || 'dev-jwt-secret-key'
-            ) || 'dev-jwt-secret-key',
+          secret: jwtConfig.secret || 'dev-jwt-secret-key',
           signOptions: {
             expiresIn: expiresIn as SignOptions['expiresIn'],
           } as SignOptions,

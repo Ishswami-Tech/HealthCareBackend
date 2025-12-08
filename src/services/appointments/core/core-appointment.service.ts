@@ -25,6 +25,11 @@ import {
   AppointmentStatus,
   AppointmentPriority,
 } from '@dtos/appointment.dto';
+import {
+  isVideoCallAppointmentType,
+  isInPersonAppointmentType,
+  isHomeVisitAppointmentType,
+} from '@core/types/appointment-guards.types';
 // PaymentStatus, PaymentMethod, Language removed - not used in this service
 import type {
   AppointmentContext,
@@ -103,7 +108,28 @@ export class CoreAppointmentService {
         'CoreAppointmentService.createAppointment'
       );
 
-      // 1. Validate business rules
+      // 1. Validate appointment type requirements using strict type guards
+      if (isVideoCallAppointmentType(createDto.type)) {
+        // VIDEO_CALL appointments don't require locationId (can be null/optional)
+        // Video room will be auto-created after appointment creation
+      } else if (isInPersonAppointmentType(createDto.type)) {
+        // IN_PERSON appointments require locationId
+        if (!(createDto as { locationId?: string }).locationId) {
+          return {
+            success: false,
+            error: 'VALIDATION_ERROR',
+            message: 'Location ID is required for in-person appointments',
+            metadata: {
+              processingTime: Date.now() - startTime,
+            },
+          };
+        }
+      } else if (isHomeVisitAppointmentType(createDto.type)) {
+        // HOME_VISIT appointments may not require locationId (patient's address)
+        // But should have address information
+      }
+
+      // 2. Validate business rules
       const businessRuleValidation = await this.businessRules.validateAppointmentCreation(
         createDto,
         context
@@ -156,7 +182,7 @@ export class CoreAppointmentService {
         };
       }
 
-      // 3. Create appointment with enhanced metadata
+      // 4. Create appointment with enhanced metadata
       // Extract date and time from appointmentDate
       const appointmentDateTime = new Date(createDto.appointmentDate);
       const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
@@ -183,13 +209,26 @@ export class CoreAppointmentService {
       // Cast for AppointmentResult compatibility
       const appointmentResult = appointment as unknown as Record<string, unknown>;
 
-      // 4. Initialize workflow
+      // 5. Auto-create video room for VIDEO_CALL appointments
+      // Note: Video room creation is handled by AppointmentsService after appointment creation
+      // to avoid circular dependencies. The video room creation is triggered via event.
+      if (isVideoCallAppointmentType(appointment.type)) {
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          `Video appointment created - video room will be auto-created`,
+          'CoreAppointmentService.createAppointment',
+          { appointmentId: appointment.id, type: appointment.type }
+        );
+      }
+
+      // 6. Initialize workflow
       this.workflowEngine.initializeWorkflow(appointment.id, 'APPOINTMENT_CREATED');
 
-      // 5. Queue background operations
+      // 7. Queue background operations
       await this.queueBackgroundOperations(appointment, context);
 
-      // 6. Emit events
+      // 8. Emit events
       await this.eventService.emit('appointment.created', {
         appointmentId: appointment.id,
         clinicId: appointment.clinicId,

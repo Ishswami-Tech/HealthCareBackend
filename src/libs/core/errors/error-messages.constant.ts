@@ -55,6 +55,20 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.APPOINTMENT_SLOT_UNAVAILABLE]: 'The selected time slot is no longer available.',
   [ErrorCode.APPOINTMENT_PAST_DATE]: 'Cannot schedule appointments for past dates.',
 
+  // Check-In Errors
+  [ErrorCode.CHECKIN_NO_APPOINTMENT_FOUND]:
+    'No appointment found for this location. Please ensure you have a scheduled appointment.',
+  [ErrorCode.CHECKIN_ALREADY_CHECKED_IN]:
+    'You have already checked in for this appointment. Please wait for your turn.',
+  [ErrorCode.CHECKIN_WRONG_LOCATION]:
+    'This appointment is scheduled for a different location. Please go to the correct location.',
+  [ErrorCode.CHECKIN_APPOINTMENT_EXPIRED]:
+    'This appointment has expired. Please contact the clinic to reschedule.',
+  [ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED]:
+    'Check-in window has expired. Please check in within 30 minutes before or 2 hours after your appointment time.',
+  [ErrorCode.CHECKIN_INVALID_QR_CODE]:
+    'Invalid QR code. Please scan the correct QR code for this location.',
+
   // Doctor & Staff Errors
   [ErrorCode.DOCTOR_NOT_FOUND]: 'Doctor not found. Please check the doctor ID and try again.',
   [ErrorCode.DOCTOR_UNAVAILABLE]: 'Doctor is not available for the selected time.',

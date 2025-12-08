@@ -38,6 +38,7 @@ import {
   RequestOtpDto,
   VerifyOtpRequestDto,
   LogoutDto,
+  GoogleOAuthDto,
 } from '@dtos/auth.dto';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
@@ -59,7 +60,8 @@ import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '@c
   ChangePasswordDto,
   RequestOtpDto,
   VerifyOtpRequestDto,
-  LogoutDto
+  LogoutDto,
+  GoogleOAuthDto
 )
 export class AuthController {
   constructor(
@@ -1104,6 +1106,105 @@ export class AuthController {
       const sessions: never[] = [];
 
       return new DataResponseDto(sessions, 'Sessions retrieved successfully');
+    } catch (_error) {
+      if (_error instanceof HealthcareError) {
+        this.errors.handleError(_error, 'AuthController');
+        throw _error;
+      }
+      throw _error;
+    }
+  }
+
+  @Public()
+  @Post('google')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Authenticate with Google OAuth',
+    description:
+      'Authenticate user using Google OAuth ID token or access token. Creates new user if not exists.',
+    operationId: 'googleOAuth',
+  })
+  @ApiBody({
+    type: GoogleOAuthDto,
+    description: 'Google OAuth token and optional clinic context',
+    examples: {
+      withIdToken: {
+        summary: 'Google ID Token',
+        description: 'Using Google ID token from frontend',
+        value: {
+          token: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1NiIsInR5cCI6IkpXVCJ9...',
+          clinicId: 'clinic-uuid-123',
+        },
+      },
+      withAccessToken: {
+        summary: 'Google Access Token',
+        description: 'Using Google access token',
+        value: {
+          token: 'ya29.a0AfH6SMBx...',
+          clinicId: 'clinic-uuid-123',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Google OAuth authentication successful',
+    type: DataResponseDto<AuthResponse>,
+    schema: {
+      example: {
+        status: 'success',
+        message: 'Google OAuth authentication successful',
+        timestamp: '2024-01-01T00:00:00.000Z',
+        data: {
+          accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          refreshToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+          user: {
+            id: 'user-123',
+            email: 'user@gmail.com',
+            firstName: 'John',
+            lastName: 'Doe',
+            role: 'PATIENT',
+            isVerified: true,
+            clinicId: 'clinic-uuid-123',
+            profilePicture: 'https://lh3.googleusercontent.com/...',
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Invalid Google token or authentication failed',
+  })
+  async googleOAuth(
+    @Body() googleOAuthDto: GoogleOAuthDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<DataResponseDto<AuthResponse>> {
+    try {
+      const result = await this.authService.authenticateWithGoogle(
+        googleOAuthDto.token,
+        googleOAuthDto.clinicId
+      );
+
+      // Sync session to Fastify session if available
+      if (req.session && result.user) {
+        const decodedToken = result.accessToken
+          ? this.jwtAuthService.decodeToken(result.accessToken)
+          : null;
+        const sessionId =
+          decodedToken && typeof decodedToken === 'object' && decodedToken !== null
+            ? (decodedToken as { sessionId?: string }).sessionId
+            : undefined;
+
+        if (sessionId) {
+          const sessionData = await this.sessionService.getSession(sessionId);
+          if (sessionData) {
+            this.sessionService.syncToFastifySession(sessionData, req.session);
+          }
+        }
+      }
+
+      return new DataResponseDto(result, 'Google OAuth authentication successful');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, 'AuthController');

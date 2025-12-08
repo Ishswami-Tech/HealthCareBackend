@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -15,7 +15,6 @@ import type {
 
 @Injectable()
 export class CheckInLocationService {
-  private readonly logger = new Logger(CheckInLocationService.name);
   private readonly LOCATION_CACHE_TTL = 3600; // 1 hour
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
 
@@ -158,6 +157,67 @@ export class CheckInLocationService {
         'CheckInLocationService',
         {
           clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Get location by ID
+   */
+  async getLocationById(locationId: string): Promise<CheckInLocation> {
+    const startTime = Date.now();
+    const cacheKey = `checkin-location:id:${locationId}`;
+
+    try {
+      // Try to get from cache first
+      const cached = await this.cacheService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached as string) as CheckInLocation;
+      }
+
+      // Use executeHealthcareRead for optimized query
+      const location = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+            };
+          }
+        ).checkInLocation.findUnique({
+          where: { id: locationId },
+        } as never);
+      });
+
+      if (!location) {
+        throw new NotFoundException(`Location with ID ${locationId} not found`);
+      }
+
+      // Cache the result
+      await this.cacheService.set(cacheKey, JSON.stringify(location), this.LOCATION_CACHE_TTL);
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Location retrieved by ID',
+        'CheckInLocationService',
+        {
+          locationId: location.id,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return location;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get location by ID: ${error instanceof Error ? error.message : String(error)}`,
+        'CheckInLocationService',
+        {
+          locationId,
           error: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -470,6 +530,7 @@ export class CheckInLocationService {
               appointmentId: data.appointmentId,
               locationId: data.locationId,
               patientId: data.patientId,
+              clinicId: location.clinicId, // Denormalized for 10M+ scale analytics
               coordinates: data.coordinates as never,
               deviceInfo: data.deviceInfo as never,
             },

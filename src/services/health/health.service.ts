@@ -342,9 +342,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       cluster.isPrimary || (cluster as { isMaster?: boolean }).isMaster || false
     );
     const isWorker = !isPrimary && cluster.worker !== undefined;
-    const workerId = cluster.worker?.id || process.env['WORKER_ID'] || undefined;
-    const instanceId = process.env['INSTANCE_ID'] || process.env['WORKER_ID'] || '1';
-    const nodeName = process.env['NODE_NAME'] || process.env['HOSTNAME'] || os.hostname();
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const workerId = cluster.worker?.id || this.config?.getEnv('WORKER_ID') || undefined;
+    const instanceId =
+      this.config?.getEnv('INSTANCE_ID') || this.config?.getEnv('WORKER_ID') || '1';
+    const nodeName =
+      this.config?.getEnv('NODE_NAME') || this.config?.getEnv('HOSTNAME') || os.hostname();
     const hostname = os.hostname();
     const cpuCount = os.cpus().length;
 
@@ -529,8 +532,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     return {
       status: 'degraded',
       timestamp: new Date().toISOString(),
-      environment: process.env['NODE_ENV'] || 'development',
-      version: process.env['npm_package_version'] || '0.0.1',
+      environment: this.config?.getEnvironment() || 'development',
+      version: this.config?.getEnv('npm_package_version') || '0.0.1',
       systemMetrics: {
         uptime: process.uptime(),
         memoryUsage: {
@@ -601,7 +604,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Defensive check: ensure all required services are available before proceeding
       // This prevents "Cannot read properties of undefined" errors
       // Note: config is optional, so we only check if NODE_ENV is also missing
-      if (!this.config && !process.env['NODE_ENV']) {
+      if (!this.config || !this.config.getEnvironment()) {
         // This is not a fatal error - we can still proceed with defaults
         // Just log a warning
         if (this.loggingService) {
@@ -618,14 +621,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       let environment = 'development';
       try {
         // Defensive: handle case where this.config is undefined or null
-        if (this.config && typeof this.config.get === 'function') {
-          environment =
-            this.config.get<string>('NODE_ENV') || process.env['NODE_ENV'] || 'development';
+        if (this.config) {
+          environment = this.config.getEnvironment();
         } else {
-          environment = process.env['NODE_ENV'] || 'development';
+          environment = 'development';
         }
       } catch (_error) {
-        environment = process.env['NODE_ENV'] || 'development';
+        environment = this.config?.getEnvironment() || 'development';
       }
 
       // Use cached database status if available and fresh (< 15 seconds old)
@@ -1045,7 +1047,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'healthy',
         timestamp: new Date().toISOString(),
         environment,
-        version: process.env['npm_package_version'] || '0.0.1',
+        version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
         services: {
           api: {
@@ -1292,8 +1294,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       return {
         status: 'degraded',
         timestamp: new Date().toISOString(),
-        environment: process.env['NODE_ENV'] || 'development',
-        version: process.env['npm_package_version'] || '0.0.1',
+        environment: this.config?.getEnvironment() || 'development',
+        version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
         services: {
           api: {
@@ -1426,13 +1428,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       let isDevMode = false;
       try {
         // Defensive: handle case where this.config is undefined or null
-        let env = process.env['NODE_ENV'] || 'development';
-        if (this.config && typeof this.config.get === 'function') {
-          env = this.config.get('NODE_ENV') || env;
+        if (this.config) {
+          isDevMode = this.config.isDevelopment();
+        } else {
+          isDevMode = false;
         }
-        isDevMode = env === 'development';
       } catch (_error) {
-        isDevMode = (process.env['NODE_ENV'] || 'development') === 'development';
+        isDevMode = this.config?.isDevelopment() || false;
       }
 
       // Safely access baseHealth.services - handle case where baseHealth or services might be undefined
@@ -1485,37 +1487,35 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // In local: Use localhost
 
         // Prisma Studio URL - typically runs on the same pod/container
-        const prismaStudioUrl =
-          process.env['PRISMA_STUDIO_URL'] ||
-          this.config?.get<string>('PRISMA_STUDIO_URL') ||
-          'http://localhost:5555';
+        const urlsConfig = this.config?.getUrlsConfig();
+        const prismaStudioUrl = urlsConfig?.prismaStudio || 'http://localhost:5555';
 
         // pgAdmin URL - can be in different pod/service in Kubernetes
         const pgAdminUrl =
-          process.env['PGADMIN_URL'] ||
-          this.config?.get<string>('PGADMIN_URL') ||
+          urlsConfig?.pgAdmin ||
           // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
           // Fallback to localhost for local/Docker development
           'http://localhost:5050';
 
         // Redis Commander URL - can be in different pod/service in Kubernetes
         const redisCommanderUrl =
-          process.env['REDIS_COMMANDER_URL'] ||
-          this.config?.get<string>('REDIS_COMMANDER_URL') ||
+          urlsConfig?.redisCommander ||
           // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
           // Fallback to localhost for local/Docker development
           'http://localhost:8082';
 
         // Build fallback URLs based on environment
         // Only add Docker-specific fallbacks if we're in Docker (not Kubernetes)
-        const isKubernetes = process.env['KUBERNETES_SERVICE_HOST'] !== undefined;
-        const isDocker = process.env['DOCKER_ENV'] === 'true' && !isKubernetes;
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const isKubernetes = this.config?.hasEnv('KUBERNETES_SERVICE_HOST') || false;
+        const isDocker = this.config?.getEnvBoolean('DOCKER_ENV', false) && !isKubernetes;
 
         // For pgAdmin: Try configured URL, then Kubernetes service name, then Docker container, then localhost
         const pgAdminUrls = [pgAdminUrl];
         if (isKubernetes) {
           // Kubernetes service discovery patterns
-          const namespace = process.env['KUBERNETES_NAMESPACE'] || 'default';
+          // Use ConfigService (which uses dotenv) for environment variable access
+          const namespace = this.config?.getEnv('KUBERNETES_NAMESPACE', 'default') || 'default';
           pgAdminUrls.push(
             `http://pgadmin-service.${namespace}.svc.cluster.local`,
             `http://pgadmin-service.${namespace}`,
@@ -1531,7 +1531,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         const redisCommanderUrls = [redisCommanderUrl];
         if (isKubernetes) {
           // Kubernetes service discovery patterns
-          const namespace = process.env['KUBERNETES_NAMESPACE'] || 'default';
+          // Use ConfigService (which uses dotenv) for environment variable access
+          const namespace = this.config?.getEnv('KUBERNETES_NAMESPACE', 'default') || 'default';
           redisCommanderUrls.push(
             `http://redis-commander-service.${namespace}.svc.cluster.local:8081`,
             `http://redis-commander-service.${namespace}:8081`,
@@ -1677,8 +1678,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const baseHealth = await this.performHealthCheck().catch(() => ({
         status: 'degraded' as const,
         timestamp: new Date().toISOString(),
-        environment: process.env['NODE_ENV'] || 'development',
-        version: process.env['npm_package_version'] || '0.0.1',
+        environment: this.config?.getEnvironment() || 'development',
+        version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics: {
           uptime: process.uptime(),
           memoryUsage: {
@@ -2571,10 +2572,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           // Also verify HTTP endpoint is accessible (optional verification)
           try {
-            const baseUrl =
-              this.config?.get<string>('API_URL') ||
-              process.env['API_URL'] ||
-              'http://localhost:8088';
+            // Use ConfigService (which uses dotenv) for environment variable access
+            const appConfig = this.config?.getAppConfig();
+            const baseUrl = appConfig?.apiUrl || 'http://localhost:8088';
             const socketTestUrl = `${baseUrl}/socket-test`;
 
             await Promise.race([
@@ -2643,11 +2643,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       if (!this.emailService || typeof this.emailService.isHealthy !== 'function') {
         // Try HTTP check as fallback
         try {
-          const baseUrl =
-            this.config?.get<string>('API_URL') ||
-            process.env['API_URL'] ||
-            'http://localhost:8088';
-          const apiPrefix = this.config?.get<string>('API_PREFIX') || '/api/v1';
+          const appConfig = this.config?.getAppConfig();
+          const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
+          const apiPrefix = appConfig?.apiPrefix || '/api/v1';
           const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
           const httpCheck = await Promise.race([
@@ -2681,9 +2679,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         const _isHealthy = this.emailService.isHealthy();
 
         // Also check HTTP endpoint for real-time status
-        const baseUrl =
-          this.config?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088';
-        const apiPrefix = this.config?.get<string>('API_PREFIX') || '/api/v1';
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const appConfig = this.config?.getAppConfig();
+        const baseUrl = appConfig?.apiUrl || 'http://localhost:8088';
+        const apiPrefix = appConfig?.apiPrefix || '/api/v1';
         const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
         try {
@@ -2893,8 +2892,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   ): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
-      const baseUrl =
-        this.config?.get<string>('API_URL') || process.env['API_URL'] || 'http://localhost:8088';
+      const appConfig = this.config?.getAppConfig();
+      const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
       const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
       const response = await Promise.race([

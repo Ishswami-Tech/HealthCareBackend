@@ -95,15 +95,10 @@ export class AppController {
   })
   async getDashboard(@Res() res: FastifyReply) {
     try {
-      const host: string =
-        this.configService?.get<string>(
-          'API_URL',
-          process.env['API_URL'] || 'https://api.ishswami.in'
-        ) ||
-        process.env['API_URL'] ||
-        'https://api.ishswami.in';
-      const baseUrl = host.endsWith('/') ? host.slice(0, -1) : host;
-      const isProduction = process.env['NODE_ENV'] === 'production';
+      const appConfig = this.configService.getAppConfig();
+      const urlsConfig = this.configService.getUrlsConfig();
+      const baseUrl = appConfig.apiUrl || appConfig.baseUrl;
+      const isProduction = appConfig.environment === 'production';
 
       // Get real-time service status from health service with comprehensive error handling
       // HealthService is now independent and always returns a valid response
@@ -120,8 +115,8 @@ export class AppController {
             resolve({
               status: 'degraded',
               timestamp: new Date().toISOString(),
-              environment: process.env['NODE_ENV'] || 'development',
-              version: process.env['npm_package_version'] || '0.0.1',
+              environment: appConfig.environment,
+              version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
               systemMetrics: {
                 uptime: process.uptime(),
                 memoryUsage: {
@@ -218,8 +213,8 @@ export class AppController {
         healthData = {
           status: 'degraded',
           timestamp: new Date().toISOString(),
-          environment: process.env['NODE_ENV'] || 'development',
-          version: process.env['npm_package_version'] || '0.0.1',
+          environment: this.configService?.getEnvironment() || 'development',
+          version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
           systemMetrics: {
             uptime: process.uptime(),
             memoryUsage: {
@@ -328,12 +323,8 @@ export class AppController {
 
       // Extract real-time metrics for all services
       const basePort =
-        this.configService?.get<number | string>(
-          'PORT',
-          process.env['PORT'] || process.env['VIRTUAL_PORT'] || 8088
-        ) ||
-        process.env['PORT'] ||
-        process.env['VIRTUAL_PORT'] ||
+        this.configService?.get<number | string>('PORT', 8088) ||
+        this.configService?.get<number | string>('VIRTUAL_PORT', 8088) ||
         8088;
       const queueMetrics =
         (queueHealth && 'metrics' in queueHealth ? queueHealth.metrics : {}) || {};
@@ -362,14 +353,14 @@ export class AppController {
         {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
-          url: `${baseUrl}${this.configService?.get<string>('SWAGGER_URL', '/docs') || process.env['SWAGGER_URL'] || '/docs'}`,
+          url: `${baseUrl}${urlsConfig.swagger}`,
           active: isApiRunning, // API is running if we can serve this page
           category: 'Documentation',
         },
         {
           name: 'Queue Dashboard',
           description: `Queue management and monitoring dashboard. Port: ${String(queuePort)}${activeQueues !== undefined ? ` | Active Queues: ${activeQueues}` : ''}`,
-          url: `${baseUrl}${this.configService?.get<string>('BULL_BOARD_URL', '/queue-dashboard') || process.env['BULL_BOARD_URL'] || '/queue-dashboard'}`,
+          url: `${baseUrl}${this.configService?.get<string>('BULL_BOARD_URL', '/queue-dashboard') || '/queue-dashboard'}`,
           active: isQueueRunning, // Active if queue health check passes
           category: 'Monitoring',
           port: Number(queuePort),
@@ -404,7 +395,7 @@ export class AppController {
         {
           name: 'Email Service',
           description: `Email sending and template management. Port: ${String(basePort)}`,
-          url: `${baseUrl}${this.configService?.get<string>('API_PREFIX', '/api/v1') || process.env['API_PREFIX'] || '/api/v1'}/email/status`,
+          url: `${baseUrl}${appConfig.apiPrefix}/email/status`,
           active: isEmailRunning, // Active if email health check passes
           category: 'Services',
           port: Number(basePort),
@@ -432,13 +423,7 @@ export class AppController {
           description: isDragonflyProvider
             ? 'Dragonfly cache management interface (Redis-compatible).'
             : 'Redis database management interface.',
-          url:
-            this.configService?.get<string>(
-              'REDIS_COMMANDER_URL',
-              process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
-            ) ||
-            process.env['REDIS_COMMANDER_URL'] ||
-            'http://localhost:8082',
+          url: urlsConfig.redisCommander || 'http://localhost:8082',
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -449,13 +434,7 @@ export class AppController {
         allServices.push({
           name: 'Redis Commander',
           description: 'Redis database management interface.',
-          url:
-            this.configService?.get<string>(
-              'REDIS_COMMANDER_URL',
-              process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082'
-            ) ||
-            process.env['REDIS_COMMANDER_URL'] ||
-            'http://localhost:8082',
+          url: urlsConfig.redisCommander || 'http://localhost:8082',
           active: isRedisCommanderRunning,
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -467,13 +446,7 @@ export class AppController {
         allServices.push({
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
-          url:
-            this.configService?.get<string>(
-              'PRISMA_STUDIO_URL',
-              process.env['PRISMA_STUDIO_URL'] || 'http://localhost:5555'
-            ) ||
-            process.env['PRISMA_STUDIO_URL'] ||
-            'http://localhost:5555',
+          url: urlsConfig.prismaStudio || 'http://localhost:5555',
           active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
           category: 'Database',
           devOnly: !isProduction,
@@ -484,13 +457,7 @@ export class AppController {
         allServices.push({
           name: 'pgAdmin',
           description: 'PostgreSQL database management interface.',
-          url:
-            this.configService?.get<string>(
-              'PGADMIN_URL',
-              process.env['PGADMIN_URL'] || 'http://localhost:5050'
-            ) ||
-            process.env['PGADMIN_URL'] ||
-            'http://localhost:5050',
+          url: urlsConfig.pgAdmin || 'http://localhost:5050',
           active: isPgAdminRunning, // Active if pgAdmin health check passes
           category: 'Database',
           credentials: 'Email: admin@admin.com, Password: admin',
@@ -640,10 +607,8 @@ export class AppController {
     description: 'WebSocket test page HTML',
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
-    const baseUrl: string =
-      this.configService?.get<string>('API_URL') ||
-      process.env['API_URL'] ||
-      'http://localhost:8088';
+    const appConfig = this.configService.getAppConfig();
+    const baseUrl: string = appConfig.apiUrl || appConfig.baseUrl || 'http://localhost:8088';
 
     const html = `
 <!DOCTYPE html>
