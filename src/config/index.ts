@@ -36,3 +36,4 @@ export { ConfigModule } from './config.module';
 export { ConfigService } from './config.service';
 export * from './constants';
 export { isCacheEnabled, getCacheProvider, CacheConfigUtils } from './cache.config';
+export { isVideoEnabled, getVideoProvider, VideoConfigUtils } from './video.config';

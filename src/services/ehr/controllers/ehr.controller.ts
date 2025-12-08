@@ -112,14 +112,14 @@ export class EHRController {
   // ============ Lab Reports ============
 
   @Post('lab-reports')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
   @RequireResourcePermission('lab-reports', 'create')
   async createLabReport(@Body() createDto: CreateLabReportDto): Promise<unknown> {
     return this.ehrService.createLabReport(createDto);
   }
 
   @Get('lab-reports/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
   @RequireResourcePermission('lab-reports', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:lab-reports:{userId}',
@@ -134,14 +134,14 @@ export class EHRController {
   }
 
   @Put('lab-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
   @RequireResourcePermission('lab-reports', 'update')
   async updateLabReport(@Param('id') id: string, @Body() updateDto: UpdateLabReportDto) {
     return this.ehrService.updateLabReport(id, updateDto);
   }
 
   @Delete('lab-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
   @RequireResourcePermission('lab-reports', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteLabReport(@Param('id') id: string) {

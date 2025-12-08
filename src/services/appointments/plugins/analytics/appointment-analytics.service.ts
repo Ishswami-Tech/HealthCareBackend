@@ -675,4 +675,577 @@ export class AppointmentAnalyticsService {
       },
     };
   }
+
+  /**
+   * Get wait time analytics
+   */
+  async getWaitTimeAnalytics(
+    clinicId: string,
+    dateRange: { from: Date; to: Date },
+    locationId?: string,
+    doctorId?: string
+  ): Promise<AnalyticsResult> {
+    const cacheKey = `wait_time_analytics:${clinicId}:${locationId || 'all'}:${doctorId || 'all'}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
+
+    try {
+      const cached = await this.cacheService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached as string) as AnalyticsResult;
+      }
+
+      // Query CheckIn and Appointment tables for wait time analysis
+      const waitTimeData = await this.databaseService.executeHealthcareRead(async client => {
+        const checkIns = await (
+          client as unknown as {
+            checkIn: {
+              findMany: <T>(args: T) => Promise<
+                Array<{
+                  checkedInAt: Date;
+                  appointmentId: string;
+                  locationId: string;
+                  clinicId: string;
+                }>
+              >;
+            };
+            appointment: {
+              findMany: <T>(args: T) => Promise<
+                Array<{
+                  id: string;
+                  date: Date;
+                  time: string;
+                  status: string;
+                  startedAt?: Date | null;
+                }>
+              >;
+            };
+          }
+        ).checkIn.findMany({
+          where: {
+            clinicId,
+            checkedInAt: {
+              gte: dateRange.from,
+              lte: dateRange.to,
+            },
+            ...(locationId && { locationId }),
+          },
+          select: {
+            checkedInAt: true,
+            appointmentId: true,
+            locationId: true,
+            clinicId: true,
+          },
+          orderBy: { checkedInAt: 'desc' },
+        } as never);
+
+        const appointmentIds = checkIns.map(ci => ci.appointmentId);
+        const appointments = await (
+          client as unknown as {
+            appointment: {
+              findMany: <T>(args: T) => Promise<
+                Array<{
+                  id: string;
+                  date: Date;
+                  time: string;
+                  status: string;
+                  startedAt?: Date | null;
+                  doctorId?: string;
+                }>
+              >;
+            };
+          }
+        ).appointment.findMany({
+          where: {
+            id: { in: appointmentIds },
+            ...(doctorId && { doctorId }),
+          },
+          select: {
+            id: true,
+            date: true,
+            time: true,
+            status: true,
+            startedAt: true,
+            doctorId: true,
+          },
+        } as never);
+
+        // Calculate wait times
+        const waitTimes: number[] = [];
+        const byHour: Record<number, number[]> = {};
+        const byLocation: Record<string, number[]> = {};
+        const byDoctor: Record<string, number[]> = {};
+
+        for (const checkIn of checkIns) {
+          const appointment = appointments.find(a => a.id === checkIn.appointmentId);
+          if (!appointment || !appointment.startedAt) continue;
+
+          const appointmentDateTime = new Date(appointment.date);
+          const timeParts = appointment.time.split(':').map(Number);
+          const hours = timeParts[0] ?? 0;
+          const minutes = timeParts[1] ?? 0;
+          appointmentDateTime.setHours(hours, minutes, 0, 0);
+
+          const waitTime =
+            Math.max(0, appointment.startedAt.getTime() - checkIn.checkedInAt.getTime()) /
+            (1000 * 60); // minutes
+
+          waitTimes.push(waitTime);
+
+          const checkInHour = checkIn.checkedInAt.getHours();
+          if (!byHour[checkInHour]) byHour[checkInHour] = [];
+          byHour[checkInHour].push(waitTime);
+
+          const locationId = checkIn.locationId;
+          if (!byLocation[locationId]) {
+            byLocation[locationId] = [];
+          }
+          const locationArray = byLocation[locationId];
+          if (locationArray) {
+            locationArray.push(waitTime);
+          }
+
+          if (appointment.doctorId) {
+            const doctorId = appointment.doctorId;
+            if (!byDoctor[doctorId]) {
+              byDoctor[doctorId] = [];
+            }
+            const doctorArray = byDoctor[doctorId];
+            if (doctorArray) {
+              doctorArray.push(waitTime);
+            }
+          }
+        }
+
+        const avgWaitTime =
+          waitTimes.length > 0 ? waitTimes.reduce((a, b) => a + b, 0) / waitTimes.length : 0;
+        const sortedWaitTimes = waitTimes.length > 0 ? [...waitTimes].sort((a, b) => a - b) : [];
+        const medianWaitTime =
+          sortedWaitTimes.length > 0
+            ? (sortedWaitTimes[Math.floor(sortedWaitTimes.length / 2)] ?? 0)
+            : 0;
+        const p95WaitTime =
+          sortedWaitTimes.length > 0
+            ? (sortedWaitTimes[Math.floor(sortedWaitTimes.length * 0.95)] ?? 0)
+            : 0;
+
+        const filters: AnalyticsFilter = {
+          clinicId,
+          ...(locationId && { doctorId: locationId }),
+          ...(doctorId && { doctorId }),
+          startDate: dateRange.from,
+          endDate: dateRange.to,
+        };
+
+        return {
+          success: true,
+          data: {
+            averageWaitTime: Math.round(avgWaitTime * 10) / 10,
+            medianWaitTime: Math.round(medianWaitTime * 10) / 10,
+            p95WaitTime: Math.round(p95WaitTime * 10) / 10,
+            minWaitTime: waitTimes.length > 0 ? Math.min(...waitTimes) : 0,
+            maxWaitTime: waitTimes.length > 0 ? Math.max(...waitTimes) : 0,
+            totalAppointments: waitTimes.length,
+            waitTimesByHour: Object.fromEntries(
+              Object.entries(byHour).map(([hour, times]) => [
+                hour,
+                {
+                  average: Math.round((times.reduce((a, b) => a + b, 0) / times.length) * 10) / 10,
+                  count: times.length,
+                },
+              ])
+            ),
+            waitTimesByLocation: Object.fromEntries(
+              Object.entries(byLocation).map(([locId, times]) => [
+                locId,
+                {
+                  average: Math.round((times.reduce((a, b) => a + b, 0) / times.length) * 10) / 10,
+                  count: times.length,
+                },
+              ])
+            ),
+            waitTimesByDoctor: Object.fromEntries(
+              Object.entries(byDoctor).map(([docId, times]) => [
+                docId,
+                {
+                  average: Math.round((times.reduce((a, b) => a + b, 0) / times.length) * 10) / 10,
+                  count: times.length,
+                },
+              ])
+            ),
+          },
+          generatedAt: new Date(),
+          filters,
+        };
+      });
+
+      await this.cacheService.set(cacheKey, JSON.stringify(waitTimeData), this.ANALYTICS_CACHE_TTL);
+
+      return waitTimeData;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get wait time analytics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'AppointmentAnalyticsService',
+        {
+          clinicId,
+          locationId,
+          doctorId,
+          error: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+
+      const filters: AnalyticsFilter = {
+        clinicId,
+        ...(locationId && { doctorId: locationId }),
+        ...(doctorId && { doctorId }),
+        startDate: dateRange.from,
+        endDate: dateRange.to,
+      };
+
+      return {
+        success: false,
+        error: _error instanceof Error ? _error.message : 'Unknown error',
+        generatedAt: new Date(),
+        filters,
+      };
+    }
+  }
+
+  /**
+   * Get check-in pattern analytics
+   */
+  async getCheckInPatternAnalytics(
+    clinicId: string,
+    dateRange: { from: Date; to: Date },
+    locationId?: string
+  ): Promise<AnalyticsResult> {
+    const cacheKey = `checkin_pattern_analytics:${clinicId}:${locationId || 'all'}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
+
+    try {
+      const cached = await this.cacheService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached as string) as AnalyticsResult;
+      }
+
+      const patternData = await this.databaseService.executeHealthcareRead(async client => {
+        const checkIns = await (
+          client as unknown as {
+            checkIn: {
+              findMany: <T>(
+                args: T
+              ) => Promise<Array<{ checkedInAt: Date; locationId: string; appointmentId: string }>>;
+            };
+            appointment: {
+              findMany: <T>(args: T) => Promise<Array<{ id: string; date: Date; time: string }>>;
+            };
+          }
+        ).checkIn.findMany({
+          where: {
+            clinicId,
+            checkedInAt: {
+              gte: dateRange.from,
+              lte: dateRange.to,
+            },
+            ...(locationId && { locationId }),
+          },
+          select: {
+            checkedInAt: true,
+            locationId: true,
+            appointmentId: true,
+          },
+          orderBy: { checkedInAt: 'desc' },
+        } as never);
+
+        const appointmentIds = checkIns.map(ci => ci.appointmentId);
+        const appointments = await (
+          client as unknown as {
+            appointment: {
+              findMany: <T>(args: T) => Promise<Array<{ id: string; date: Date; time: string }>>;
+            };
+          }
+        ).appointment.findMany({
+          where: { id: { in: appointmentIds } },
+          select: {
+            id: true,
+            date: true,
+            time: true,
+          },
+        } as never);
+
+        // Analyze check-in patterns
+        const byDayOfWeek: Record<number, number> = {};
+        const byHour: Record<number, number> = {};
+        let earlyCheckIns = 0; // Checked in >30min before
+        let onTimeCheckIns = 0; // Checked in within ±30min
+        let lateCheckIns = 0; // Checked in >30min after
+        const byLocation: Record<string, number> = {};
+
+        for (const checkIn of checkIns) {
+          const appointment = appointments.find(a => a.id === checkIn.appointmentId);
+          if (!appointment) continue;
+
+          const appointmentDateTime = new Date(appointment.date);
+          const timeParts = appointment.time.split(':').map(Number);
+          const hours = timeParts[0] ?? 0;
+          const minutes = timeParts[1] ?? 0;
+          appointmentDateTime.setHours(hours, minutes, 0, 0);
+
+          const diffMinutes =
+            (checkIn.checkedInAt.getTime() - appointmentDateTime.getTime()) / (1000 * 60);
+
+          if (diffMinutes < -30) earlyCheckIns++;
+          else if (diffMinutes <= 30) onTimeCheckIns++;
+          else lateCheckIns++;
+
+          const dayOfWeek = checkIn.checkedInAt.getDay();
+          byDayOfWeek[dayOfWeek] = (byDayOfWeek[dayOfWeek] || 0) + 1;
+
+          const hour = checkIn.checkedInAt.getHours();
+          byHour[hour] = (byHour[hour] || 0) + 1;
+
+          byLocation[checkIn.locationId] = (byLocation[checkIn.locationId] || 0) + 1;
+        }
+
+        return {
+          success: true,
+          data: {
+            totalCheckIns: checkIns.length,
+            earlyCheckIns,
+            onTimeCheckIns,
+            lateCheckIns,
+            checkInTimingDistribution: {
+              early: Math.round((earlyCheckIns / checkIns.length) * 100) || 0,
+              onTime: Math.round((onTimeCheckIns / checkIns.length) * 100) || 0,
+              late: Math.round((lateCheckIns / checkIns.length) * 100) || 0,
+            },
+            checkInsByDayOfWeek: byDayOfWeek,
+            checkInsByHour: byHour,
+            checkInsByLocation: byLocation,
+            peakCheckInHour: Object.entries(byHour).reduce(
+              (a, b) => {
+                const aVal = byHour[Number(a[0])] ?? 0;
+                const bVal = byHour[Number(b[0])] ?? 0;
+                return aVal > bVal ? a : b;
+              },
+              ['0', 0]
+            )[0],
+            peakCheckInDay: Object.entries(byDayOfWeek).reduce(
+              (a, b) => {
+                const aVal = byDayOfWeek[Number(a[0])] ?? 0;
+                const bVal = byDayOfWeek[Number(b[0])] ?? 0;
+                return aVal > bVal ? a : b;
+              },
+              ['0', 0]
+            )[0],
+          },
+          generatedAt: new Date(),
+          filters: {
+            clinicId,
+            ...(locationId && { doctorId: locationId }),
+            startDate: dateRange.from,
+            endDate: dateRange.to,
+          },
+        };
+      });
+
+      await this.cacheService.set(cacheKey, JSON.stringify(patternData), this.ANALYTICS_CACHE_TTL);
+
+      return patternData;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get check-in pattern analytics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'AppointmentAnalyticsService',
+        {
+          clinicId,
+          locationId,
+          error: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+
+      return {
+        success: false,
+        error: _error instanceof Error ? _error.message : 'Unknown error',
+        generatedAt: new Date(),
+        filters: {
+          clinicId,
+          ...(locationId && { doctorId: locationId }),
+          startDate: dateRange.from,
+          endDate: dateRange.to,
+        },
+      };
+    }
+  }
+
+  /**
+   * Get no-show correlation analytics
+   */
+  async getNoShowCorrelationAnalytics(
+    clinicId: string,
+    dateRange: { from: Date; to: Date },
+    locationId?: string
+  ): Promise<AnalyticsResult> {
+    const cacheKey = `noshow_correlation_analytics:${clinicId}:${locationId || 'all'}:${dateRange.from.toISOString()}:${dateRange.to.toISOString()}`;
+
+    try {
+      const cached = await this.cacheService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached as string) as AnalyticsResult;
+      }
+
+      const correlationData = await this.databaseService.executeHealthcareRead(async client => {
+        const appointments = await (
+          client as unknown as {
+            appointment: {
+              findMany: <T>(args: T) => Promise<
+                Array<{
+                  id: string;
+                  date: Date;
+                  time: string;
+                  status: string;
+                  locationId?: string;
+                  checkedInAt?: Date | null;
+                }>
+              >;
+            };
+            checkIn: {
+              findMany: <T>(args: T) => Promise<Array<{ appointmentId: string }>>;
+            };
+          }
+        ).appointment.findMany({
+          where: {
+            clinicId,
+            date: {
+              gte: dateRange.from,
+              lte: dateRange.to,
+            },
+            ...(locationId && { locationId }),
+            status: {
+              in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'COMPLETED', 'NO_SHOW', 'CANCELLED'],
+            },
+          },
+          select: {
+            id: true,
+            date: true,
+            time: true,
+            status: true,
+            locationId: true,
+            checkedInAt: true,
+          },
+        } as never);
+
+        const checkedInAppointmentIds = new Set(
+          (
+            await (
+              client as unknown as {
+                checkIn: {
+                  findMany: <T>(args: T) => Promise<Array<{ appointmentId: string }>>;
+                };
+              }
+            ).checkIn.findMany({
+              where: {
+                appointmentId: { in: appointments.map(a => a.id) },
+              },
+              select: { appointmentId: true },
+            } as never)
+          ).map(ci => ci.appointmentId)
+        );
+
+        // Analyze no-show correlation with check-in
+        const totalAppointments = appointments.length;
+        const checkedIn = appointments.filter(
+          a => checkedInAppointmentIds.has(a.id) || a.checkedInAt
+        ).length;
+        const noShows = appointments.filter(a => a.status === 'NO_SHOW').length;
+        const noShowsWithCheckIn = appointments.filter(
+          a => a.status === 'NO_SHOW' && (checkedInAppointmentIds.has(a.id) || a.checkedInAt)
+        ).length;
+        const noShowsWithoutCheckIn = noShows - noShowsWithCheckIn;
+
+        // Check-in timing vs no-show
+        const checkedInAppointments = appointments.filter(
+          a => checkedInAppointmentIds.has(a.id) || a.checkedInAt
+        );
+        const earlyCheckedIn = checkedInAppointments.filter(a => {
+          if (!a.checkedInAt) return false;
+          const appointmentDateTime = new Date(a.date);
+          const timeParts = a.time.split(':').map(Number);
+          const hours = timeParts[0] ?? 0;
+          const minutes = timeParts[1] ?? 0;
+          appointmentDateTime.setHours(hours, minutes, 0, 0);
+          return a.checkedInAt.getTime() < appointmentDateTime.getTime() - 30 * 60 * 1000;
+        }).length;
+
+        return {
+          success: true,
+          data: {
+            totalAppointments,
+            checkedInCount: checkedIn,
+            noShowCount: noShows,
+            noShowRate: Math.round((noShows / totalAppointments) * 1000) / 10,
+            checkInRate: Math.round((checkedIn / totalAppointments) * 1000) / 10,
+            noShowCorrelation: {
+              withCheckIn: {
+                count: noShowsWithCheckIn,
+                percentage:
+                  noShows > 0 ? Math.round((noShowsWithCheckIn / noShows) * 1000) / 10 : 0,
+              },
+              withoutCheckIn: {
+                count: noShowsWithoutCheckIn,
+                percentage:
+                  noShows > 0 ? Math.round((noShowsWithoutCheckIn / noShows) * 1000) / 10 : 0,
+              },
+            },
+            earlyCheckInCount: earlyCheckedIn,
+            earlyCheckInRate:
+              checkedIn > 0 ? Math.round((earlyCheckedIn / checkedIn) * 1000) / 10 : 0,
+            insight:
+              noShowsWithoutCheckIn > noShowsWithCheckIn
+                ? 'Patients who check in are less likely to be no-shows'
+                : 'Check-in status does not significantly correlate with no-show rate',
+          },
+          generatedAt: new Date(),
+          filters: {
+            clinicId,
+            ...(locationId && { doctorId: locationId }),
+            startDate: dateRange.from,
+            endDate: dateRange.to,
+          },
+        };
+      });
+
+      await this.cacheService.set(
+        cacheKey,
+        JSON.stringify(correlationData),
+        this.ANALYTICS_CACHE_TTL
+      );
+
+      return correlationData;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get no-show correlation analytics: ${_error instanceof Error ? _error.message : String(_error)}`,
+        'AppointmentAnalyticsService',
+        {
+          clinicId,
+          locationId,
+          error: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+
+      return {
+        success: false,
+        error: _error instanceof Error ? _error.message : 'Unknown error',
+        generatedAt: new Date(),
+        filters: {
+          clinicId,
+          ...(locationId && { doctorId: locationId }),
+          startDate: dateRange.from,
+          endDate: dateRange.to,
+        },
+      };
+    }
+  }
 }

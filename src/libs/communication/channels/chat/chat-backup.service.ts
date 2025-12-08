@@ -96,18 +96,11 @@ export class ChatBackupService implements OnModuleInit {
 
   private initializeFirebaseDatabase(): void {
     try {
-      const databaseUrl =
-        this.configService?.get<string>('FIREBASE_DATABASE_URL') ||
-        process.env['FIREBASE_DATABASE_URL'];
-      const projectId =
-        this.configService?.get<string>('FIREBASE_PROJECT_ID') ||
-        process.env['FIREBASE_PROJECT_ID'];
-      const privateKey =
-        this.configService?.get<string>('FIREBASE_PRIVATE_KEY') ||
-        process.env['FIREBASE_PRIVATE_KEY'];
-      const clientEmail =
-        this.configService?.get<string>('FIREBASE_CLIENT_EMAIL') ||
-        process.env['FIREBASE_CLIENT_EMAIL'];
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const databaseUrl = this.configService.getEnv('FIREBASE_DATABASE_URL');
+      const projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
+      const privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY');
+      const clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
 
       if (!databaseUrl || !projectId || !privateKey || !clientEmail) {
         void this.loggingService.log(

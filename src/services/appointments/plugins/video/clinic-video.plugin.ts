@@ -1,7 +1,6 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '../base/base-plugin.service';
 import { VideoService } from './video.service';
-import { JitsiVideoService } from './jitsi-video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
 
 /**
@@ -33,7 +32,7 @@ export interface VideoPluginData {
  *
  * This plugin provides comprehensive video consultation functionality including:
  * - Legacy video call operations
- * - Jitsi-based consultation rooms
+ * - Unified video consultations (OpenVidu primary, Jitsi fallback)
  * - Real-time tracking and analytics
  * - HIPAA-compliant recording and data handling
  */
@@ -47,7 +46,8 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     'recording',
     'screen-sharing',
     'medical-imaging',
-    'jitsi-consultation',
+    'openvidu-consultation', // Primary provider
+    'jitsi-consultation', // Fallback provider
     'real-time-tracking',
     'hipaa-compliance',
   ];
@@ -55,13 +55,11 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
   /**
    * Creates an instance of ClinicVideoPlugin
    *
-   * @param videoService - Service for legacy video call operations
-   * @param jitsiVideoService - Service for Jitsi-based consultations
+   * @param videoService - Single consolidated video service (OpenVidu primary, Jitsi fallback)
    * @param consultationTracker - Service for tracking consultation metrics
    */
   constructor(
     private readonly videoService: VideoService,
-    private readonly jitsiVideoService: JitsiVideoService,
     private readonly consultationTracker: VideoConsultationTracker
   ) {
     super();
@@ -108,19 +106,28 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
         case 'stopRecording':
           return await this.videoService.stopRecording(videoData.callId!, videoData.userId!);
 
-        case 'shareMedicalImage':
+        case 'shareMedicalImage': {
+          // Convert imageData from string to Record<string, unknown> if needed
+          if (!videoData.imageData) {
+            throw new BadRequestException('imageData is required for sharing medical images');
+          }
+          const imageData =
+            typeof videoData.imageData === 'string'
+              ? { data: videoData.imageData, format: 'base64' }
+              : (videoData.imageData as Record<string, unknown>);
           return await this.videoService.shareMedicalImage(
             videoData.callId!,
             videoData.userId!,
-            videoData.imageData!
+            imageData
           );
+        }
 
         case 'getVideoCallHistory':
           return await this.videoService.getVideoCallHistory(videoData.userId!, videoData.clinicId);
 
-        // Jitsi consultation operations
+        // Video consultation operations (OpenVidu primary, Jitsi fallback)
         case 'createConsultationRoom':
-          return await this.jitsiVideoService.generateMeetingToken(
+          return await this.videoService.generateMeetingToken(
             videoData.appointmentId!,
             videoData.patientId!,
             'patient',
@@ -132,7 +139,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           );
 
         case 'generateJoinToken':
-          return await this.jitsiVideoService.generateMeetingToken(
+          return await this.videoService.generateMeetingToken(
             videoData.appointmentId!,
             videoData.userId!,
             videoData.userRole!,
@@ -144,14 +151,14 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           );
 
         case 'startConsultationSession':
-          return await this.jitsiVideoService.startConsultation(
+          return await this.videoService.startConsultation(
             videoData.appointmentId!,
             videoData.userId!,
             videoData.userRole!
           );
 
         case 'endConsultationSession':
-          return await this.jitsiVideoService.endConsultation(
+          return await this.videoService.endConsultation(
             videoData.appointmentId!,
             videoData.userId!,
             videoData.userRole!,
@@ -159,15 +166,19 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           );
 
         case 'getConsultationStatus':
-          return await this.jitsiVideoService.getConsultationStatus(videoData.appointmentId!);
+          return await this.videoService.getConsultationStatus(videoData.appointmentId!);
 
         case 'reportTechnicalIssue':
-          return await this.jitsiVideoService.reportTechnicalIssue(
+          await this.videoService.reportTechnicalIssue(
             videoData.appointmentId!,
             videoData.userId!,
-            videoData.issueType!,
-            videoData.description! as 'other' | 'audio' | 'video' | 'connection'
+            videoData.description || 'Technical issue',
+            (videoData.issueType as 'audio' | 'video' | 'connection' | 'other') || 'other'
           );
+          return {
+            success: true,
+            message: 'Technical issue reported',
+          };
 
         // Real-time tracking operations
         case 'initializeTracking':

@@ -77,10 +77,8 @@ export class JwtAuthService {
    */
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     try {
-      const expiresInValue: string =
-        this.configService?.get<string>('JWT_ACCESS_EXPIRES_IN') ||
-        process.env['JWT_ACCESS_EXPIRES_IN'] ||
-        '15m';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const expiresInValue = this.configService.getEnv('JWT_ACCESS_EXPIRES_IN', '15m') || '15m';
       return await this.jwtService.signAsync(payload, {
         expiresIn: expiresInValue as SignOptions['expiresIn'],
       } as SignOptions);
@@ -98,10 +96,8 @@ export class JwtAuthService {
    */
   async generateRefreshToken(payload: TokenPayload): Promise<string> {
     try {
-      const expiresInValue =
-        this.configService?.get<string>('JWT_REFRESH_EXPIRES_IN') ||
-        process.env['JWT_REFRESH_EXPIRES_IN'] ||
-        '7d';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const expiresInValue = this.configService.getEnv('JWT_REFRESH_EXPIRES_IN', '7d');
       return await this.jwtService.signAsync(payload, {
         expiresIn: expiresInValue as SignOptions['expiresIn'],
       } as SignOptions);

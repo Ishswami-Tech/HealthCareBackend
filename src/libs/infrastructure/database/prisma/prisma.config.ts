@@ -7,6 +7,7 @@
  * @see https://www.prisma.io/docs/orm/reference/prisma-schema-reference#prisma-config-file
  */
 import { defineConfig } from 'prisma/config';
+import { getEnv, isDockerEnvironment } from '@config/environment/utils';
 
 /**
  * Load environment variables with proper precedence:
@@ -17,10 +18,8 @@ import { defineConfig } from 'prisma/config';
  */
 function loadEnvWithPrecedence(): void {
   // Only load .env if not running in Docker (where env vars are already set)
-  // Check if we're in Docker by looking for DOCKER_ENV or if DATABASE_URL contains 'postgres:' (Docker service name)
-  const isDocker =
-    process.env['DOCKER_ENV'] === 'true' ||
-    (process.env['DATABASE_URL'] || '').includes('@postgres:');
+  // Check if we're in Docker using helper function
+  const isDocker = isDockerEnvironment() || (getEnv('DATABASE_URL') || '').includes('@postgres:');
 
   if (!isDocker) {
     // Load .env file for local development (outside Docker)
@@ -44,13 +43,13 @@ loadEnvWithPrecedence();
  */
 function getCleanDatabaseUrl(): string {
   // Priority 1: DIRECT_URL (clean connection string, highest priority)
-  const directUrl = process.env['DIRECT_URL'];
+  const directUrl = getEnv('DIRECT_URL');
   if (directUrl) {
     return directUrl; // DIRECT_URL should be a clean connection string
   }
 
   // Priority 2: DATABASE_URL from environment (Docker or system env)
-  const databaseUrl = process.env['DATABASE_URL'] || '';
+  const databaseUrl = getEnv('DATABASE_URL') || '';
   if (!databaseUrl) {
     return '';
   }

@@ -50,24 +50,19 @@ export class PluginConfigService {
       }
 
       // Generate configurations from environment
-      // Helper function to safely get config values with fallback
-      // ConfigService is global, but we add try-catch for robustness
+      // Helper function to safely get config values via ConfigService (uses dotenv)
+      // Use ConfigService methods for type-safe access
       const getConfig = <T>(key: string, defaultValue: T): T => {
         try {
-          return this.configService.get<T>(key, defaultValue);
-        } catch {
-          // Fallback to process.env if ConfigService.get fails
-          const envValue = process.env[key];
-          if (envValue !== undefined) {
-            // Try to parse as the same type as defaultValue
-            if (typeof defaultValue === 'number') {
-              return (parseInt(envValue, 10) || defaultValue) as T;
-            }
-            if (typeof defaultValue === 'boolean') {
-              return (envValue === 'true' || envValue === '1') as T;
-            }
-            return envValue as T;
+          if (typeof defaultValue === 'number') {
+            return this.configService.getEnvNumber(key, defaultValue as number) as unknown as T;
           }
+          if (typeof defaultValue === 'boolean') {
+            return this.configService.getEnvBoolean(key, defaultValue as boolean) as unknown as T;
+          }
+          return this.configService.getEnv(key, defaultValue as string) as unknown as T;
+        } catch {
+          // Defensive fallback - should rarely be needed
           return defaultValue;
         }
       };

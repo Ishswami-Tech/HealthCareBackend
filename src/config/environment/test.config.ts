@@ -1,6 +1,8 @@
 import type { Config } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
-import { parseInteger, parseBoolean } from './utils';
+import { parseInteger, getEnvWithDefault, getEnvBoolean, getEnv } from './utils';
+import createJitsiConfig from '../jitsi.config';
+import { videoConfig } from '../video.config';
 
 /**
  * Test environment configuration
@@ -23,40 +25,43 @@ export default function createTestConfig(): Config {
 
   return {
     app: {
-      port: parseInteger(process.env[ENV_VARS.PORT], 0, 0, 65535), // Port 0 = random port for tests
-      apiPrefix: process.env['API_PREFIX'] || DEFAULT_CONFIG.API_PREFIX,
+      // Use helper functions (which use dotenv) for environment variable access
+      port: parseInteger(getEnv(ENV_VARS.PORT), 0, 0, 65535), // Port 0 = random port for tests
+      apiPrefix: getEnvWithDefault('API_PREFIX', DEFAULT_CONFIG.API_PREFIX),
       environment: 'test' as const,
       isDev: true, // Test mode is like development
-      host: process.env['HOST'] || 'localhost',
-      bindAddress: process.env['BIND_ADDRESS'] || '127.0.0.1',
-      baseUrl: process.env['BASE_URL'] || 'http://localhost:0',
-      apiUrl: process.env['API_URL'] || 'http://localhost:0',
+      host: getEnvWithDefault('HOST', 'localhost'),
+      bindAddress: getEnvWithDefault('BIND_ADDRESS', '127.0.0.1'),
+      baseUrl: getEnvWithDefault('BASE_URL', 'http://localhost:0'),
+      apiUrl: getEnvWithDefault('API_URL', 'http://localhost:0'),
     },
     urls: {
-      swagger: process.env['SWAGGER_URL'] || '/docs',
-      bullBoard: process.env['BULL_BOARD_URL'] || '/queue-dashboard',
-      socket: process.env['SOCKET_URL'] || '/socket.io',
-      redisCommander: process.env['REDIS_COMMANDER_URL'] || 'http://localhost:8082',
-      prismaStudio: process.env['PRISMA_STUDIO_URL'] || 'http://localhost:5555',
-      pgAdmin: process.env['PGADMIN_URL'] || 'http://localhost:5050',
-      frontend: process.env['FRONTEND_URL'] || 'http://localhost:3000',
+      // Use helper functions (which use dotenv) for environment variable access
+      swagger: getEnvWithDefault('SWAGGER_URL', '/docs'),
+      bullBoard: getEnvWithDefault('BULL_BOARD_URL', '/queue-dashboard'),
+      socket: getEnvWithDefault('SOCKET_URL', '/socket.io'),
+      redisCommander: getEnvWithDefault('REDIS_COMMANDER_URL', 'http://localhost:8082'),
+      prismaStudio: getEnvWithDefault('PRISMA_STUDIO_URL', 'http://localhost:5555'),
+      pgAdmin: getEnvWithDefault('PGADMIN_URL', 'http://localhost:5050'),
+      frontend: getEnvWithDefault('FRONTEND_URL', 'http://localhost:3000'),
     },
     database: {
+      // Use helper functions (which use dotenv) for environment variable access
       url:
-        process.env[ENV_VARS.DATABASE_URL] ||
-        process.env['TEST_DATABASE_URL'] ||
+        getEnvWithDefault(ENV_VARS.DATABASE_URL, '') ||
+        getEnvWithDefault('TEST_DATABASE_URL', '') ||
         'postgresql://postgres:postgres@localhost:5432/test_userdb?connection_limit=50&pool_timeout=20',
       sqlInjectionPrevention: {
-        enabled: parseBoolean(process.env['DB_SQL_INJECTION_PREVENTION'], false), // Disabled for tests
+        enabled: getEnvBoolean('DB_SQL_INJECTION_PREVENTION', false), // Disabled for tests
       },
       rowLevelSecurity: {
-        enabled: parseBoolean(process.env['DB_ROW_LEVEL_SECURITY'], false), // Disabled for tests
+        enabled: getEnvBoolean('DB_ROW_LEVEL_SECURITY', false), // Disabled for tests
       },
       dataMasking: {
-        enabled: parseBoolean(process.env['DB_DATA_MASKING'], false), // Disabled for tests
+        enabled: getEnvBoolean('DB_DATA_MASKING', false), // Disabled for tests
       },
       rateLimiting: {
-        enabled: parseBoolean(process.env['DB_RATE_LIMITING'], false), // Disabled for tests
+        enabled: getEnvBoolean('DB_RATE_LIMITING', false), // Disabled for tests
       },
       readReplicas: {
         enabled: false, // No read replicas in tests
@@ -65,62 +70,82 @@ export default function createTestConfig(): Config {
       },
     },
     redis: {
-      host: process.env[ENV_VARS.REDIS_HOST] || 'localhost',
-      port: parseInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
-      ttl: parseInteger(process.env['REDIS_TTL'], 60, 1), // Short TTL for tests
-      prefix: process.env['REDIS_PREFIX'] || 'healthcare:test:',
-      enabled: parseBoolean(process.env['REDIS_ENABLED'], true),
+      // Use helper functions (which use dotenv) for environment variable access
+      host: getEnvWithDefault(ENV_VARS.REDIS_HOST, 'localhost'),
+      port: parseInteger(getEnv(ENV_VARS.REDIS_PORT), 6379, 1, 65535),
+      ttl: parseInteger(getEnv('REDIS_TTL'), 60, 1), // Short TTL for tests
+      prefix: getEnvWithDefault('REDIS_PREFIX', 'healthcare:test:'),
+      enabled: getEnvBoolean('REDIS_ENABLED', true),
       development: true, // Test mode
     },
     jwt: {
-      secret: process.env[ENV_VARS.JWT_SECRET] || 'test-jwt-secret-key-for-testing-only',
-      expiration: process.env[ENV_VARS.JWT_EXPIRATION] || '1h', // Shorter expiration for tests
+      // Use helper functions (which use dotenv) for environment variable access
+      secret: getEnvWithDefault(ENV_VARS.JWT_SECRET, 'test-jwt-secret-key-for-testing-only'),
+      expiration: getEnvWithDefault(ENV_VARS.JWT_EXPIRATION, '1h'), // Shorter expiration for tests
     },
     prisma: {
-      schemaPath:
-        process.env['PRISMA_SCHEMA_PATH'] ||
-        './src/libs/infrastructure/database/prisma/schema.prisma',
+      // Use helper functions (which use dotenv) for environment variable access
+      schemaPath: getEnvWithDefault(
+        'PRISMA_SCHEMA_PATH',
+        './src/libs/infrastructure/database/prisma/schema.prisma'
+      ),
     },
     rateLimit: {
-      ttl: parseInteger(process.env['RATE_LIMIT_TTL'], 10, 1), // Short TTL for tests
-      max: parseInteger(process.env['RATE_LIMIT_MAX'], 1000, 1), // Higher limit for tests
+      // Use helper functions (which use dotenv) for environment variable access
+      ttl: parseInteger(getEnv('RATE_LIMIT_TTL'), 10, 1), // Short TTL for tests
+      max: parseInteger(getEnv('RATE_LIMIT_MAX'), 1000, 1), // Higher limit for tests
     },
     logging: {
+      // Use helper functions (which use dotenv) for environment variable access
       level:
-        (process.env[ENV_VARS.LOG_LEVEL] as 'error' | 'warn' | 'info' | 'debug' | 'verbose') ||
-        'error', // Only errors in tests (faster execution)
-      enableAuditLogs: parseBoolean(process.env['ENABLE_AUDIT_LOGS'], false), // Disabled for tests
+        (getEnvWithDefault(ENV_VARS.LOG_LEVEL, 'error') as
+          | 'error'
+          | 'warn'
+          | 'info'
+          | 'debug'
+          | 'verbose') || 'error', // Only errors in tests (faster execution)
+      enableAuditLogs: getEnvBoolean('ENABLE_AUDIT_LOGS', false), // Disabled for tests
     },
     email: {
-      host: process.env[ENV_VARS.EMAIL_HOST] || 'localhost',
-      port: parseInteger(process.env[ENV_VARS.EMAIL_PORT], 1025, 1, 65535), // MailHog/MailCatcher port
-      secure: parseBoolean(process.env['EMAIL_SECURE'], false),
-      user: process.env[ENV_VARS.EMAIL_USER] || '',
-      password: process.env[ENV_VARS.EMAIL_PASSWORD] || '',
-      from: process.env['EMAIL_FROM'] || 'test@healthcare.com',
+      // Use helper functions (which use dotenv) for environment variable access
+      host: getEnvWithDefault(ENV_VARS.EMAIL_HOST, 'localhost'),
+      port: parseInteger(getEnv(ENV_VARS.EMAIL_PORT), 1025, 1, 65535), // MailHog/MailCatcher port
+      secure: getEnvBoolean('EMAIL_SECURE', false),
+      user: getEnvWithDefault(ENV_VARS.EMAIL_USER, ''),
+      password: getEnvWithDefault(ENV_VARS.EMAIL_PASSWORD, ''),
+      from: getEnvWithDefault('EMAIL_FROM', 'test@healthcare.com'),
     },
     cors: {
-      origin: process.env[ENV_VARS.CORS_ORIGIN] || '*', // Allow all in tests
-      credentials: parseBoolean(process.env['CORS_CREDENTIALS'], true),
-      methods: process.env['CORS_METHODS'] || 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+      // Use helper functions (which use dotenv) for environment variable access
+      origin: getEnvWithDefault(ENV_VARS.CORS_ORIGIN, '*'), // Allow all in tests
+      credentials: getEnvBoolean('CORS_CREDENTIALS', true),
+      methods: getEnvWithDefault('CORS_METHODS', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'),
     },
     security: {
-      rateLimit: parseBoolean(process.env['SECURITY_RATE_LIMIT'], false), // Disabled for tests
-      rateLimitMax: parseInteger(process.env['SECURITY_RATE_LIMIT_MAX'], 10000, 1), // High limit
-      rateLimitWindowMs: parseInteger(process.env['SECURITY_RATE_LIMIT_WINDOW_MS'], 1000, 100),
-      trustProxy: parseInteger(process.env['TRUST_PROXY'], 0, 0, 2), // No proxy in tests
+      // Use helper functions (which use dotenv) for environment variable access
+      rateLimit: getEnvBoolean('SECURITY_RATE_LIMIT', false), // Disabled for tests
+      rateLimitMax: parseInteger(getEnv('SECURITY_RATE_LIMIT_MAX'), 10000, 1), // High limit
+      rateLimitWindowMs: parseInteger(getEnv('SECURITY_RATE_LIMIT_WINDOW_MS'), 1000, 100),
+      trustProxy: parseInteger(getEnv('TRUST_PROXY'), 0, 0, 2), // No proxy in tests
     },
     whatsapp: {
-      enabled: parseBoolean(process.env[ENV_VARS.WHATSAPP_ENABLED], false), // Disabled by default
-      apiUrl: process.env['WHATSAPP_API_URL'] || 'https://graph.facebook.com/v17.0',
-      apiKey: process.env[ENV_VARS.WHATSAPP_API_KEY] || '',
-      phoneNumberId: process.env['WHATSAPP_PHONE_NUMBER_ID'] || '',
-      businessAccountId: process.env['WHATSAPP_BUSINESS_ACCOUNT_ID'] || '',
-      otpTemplateId: process.env['WHATSAPP_OTP_TEMPLATE_ID'] || 'otp_verification',
-      appointmentTemplateId:
-        process.env['WHATSAPP_APPOINTMENT_TEMPLATE_ID'] || 'appointment_reminder',
-      prescriptionTemplateId:
-        process.env['WHATSAPP_PRESCRIPTION_TEMPLATE_ID'] || 'prescription_notification',
+      // Use helper functions (which use dotenv) for environment variable access
+      enabled: getEnvBoolean(ENV_VARS.WHATSAPP_ENABLED, false), // Disabled by default
+      apiUrl: getEnvWithDefault('WHATSAPP_API_URL', 'https://graph.facebook.com/v17.0'),
+      apiKey: getEnvWithDefault(ENV_VARS.WHATSAPP_API_KEY, ''),
+      phoneNumberId: getEnvWithDefault('WHATSAPP_PHONE_NUMBER_ID', ''),
+      businessAccountId: getEnvWithDefault('WHATSAPP_BUSINESS_ACCOUNT_ID', ''),
+      otpTemplateId: getEnvWithDefault('WHATSAPP_OTP_TEMPLATE_ID', 'otp_verification'),
+      appointmentTemplateId: getEnvWithDefault(
+        'WHATSAPP_APPOINTMENT_TEMPLATE_ID',
+        'appointment_reminder'
+      ),
+      prescriptionTemplateId: getEnvWithDefault(
+        'WHATSAPP_PRESCRIPTION_TEMPLATE_ID',
+        'prescription_notification'
+      ),
     },
+    jitsi: createJitsiConfig(),
+    video: videoConfig(),
   };
 }

@@ -21,10 +21,8 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private healthCheckInterval?: NodeJS.Timeout;
   // Background monitoring interval: 10-30 seconds (configurable, default 20 seconds)
   // Optimized for 10M+ users - frequent enough for real-time status, not too frequent to cause load
-  private readonly CHECK_INTERVAL_MS = parseInt(
-    process.env['CACHE_HEALTH_CHECK_INTERVAL_MS'] || '20000',
-    10
-  ); // Default 20 seconds (within 10-30 range)
+  // Note: Will be initialized in constructor using ConfigService
+  private CHECK_INTERVAL_MS = 20000; // Default 20 seconds (within 10-30 range)
   private cachedHealthStatus: CacheHealthMonitorStatus | null = null;
   private lastHealthCheckTime = 0;
   private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries
@@ -268,10 +266,8 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
    */
   private getProviderType(): 'redis' | 'dragonfly' | 'memcached' | 'memory' | 'unknown' {
     try {
-      const provider =
-        this.configService?.get<string>('CACHE_PROVIDER')?.toLowerCase() ||
-        process.env['CACHE_PROVIDER']?.toLowerCase() ||
-        'dragonfly'; // Default to Dragonfly
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const provider = this.configService.getCacheProvider();
 
       if (['redis', 'dragonfly', 'memcached', 'memory'].includes(provider)) {
         return provider as 'redis' | 'dragonfly' | 'memcached' | 'memory';
@@ -279,10 +275,10 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
 
       return 'unknown';
     } catch {
-      // Fallback: try to detect from environment
-      const envProvider = process.env['CACHE_PROVIDER']?.toLowerCase();
-      if (envProvider && ['redis', 'dragonfly', 'memcached', 'memory'].includes(envProvider)) {
-        return envProvider as 'redis' | 'dragonfly' | 'memcached' | 'memory';
+      // Fallback: use ConfigService (which uses dotenv) for environment variable access
+      const provider = this.configService.getCacheProvider();
+      if (['redis', 'dragonfly', 'memcached', 'memory'].includes(provider)) {
+        return provider as 'redis' | 'dragonfly' | 'memcached' | 'memory';
       }
       return 'unknown';
     }

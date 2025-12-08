@@ -8,7 +8,7 @@ import { CacheService } from '@infrastructure/cache';
 import { QueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { HealthcareErrorsService } from '@core/errors';
 import { RbacService } from '@core/rbac/rbac.service';
 
@@ -31,6 +31,7 @@ import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notific
 import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
 import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
 import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin';
+import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 
 // DTOs and Types
 import {
@@ -44,6 +45,7 @@ import {
   CompleteAppointmentDto,
   StartConsultationDto,
 } from '@dtos/appointment.dto';
+import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
 
 // Legacy imports for backward compatibility
 import { DatabaseService } from '@infrastructure/database';
@@ -124,6 +126,7 @@ export class AppointmentsService {
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
     private readonly clinicFollowUpPlugin: ClinicFollowUpPlugin, // Medium: Follow-up operations (moderate frequency)
+    private readonly clinicVideoPlugin: ClinicVideoPlugin, // Video consultations (medium-low frequency)
 
     // Infrastructure Services
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
@@ -242,15 +245,63 @@ export class AppointmentsService {
         );
       }
 
-      // Emit event for real-time broadcasting
-      await this.eventService.emit('appointment.created', {
-        appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+      // Auto-create video room for VIDEO_CALL appointments
+      if (isVideoCallAppointmentType(createDto.type) && result.success) {
+        const appointmentId = (result.data as Record<string, unknown>)?.['id'] as string;
+        try {
+          await this.clinicVideoPlugin.process({
+            operation: 'createConsultationRoom',
+            appointmentId,
+            patientId: createDto.patientId,
+            doctorId: createDto.doctorId,
+            clinicId,
+            displayName: {
+              name: 'Patient',
+              email: '',
+            },
+          });
+          void this.loggingService.log(
+            LogType.BUSINESS,
+            LogLevel.INFO,
+            `Video room auto-created for appointment ${appointmentId}`,
+            'AppointmentsService.createAppointment',
+            { appointmentId, type: createDto.type }
+          );
+        } catch (videoError) {
+          // Log but don't fail appointment creation if video room creation fails
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            `Failed to auto-create video room: ${videoError instanceof Error ? videoError.message : String(videoError)}`,
+            'AppointmentsService.createAppointment',
+            {
+              appointmentId,
+              error: videoError instanceof Error ? videoError.message : String(videoError),
+            }
+          );
+        }
+      }
+
+      // Emit enterprise event for real-time WebSocket broadcasting
+      await this.eventService.emitEnterprise('appointment.created', {
+        eventId: `appointment-created-${(result.data as Record<string, unknown>)?.['id'] as string}-${Date.now()}`,
+        eventType: 'appointment.created',
+        category: EventCategory.APPOINTMENT,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'AppointmentsService',
+        version: '1.0.0',
         userId: createDto.patientId,
-        doctorId: createDto.doctorId,
         clinicId,
-        status: (result.data as Record<string, unknown>)?.['status'] as string,
-        appointmentType: createDto.type,
-        createdBy: userId,
+        payload: {
+          appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+          userId: createDto.patientId,
+          doctorId: createDto.doctorId,
+          clinicId,
+          status: (result.data as Record<string, unknown>)?.['status'] as string,
+          appointmentType: createDto.type,
+          createdBy: userId,
+        },
       });
     }
 
@@ -394,14 +445,27 @@ export class AppointmentsService {
         );
       }
 
-      // Emit event for real-time broadcasting
-      await this.eventService.emit('appointment.updated', {
-        appointmentId,
+      // Emit enterprise event for real-time WebSocket broadcasting
+      await this.eventService.emitEnterprise('appointment.updated', {
+        eventId: `appointment-updated-${appointmentId}-${Date.now()}`,
+        eventType: 'appointment.updated',
+        category: EventCategory.APPOINTMENT,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'AppointmentsService',
+        version: '1.0.0',
         userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
-        doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
         clinicId,
-        changes: updateDto,
-        updatedBy: userId,
+        payload: {
+          appointmentId,
+          userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
+          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
+          clinicId,
+          changes: updateDto,
+          updatedBy: userId,
+          status:
+            updateDto.status || ((result.data as Record<string, unknown>)?.['status'] as string),
+        },
       });
     }
 
@@ -478,14 +542,26 @@ export class AppointmentsService {
         );
       }
 
-      // Emit event for real-time broadcasting
-      await this.eventService.emit('appointment.cancelled', {
-        appointmentId,
+      // Emit enterprise event for real-time WebSocket broadcasting
+      await this.eventService.emitEnterprise('appointment.cancelled', {
+        eventId: `appointment-cancelled-${appointmentId}-${Date.now()}`,
+        eventType: 'appointment.cancelled',
+        category: EventCategory.APPOINTMENT,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'AppointmentsService',
+        version: '1.0.0',
         userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
-        doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
         clinicId,
-        reason,
-        cancelledBy: userId,
+        payload: {
+          appointmentId,
+          userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
+          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
+          clinicId,
+          reason,
+          cancelledBy: userId,
+          status: 'CANCELLED',
+        },
       });
     }
 
@@ -784,12 +860,30 @@ export class AppointmentsService {
           }
         }
 
-        // Emit event for real-time broadcasting
-        await this.eventService.emit('appointment.completed', {
+        // Emit enterprise event for real-time WebSocket broadcasting
+        const appointment = (await this.getAppointmentById(
           appointmentId,
+          clinicId
+        )) as AppointmentWithRelations | null;
+        await this.eventService.emitEnterprise('appointment.completed', {
+          eventId: `appointment-completed-${appointmentId}-${Date.now()}`,
+          eventType: 'appointment.completed',
+          category: EventCategory.APPOINTMENT,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'AppointmentsService',
+          version: '1.0.0',
+          userId: appointment?.patientId || userId,
           clinicId,
-          completedBy: userId,
-          completionData: completeDto,
+          payload: {
+            appointmentId,
+            clinicId,
+            completedBy: userId,
+            completionData: completeDto,
+            status: 'COMPLETED',
+            patientId: appointment?.patientId,
+            doctorId: appointment?.doctorId,
+          },
         });
       }
       return result;
@@ -1076,15 +1170,8 @@ export class AppointmentsService {
   }
 
   // =============================================
-  // LEGACY METHODS REMOVED
+  // UTILITY METHODS
   // =============================================
-  // Legacy methods have been removed to eliminate duplication.
-  // Please use the enhanced methods directly:
-  // - createAppointment() instead of createAppointmentLegacy()
-
-  // - getAppointments() instead of getAppointmentsLegacy()
-  // - updateAppointment() instead of updateAppointmentLegacy()
-  // - cancelAppointment() instead of cancelAppointmentLegacy()
 
   // =============================================
   // UTILITY METHODS

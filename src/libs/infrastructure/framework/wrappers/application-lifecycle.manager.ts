@@ -270,14 +270,11 @@ export class ApplicationLifecycleManager {
           }
         }
 
-        // Try to get more context about what was undefined
+        // Log error context for troubleshooting
         if (errorMessage.includes("Cannot read properties of undefined (reading 'set')")) {
-          this.logger.error('DEBUG: Error is about undefined .set() method');
-          this.logger.error('DEBUG: This suggests something is trying to call .set() on undefined');
-          this.logger.error(
-            'DEBUG: Common causes: app.set(), app.getHttpAdapter().set(), or similar'
-          );
-          this.logger.error('DEBUG: This might be happening in a service OnModuleInit hook');
+          this.logger.error('Error: Attempting to call .set() on undefined object');
+          this.logger.error('Common causes: app.set(), app.getHttpAdapter().set(), or similar');
+          this.logger.error('This might be happening in a service OnModuleInit hook');
         }
 
         throw listenError;

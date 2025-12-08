@@ -49,6 +49,12 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 
+/**
+ * Legacy Notification Controller
+ * Use CommunicationController at /communication instead
+ * This controller is maintained for backward compatibility.
+ * All endpoints have been consolidated into the unified CommunicationController with category-based routing.
+ */
 @ApiTags('notifications')
 @Controller('notifications')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))

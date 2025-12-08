@@ -14,13 +14,19 @@ import type {
   CorsConfig,
   SecurityConfig,
   WhatsappConfig,
+  JitsiConfig,
   EnhancedRateLimitConfig,
   CacheConfig,
+  VideoProviderConfig,
 } from '@core/types';
 import {
   isCacheEnabled as checkCacheEnabled,
   getCacheProvider as getCacheProviderType,
 } from './cache.config';
+import {
+  isVideoEnabled as checkVideoEnabled,
+  getVideoProvider as getVideoProviderType,
+} from './video.config';
 
 /**
  * Enhanced Type-Safe Configuration Service
@@ -208,6 +214,22 @@ export class ConfigService {
   }
 
   /**
+   * Get Jitsi Meet configuration
+   * @returns Jitsi configuration
+   */
+  getJitsiConfig(): JitsiConfig {
+    return this.get<JitsiConfig>('jitsi');
+  }
+
+  /**
+   * Get video provider configuration
+   * @returns Video provider configuration
+   */
+  getVideoConfig(): VideoProviderConfig {
+    return this.get<VideoProviderConfig>('video');
+  }
+
+  /**
    * Get cache configuration
    * @returns Cache configuration
    */
@@ -233,6 +255,22 @@ export class ConfigService {
    */
   getCacheProvider(): 'redis' | 'dragonfly' | 'memory' {
     return getCacheProviderType();
+  }
+
+  /**
+   * Check if video is enabled
+   * @returns True if video is enabled
+   */
+  isVideoEnabled(): boolean {
+    return checkVideoEnabled();
+  }
+
+  /**
+   * Get video provider type
+   * @returns 'openvidu' | 'jitsi'
+   */
+  getVideoProvider(): 'openvidu' | 'jitsi' {
+    return getVideoProviderType();
   }
 
   /**
@@ -352,6 +390,8 @@ export class ConfigService {
       cors: this.getCorsConfig(),
       security: this.getSecurityConfig(),
       whatsapp: this.getWhatsappConfig(),
+      jitsi: this.getJitsiConfig(),
+      video: this.getVideoConfig(),
     };
   }
 

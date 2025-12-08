@@ -11,6 +11,7 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';
+import { SocialAuthService } from './core/social-auth.service';
 import {
   LoginDto,
   RegisterDto,
@@ -44,11 +45,18 @@ export class AuthService {
     private readonly emailService: EmailService,
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
-    private readonly jwtAuthService: JwtAuthService
+    private readonly jwtAuthService: JwtAuthService,
+    private readonly socialAuthService: SocialAuthService
   ) {
     // Defensive check: ensure configService is available
     if (!this.configService) {
-      console.error('[AuthService] ConfigService is not injected!');
+      void this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'ConfigService is not injected',
+        'AuthService.constructor',
+        {}
+      );
     }
   }
 
@@ -556,7 +564,7 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService?.get<string>('FRONTEND_URL') || process.env['FRONTEND_URL'] || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.getUrlsConfig().frontend || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
         },
       });
 
@@ -955,5 +963,126 @@ export class AuthService {
       userAgent,
       ipAddress
     );
+  }
+
+  /**
+   * Authenticate with Google OAuth
+   * @param googleToken - Google ID token or access token
+   * @param clinicId - Optional clinic ID for multi-tenant context
+   * @returns AuthResponse with JWT tokens and user information
+   */
+  async authenticateWithGoogle(googleToken: string, clinicId?: string): Promise<AuthResponse> {
+    try {
+      // Verify Google token and get user info
+      const socialAuthResult = await this.socialAuthService.authenticateWithGoogle(googleToken);
+
+      if (!socialAuthResult.success || !socialAuthResult.user) {
+        throw this.errors.invalidCredentials('AuthService.authenticateWithGoogle');
+      }
+
+      // Type assertion for social user - we know the structure from SocialAuthService.processSocialUser
+      const socialUser = socialAuthResult.user as
+        | {
+            id: string;
+            email: string;
+            firstName?: string;
+            lastName?: string;
+            role?: string;
+            isVerified?: boolean;
+            profilePicture?: string;
+          }
+        | null
+        | undefined;
+
+      if (!socialUser || !socialUser.email) {
+        throw this.errors.invalidCredentials('AuthService.authenticateWithGoogle');
+      }
+
+      const userEmail: string = socialUser.email;
+      const userId: string = socialUser.id;
+
+      // Find the full user record
+      const fullUser = await this.databaseService.findUserByEmailSafe(userEmail);
+      if (!fullUser) {
+        throw this.errors.userNotFound(userId, 'AuthService.authenticateWithGoogle');
+      }
+
+      // Determine clinic ID
+      const finalClinicId = clinicId || fullUser.primaryClinicId || undefined;
+
+      // Create session
+      const session = await this.sessionService.createSession({
+        userId: fullUser.id,
+        userAgent: 'Google OAuth',
+        ipAddress: '127.0.0.1',
+        metadata: { googleOAuth: true, isNewUser: socialAuthResult.isNewUser },
+        ...(finalClinicId && { clinicId: finalClinicId }),
+      });
+
+      // Generate tokens
+      const userForTokens: UserProfile = {
+        id: fullUser.id,
+        email: fullUser.email,
+        name:
+          fullUser.name ||
+          `${fullUser.firstName || ''} ${fullUser.lastName || ''}`.trim() ||
+          fullUser.email,
+        role: fullUser.role,
+        ...(fullUser.phone && { phone: fullUser.phone }),
+        ...(fullUser.primaryClinicId && { primaryClinicId: fullUser.primaryClinicId }),
+      };
+
+      const tokens = await this.generateTokens(userForTokens, session.sessionId);
+
+      // Update last login
+      await this.databaseService.updateUserSafe(fullUser.id, {
+        lastLogin: new Date(),
+      });
+
+      // Emit Google OAuth login event
+      await this.eventService.emit('user.google_oauth_logged_in', {
+        userId: fullUser.id,
+        email: fullUser.email,
+        role: fullUser.role,
+        clinicId: finalClinicId,
+        sessionId: session.sessionId,
+        isNewUser: socialAuthResult.isNewUser,
+      });
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Google OAuth login successful for: ${fullUser.email}${socialAuthResult.isNewUser ? ' (new user)' : ''}`,
+        'AuthService.authenticateWithGoogle',
+        { userId: fullUser.id, email: fullUser.email, role: fullUser.role, clinicId: finalClinicId }
+      );
+
+      return {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        user: {
+          id: fullUser.id,
+          email: fullUser.email,
+          firstName: fullUser.firstName,
+          lastName: fullUser.lastName,
+          role: fullUser.role,
+          isVerified: fullUser.isVerified,
+          clinicId: finalClinicId,
+          profilePicture: fullUser.profilePicture,
+        },
+      };
+    } catch (_error) {
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Google OAuth authentication failed`,
+        'AuthService.authenticateWithGoogle',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : undefined,
+        }
+      );
+      throw _error;
+    }
   }
 }

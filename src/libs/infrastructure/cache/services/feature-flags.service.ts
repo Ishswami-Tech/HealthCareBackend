@@ -61,16 +61,13 @@ export class FeatureFlagsService implements OnModuleInit {
    * Load feature flags from configuration
    */
   private loadFlags(): void {
+    // Use ConfigService (which uses dotenv) for environment variable access
     const getFlag = (key: string, defaultValue: boolean): boolean => {
       try {
-        return (
-          this.configService?.get<boolean>(key, defaultValue) ||
-          process.env[key] === 'true' ||
-          process.env[key] === '1' ||
-          defaultValue
-        );
+        return this.configService.getEnvBoolean(key, defaultValue);
       } catch {
-        return process.env[key] === 'true' || process.env[key] === '1' || defaultValue;
+        // Defensive fallback - should rarely be needed
+        return defaultValue;
       }
     };
 

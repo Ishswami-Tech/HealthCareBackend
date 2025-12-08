@@ -36,9 +36,9 @@ export const PHI_CACHE_KEY = 'phi_cache' as const; // Protected Health Informati
 
 /**
  * Legacy cache options interface (for backward compatibility)
- * @deprecated Use UnifiedCacheOptions instead
+ * Use UnifiedCacheOptions instead
  */
-export interface CacheOptions {
+interface LegacyCacheOptions {
   /** Cache TTL in seconds */
   readonly ttl?: number;
   /** Custom cache key */
@@ -79,7 +79,7 @@ export interface CacheOptions {
  * }
  * ```
  */
-export const Cache = (options: UnifiedCacheOptions | CacheOptions = {}) => {
+export const Cache = (options: UnifiedCacheOptions | LegacyCacheOptions = {}) => {
   return applyDecorators(
     SetMetadata(CACHE_KEY, {
       ...options,

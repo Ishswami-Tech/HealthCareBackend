@@ -212,6 +212,71 @@ export class HealthcareErrorsService {
     return this.createError(ErrorCode.APPOINTMENT_PAST_DATE, HttpStatus.BAD_REQUEST, context);
   }
 
+  // Check-In Errors
+  checkInNoAppointmentFound(locationId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_NO_APPOINTMENT_FOUND,
+      HttpStatus.NOT_FOUND,
+      context,
+      locationId ? { locationId } : undefined
+    );
+  }
+
+  checkInAlreadyCheckedIn(appointmentId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_ALREADY_CHECKED_IN,
+      HttpStatus.CONFLICT,
+      context,
+      appointmentId ? { appointmentId } : undefined
+    );
+  }
+
+  checkInWrongLocation(
+    appointmentLocationId?: string,
+    scannedLocationId?: string,
+    context?: string
+  ): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_WRONG_LOCATION,
+      HttpStatus.BAD_REQUEST,
+      context,
+      appointmentLocationId && scannedLocationId
+        ? { appointmentLocationId, scannedLocationId }
+        : undefined
+    );
+  }
+
+  checkInAppointmentExpired(appointmentId?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_APPOINTMENT_EXPIRED,
+      HttpStatus.BAD_REQUEST,
+      context,
+      appointmentId ? { appointmentId } : undefined
+    );
+  }
+
+  checkInTimeWindowExpired(
+    appointmentTime?: string,
+    currentTime?: string,
+    context?: string
+  ): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED,
+      HttpStatus.BAD_REQUEST,
+      context,
+      appointmentTime && currentTime ? { appointmentTime, currentTime } : undefined
+    );
+  }
+
+  checkInInvalidQRCode(qrCode?: string, context?: string): HealthcareError {
+    return this.createError(
+      ErrorCode.CHECKIN_INVALID_QR_CODE,
+      HttpStatus.BAD_REQUEST,
+      context,
+      qrCode ? { qrCode: qrCode.substring(0, 20) + '...' } : undefined
+    );
+  }
+
   // Doctor & Staff Errors
   doctorNotFound(doctorId?: string, context?: string): HealthcareError {
     return this.createError(

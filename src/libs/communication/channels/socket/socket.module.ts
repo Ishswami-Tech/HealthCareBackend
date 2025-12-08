@@ -17,13 +17,14 @@ import { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth
     forwardRef(() => EventsModule), // Central event system for EventSocketBroadcaster
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => ({
-        secret:
-          configService?.get<string>('JWT_SECRET') ||
-          process.env['JWT_SECRET'] ||
-          'default-secret-key',
-        signOptions: { expiresIn: '7d' },
-      }),
+      useFactory: (configService: ConfigService) => {
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const jwtConfig = configService.getJwtConfig();
+        return {
+          secret: jwtConfig.secret || 'default-secret-key',
+          signOptions: { expiresIn: '7d' },
+        };
+      },
       inject: [ConfigService],
     }),
   ],

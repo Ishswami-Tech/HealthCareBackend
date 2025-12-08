@@ -1,4 +1,5 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -18,6 +19,7 @@ export class AppointmentConfirmationService {
   private readonly CONFIRMATION_CACHE_TTL = 1800; // 30 minutes
 
   constructor(
+    @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly qrService: QrService
@@ -396,7 +398,10 @@ export class AppointmentConfirmationService {
 
   // Helper methods
   private encryptQRData(data: QRCodeData): string {
-    const secretKey = process.env['QR_ENCRYPTION_KEY'] || 'default-secret-key-32-chars-long';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const secretKey =
+      this.configService.getEnv('QR_ENCRYPTION_KEY', 'default-secret-key-32-chars-long') ||
+      'default-secret-key-32-chars-long';
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv(
       'aes-256-cbc',
@@ -410,7 +415,10 @@ export class AppointmentConfirmationService {
 
   private decryptQRData(encryptedData: string): QRCodeData | null {
     try {
-      const secretKey = process.env['QR_ENCRYPTION_KEY'] || 'default-secret-key-32-chars-long';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const secretKey =
+        this.configService.getEnv('QR_ENCRYPTION_KEY', 'default-secret-key-32-chars-long') ||
+        'default-secret-key-32-chars-long';
       const [ivHex, encrypted] = encryptedData.split(':');
       if (!ivHex || !encrypted) return null;
       const iv = Buffer.from(ivHex, 'hex');

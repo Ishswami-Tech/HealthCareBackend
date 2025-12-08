@@ -1,6 +1,14 @@
 import { registerAs } from '@nestjs/config';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import {
+  getEnv,
+  getEnvWithDefault,
+  getEnvNumber,
+  getEnvBoolean,
+  getEnvironment,
+  isProduction,
+} from '@config/environment/utils';
 
 /**
  * Healthcare Multi-Clinic Configuration
@@ -19,113 +27,116 @@ export const healthcareConfig = registerAs('healthcare', () => ({
   appType: 'healthcare',
 
   // Multi-clinic settings
+  // Use helper functions (which use dotenv) for environment variable access
+  // These mimic ConfigService methods but work in config factories
   multiClinic: {
-    enabled: process.env['MULTI_CLINIC_ENABLED'] === 'true' || true,
-    isolationLevel: process.env['CLINIC_ISOLATION_LEVEL'] || 'row', // 'row' | 'schema'
-    maxClinicsPerApp: parseInt(process.env['MAX_CLINICS_PER_APP'] || '200', 10),
-    maxLocationsPerClinic: parseInt(process.env['MAX_LOCATIONS_PER_CLINIC'] || '50', 10),
+    enabled: getEnvBoolean('MULTI_CLINIC_ENABLED', true),
+    isolationLevel: getEnvWithDefault('CLINIC_ISOLATION_LEVEL', 'row'), // 'row' | 'schema'
+    maxClinicsPerApp: getEnvNumber('MAX_CLINICS_PER_APP', 200),
+    maxLocationsPerClinic: getEnvNumber('MAX_LOCATIONS_PER_CLINIC', 50),
   },
 
   // Enterprise Database configuration for 1M+ users
   database: {
-    url: process.env['DATABASE_URL'] || 'postgresql://localhost:5432/healthcare',
+    url: getEnvWithDefault('DATABASE_URL', 'postgresql://localhost:5432/healthcare'),
     schema: 'healthcare',
-    ssl: process.env['DATABASE_SSL'] === 'true' || false,
+    ssl: getEnvBoolean('DATABASE_SSL', false),
     connectionPool: {
       // Enhanced connection pooling for 1M+ users
       primary: {
-        min: parseInt(process.env['DB_POOL_MIN'] || '50', 10), // Increased for scale
-        max: parseInt(process.env['DB_POOL_MAX'] || '500', 10), // Increased for 1M users
-        acquireTimeout: parseInt(process.env['DB_POOL_ACQUIRE_TIMEOUT'] || '60000', 10),
-        idleTimeout: parseInt(process.env['DB_POOL_IDLE_TIMEOUT'] || '300000', 10),
-        reapInterval: parseInt(process.env['DB_POOL_REAP_INTERVAL'] || '1000', 10),
-        createTimeout: parseInt(process.env['DB_POOL_CREATE_TIMEOUT'] || '30000', 10),
-        destroyTimeout: parseInt(process.env['DB_POOL_DESTROY_TIMEOUT'] || '5000', 10),
-        createRetryInterval: parseInt(process.env['DB_POOL_CREATE_RETRY_INTERVAL'] || '200', 10),
+        min: getEnvNumber('DB_POOL_MIN', 50), // Increased for scale
+        max: getEnvNumber('DB_POOL_MAX', 500), // Increased for 1M users
+        acquireTimeout: getEnvNumber('DB_POOL_ACQUIRE_TIMEOUT', 60000),
+        idleTimeout: getEnvNumber('DB_POOL_IDLE_TIMEOUT', 300000),
+        reapInterval: getEnvNumber('DB_POOL_REAP_INTERVAL', 1000),
+        createTimeout: getEnvNumber('DB_POOL_CREATE_TIMEOUT', 30000),
+        destroyTimeout: getEnvNumber('DB_POOL_DESTROY_TIMEOUT', 5000),
+        createRetryInterval: getEnvNumber('DB_POOL_CREATE_RETRY_INTERVAL', 200),
       },
       // Read replica support for scaling reads
       readReplicas: {
-        enabled: process.env['DB_READ_REPLICAS_ENABLED'] === 'true' || false,
-        min: parseInt(process.env['DB_READ_POOL_MIN'] || '25', 10),
-        max: parseInt(process.env['DB_READ_POOL_MAX'] || '200', 10),
-        loadBalancing: process.env['DB_LOAD_BALANCING'] || 'round-robin',
-        failover: process.env['DB_FAILOVER'] === 'true' || true,
-        urls: process.env['READ_REPLICA_URLS'] ? process.env['READ_REPLICA_URLS'].split(',') : [],
+        enabled: getEnvBoolean('DB_READ_REPLICAS_ENABLED', false),
+        min: getEnvNumber('DB_READ_POOL_MIN', 25),
+        max: getEnvNumber('DB_READ_POOL_MAX', 200),
+        loadBalancing: getEnvWithDefault('DB_LOAD_BALANCING', 'round-robin'),
+        failover: getEnvBoolean('DB_FAILOVER', true),
+        urls: (() => {
+          const urlsValue = getEnv('READ_REPLICA_URLS');
+          return urlsValue ? urlsValue.split(',').filter(Boolean) : [];
+        })(),
       },
       // Connection validation for reliability
       validation: {
         enabled: true,
         query: 'SELECT 1',
-        interval: parseInt(process.env['DB_VALIDATION_INTERVAL'] || '30000', 10),
-        timeout: parseInt(process.env['DB_VALIDATION_TIMEOUT'] || '5000', 10),
+        interval: getEnvNumber('DB_VALIDATION_INTERVAL', 30000),
+        timeout: getEnvNumber('DB_VALIDATION_TIMEOUT', 5000),
       },
     },
     // Advanced query optimization for 1M users
     queryOptimization: {
       enabled: true,
-      batchSize: parseInt(process.env['DB_BATCH_SIZE'] || '2000', 10), // Larger batches for scale
-      parallelQueries: parseInt(process.env['DB_PARALLEL_QUERIES'] || '20', 10), // More parallel processing
+      batchSize: getEnvNumber('DB_BATCH_SIZE', 2000), // Larger batches for scale
+      parallelQueries: getEnvNumber('DB_PARALLEL_QUERIES', 20), // More parallel processing
       queryCache: {
-        enabled: process.env['DB_QUERY_CACHE'] === 'true' || true,
-        ttl: parseInt(process.env['DB_QUERY_CACHE_TTL'] || '300', 10),
-        maxSize: parseInt(process.env['DB_QUERY_CACHE_MAX_SIZE'] || '50000', 10), // Larger cache
+        enabled: getEnvBoolean('DB_QUERY_CACHE', true),
+        ttl: getEnvNumber('DB_QUERY_CACHE_TTL', 300),
+        maxSize: getEnvNumber('DB_QUERY_CACHE_MAX_SIZE', 50000), // Larger cache
       },
       resultCache: {
-        enabled: process.env['DB_RESULT_CACHE'] === 'true' || true,
-        ttl: parseInt(process.env['DB_RESULT_CACHE_TTL'] || '600', 10),
-        maxSize: parseInt(process.env['DB_RESULT_CACHE_MAX_SIZE'] || '100000', 10), // Larger cache
+        enabled: getEnvBoolean('DB_RESULT_CACHE', true),
+        ttl: getEnvNumber('DB_RESULT_CACHE_TTL', 600),
+        maxSize: getEnvNumber('DB_RESULT_CACHE_MAX_SIZE', 100000), // Larger cache
       },
       // Circuit breaker for resilience
       circuitBreaker: {
-        enabled: process.env['DB_CIRCUIT_BREAKER'] === 'true' || true,
-        failureThreshold: parseInt(process.env['DB_CIRCUIT_BREAKER_THRESHOLD'] || '5', 10),
-        timeout: parseInt(process.env['DB_CIRCUIT_BREAKER_TIMEOUT'] || '30000', 10),
-        resetTimeout: parseInt(process.env['DB_CIRCUIT_BREAKER_RESET'] || '60000', 10),
+        enabled: getEnvBoolean('DB_CIRCUIT_BREAKER', true),
+        failureThreshold: getEnvNumber('DB_CIRCUIT_BREAKER_THRESHOLD', 5),
+        timeout: getEnvNumber('DB_CIRCUIT_BREAKER_TIMEOUT', 30000),
+        resetTimeout: getEnvNumber('DB_CIRCUIT_BREAKER_RESET', 60000),
       },
     },
     // Performance tuning for massive scale
     performance: {
       // Memory optimization for large scale
       memory: {
-        sharedBuffers: process.env['DB_SHARED_BUFFERS'] || '512MB',
-        effectiveCacheSize: process.env['DB_EFFECTIVE_CACHE_SIZE'] || '4GB',
-        workMem: process.env['DB_WORK_MEM'] || '8MB',
-        maintenanceWorkMem: process.env['DB_MAINTENANCE_WORK_MEM'] || '256MB',
-        maxConnections: parseInt(process.env['DB_MAX_CONNECTIONS'] || '500', 10),
+        sharedBuffers: getEnvWithDefault('DB_SHARED_BUFFERS', '512MB'),
+        effectiveCacheSize: getEnvWithDefault('DB_EFFECTIVE_CACHE_SIZE', '4GB'),
+        workMem: getEnvWithDefault('DB_WORK_MEM', '8MB'),
+        maintenanceWorkMem: getEnvWithDefault('DB_MAINTENANCE_WORK_MEM', '256MB'),
+        maxConnections: getEnvNumber('DB_MAX_CONNECTIONS', 500),
       },
       // WAL configuration for high throughput
       wal: {
-        enabled: process.env['DB_WAL_ENABLED'] === 'true' || true,
-        level: process.env['DB_WAL_LEVEL'] || 'replica',
-        keepSegments: parseInt(process.env['DB_WAL_KEEP_SEGMENTS'] || '128', 10),
-        archiveTimeout: parseInt(process.env['DB_WAL_ARCHIVE_TIMEOUT'] || '60', 10),
+        enabled: getEnvBoolean('DB_WAL_ENABLED', true),
+        level: getEnvWithDefault('DB_WAL_LEVEL', 'replica'),
+        keepSegments: getEnvNumber('DB_WAL_KEEP_SEGMENTS', 128),
+        archiveTimeout: getEnvNumber('DB_WAL_ARCHIVE_TIMEOUT', 60),
       },
       // Auto-scaling configuration
       autoScaling: {
-        enabled: process.env['DB_AUTO_SCALING_ENABLED'] === 'true' || true,
-        cpuThreshold: parseInt(process.env['DB_AUTO_SCALING_CPU_THRESHOLD'] || '75', 10),
-        connectionThreshold: parseInt(
-          process.env['DB_AUTO_SCALING_CONNECTION_THRESHOLD'] || '400',
-          10
-        ),
-        scaleUpCooldown: parseInt(process.env['DB_SCALE_UP_COOLDOWN'] || '300', 10),
-        scaleDownCooldown: parseInt(process.env['DB_SCALE_DOWN_COOLDOWN'] || '1800', 10),
+        enabled: getEnvBoolean('DB_AUTO_SCALING_ENABLED', true),
+        cpuThreshold: getEnvNumber('DB_AUTO_SCALING_CPU_THRESHOLD', 75),
+        connectionThreshold: getEnvNumber('DB_AUTO_SCALING_CONNECTION_THRESHOLD', 400),
+        scaleUpCooldown: getEnvNumber('DB_SCALE_UP_COOLDOWN', 300),
+        scaleDownCooldown: getEnvNumber('DB_SCALE_DOWN_COOLDOWN', 1800),
       },
     },
   },
 
   // Cache settings - Optimized for 10M+ users
   // Note: Cache enabled status is controlled by cache.config.ts (single source of truth)
+  // Use helper functions (which use dotenv) for environment variable access
   cache: {
-    enabled: process.env['CACHE_ENABLED'] === 'true',
-    ttl: parseInt(process.env['CACHE_TTL'] || '300', 10), // 5 minutes
-    maxSize: parseInt(process.env['CACHE_MAX_SIZE'] || '100000', 10), // Increased from 10000 to 100000 for 10M+ users
+    enabled: getEnvBoolean('CACHE_ENABLED', false),
+    ttl: getEnvNumber('CACHE_TTL', 300), // 5 minutes
+    maxSize: getEnvNumber('CACHE_MAX_SIZE', 100000), // Increased from 10000 to 100000 for 10M+ users
 
     // Clinic-specific cache TTL
-    clinicDataTtl: parseInt(process.env['CLINIC_CACHE_TTL'] || '3600', 10), // 1 hour
-    patientDataTtl: parseInt(process.env['PATIENT_CACHE_TTL'] || '1800', 10), // 30 minutes
-    appointmentDataTtl: parseInt(process.env['APPOINTMENT_CACHE_TTL'] || '300', 10), // 5 minutes
-    emergencyDataTtl: parseInt(process.env['EMERGENCY_CACHE_TTL'] || '60', 10), // 1 minute
+    clinicDataTtl: getEnvNumber('CLINIC_CACHE_TTL', 3600), // 1 hour
+    patientDataTtl: getEnvNumber('PATIENT_CACHE_TTL', 1800), // 30 minutes
+    appointmentDataTtl: getEnvNumber('APPOINTMENT_CACHE_TTL', 300), // 5 minutes
+    emergencyDataTtl: getEnvNumber('EMERGENCY_CACHE_TTL', 60), // 1 minute
   },
 
   // HIPAA Compliance settings
@@ -154,35 +165,36 @@ export const healthcareConfig = registerAs('healthcare', () => ({
   },
 
   // Security configuration
+  // Use helper functions (which use dotenv) for environment variable access
   security: {
     encryption: {
-      algorithm: process.env['ENCRYPTION_ALGORITHM'] || 'AES-256-GCM',
-      keyRotation: parseInt(process.env['ENCRYPTION_KEY_ROTATION_DAYS'] || '90', 10),
-      keyStorage: process.env['ENCRYPTION_KEY_STORAGE'] || 'local', // 'aws-kms' | 'azure-keyvault' | 'local'
+      algorithm: getEnvWithDefault('ENCRYPTION_ALGORITHM', 'AES-256-GCM'),
+      keyRotation: getEnvNumber('ENCRYPTION_KEY_ROTATION_DAYS', 90),
+      keyStorage: getEnvWithDefault('ENCRYPTION_KEY_STORAGE', 'local'), // 'aws-kms' | 'azure-keyvault' | 'local'
     },
     authentication: {
-      jwtSecret: process.env['JWT_SECRET'] || 'your-healthcare-jwt-secret',
-      jwtExpiration: process.env['JWT_EXPIRATION'] || '8h', // Shorter for healthcare
-      refreshTokenExpiration: process.env['REFRESH_TOKEN_EXPIRATION'] || '24h',
-      sessionTimeout: parseInt(process.env['SESSION_TIMEOUT'] || '28800', 10), // 8 hours
+      jwtSecret: getEnvWithDefault('JWT_SECRET', 'your-healthcare-jwt-secret'),
+      jwtExpiration: getEnvWithDefault('JWT_EXPIRATION', '8h'), // Shorter for healthcare
+      refreshTokenExpiration: getEnvWithDefault('REFRESH_TOKEN_EXPIRATION', '24h'),
+      sessionTimeout: getEnvNumber('SESSION_TIMEOUT', 28800), // 8 hours
       passwordPolicy: {
-        minLength: parseInt(process.env['PASSWORD_MIN_LENGTH'] || '12', 10), // Stricter for healthcare
+        minLength: getEnvNumber('PASSWORD_MIN_LENGTH', 12), // Stricter for healthcare
         requireUppercase: true,
         requireLowercase: true,
         requireNumbers: true,
         requireSpecialChars: true,
-        preventReuse: parseInt(process.env['PASSWORD_HISTORY'] || '12', 10),
+        preventReuse: getEnvNumber('PASSWORD_HISTORY', 12),
       },
     },
     rateLimit: {
       // Per-clinic rate limiting for better resource distribution
       perClinicLimits: {
-        loginAttempts: parseInt(process.env['RATE_LIMIT_LOGIN'] || '5', 10),
-        apiCalls: parseInt(process.env['RATE_LIMIT_API'] || '1000', 10),
-        patientSearch: parseInt(process.env['RATE_LIMIT_PATIENT_SEARCH'] || '100', 10),
-        appointmentBooking: parseInt(process.env['RATE_LIMIT_APPOINTMENT'] || '50', 10),
+        loginAttempts: getEnvNumber('RATE_LIMIT_LOGIN', 5),
+        apiCalls: getEnvNumber('RATE_LIMIT_API', 1000),
+        patientSearch: getEnvNumber('RATE_LIMIT_PATIENT_SEARCH', 100),
+        appointmentBooking: getEnvNumber('RATE_LIMIT_APPOINTMENT', 50),
       },
-      windowMs: parseInt(process.env['RATE_LIMIT_WINDOW'] || '900000', 10), // 15 minutes
+      windowMs: getEnvNumber('RATE_LIMIT_WINDOW', 900000), // 15 minutes
       skipSuccessfulRequests: false,
       skipFailedRequests: false,
     },
@@ -214,16 +226,16 @@ export const healthcareConfig = registerAs('healthcare', () => ({
     backupAndRecovery: true,
 
     // Integration features
-    hl7Integration: process.env['HL7_INTEGRATION'] === 'true' || false,
-    fhirCompliance: process.env['FHIR_COMPLIANCE'] === 'true' || false,
-    icdIntegration: process.env['ICD_INTEGRATION'] === 'true' || false,
+    hl7Integration: getEnvBoolean('HL7_INTEGRATION', false),
+    fhirCompliance: getEnvBoolean('FHIR_COMPLIANCE', false),
+    icdIntegration: getEnvBoolean('ICD_INTEGRATION', false),
   },
 
   // Clinic configuration
   clinic: {
-    requireVerification: process.env['CLINIC_VERIFICATION_REQUIRED'] === 'true' || true,
-    maxStaffPerClinic: parseInt(process.env['MAX_STAFF_PER_CLINIC'] || '500', 10),
-    maxPatientsPerClinic: parseInt(process.env['MAX_PATIENTS_PER_CLINIC'] || '25000', 10), // 10L users across 200 clinics = ~5K avg per clinic
+    requireVerification: getEnvBoolean('CLINIC_VERIFICATION_REQUIRED', true),
+    maxStaffPerClinic: getEnvNumber('MAX_STAFF_PER_CLINIC', 500),
+    maxPatientsPerClinic: getEnvNumber('MAX_PATIENTS_PER_CLINIC', 25000), // 10L users across 200 clinics = ~5K avg per clinic
     requireOperatingHours: true,
     requireContactInfo: true,
     requireLicenseInfo: true,
@@ -235,7 +247,7 @@ export const healthcareConfig = registerAs('healthcare', () => ({
       requireEmail: true,
       requireOperatingHours: true,
       requireStaffAssignment: true,
-      allowOverlapSchedules: process.env['ALLOW_OVERLAP_SCHEDULES'] === 'true' || false,
+      allowOverlapSchedules: getEnvBoolean('ALLOW_OVERLAP_SCHEDULES', false),
     },
   },
 
@@ -244,31 +256,31 @@ export const healthcareConfig = registerAs('healthcare', () => ({
     connectionPooling: {
       enabled: true,
       strategy: 'round_robin', // 'round_robin' | 'least_connections'
-      healthCheckInterval: parseInt(process.env['HEALTH_CHECK_INTERVAL'] || '30000', 10),
+      healthCheckInterval: getEnvNumber('HEALTH_CHECK_INTERVAL', 30000),
     },
     caching: {
       strategy: 'lru', // 'lru' | 'lfu' | 'fifo'
-      distributedCache: process.env['DISTRIBUTED_CACHE'] === 'true' || true,
-      cacheWarmup: process.env['CACHE_WARMUP'] === 'true' || true,
+      distributedCache: getEnvBoolean('DISTRIBUTED_CACHE', true),
+      cacheWarmup: getEnvBoolean('CACHE_WARMUP', true),
     },
     queryOptimization: {
       enabled: true,
-      slowQueryThreshold: parseInt(process.env['SLOW_QUERY_THRESHOLD'] || '1000', 10),
-      queryLogging: process.env['QUERY_LOGGING'] === 'true' || false,
-      batchSize: parseInt(process.env['BATCH_SIZE'] || '100', 10),
+      slowQueryThreshold: getEnvNumber('SLOW_QUERY_THRESHOLD', 1000),
+      queryLogging: getEnvBoolean('QUERY_LOGGING', false),
+      batchSize: getEnvNumber('BATCH_SIZE', 100),
     },
     loadBalancing: {
-      enabled: process.env['LOAD_BALANCING'] === 'true' || false,
-      algorithm: process.env['LOAD_BALANCE_ALGORITHM'] || 'round_robin',
+      enabled: getEnvBoolean('LOAD_BALANCING', false),
+      algorithm: getEnvWithDefault('LOAD_BALANCE_ALGORITHM', 'round_robin'),
     },
   },
 
   // Monitoring and observability
   monitoring: {
     metrics: {
-      enabled: process.env['METRICS_ENABLED'] === 'true' || true,
-      collectionInterval: parseInt(process.env['METRICS_COLLECTION_INTERVAL'] || '60000', 10),
-      retentionPeriod: parseInt(process.env['METRICS_RETENTION_PERIOD'] || '604800', 10), // 7 days
+      enabled: getEnvBoolean('METRICS_ENABLED', true),
+      collectionInterval: getEnvNumber('METRICS_COLLECTION_INTERVAL', 60000),
+      retentionPeriod: getEnvNumber('METRICS_RETENTION_PERIOD', 604800), // 7 days
 
       // Healthcare-specific metrics
       trackPatientMetrics: true,
@@ -277,24 +289,24 @@ export const healthcareConfig = registerAs('healthcare', () => ({
       trackSystemPerformance: true,
     },
     logging: {
-      level: process.env['LOG_LEVEL'] || 'info',
-      format: process.env['LOG_FORMAT'] || 'json',
-      destination: process.env['LOG_DESTINATION'] || 'file',
+      level: getEnvWithDefault('LOG_LEVEL', 'info'),
+      format: getEnvWithDefault('LOG_FORMAT', 'json'),
+      destination: getEnvWithDefault('LOG_DESTINATION', 'file'),
 
       // HIPAA-compliant logging
       auditLogging: true,
       securityEventLogging: true,
       dataAccessLogging: true,
-      logRetention: parseInt(process.env['LOG_RETENTION_DAYS'] || '2555', 10), // 7 years
+      logRetention: getEnvNumber('LOG_RETENTION_DAYS', 2555), // 7 years
     },
     healthChecks: {
       enabled: true,
-      interval: parseInt(process.env['HEALTH_CHECK_INTERVAL'] || '30000', 10),
-      timeout: parseInt(process.env['HEALTH_CHECK_TIMEOUT'] || '5000', 10),
+      interval: getEnvNumber('HEALTH_CHECK_INTERVAL', 30000),
+      timeout: getEnvNumber('HEALTH_CHECK_TIMEOUT', 5000),
       endpoints: ['/health', '/health/db', '/health/cache', '/health/queue'],
     },
     alerts: {
-      enabled: process.env['ALERTS_ENABLED'] === 'true' || true,
+      enabled: getEnvBoolean('ALERTS_ENABLED', true),
       emergencyAlerts: true,
       systemAlerts: true,
       securityAlerts: true,
@@ -304,38 +316,38 @@ export const healthcareConfig = registerAs('healthcare', () => ({
 
   // Backup and disaster recovery
   backup: {
-    enabled: process.env['BACKUP_ENABLED'] === 'true' || true,
-    frequency: process.env['BACKUP_FREQUENCY'] || 'hourly', // More frequent for healthcare
-    fullBackupFrequency: process.env['FULL_BACKUP_FREQUENCY'] || 'daily',
-    retention: parseInt(process.env['BACKUP_RETENTION_DAYS'] || '365', 10), // 1 year
+    enabled: getEnvBoolean('BACKUP_ENABLED', true),
+    frequency: getEnvWithDefault('BACKUP_FREQUENCY', 'hourly'), // More frequent for healthcare
+    fullBackupFrequency: getEnvWithDefault('FULL_BACKUP_FREQUENCY', 'daily'),
+    retention: getEnvNumber('BACKUP_RETENTION_DAYS', 365), // 1 year
 
     storage: {
-      type: process.env['BACKUP_STORAGE_TYPE'] || 'local', // 's3' | 'azure-blob' | 'local'
-      path: process.env['BACKUP_STORAGE_PATH'] || './backups',
-      compression: process.env['BACKUP_COMPRESSION'] === 'true' || true,
+      type: getEnvWithDefault('BACKUP_STORAGE_TYPE', 'local'), // 's3' | 'azure-blob' | 'local'
+      path: getEnvWithDefault('BACKUP_STORAGE_PATH', './backups'),
+      compression: getEnvBoolean('BACKUP_COMPRESSION', true),
     },
     encryption: {
       enabled: true,
       algorithm: 'AES-256',
     },
     testing: {
-      enabled: process.env['BACKUP_TESTING'] === 'true' || true,
-      frequency: process.env['BACKUP_TEST_FREQUENCY'] || 'weekly',
+      enabled: getEnvBoolean('BACKUP_TESTING', true),
+      frequency: getEnvWithDefault('BACKUP_TEST_FREQUENCY', 'weekly'),
     },
   },
 
   // Development and testing
   development: {
-    seedData: process.env['SEED_DATA'] === 'true' || false,
-    mockData: process.env['MOCK_DATA'] === 'true' || false,
-    debugMode: process.env['DEBUG_MODE'] === 'true' || false,
+    seedData: getEnvBoolean('SEED_DATA', false),
+    mockData: getEnvBoolean('MOCK_DATA', false),
+    debugMode: getEnvBoolean('DEBUG_MODE', false),
     testDatabase: {
-      url: process.env['TEST_DB_URL'] || 'postgresql://localhost:5432/healthcare_test',
-      cleanupAfterTests: process.env['CLEANUP_AFTER_TESTS'] === 'true' || true,
+      url: getEnvWithDefault('TEST_DB_URL', 'postgresql://localhost:5432/healthcare_test'),
+      cleanupAfterTests: getEnvBoolean('CLEANUP_AFTER_TESTS', true),
     },
     apiDocumentation: {
-      enabled: process.env['API_DOCS_ENABLED'] === 'true' || true,
-      path: process.env['API_DOCS_PATH'] || '/api/docs',
+      enabled: getEnvBoolean('API_DOCS_ENABLED', true),
+      path: getEnvWithDefault('API_DOCS_PATH', '/api/docs'),
     },
   },
 }));
@@ -344,7 +356,8 @@ export const healthcareConfig = registerAs('healthcare', () => ({
  * Environment-specific configurations
  */
 export const getEnvironmentConfig = () => {
-  const env = process.env['NODE_ENV'] || 'development';
+  // Use helper function (which uses dotenv) for environment variable access
+  const env = getEnvironment();
 
   const configs = {
     development: {
@@ -384,7 +397,8 @@ export const getEnvironmentConfig = () => {
 export const validateHealthcareConfig = (config: unknown) => {
   const errors: string[] = [];
   const cfg = config as Record<string, unknown>;
-  const isProduction = process.env['NODE_ENV'] === 'production';
+  // Use helper function (which uses dotenv) for environment variable access
+  const prodEnv = isProduction();
 
   const asRecord = (value: unknown): Record<string, unknown> | undefined =>
     typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : undefined;
@@ -397,7 +411,7 @@ export const validateHealthcareConfig = (config: unknown) => {
   const databaseUrl = typeof database?.['url'] === 'string' ? database['url'] : undefined;
   if (!databaseUrl || databaseUrl.trim().length === 0) {
     errors.push('DATABASE_URL must be set');
-  } else if (isProduction && databaseUrl.includes('localhost')) {
+  } else if (prodEnv && databaseUrl.includes('localhost')) {
     // Only enforce production database URL in production
     errors.push(
       'DATABASE_URL must be set to a valid production database URL (localhost not allowed in production)'
@@ -405,7 +419,7 @@ export const validateHealthcareConfig = (config: unknown) => {
   }
 
   // Validate security settings (only in production)
-  if (isProduction) {
+  if (prodEnv) {
     const authentication = asRecord(security?.['authentication']);
     if (authentication?.['jwtSecret'] === 'your-healthcare-jwt-secret') {
       errors.push('JWT_SECRET must be changed from default value in production');
@@ -418,7 +432,7 @@ export const validateHealthcareConfig = (config: unknown) => {
   }
 
   // Validate performance settings for scale (only in production)
-  if (isProduction) {
+  if (prodEnv) {
     const connectionPool = asRecord(database?.['connectionPool']);
     const primaryPool = asRecord(connectionPool?.['primary']);
     const poolMax = typeof primaryPool?.['max'] === 'number' ? primaryPool['max'] : undefined;
@@ -432,7 +446,7 @@ export const validateHealthcareConfig = (config: unknown) => {
       ErrorCode.VALIDATION_INVALID_FORMAT,
       `Healthcare configuration validation failed: ${errors.join(', ')}`,
       undefined,
-      { errors, environment: process.env['NODE_ENV'] || 'development' },
+      { errors, environment: getEnvironment() },
       'validateHealthcareConfig'
     );
   }

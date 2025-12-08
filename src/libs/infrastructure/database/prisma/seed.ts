@@ -24,6 +24,9 @@ import {
 } from '@core/types/enums.types';
 import type { Role } from '@core/types/rbac.types';
 import { Gender } from '@dtos/user.dto';
+// Use helper functions (which use dotenv) for environment variable access
+// These mimic ConfigService methods but work in seed scripts
+import { getEnvWithDefault, isProduction, isDevelopment } from '@config/environment/utils';
 
 // Role string literals (Role is a type, not an enum)
 const RoleValues = {
@@ -52,7 +55,9 @@ function generateClinicId(): string {
 }
 
 // Initialize Prisma client with adapter (required for Prisma 7 with engine type "client")
-const connectionString = process.env['DIRECT_URL'] || process.env['DATABASE_URL'] || '';
+// Use helper functions (which use dotenv) for environment variable access
+const connectionString =
+  getEnvWithDefault('DIRECT_URL', '') || getEnvWithDefault('DATABASE_URL', '');
 if (!connectionString) {
   throw new Error('DATABASE_URL or DIRECT_URL environment variable is required');
 }
@@ -68,9 +73,9 @@ const poolConfig: {
   connectionTimeoutMillis: 10000,
 };
 
-const isProduction = process.env['NODE_ENV'] === 'production';
+const prodEnv = isProduction();
 if (connectionString.includes('supabase') || connectionString.includes('pooler.supabase.com')) {
-  poolConfig.ssl = isProduction ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
+  poolConfig.ssl = prodEnv ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
 }
 
 console.log('Initializing PrismaClient with adapter...');
@@ -92,9 +97,8 @@ try {
 }
 
 const prismaConstructorArgs = {
-  log: (process.env['NODE_ENV'] === 'development' ? ['error', 'warn'] : ['error']) as Array<
-    'error' | 'warn'
-  >,
+  // Use helper functions (which use dotenv) for environment variable access
+  log: (isDevelopment() ? ['error', 'warn'] : ['error']) as Array<'error' | 'warn'>,
   errorFormat: 'minimal' as const,
   adapter: adapter,
 };
@@ -492,7 +496,8 @@ async function createClinicIfNeeded() {
       phone: '+91-9876543210',
       email: 'contact@aadesh.com',
       app_name: 'aadesh_ayurvedalay',
-      db_connection_string: process.env['DATABASE_URL'] || '',
+      // Use helper functions (which use dotenv) for environment variable access
+      db_connection_string: getEnvWithDefault('DATABASE_URL', ''),
       databaseName: 'userdb',
       createdByUser: {
         connect: { id: superAdmin.id },
@@ -606,8 +611,9 @@ async function main() {
         phone: '+91-9876543210',
         email: 'contact@aadesh.com',
         app_name: 'aadesh_ayurvedalay',
+        // Use helper functions (which use dotenv) for environment variable access
         db_connection_string:
-          process.env['DATABASE_URL'] ||
+          getEnvWithDefault('DATABASE_URL', '') ||
           'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
         databaseName: 'userdb',
         createdByUser: {
@@ -627,8 +633,9 @@ async function main() {
         phone: '+91-8765432109',
         email: 'contact@vishwamurthi.com',
         app_name: 'vishwamurthi_ayurvedalay',
+        // Use helper functions (which use dotenv) for environment variable access
         db_connection_string:
-          process.env['DATABASE_URL'] ||
+          getEnvWithDefault('DATABASE_URL', '') ||
           'postgresql://postgres:postgres@postgres:5432/userdb?schema=public',
         databaseName: 'userdb',
         createdByUser: {
@@ -1169,7 +1176,8 @@ async function main() {
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
     // Create sample data only in development environment
-    if (process.env['NODE_ENV'] === 'development') {
+    // Use helper functions (which use dotenv) for environment variable access
+    if (isDevelopment()) {
       // Create Medicines
       console.log('Creating medicines...');
       const medicines1 = (await Promise.all(

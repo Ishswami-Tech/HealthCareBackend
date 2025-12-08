@@ -12,6 +12,8 @@ import { CacheModule } from '@infrastructure/cache';
 import { ResilienceModule } from '@core/resilience';
 import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
+import { CommunicationController } from './communication.controller';
+import { CommunicationConfigModule } from './config/communication-config.module';
 
 /**
  * Unified Communication Module
@@ -51,10 +53,12 @@ import { CommunicationHealthMonitorService } from './communication-health-monito
     ChatModule, // Chat backup and synchronization
     NotificationModule, // REST API endpoints in @services/notification (for external API access)
     ListenersModule, // Event-driven communication listeners
+    CommunicationConfigModule, // Multi-tenant communication configuration
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
+  controllers: [CommunicationController],
   providers: [CommunicationService, CommunicationHealthMonitorService],
   exports: [
     EmailModule,
@@ -64,6 +68,7 @@ import { CommunicationHealthMonitorService } from './communication-health-monito
     ChatModule,
     NotificationModule,
     ListenersModule,
+    CommunicationConfigModule, // Multi-tenant communication configuration
     CommunicationService, // Unified communication service
     // Export health monitor for HealthService
     CommunicationHealthMonitorService,

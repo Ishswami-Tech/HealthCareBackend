@@ -16,6 +16,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -510,7 +511,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private readonly maxRetries = 3;
   private readonly retryDelay = 1000; // 1 second
   private connectionPool: Map<string, Record<string, never>> = new Map();
-  private poolSize = parseInt(process.env['DB_POOL_SIZE'] || '20', 10);
+  private poolSize: number;
   private loggingService?: LoggingService;
 
   /**
@@ -527,15 +528,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       this.loggingService = loggingService;
     }
 
+    // Initialize pool size using helper function
+    this.poolSize = getEnvNumber('DB_POOL_SIZE', 20);
+
     // With REQUEST scope, NestJS creates a new instance per request
     // We still need to initialize prismaClient on each instance
     // The singleton pattern is handled via static instance, but each request gets its own instance
     // Continue with initialization below
 
     // Create PrismaClient instance using composition
-    const dbUrlValue = process.env['DATABASE_URL'];
-    const nodeEnv = process.env['NODE_ENV'];
-    const isProduction = nodeEnv === 'production';
+    // Use helper functions (which use dotenv) for environment variable access
+    const dbUrlValue = getEnv('DATABASE_URL');
+    const isProductionEnv = isProduction();
 
     // Build log configuration array based on environment
     type LogLevel = 'error' | 'warn' | 'info' | 'query';
@@ -549,11 +553,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       { emit: 'stdout' as const, level: 'warn' as const },
       { emit: 'stdout' as const, level: 'info' as const },
     ];
-    const logConfiguration: LogConfig[] = isProduction ? productionLogConfig : developmentLogConfig;
+    const logConfiguration: LogConfig[] = isProductionEnv
+      ? productionLogConfig
+      : developmentLogConfig;
 
     // Prisma 7: Use adapter pattern for library engine type
     // Create PostgreSQL adapter with connection string
-    let connectionString = dbUrlValue || process.env['DATABASE_URL'] || '';
+    let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
     if (!connectionString) {
       throw new HealthcareError(
         ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -576,9 +582,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Create pg Pool with SSL configuration for Supabase
     // Handle self-signed certificates in development
     // Get connection timeout from env or use defaults (longer for dev, shorter for prod)
-    const connectionTimeout = isProduction
-      ? parseInt(process.env['DB_CONNECTION_TIMEOUT'] || '10000', 10)
-      : parseInt(process.env['DB_CONNECTION_TIMEOUT'] || '30000', 10); // 30 seconds for dev
+    const connectionTimeout = isProductionEnv
+      ? getEnvNumber('DB_CONNECTION_TIMEOUT', 10000)
+      : getEnvNumber('DB_CONNECTION_TIMEOUT', 30000); // 30 seconds for dev
 
     const poolConfig: {
       connectionString: string;
@@ -596,7 +602,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     if (connectionString.includes('supabase') || connectionString.includes('pooler.supabase.com')) {
       // In development, set rejectUnauthorized to false to accept self-signed certs
       // In production, use proper certificate validation
-      poolConfig.ssl = isProduction ? { rejectUnauthorized: true } : { rejectUnauthorized: false };
+      poolConfig.ssl = isProductionEnv
+        ? { rejectUnauthorized: true }
+        : { rejectUnauthorized: false };
     }
 
     const pool = new Pool(poolConfig);
@@ -677,7 +685,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           }
 
           // Add query timeout in production
-          if (process.env['NODE_ENV'] === 'production') {
+          if (isProduction()) {
             const productionQueryArgs: Record<string, unknown> = operationArgs;
             const productionQueryResultPromise = productionQueryFn(productionQueryArgs);
             const productionQueryResult: Promise<Record<string, never>> =
@@ -757,7 +765,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
 
     // Monitor queries only in development
-    if (process.env['NODE_ENV'] !== 'production') {
+    if (!isProduction()) {
       // Query monitoring will be handled via extensions
     }
 
@@ -795,19 +803,19 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    */
   static getHealthCheckClient(): PrismaClient {
     if (!PrismaService.healthCheckPrismaClient) {
-      const dbUrlValue = process.env['DATABASE_URL'];
-      const nodeEnv = process.env['NODE_ENV'];
-      const isProduction = nodeEnv === 'production';
+      // Use helper functions (which use dotenv) for environment variable access
+      const dbUrlValue = getEnv('DATABASE_URL');
+      const isProductionEnv = isProduction();
 
       // Build log configuration for health checks (minimal logging)
       type LogLevel = 'error' | 'warn';
       type LogConfig = { emit: 'stdout'; level: LogLevel };
-      const logConfiguration: LogConfig[] = isProduction
+      const logConfiguration: LogConfig[] = isProductionEnv
         ? [{ emit: 'stdout' as const, level: 'error' as const }]
         : [{ emit: 'stdout' as const, level: 'error' as const }];
 
       // Prisma 7: Use adapter pattern for library engine type
-      let connectionString = dbUrlValue || process.env['DATABASE_URL'] || '';
+      let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
       if (!connectionString) {
         throw new HealthcareError(
           ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -842,7 +850,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         connectionString.includes('supabase') ||
         connectionString.includes('pooler.supabase.com')
       ) {
-        healthCheckPoolConfig.ssl = isProduction
+        healthCheckPoolConfig.ssl = isProductionEnv
           ? { rejectUnauthorized: true }
           : { rejectUnauthorized: false };
       }
@@ -966,13 +974,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         try {
           // Initialize synchronously if not already done
           // This can happen with REQUEST scope when instance is created before onModuleInit
-          const dbUrlValue = process.env['DATABASE_URL'];
-          const nodeEnv = process.env['NODE_ENV'];
-          const isProduction = nodeEnv === 'production';
+          // Use helper functions (which use dotenv) for environment variable access
+          const dbUrlValue = getEnv('DATABASE_URL');
+          const isProductionEnv = isProduction();
 
           type LogLevel = 'error' | 'warn' | 'info' | 'query';
           type LogConfig = { emit: 'stdout'; level: LogLevel };
-          const logConfig: LogConfig[] = isProduction
+          const logConfig: LogConfig[] = isProductionEnv
             ? [{ emit: 'stdout', level: 'error' }]
             : [
                 { emit: 'stdout', level: 'query' },
@@ -981,7 +989,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
               ];
 
           // Prisma 7: Use adapter pattern for library engine type
-          let connectionString = dbUrlValue || process.env['DATABASE_URL'] || '';
+          let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
           if (!connectionString) {
             throw new HealthcareError(
               ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -1012,12 +1020,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
           // For Supabase/cloud databases, always configure SSL
           // In development, accept self-signed certificates to avoid connection errors
-          const isProductionEnv = process.env['NODE_ENV'] === 'production';
+          const isProductionEnvCheck = isProduction();
           if (
             connectionString.includes('supabase') ||
             connectionString.includes('pooler.supabase.com')
           ) {
-            poolConfig.ssl = isProductionEnv
+            poolConfig.ssl = isProductionEnvCheck
               ? { rejectUnauthorized: true }
               : { rejectUnauthorized: false };
           }

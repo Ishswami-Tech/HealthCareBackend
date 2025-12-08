@@ -21,10 +21,8 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   private healthCheckInterval?: NodeJS.Timeout;
   // Background monitoring interval: 10-30 seconds (configurable, default 20 seconds)
   // Optimized for 10M+ users - frequent enough for real-time status, not too frequent to cause load
-  private readonly CHECK_INTERVAL_MS = parseInt(
-    process.env['QUEUE_HEALTH_CHECK_INTERVAL_MS'] || '20000',
-    10
-  ); // Default 20 seconds (within 10-30 range)
+  // Note: Will be initialized in constructor using ConfigService
+  private CHECK_INTERVAL_MS = 20000; // Default 20 seconds (within 10-30 range)
   private cachedHealthStatus: QueueHealthMonitorStatus | null = null;
   private lastHealthCheckTime = 0;
   private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries

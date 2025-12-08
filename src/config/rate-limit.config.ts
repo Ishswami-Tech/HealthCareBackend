@@ -1,6 +1,6 @@
 import { registerAs } from '@nestjs/config';
 import type { EnhancedRateLimitConfig } from '@core/types';
-import { parseInteger } from './environment/utils';
+import { parseInteger, getEnv, getEnvBoolean } from './environment/utils';
 
 /**
  * Validates rate limit configuration
@@ -33,45 +33,46 @@ function validateRateLimitConfig(config: EnhancedRateLimitConfig): void {
  * Rate limit configuration factory
  */
 export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
+  // Use helper functions (which use dotenv) for environment variable access
   const config: EnhancedRateLimitConfig = {
-    enabled: process.env['RATE_LIMIT_ENABLED'] !== 'false',
+    enabled: getEnvBoolean('RATE_LIMIT_ENABLED', true),
     rules: {
       // API endpoints
       api: {
-        limit: parseInteger(process.env['API_RATE_LIMIT'], 100, 1, 10000),
+        limit: parseInteger(getEnv('API_RATE_LIMIT'), 100, 1, 10000),
         window: 60, // 1 minute
         burst: 20, // Allow 20 extra requests for bursts
       },
       // Authentication endpoints
       auth: {
-        limit: parseInteger(process.env['AUTH_RATE_LIMIT'], 5, 1, 100),
+        limit: parseInteger(getEnv('AUTH_RATE_LIMIT'), 5, 1, 100),
         window: 60, // 1 minute
         burst: 2, // Allow 2 extra attempts
       },
       // Heavy operations (e.g., file uploads, reports)
       heavy: {
-        limit: parseInteger(process.env['HEAVY_RATE_LIMIT'], 10, 1, 100),
+        limit: parseInteger(getEnv('HEAVY_RATE_LIMIT'), 10, 1, 100),
         window: 300, // 5 minutes
         cost: 2, // Each request counts as 2
       },
       // User profile operations
       user: {
-        limit: parseInteger(process.env['USER_RATE_LIMIT'], 50, 1, 1000),
+        limit: parseInteger(getEnv('USER_RATE_LIMIT'), 50, 1, 1000),
         window: 60, // 1 minute
       },
       // Health check endpoints
       health: {
-        limit: parseInteger(process.env['HEALTH_RATE_LIMIT'], 200, 1, 10000),
+        limit: parseInteger(getEnv('HEALTH_RATE_LIMIT'), 200, 1, 10000),
         window: 60, // 1 minute
       },
     },
     security: {
-      maxAttempts: parseInteger(process.env['MAX_AUTH_ATTEMPTS'], 5, 1, 20),
-      attemptWindow: parseInteger(process.env['AUTH_ATTEMPT_WINDOW'], 1800, 60, 86400), // 30 minutes
+      maxAttempts: parseInteger(getEnv('MAX_AUTH_ATTEMPTS'), 5, 1, 20),
+      attemptWindow: parseInteger(getEnv('AUTH_ATTEMPT_WINDOW'), 1800, 60, 86400), // 30 minutes
       lockoutIntervals: [10, 25, 45, 60, 360] as const, // Progressive lockout in minutes
-      maxConcurrentSessions: parseInteger(process.env['MAX_CONCURRENT_SESSIONS'], 5, 1, 50),
+      maxConcurrentSessions: parseInteger(getEnv('MAX_CONCURRENT_SESSIONS'), 5, 1, 50),
       sessionInactivityThreshold: parseInteger(
-        process.env['SESSION_INACTIVITY_THRESHOLD'],
+        getEnv('SESSION_INACTIVITY_THRESHOLD'),
         900,
         60,
         86400

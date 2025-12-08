@@ -47,9 +47,9 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private healthCheckInterval!: NodeJS.Timeout;
   private slowQueryThreshold = 1000; // 1 second
   // More tolerant circuit breaker in development
-  private readonly isProduction = process.env['NODE_ENV'] === 'production';
-  private circuitBreakerThreshold = this.isProduction ? 5 : 10; // More tolerant in dev
-  private circuitBreakerTimeout = this.isProduction ? 30000 : 60000; // Longer timeout in dev
+  private readonly isProduction: boolean;
+  private circuitBreakerThreshold: number;
+  private circuitBreakerTimeout: number;
   private lastHealthCheckSuccessLog = 0; // Track last success log time for periodic logging
 
   constructor(
@@ -58,6 +58,10 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
     private readonly prismaService: PrismaServiceClass,
     @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService
   ) {
+    // Use ConfigService for environment detection (required, so always available)
+    this.isProduction = this.configService.isProduction();
+    this.circuitBreakerThreshold = this.isProduction ? 5 : 10; // More tolerant in dev
+    this.circuitBreakerTimeout = this.isProduction ? 30000 : 60000; // Longer timeout in dev
     this.initializeMetrics();
     this.initializeCircuitBreaker();
   }
@@ -151,15 +155,9 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   private initializePool() {
     // Initialize connection pool configuration for Prisma - Optimized for 10M+ users
     const poolConfig = {
-      min:
-        this.configService?.get<number>('DB_POOL_MIN', 50) ||
-        parseInt(process.env['DB_POOL_MIN'] || '50', 10), // Increased from 20
-      max:
-        this.configService?.get<number>('DB_POOL_MAX', 500) ||
-        parseInt(process.env['DB_POOL_MAX'] || '500', 10), // Increased from 300 for scale
-      maxUses:
-        this.configService?.get<number>('DB_POOL_MAX_USES', 10000) ||
-        parseInt(process.env['DB_POOL_MAX_USES'] || '10000', 10), // Increased from 7500
+      min: this.configService.getEnvNumber('DB_POOL_MIN', 50), // Increased from 20
+      max: this.configService.getEnvNumber('DB_POOL_MAX', 500), // Increased from 300 for scale
+      maxUses: this.configService.getEnvNumber('DB_POOL_MAX_USES', 10000), // Increased from 7500
     };
 
     // Update metrics with estimated values

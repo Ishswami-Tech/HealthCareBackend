@@ -1,9 +1,23 @@
 import { DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
+import { getEnvironment } from './environment/utils';
 import developmentConfig from './environment/development.config';
 import productionConfig from './environment/production.config';
+import stagingConfig from './environment/staging.config';
+import testConfig from './environment/test.config';
 
 const getEnvironmentConfig = () => {
-  return process.env['NODE_ENV'] === 'production' ? productionConfig() : developmentConfig();
+  // Use helper function (which uses dotenv) for environment variable access
+  const nodeEnv = getEnvironment();
+  if (nodeEnv === 'production') {
+    return productionConfig();
+  }
+  if (nodeEnv === 'staging') {
+    return stagingConfig();
+  }
+  if (nodeEnv === 'test') {
+    return testConfig();
+  }
+  return developmentConfig();
 };
 
 // Helper function to get API servers based on environment
@@ -22,16 +36,19 @@ const getApiServers = () => {
   } else {
     // Docker-first development configuration
     servers.push(
-      // Primary Docker network URLs
-      { url: `http://localhost:8088`, description: 'Development API Server' },
+      // Primary Docker network URLs - use config values
+      { url: config.app.baseUrl, description: 'Development API Server' },
       {
-        url: `http://localhost:8088${config.urls.bullBoard}`,
+        url: `${config.app.baseUrl}${config.urls.bullBoard}`,
         description: 'Queue Dashboard',
       },
-      // Development services with Docker network URLs
-      { url: 'http://localhost:8082', description: 'Redis Commander' },
-      { url: 'http://localhost:5555', description: 'Prisma Studio' },
-      { url: 'http://localhost:5050', description: 'PgAdmin' }
+      // Development services with Docker network URLs - use config values
+      {
+        url: config.urls.redisCommander || 'http://localhost:8082',
+        description: 'Redis Commander',
+      },
+      { url: config.urls.prismaStudio || 'http://localhost:5555', description: 'Prisma Studio' },
+      { url: config.urls.pgAdmin || 'http://localhost:5050', description: 'PgAdmin' }
     );
   }
 
@@ -87,9 +104,9 @@ ${
   getEnvironmentConfig().app.environment !== 'production'
     ? `
 ### Development Tools (Docker)
-- Redis Commander: http://localhost:8082
-- Prisma Studio: http://localhost:5555
-- PgAdmin: http://localhost:5050`
+- Redis Commander: ${getEnvironmentConfig().urls.redisCommander || 'http://localhost:8082'}
+- Prisma Studio: ${getEnvironmentConfig().urls.prismaStudio || 'http://localhost:5555'}
+- PgAdmin: ${getEnvironmentConfig().urls.pgAdmin || 'http://localhost:5050'}`
     : ''
 }
   `

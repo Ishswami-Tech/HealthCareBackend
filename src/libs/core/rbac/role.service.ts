@@ -11,7 +11,7 @@ import type { CreateRoleDto, UpdateRoleDto } from '@dtos/role.dto';
 
 /**
  * Re-export types for backward compatibility
- * @deprecated Use types from @core/types instead
+ * Use types from @core/types instead
  */
 export type { RoleRecord };
 export type { RolePermission as Permission };

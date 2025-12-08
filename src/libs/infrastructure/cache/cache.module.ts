@@ -89,7 +89,13 @@ import { ScheduleModule } from '@nestjs/schedule';
 export class CacheModule {
   static forRoot(): DynamicModule {
     // Check if this is a worker service - workers don't need CacheWarmingService or ScheduleModule
-    const serviceName = process.env['SERVICE_NAME'] || 'clinic';
+    // Use helper functions (which use dotenv) for environment variable access
+    // These mimic ConfigService methods but work in static module factories
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getEnvWithDefault } = require('@config/environment/utils') as {
+      getEnvWithDefault: (key: string, defaultValue: string) => string;
+    };
+    const serviceName = getEnvWithDefault('SERVICE_NAME', 'clinic');
     const isWorker = serviceName === 'worker';
 
     const baseImports = [

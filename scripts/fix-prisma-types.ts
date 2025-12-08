@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 /**
  * Post-generation script to fix TypeScript type inference errors in generated Prisma files
  * This script adds explicit type annotations to exports that TypeScript can't infer

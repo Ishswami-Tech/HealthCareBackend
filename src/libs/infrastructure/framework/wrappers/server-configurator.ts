@@ -64,24 +64,18 @@ export class ServerConfigurator {
    * @returns ServerConfig - Server configuration object
    */
   getServerConfig(): ServerConfig {
+    // Use ConfigService (required, so always available)
     const port =
       this.configService?.get<number | string>('PORT') ||
       this.configService?.get<number | string>('VIRTUAL_PORT') ||
-      process.env['PORT'] ||
-      process.env['VIRTUAL_PORT'] ||
       8088;
 
     const host =
-      this.configService?.get<string>(
-        'VIRTUAL_HOST',
-        process.env['VIRTUAL_HOST'] || process.env['HOST'] || '0.0.0.0'
-      ) ||
-      process.env['VIRTUAL_HOST'] ||
-      process.env['HOST'] ||
+      this.configService?.get<string>('VIRTUAL_HOST', '0.0.0.0') ||
+      this.configService?.get<string>('HOST', '0.0.0.0') ||
       '0.0.0.0';
 
-    const bindAddress =
-      this.configService?.get<string>('BIND_ADDRESS') || process.env['BIND_ADDRESS'] || host;
+    const bindAddress = this.configService?.get<string>('BIND_ADDRESS') || host;
 
     const portNumber = typeof port === 'string' ? parseInt(port, 10) : port;
 
@@ -110,10 +104,7 @@ export class ServerConfigurator {
    * @returns ApplicationConfig - Application configuration object
    */
   getApplicationConfig(instanceId: string, isHorizontalScaling: boolean): ApplicationConfig {
-    const trustProxyValue =
-      this.configService?.get<string>('TRUST_PROXY', process.env['TRUST_PROXY'] || '0') ||
-      process.env['TRUST_PROXY'] ||
-      '0';
+    const trustProxyValue = this.configService?.get<string>('TRUST_PROXY', '0') || '0';
     const trustProxy = trustProxyValue === '1' || trustProxyValue === 'true';
 
     // Production-like settings for staging and production
@@ -128,9 +119,9 @@ export class ServerConfigurator {
 
     const requestTimeout = isProductionLike ? 30000 : 10000;
 
-    const enableHttp2 =
+    const enableHttp2: boolean =
       (this.environment === 'production' || this.environment === 'staging') &&
-      process.env['ENABLE_HTTP2'] !== 'false';
+      (this.configService?.getEnvBoolean('ENABLE_HTTP2', true) ?? true);
 
     const config: ApplicationConfig = {
       environment: this.environment,

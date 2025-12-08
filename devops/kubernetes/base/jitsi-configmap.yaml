@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jitsi-config
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: config
+data:
+  # Jitsi Domain Configuration
+  # NOTE: These values are updated dynamically by configure-jitsi-domain.sh script
+  # Default values shown below - update via script or manually for your environment
+  # Example: If your domain is example.com, set:
+  #   JITSI_BASE_DOMAIN: "example.com"
+  #   JITSI_SUBDOMAIN: "meet"
+  #   This will create: meet.example.com
+  # 
+  # To update: Run: ./devops/kubernetes/scripts/configure-jitsi-domain.sh <base-domain> <subdomain>
+  
+  JITSI_BASE_DOMAIN: "ishswami.in"
+  JITSI_SUBDOMAIN: "meet"
+  JITSI_DOMAIN: "meet.ishswami.in"
+  JITSI_APP_ID: "healthcare-jitsi-app"
+  
+  # Derived domains (automatically constructed from base domain)
+  # These are used by Jitsi components and updated by configure-jitsi-domain.sh
+  XMPP_DOMAIN: "meet.ishswami.in"
+  XMPP_AUTH_DOMAIN: "auth.meet.ishswami.in"
+  XMPP_GUEST_DOMAIN: "guest.meet.ishswami.in"
+  XMPP_MUC_DOMAIN: "muc.meet.ishswami.in"
+  XMPP_INTERNAL_MUC_DOMAIN: "internal-muc.meet.ishswami.in"
+  XMPP_RECORDER_DOMAIN: "recorder.meet.ishswami.in"
+  GUEST_DOMAIN: "guest.ishswami.in"
+  
+  # URLs (updated by configure-jitsi-domain.sh)
+  PUBLIC_URL: "https://meet.ishswami.in"
+  JITSI_BASE_URL: "https://meet.ishswami.in"
+  JITSI_WS_URL: "wss://meet.ishswami.in/xmpp-websocket"
+  XMPP_BOSH_URL_BASE: "https://meet.ishswami.in/http-bind"
+  
+  # Jitsi Features
+  ENABLE_RECORDING: "true"
+  ENABLE_WAITING_ROOM: "true"
+  ENABLE_BREAKOUT_ROOMS: "true"
+  ENABLE_LOBBY: "true"
+  ENABLE_PREJOIN_PAGE: "true"
+  ENABLE_WELCOME_PAGE: "true"
+  ENABLE_CLOSE_PAGE: "true"
+  
+  # Video Settings
+  RESOLUTION: "720"
+  FRAME_RATE: "30"
+  CHANNEL_LAST_N: "20"
+  START_AUDIO_MUTED: "10"
+  START_VIDEO_MUTED: "10"
+  START_AUDIO_ONLY: "0"
+  
+  # JWT Configuration
+  JWT_ACCEPTED_ISSUERS: "healthcare-jitsi-app"
+  JWT_ACCEPTED_AUDIENCES: "healthcare-jitsi-app"
+  JWT_ASAP_KEYSERVER: "https://meet.ishswami.in/asap"
+  JWT_ALLOW_EMPTY: "0"
+  JWT_AUTH_TYPE: "token"
+  JWT_TOKEN_AUTH_MODULE: "token_verification"
+  
+  # Timezone
+  TZ: "UTC"

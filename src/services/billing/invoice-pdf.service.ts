@@ -402,10 +402,9 @@ export class InvoicePDFService {
    * Get public URL for invoice PDF
    */
   getPublicInvoiceUrl(fileName: string): string {
-    const baseUrl =
-      this.configService?.get<string>('API_URL') ||
-      process.env['API_URL'] ||
-      'http://localhost:3000';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const appConfig = this.configService.getAppConfig();
+    const baseUrl = appConfig.apiUrl || 'http://localhost:3000';
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 

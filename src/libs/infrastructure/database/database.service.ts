@@ -34,6 +34,7 @@ import { CircuitBreakerService } from '@core/resilience';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { getEnv } from '@config/environment/utils';
 
 // Internal services
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
@@ -386,7 +387,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             this.metricsService.recordCacheHit(cacheTime);
           });
           // Only log in debug mode for performance (10M+ users)
-          if (process.env['LOG_LEVEL'] === 'DEBUG') {
+          // Use helper function (which uses dotenv) for environment variable access
+          if (getEnv('LOG_LEVEL') === 'DEBUG') {
             void this.loggingService.log(
               LogType.DATABASE,
               LogLevel.DEBUG,
@@ -1197,7 +1199,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
    * │ LOW-LEVEL METHODS (Use sparingly - bypasses optimizations)          │
    * ├─────────────────────────────────────────────────────────────────────┤
    * │ • executeRawQuery()         - Raw SQL, no caching, no optimization  │
-   * │ • getPrismaClient()         - Direct Prisma access (deprecated)     │
+   * │ • getPrismaClient()         - Direct Prisma access (legacy)         │
    * │                                                                     │
    * │ ⚠️ USE WHEN:                                                         │
    * │   - Complex SQL that Prisma can't express                           │
@@ -1469,14 +1471,14 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
   /**
    * Get the underlying Prisma client
-   * @deprecated Use executeRead/Write methods instead to benefit from caching, metrics, and optimization layers
+   * Legacy method - Use executeRead/Write methods instead to benefit from caching, metrics, and optimization layers
    * @see IDatabaseClient.getPrismaClient
    */
   getPrismaClient(): PrismaService {
     void this.loggingService.log(
       LogType.DATABASE,
       LogLevel.WARN,
-      'DEPRECATED: getPrismaClient() called - use executeRead/Write instead for optimal performance',
+      'Legacy method getPrismaClient() called - use executeRead/Write instead for optimal performance',
       this.serviceName,
       { stack: new Error().stack }
     );
@@ -2185,7 +2187,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       await Promise.all(invalidationPromises);
 
       // Log invalidation for debugging (only in debug mode for performance)
-      if (process.env['LOG_LEVEL'] === 'DEBUG') {
+      // Use helper function (which uses dotenv) for environment variable access
+      if (getEnv('LOG_LEVEL') === 'DEBUG') {
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.DEBUG,

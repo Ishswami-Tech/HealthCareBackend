@@ -1,4 +1,12 @@
-import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Inject,
+} from '@nestjs/common';
+import { ConfigService } from '@config';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -44,7 +52,10 @@ export type { CustomFastifyRequest } from '@core/types/infrastructure.types';
  */
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    private readonly loggingService: LoggingService,
+    @Inject(ConfigService) private readonly configService: ConfigService
+  ) {}
 
   /**
    * Patterns for 404 errors that should be ignored in logging
@@ -236,7 +247,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
     } else if (status >= 500) {
       errorResponse['suggestion'] = 'An internal server error occurred. Please try again later';
       // Don't expose internal error details in production
-      if (process.env['NODE_ENV'] === 'production') {
+      // Use ConfigService (which uses dotenv) for environment variable access
+      if (this.configService?.isProduction()) {
         errorResponse['message'] = 'Internal server error';
         // Remove stack trace if present
         if ('stack' in errorResponse) {

@@ -418,19 +418,15 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
         { host: redisHost, port: redisPort }
       );
     } catch (_error) {
-      // Determine default host based on environment (same logic as initializeClient)
+      // Determine default host based on environment using ConfigService (uses dotenv)
       const isDocker =
-        process.env['DOCKER_ENV'] === 'true' ||
-        process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-        process.env['REDIS_HOST'] === 'redis' ||
-        process.env['REDIS_HOST'] !== undefined;
+        this.configService.getEnvBoolean('DOCKER_ENV', false) ||
+        this.configService.hasEnv('KUBERNETES_SERVICE_HOST') ||
+        this.configService.getRedisHost() === 'redis';
       const defaultHost = isDocker ? 'redis' : 'localhost';
 
-      const redisHost =
-        this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || defaultHost;
-      const redisPort =
-        this.configService?.get<number>('redis.port') ||
-        parseInt(process.env['REDIS_PORT'] || '6379', 10);
+      const redisHost = this.configService.getRedisHost() || defaultHost;
+      const redisPort = this.configService.getRedisPort();
 
       const errorMessage = _error instanceof Error ? _error.message : String(_error);
       const errorCode = (_error as { code?: string })?.code || 'UNKNOWN';
@@ -462,10 +458,10 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
           host: redisHost,
           port: redisPort,
           environment: {
-            REDIS_HOST: process.env['REDIS_HOST'],
-            REDIS_PORT: process.env['REDIS_PORT'],
-            DOCKER_ENV: process.env['DOCKER_ENV'],
-            NODE_ENV: process.env['NODE_ENV'],
+            REDIS_HOST: this.configService.getEnv('REDIS_HOST'),
+            REDIS_PORT: this.configService.getEnv('REDIS_PORT'),
+            DOCKER_ENV: this.configService.getEnv('DOCKER_ENV'),
+            NODE_ENV: this.configService.getEnvironment(),
             isDocker,
             defaultHost,
           },
@@ -503,7 +499,7 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
 
   // Auto-scaling cache management
   async optimizeMemoryUsage(): Promise<void> {
-    if (process.env['NODE_ENV'] === 'production') {
+    if (this.configService.isProduction()) {
       await this.client.config('SET', 'maxmemory-policy', this.PRODUCTION_CONFIG.maxMemoryPolicy);
       await this.client.config('SET', 'maxmemory', '2gb'); // Adjust based on available memory
       await this.loggingService.log(
@@ -602,11 +598,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
           // Connection successful, reset circuit breaker
           this.circuitBreakerOpen = false;
           this.circuitBreakerFailures = 0;
-          const currentHost =
-            this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
-          const currentPort =
-            this.configService?.get<number>('redis.port') ||
-            parseInt(process.env['REDIS_PORT'] || '6379', 10);
+          const currentHost = this.configService.getRedisHost() || 'redis';
+          const currentPort = this.configService.getRedisPort();
           void this.loggingService
             .log(
               LogType.SYSTEM,
@@ -753,11 +746,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
         }
 
         this.recordCircuitBreakerFailure();
-        const redisHost =
-          this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
-        const redisPort =
-          this.configService?.get<number>('redis.port') ||
-          parseInt(process.env['REDIS_PORT'] || '6379', 10);
+        const redisHost = this.configService.getRedisHost() || 'redis';
+        const redisPort = this.configService.getRedisPort();
 
         throw new HealthcareError(
           ErrorCode.CACHE_CONNECTION_FAILED,
@@ -936,11 +926,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
         await this.client.connect();
         await this.ping();
 
-        const reconnectHost =
-          this.configService?.get<string>('redis.host') || process.env['REDIS_HOST'] || 'redis';
-        const reconnectPort =
-          this.configService?.get<number>('redis.port') ||
-          parseInt(process.env['REDIS_PORT'] || '6379', 10);
+        const reconnectHost = this.configService.getRedisHost() || 'redis';
+        const reconnectPort = this.configService.getRedisPort();
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
@@ -2138,43 +2125,6 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
       // Always clear the revalidation flag when done
       await this.del(revalidationKey);
     }
-  }
-
-  // Deprecated but kept for backward compatibility
-  async cacheWithSWR<T>(
-    key: string,
-    fetchFn: () => Promise<T>,
-    options: {
-      cacheTtl?: number;
-      staleWhileRevalidateTtl?: number;
-      revalidationKey?: string;
-      forceRefresh?: boolean;
-      useSwr?: boolean;
-      compression?: boolean;
-      priority?: 'high' | 'low';
-    } = {}
-  ): Promise<T> {
-    void this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.WARN,
-      'cacheWithSWR is deprecated, please use cache() instead',
-      'CacheService',
-      {}
-    );
-    return this.cache(key, fetchFn, {
-      ...(options.cacheTtl !== undefined && { ttl: options.cacheTtl }),
-      ...(options.staleWhileRevalidateTtl !== undefined && {
-        staleTime: options.staleWhileRevalidateTtl,
-      }),
-      ...(options.forceRefresh !== undefined && {
-        forceRefresh: options.forceRefresh,
-      }),
-      ...(options.useSwr !== undefined && { enableSwr: options.useSwr }),
-      ...(options.compression !== undefined && {
-        compress: options.compression,
-      }),
-      ...(options.priority !== undefined && { priority: options.priority }),
-    });
   }
 
   /**

@@ -48,6 +48,7 @@ export class BillingController {
   // ============ Billing Plans ============
 
   @Get('plans')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR)
   @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plans:{clinicId}',
@@ -65,6 +66,7 @@ export class BillingController {
   }
 
   @Get('plans/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR)
   @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plan:{id}',
@@ -151,13 +153,14 @@ export class BillingController {
   // ============ Invoices ============
 
   @Post('invoices')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('invoices', 'create')
   async createInvoice(@Body() createInvoiceDto: CreateInvoiceDto) {
     return this.billingService.createInvoice(createInvoiceDto);
   }
 
   @Get('invoices/user/:userId')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
   @RequireResourcePermission('invoices', 'read', { requireOwnership: true })
   async getUserInvoices(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
@@ -166,20 +169,28 @@ export class BillingController {
   }
 
   @Get('invoices/:id')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.RECEPTIONIST
+  )
   @RequireResourcePermission('invoices', 'read')
   async getInvoice(@Param('id') id: string) {
     return this.billingService.getInvoice(id);
   }
 
   @Put('invoices/:id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('invoices', 'update')
   async updateInvoice(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
     return this.billingService.updateInvoice(id, updateInvoiceDto);
   }
 
   @Post('invoices/:id/mark-paid')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('invoices', 'update')
   async markInvoiceAsPaid(@Param('id') id: string) {
     return this.billingService.markInvoiceAsPaid(id);
@@ -188,12 +199,14 @@ export class BillingController {
   // ============ Payments ============
 
   @Post('payments')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING, Role.PATIENT)
   @RequireResourcePermission('payments', 'create')
   async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.billingService.createPayment(createPaymentDto);
   }
 
   @Get('payments/user/:userId')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
   @RequireResourcePermission('payments', 'read', { requireOwnership: true })
   async getUserPayments(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
@@ -202,13 +215,21 @@ export class BillingController {
   }
 
   @Get('payments/:id')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.RECEPTIONIST
+  )
   @RequireResourcePermission('payments', 'read')
   async getPayment(@Param('id') id: string) {
     return this.billingService.getPayment(id);
   }
 
   @Put('payments/:id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('payments', 'update')
   async updatePayment(@Param('id') id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
     return this.billingService.updatePayment(id, updatePaymentDto);
@@ -217,7 +238,7 @@ export class BillingController {
   // ============ Analytics ============
 
   @Get('analytics/revenue')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('reports', 'read')
   async getClinicRevenue(
     @Query('clinicId') clinicId: string,

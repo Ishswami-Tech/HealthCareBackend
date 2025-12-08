@@ -1,7 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { EventService } from '@infrastructure/events';
+import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import type { IEventService } from '@core/types';
+import { isEventService } from '@core/types';
 
 import type { AppointmentQueueStats } from '@core/types';
 import type {
@@ -21,11 +24,20 @@ export type { QueueEntry, QueueEntryData, AppointmentQueueStats as QueueStats };
 export class AppointmentQueueService {
   private readonly QUEUE_CACHE_TTL = 3600; // 1 hour
   private readonly METRICS_CACHE_TTL = 300; // 5 minutes
+  private typedEventService?: IEventService;
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
-  ) {}
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService?: unknown
+  ) {
+    // Type guard ensures type safety when using the service
+    if (this.eventService && isEventService(this.eventService)) {
+      this.typedEventService = this.eventService;
+    }
+  }
 
   async getDoctorQueue(
     doctorId: string,
@@ -163,6 +175,38 @@ export class AppointmentQueueService {
       // Cache for a shorter time (queue positions change frequently)
       await this.cacheService.set(cacheKey, result as unknown as string, 60);
 
+      // Emit WebSocket event for queue position update
+      if (this.typedEventService) {
+        try {
+          await this.typedEventService.emitEnterprise('appointment.queue.position.updated', {
+            eventId: `queue-position-${appointmentId}-${Date.now()}`,
+            eventType: 'appointment.queue.position.updated',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: 'AppointmentQueueService',
+            version: '1.0.0',
+            appointmentId,
+            payload: {
+              appointmentId,
+              position,
+              totalInQueue,
+              estimatedWaitTime,
+              doctorId,
+              domain,
+            },
+          });
+        } catch (eventError) {
+          // Don't fail queue position retrieval if event emission fails
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to emit queue position event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
+            'AppointmentQueueService'
+          );
+        }
+      }
+
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -286,6 +330,45 @@ export class AppointmentQueueService {
         `queue:doctor:${doctorId}:${new Date().toISOString().split('T')[0]}:${domain}`
       );
 
+      // Emit WebSocket event for queue update (consultation started)
+      if (this.typedEventService) {
+        try {
+          // Recalculate queue positions after consultation started
+          const updatedEntries = await this.cacheService.lRange(queueKey, 0, -1);
+          const updatedPositions = updatedEntries.map((entry, index) => {
+            const entryData = JSON.parse(entry) as QueueEntryData;
+            return {
+              appointmentId: entryData.appointmentId,
+              position: index + 1,
+            };
+          });
+
+          await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+            eventId: `queue-updated-${doctorId}-${Date.now()}`,
+            eventType: 'appointment.queue.updated',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: 'AppointmentQueueService',
+            version: '1.0.0',
+            payload: {
+              doctorId,
+              domain,
+              consultationStarted: appointmentId,
+              queuePositions: updatedPositions,
+            },
+          });
+        } catch (eventError) {
+          // Don't fail if event emission fails
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to emit queue update event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
+            'AppointmentQueueService'
+          );
+        }
+      }
+
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -352,6 +435,43 @@ export class AppointmentQueueService {
 
       // Invalidate cache
       await this.cacheService.del(`queue:doctor:${doctorId}:${date}:${domain}`);
+
+      // Emit WebSocket event for queue reorder
+      if (this.typedEventService) {
+        try {
+          const updatedPositions = reorderedEntries.map((entry, index) => {
+            const entryData = JSON.parse(entry as string) as QueueEntryData;
+            return {
+              appointmentId: entryData.appointmentId,
+              position: index + 1,
+            };
+          });
+
+          await this.typedEventService.emitEnterprise('appointment.queue.reordered', {
+            eventId: `queue-reordered-${doctorId}-${Date.now()}`,
+            eventType: 'appointment.queue.reordered',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: 'AppointmentQueueService',
+            version: '1.0.0',
+            payload: {
+              doctorId,
+              date,
+              domain,
+              queuePositions: updatedPositions,
+            },
+          });
+        } catch (eventError) {
+          // Don't fail if event emission fails
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to emit queue reorder event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
+            'AppointmentQueueService'
+          );
+        }
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,

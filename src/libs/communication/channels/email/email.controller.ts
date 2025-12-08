@@ -1,5 +1,6 @@
 import { Controller, Post, Body, Get } from '@nestjs/common';
 import { EmailService } from '@communication/channels/email/email.service';
+import { ConfigService } from '@config';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailTemplate, EmailContext } from '@core/types';
 
@@ -11,7 +12,10 @@ class SendTestEmailDto {
 @ApiTags('email')
 @Controller('email')
 export class EmailController {
-  constructor(private readonly emailService: EmailService) {}
+  constructor(
+    private readonly emailService: EmailService,
+    private readonly configService: ConfigService
+  ) {}
 
   @Get('status')
   @ApiOperation({ summary: 'Get email service status' })
@@ -42,12 +46,15 @@ export class EmailController {
   @ApiResponse({ status: 200, description: 'Test email sent successfully' })
   @ApiResponse({ status: 500, description: 'Failed to send test email' })
   async sendTestEmail() {
+    const urlsConfig = this.configService.getUrlsConfig();
+    const frontendUrl = urlsConfig.frontend || 'http://localhost:3000';
+
     const result = await this.emailService.sendEmail({
       to: 'aadeshbhujba1@gmail.com', // Your email address
       subject: 'Healthcare App - Email Test',
       template: EmailTemplate.VERIFICATION,
       context: {
-        verificationUrl: 'https://ishswami.in/verify',
+        verificationUrl: `${frontendUrl}/verify`,
       },
     });
 
@@ -73,17 +80,20 @@ export class EmailController {
   @ApiResponse({ status: 500, description: 'Failed to send custom test email' })
   @ApiBody({ type: SendTestEmailDto })
   async sendCustomTestEmail(@Body() dto: SendTestEmailDto) {
+    const urlsConfig = this.configService.getUrlsConfig();
+    const frontendUrl = urlsConfig.frontend || 'http://localhost:3000';
+
     const template: EmailTemplate = dto.template || EmailTemplate.VERIFICATION;
     let context: EmailContext = {};
 
     switch (template) {
       case EmailTemplate.VERIFICATION:
-        context = { verificationUrl: 'https://ishswami.in/verify' };
+        context = { verificationUrl: `${frontendUrl}/verify` };
         break;
       case EmailTemplate.PASSWORD_RESET:
         context = {
           name: 'Test User',
-          resetUrl: 'https://ishswami.in/reset-password',
+          resetUrl: `${frontendUrl}/reset-password`,
           expiryTime: '1 hour',
         };
         break;
@@ -93,7 +103,7 @@ export class EmailController {
       case EmailTemplate.MAGIC_LINK:
         context = {
           name: 'Test User',
-          loginUrl: 'https://ishswami.in/magic-login',
+          loginUrl: `${frontendUrl}/magic-login`,
           expiryTime: '15 minutes',
         };
         break;
@@ -101,8 +111,8 @@ export class EmailController {
         context = {
           name: 'Test User',
           role: 'Patient',
-          loginUrl: 'https://ishswami.in/login',
-          dashboardUrl: 'https://ishswami.in/patient/dashboard',
+          loginUrl: `${frontendUrl}/login`,
+          dashboardUrl: `${frontendUrl}/patient/dashboard`,
           supportEmail: 'support@healthcareapp.com',
           isGoogleAccount: false,
         };

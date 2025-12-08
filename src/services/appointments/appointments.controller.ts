@@ -36,6 +36,7 @@ import {
 } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role, AppointmentStatus } from '@core/types/enums.types';
+import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -78,26 +79,23 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
-import {
-  JitsiVideoService,
-  // JitsiMeetingToken,
-  VideoConsultationSession,
-} from './plugins/video/jitsi-video.service';
+import { VideoService } from './plugins/video/video.service';
+import type { VideoConsultationSession } from '@core/types/video.types';
+import type { VideoConsultationSession as LegacyVideoConsultationSession } from '@core/types/appointment.types';
 import { CheckInService } from './plugins/checkin/check-in.service';
 import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
+import { AppointmentAnalyticsService } from './plugins/analytics/appointment-analytics.service';
 import { QrService, LocationQrService } from '@utils/QR';
 import { FastifyReply } from 'fastify';
 
 // Use centralized types
 import type {
   AppointmentFilters,
-  AppointmentWithRelationsController,
   ServiceResponse,
+  CheckInLocation,
 } from '@core/types/appointment.types';
-
-// Local aliases for controller use
-type AppointmentWithRelations = AppointmentWithRelationsController;
+import type { AppointmentWithRelations } from '@core/types/database.types';
 
 @ApiTags('appointments')
 @Controller('appointments')
@@ -123,7 +121,7 @@ export class AppointmentsController {
     private readonly errors: HealthcareErrorsService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
-    private readonly jitsiVideoService: JitsiVideoService,
+    private readonly videoService: VideoService,
     @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,
     @Inject(forwardRef(() => AppointmentQueueService))
@@ -133,7 +131,9 @@ export class AppointmentsController {
     @Inject(forwardRef(() => QrService))
     private readonly qrService: QrService,
     @Inject(forwardRef(() => LocationQrService))
-    private readonly locationQrService: LocationQrService
+    private readonly locationQrService: LocationQrService,
+    @Inject(forwardRef(() => AppointmentAnalyticsService))
+    private readonly analyticsService: AppointmentAnalyticsService
   ) {}
 
   @Post()
@@ -391,7 +391,14 @@ export class AppointmentsController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.SUPPORT_STAFF
+  )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @Cache({
@@ -629,7 +636,15 @@ export class AppointmentsController {
 
   @Get('doctor/:doctorId/availability')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.SUPPORT_STAFF
+  )
   @RequireResourcePermission('appointments', 'read')
   @Cache({
     keyTemplate: 'appointments:availability:{doctorId}:{date}',
@@ -820,7 +835,15 @@ export class AppointmentsController {
 
   @Get('user/:userId/upcoming')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.SUPPORT_STAFF
+  )
   @RequireResourcePermission('appointments', 'read')
   @PatientCache({
     keyTemplate: 'appointments:upcoming:{userId}',
@@ -918,7 +941,15 @@ export class AppointmentsController {
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.SUPPORT_STAFF
+  )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
   @PatientCache({
@@ -1385,17 +1416,23 @@ export class AppointmentsController {
         throw new NotFoundException('Appointment not found');
       }
 
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Video rooms can only be created for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       // Create secure Jitsi room
-      const roomConfig = await this.jitsiVideoService.generateMeetingToken(
+      const roomConfig = await this.videoService.generateMeetingToken(
         appointmentId,
         appointment.patient?.id || '',
         'patient',
         {
-          displayName: appointment.patient?.name || 'Patient',
-          email: '',
-          ...(appointment.patient?.avatar && {
-            avatar: appointment.patient.avatar,
-          }),
+          displayName: appointment.patient?.user?.name || 'Patient',
+          email: appointment.patient?.user?.email || '',
         }
       );
 
@@ -1498,6 +1535,15 @@ export class AppointmentsController {
         throw new NotFoundException('Appointment not found');
       }
 
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Join tokens can only be generated for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       // Determine user role in consultation
       let consultationRole: 'patient' | 'doctor';
       if (userRole === Role.PATIENT) {
@@ -1510,23 +1556,16 @@ export class AppointmentsController {
       }
 
       // Generate secure meeting token
-      const meetingToken = await this.jitsiVideoService.generateMeetingToken(
+      const meetingToken = await this.videoService.generateMeetingToken(
         appointmentId,
         userId,
         consultationRole,
         {
           displayName:
             consultationRole === 'patient'
-              ? appointment.patient?.name || 'Patient'
-              : appointment.doctor?.name || 'Doctor',
+              ? appointment.patient?.user?.name || 'Patient'
+              : appointment.doctor?.user?.name || 'Doctor',
           email: (req.user && 'email' in req.user ? String(req.user['email']) : '') || '',
-          ...(consultationRole === 'patient'
-            ? appointment.patient?.avatar && {
-                avatar: appointment.patient.avatar,
-              }
-            : appointment.doctor?.avatar && {
-                avatar: appointment.doctor.avatar,
-              }),
         }
       );
 
@@ -1584,6 +1623,29 @@ export class AppointmentsController {
 
       const consultationRole = userRole === Role.PATIENT ? 'patient' : 'doctor';
 
+      // Get appointment to validate type
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw new BadRequestException('Clinic context is required');
+      }
+
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Video consultations can only be started for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -1596,7 +1658,7 @@ export class AppointmentsController {
         }
       );
 
-      const session = await this.jitsiVideoService.startConsultation(
+      const session = await this.videoService.startConsultation(
         appointmentId,
         userId,
         consultationRole
@@ -1664,6 +1726,29 @@ export class AppointmentsController {
         throw new BadRequestException('User ID required');
       }
 
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw new BadRequestException('Clinic context is required');
+      }
+
+      // Get appointment to validate type
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Video consultations can only be ended for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       const consultationRole = userRole === Role.PATIENT ? 'patient' : 'doctor';
 
       await this.loggingService.log(
@@ -1679,7 +1764,7 @@ export class AppointmentsController {
         }
       );
 
-      const session = await this.jitsiVideoService.endConsultation(
+      const session = await this.videoService.endConsultation(
         appointmentId,
         userId,
         consultationRole,
@@ -1727,9 +1812,33 @@ export class AppointmentsController {
     description: 'Video consultation session not found',
   })
   async getVideoConsultationStatus(
-    @Param('id', ParseUUIDPipe) appointmentId: string
-  ): Promise<VideoConsultationSession | null> {
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<LegacyVideoConsultationSession | null> {
     try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw new BadRequestException('Clinic context is required');
+      }
+
+      // Get appointment to validate type
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Video consultation status can only be retrieved for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -1738,7 +1847,7 @@ export class AppointmentsController {
         { appointmentId }
       );
 
-      const session = await this.jitsiVideoService.getConsultationStatus(appointmentId);
+      const session = await this.videoService.getConsultationStatus(appointmentId);
 
       if (!session) {
         throw new NotFoundException('Video consultation session not found');
@@ -1814,6 +1923,29 @@ export class AppointmentsController {
         throw new BadRequestException('User ID required');
       }
 
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw new BadRequestException('Clinic context is required');
+      }
+
+      // Get appointment to validate type
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
+      if (!appointment) {
+        throw new NotFoundException('Appointment not found');
+      }
+
+      // Runtime validation at boundary - narrow to VideoCallAppointment
+      if (!isVideoCallAppointment(appointment)) {
+        throw new BadRequestException(
+          'This appointment is not a video consultation. Technical issues can only be reported for VIDEO_CALL appointments.'
+        );
+      }
+
+      // TypeScript now knows appointment is VideoCallAppointment
+
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -1826,7 +1958,7 @@ export class AppointmentsController {
         }
       );
 
-      await this.jitsiVideoService.reportTechnicalIssue(
+      await this.videoService.reportTechnicalIssue(
         appointmentId,
         userId,
         body.description,
@@ -1922,7 +2054,7 @@ export class AppointmentsController {
 
       return {
         success: true,
-        data: result.data as AppointmentResponseDto,
+        data: result.data as unknown as AppointmentResponseDto,
       };
     } catch (error) {
       await this.loggingService.log(
@@ -2016,6 +2148,211 @@ export class AppointmentsController {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to process check-in: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  /**
+   * Staff override: Force check-in for appointment (bypasses time window)
+   * POST /appointments/:id/check-in/force
+   */
+  @Post(':id/check-in/force')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN, Role.NURSE, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 10, duration: 60 })
+  @ApiOperation({
+    summary: 'Staff override: Force check-in',
+    description:
+      'Staff-only endpoint to force check-in for an appointment, bypassing time window restrictions. Requires audit logging with reason.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['reason'],
+      properties: {
+        reason: {
+          type: 'string',
+          description:
+            'Reason for staff override (e.g., "Patient arrived late", "Technical issue")',
+          example: 'Patient arrived late due to traffic',
+        },
+        locationId: {
+          type: 'string',
+          description: 'Optional location ID if different from appointment location',
+        },
+        coordinates: {
+          type: 'object',
+          properties: {
+            lat: { type: 'number' },
+            lng: { type: 'number' },
+          },
+        },
+        deviceInfo: { type: 'object' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Forced check-in processed successfully',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions (staff only)',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @InvalidateAppointmentCache()
+  async forceCheckInAppointment(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe)
+    forceCheckInDto: {
+      reason: string;
+      locationId?: string;
+      coordinates?: { lat: number; lng: number };
+      deviceInfo?: Record<string, unknown>;
+    },
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<{ message: string; overrideReason: string }>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.forceCheckInAppointment';
+    const userId = req.user?.sub || req.user?.id || '';
+    const userRole = req.user?.role;
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      if (!userId) {
+        throw this.errors.authenticationError('User not authenticated', context);
+      }
+
+      if (!forceCheckInDto.reason || forceCheckInDto.reason.trim().length === 0) {
+        throw this.errors.validationError(
+          'reason',
+          'Override reason is required for audit logging',
+          context
+        );
+      }
+
+      // Get appointment to verify it exists and get location
+      const appointment = (await this.appointmentService.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations | null;
+      if (!appointment) {
+        throw this.errors.appointmentNotFound(appointmentId, context);
+      }
+
+      // Check if already checked in
+      if (appointment.checkedInAt) {
+        throw this.errors.checkInAlreadyCheckedIn(appointmentId, context);
+      }
+
+      // Get location (use provided locationId or appointment locationId)
+      const locationId = forceCheckInDto.locationId || appointment.locationId;
+      const location = await this.checkInLocationService.getLocationById(locationId);
+
+      // Verify location belongs to clinic
+      if (location.clinicId !== clinicId) {
+        throw this.errors.insufficientPermissions(context);
+      }
+
+      // Log staff override action with audit trail
+      await this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.WARN,
+        'Staff override: Forced check-in outside time window',
+        context,
+        {
+          appointmentId,
+          userId,
+          userRole,
+          clinicId,
+          locationId,
+          overrideReason: forceCheckInDto.reason,
+          appointmentTime: appointment.date
+            ? `${appointment.date.toISOString()} ${appointment.time}`
+            : 'N/A',
+          currentTime: new Date().toISOString(),
+        }
+      );
+
+      // Process check-in with staff override flag
+      const checkInData: {
+        appointmentId: string;
+        locationId: string;
+        patientId: string;
+        coordinates?: { lat: number; lng: number };
+        deviceInfo?: Record<string, unknown>;
+      } = {
+        appointmentId,
+        locationId,
+        patientId: appointment.patientId || userId,
+      };
+
+      if (forceCheckInDto.coordinates) {
+        checkInData.coordinates = forceCheckInDto.coordinates;
+      }
+      if (forceCheckInDto.deviceInfo) {
+        checkInData.deviceInfo = forceCheckInDto.deviceInfo;
+      }
+
+      const checkIn = await this.checkInLocationService.processCheckIn(checkInData);
+
+      // Log successful forced check-in
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Staff override check-in completed successfully',
+        context,
+        {
+          appointmentId,
+          checkInId: checkIn.id,
+          userId,
+          userRole,
+          clinicId,
+          overrideReason: forceCheckInDto.reason,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: {
+          message: 'Forced check-in processed successfully',
+          overrideReason: forceCheckInDto.reason,
+        },
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to force check-in: ${error instanceof Error ? error.message : String(error)}`,
         context,
         {
           appointmentId,
@@ -2254,65 +2591,162 @@ export class AppointmentsController {
           }
         );
 
-        return {
-          success: false,
-          error: `No appointment found for location ${location.locationName}`,
-        };
+        throw this.errors.checkInNoAppointmentFound(location.id, context);
       }
 
-      // Step 3: Find the most appropriate appointment (today's or next upcoming)
+      // Step 3: Handle multiple appointments or specific appointment selection
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Sort appointments: today first, then by date/time
-      const sortedAppointments = appointments.sort((a, b) => {
-        const dateA = new Date(a.date);
-        const dateB = new Date(b.date);
+      // Filter out already checked-in appointments
+      const eligibleAppointments = appointments.filter(a => !a.checkedInAt);
 
-        // Today's appointments first
-        const aIsToday = dateA.toDateString() === today.toDateString();
-        const bIsToday = dateB.toDateString() === today.toDateString();
+      if (eligibleAppointments.length === 0) {
+        throw this.errors.checkInNoAppointmentFound(location.id, context);
+      }
 
-        if (aIsToday && !bIsToday) return -1;
-        if (!aIsToday && bIsToday) return 1;
-
-        // Then by date/time
-        if (dateA.getTime() !== dateB.getTime()) {
-          return dateA.getTime() - dateB.getTime();
+      // If appointmentId is provided, use that specific appointment
+      let appointment = eligibleAppointments[0];
+      if (scanDto.appointmentId) {
+        const specifiedAppointment = eligibleAppointments.find(a => a.id === scanDto.appointmentId);
+        if (!specifiedAppointment) {
+          throw this.errors.appointmentNotFound(scanDto.appointmentId, context);
         }
+        appointment = specifiedAppointment;
+      } else if (eligibleAppointments.length > 1) {
+        // Multiple appointments - return them for client selection
+        // Sort appointments: today first, then by date/time
+        const sortedAppointments = eligibleAppointments.sort((a, b) => {
+          const dateA = new Date(a.date);
+          const dateB = new Date(b.date);
 
-        // Finally by time
-        return a.time.localeCompare(b.time);
-      });
+          // Today's appointments first
+          const aIsToday = dateA.toDateString() === today.toDateString();
+          const bIsToday = dateB.toDateString() === today.toDateString();
 
-      const appointment = sortedAppointments[0];
+          if (aIsToday && !bIsToday) return -1;
+          if (!aIsToday && bIsToday) return 1;
 
-      if (!appointment) {
+          // Then by date/time
+          if (dateA.getTime() !== dateB.getTime()) {
+            return dateA.getTime() - dateB.getTime();
+          }
+
+          // Finally by time
+          return a.time.localeCompare(b.time);
+        });
+
+        // Return multiple appointments for client selection
         return {
           success: false,
-          error: 'No appointment found for this location',
+          data: {
+            requiresSelection: true,
+            eligibleAppointments: sortedAppointments.map(a => ({
+              id: a.id,
+              date: a.date,
+              time: a.time,
+              doctor: a.doctor
+                ? { id: a.doctor.id, name: a.doctor.user?.name || 'Doctor' }
+                : undefined,
+              type: a.type,
+              status: a.status,
+            })),
+            message: `Multiple appointments found. Please specify appointmentId to check in.`,
+          } as unknown as {
+            appointmentId: string;
+            locationId: string;
+            locationName: string;
+            checkedInAt: string;
+            queuePosition: number;
+            totalInQueue: number;
+            estimatedWaitTime: number;
+            doctorId: string;
+            doctorName: string;
+          },
         };
+      } else {
+        // Single appointment - proceed normally
+        appointment = eligibleAppointments[0];
+      }
+
+      if (!appointment) {
+        throw this.errors.checkInNoAppointmentFound(location.id, context);
       }
 
       // Step 4: Validate appointment
       if (appointment.locationId !== location.id) {
-        throw this.errors.validationError(
-          'location',
-          'Appointment is not scheduled for this location',
-          context,
-          {
-            appointmentLocationId: appointment.locationId,
-            scannedLocationId: location.id,
-          }
-        );
+        throw this.errors.checkInWrongLocation(appointment.locationId, location.id, context);
       }
 
       // Check if already checked in
       if (appointment.checkedInAt) {
-        return {
-          success: false,
-          error: `Appointment already checked in at ${appointment.checkedInAt.toISOString()}`,
-        };
+        throw this.errors.checkInAlreadyCheckedIn(appointment.id, context);
+      }
+
+      // Step 4.5: Validate time window for check-in (30 min before to 2 hours after)
+      const userRole = req.user?.role;
+      const staffRoles: string[] = [
+        Role.RECEPTIONIST,
+        Role.DOCTOR,
+        Role.CLINIC_ADMIN,
+        Role.SUPER_ADMIN,
+        Role.NURSE,
+      ];
+      const isStaff = userRole && staffRoles.includes(userRole);
+
+      // Parse appointment date and time
+      const appointmentDate = new Date(appointment.date);
+      const timeParts = appointment.time.split(':').map(Number);
+      const hours = timeParts[0] ?? 0;
+      const minutes = timeParts[1] ?? 0;
+      appointmentDate.setHours(hours, minutes, 0, 0);
+
+      const now = new Date();
+      const thirtyMinutesBefore = new Date(appointmentDate);
+      thirtyMinutesBefore.setMinutes(thirtyMinutesBefore.getMinutes() - 30);
+      const twoHoursAfter = new Date(appointmentDate);
+      twoHoursAfter.setHours(twoHoursAfter.getHours() + 2);
+
+      const isWithinWindow = now >= thirtyMinutesBefore && now <= twoHoursAfter;
+
+      if (!isWithinWindow && !isStaff) {
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          'Check-in attempted outside time window',
+          context,
+          {
+            appointmentId: appointment.id,
+            appointmentTime: appointmentDate.toISOString(),
+            currentTime: now.toISOString(),
+            userId,
+            userRole,
+          }
+        );
+
+        throw this.errors.checkInTimeWindowExpired(
+          appointmentDate.toISOString(),
+          now.toISOString(),
+          context
+        );
+      }
+
+      // Log staff override if applicable
+      if (!isWithinWindow && isStaff) {
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.INFO,
+          'Staff override: Check-in outside time window',
+          context,
+          {
+            appointmentId: appointment.id,
+            appointmentTime: appointmentDate.toISOString(),
+            currentTime: now.toISOString(),
+            userId,
+            userRole,
+            overrideReason: 'Staff override',
+          }
+        );
       }
 
       // Step 5: Process check-in using CheckInLocationService
@@ -2422,6 +2856,413 @@ export class AppointmentsController {
         {
           qrCode: scanDto.qrCode.substring(0, 20) + '...',
           userId: req.user?.sub,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  // =============================================
+  // CHECK-IN LOCATION MANAGEMENT ENDPOINTS
+  // =============================================
+
+  @Get('check-in/locations')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @ApiOperation({
+    summary: 'List all check-in locations for clinic',
+    description:
+      'Retrieves all check-in locations for the current clinic. Optionally filter by active status.',
+  })
+  @ApiQuery({
+    name: 'isActive',
+    description: 'Filter by active status',
+    type: Boolean,
+    required: false,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'List of check-in locations',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async getCheckInLocations(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('isActive') isActive?: string
+  ): Promise<ServiceResponse<CheckInLocation[]>> {
+    const context = 'AppointmentsController.getCheckInLocations';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const isActiveFilter = isActive === 'true' ? true : isActive === 'false' ? false : undefined;
+      const locations = await this.checkInLocationService.getClinicLocations(
+        clinicId,
+        isActiveFilter
+      );
+
+      await this.loggingService.log(
+        LogType.REQUEST,
+        LogLevel.INFO,
+        'Retrieved check-in locations',
+        context,
+        {
+          clinicId,
+          count: locations.length,
+          isActive: isActiveFilter,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: locations,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get check-in locations: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Post('check-in/locations')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'create')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:location:*', 'checkin-locations:*'],
+    tags: ['appointments', 'check_in_locations'],
+  })
+  @ApiOperation({
+    summary: 'Create new check-in location',
+    description: 'Creates a new check-in location with QR code generation for the current clinic.',
+  })
+  @ApiBody({
+    description: 'Check-in location data',
+    schema: {
+      type: 'object',
+      required: ['locationName', 'coordinates', 'radius'],
+      properties: {
+        locationName: { type: 'string', example: 'Main Reception' },
+        coordinates: {
+          type: 'object',
+          properties: {
+            lat: { type: 'number', example: 40.7128 },
+            lng: { type: 'number', example: -74.006 },
+          },
+        },
+        radius: { type: 'number', example: 50, description: 'Geofencing radius in meters' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Check-in location created successfully',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid input data',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async createCheckInLocation(
+    @Body()
+    createDto: { locationName: string; coordinates: { lat: number; lng: number }; radius: number },
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<CheckInLocation>> {
+    const context = 'AppointmentsController.createCheckInLocation';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const location = await this.checkInLocationService.createCheckInLocation({
+        clinicId,
+        locationName: createDto.locationName,
+        coordinates: createDto.coordinates,
+        radius: createDto.radius,
+      });
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Check-in location created',
+        context,
+        {
+          locationId: location.id,
+          clinicId,
+          locationName: createDto.locationName,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: location,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create check-in location: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Put('check-in/locations/:locationId')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:location:*', 'checkin-locations:*', 'checkin-location:*'],
+    tags: ['appointments', 'check_in_locations'],
+  })
+  @ApiOperation({
+    summary: 'Update check-in location',
+    description: 'Updates an existing check-in location. Only provided fields will be updated.',
+  })
+  @ApiParam({
+    name: 'locationId',
+    description: 'UUID of the check-in location',
+    type: String,
+  })
+  @ApiBody({
+    description: 'Check-in location update data',
+    schema: {
+      type: 'object',
+      properties: {
+        locationName: { type: 'string', example: 'Main Reception' },
+        coordinates: {
+          type: 'object',
+          properties: {
+            lat: { type: 'number', example: 40.7128 },
+            lng: { type: 'number', example: -74.006 },
+          },
+        },
+        radius: { type: 'number', example: 50 },
+        isActive: { type: 'boolean', example: true },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Check-in location updated successfully',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Check-in location not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async updateCheckInLocation(
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Body()
+    updateDto: {
+      locationName?: string;
+      coordinates?: { lat: number; lng: number };
+      radius?: number;
+      isActive?: boolean;
+    },
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<CheckInLocation>> {
+    const context = 'AppointmentsController.updateCheckInLocation';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const location = await this.checkInLocationService.updateCheckInLocation(
+        locationId,
+        updateDto
+      );
+
+      // Verify location belongs to clinic
+      if (location.clinicId !== clinicId) {
+        throw this.errors.insufficientPermissions(context);
+      }
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Check-in location updated',
+        context,
+        {
+          locationId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: location,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update check-in location: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          locationId,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Delete('check-in/locations/:locationId')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'delete')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:location:*', 'checkin-locations:*', 'checkin-location:*'],
+    tags: ['appointments', 'check_in_locations'],
+  })
+  @ApiOperation({
+    summary: 'Delete check-in location',
+    description: 'Deletes a check-in location. This action cannot be undone.',
+  })
+  @ApiParam({
+    name: 'locationId',
+    description: 'UUID of the check-in location',
+    type: String,
+  })
+  @ApiResponse({
+    status: HttpStatus.NO_CONTENT,
+    description: 'Check-in location deleted successfully',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Check-in location not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async deleteCheckInLocation(
+    @Param('locationId', ParseUUIDPipe) locationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<void> {
+    const context = 'AppointmentsController.deleteCheckInLocation';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      // Verify location belongs to clinic before deletion
+      const location = await this.checkInLocationService.getLocationById(locationId);
+      if (location.clinicId !== clinicId) {
+        throw this.errors.insufficientPermissions(context);
+      }
+
+      await this.checkInLocationService.deleteCheckInLocation(locationId);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Check-in location deleted',
+        context,
+        {
+          locationId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to delete check-in location: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          locationId,
           clinicId: req.clinicContext?.clinicId,
           error: error instanceof Error ? error.stack : undefined,
           responseTime: Date.now() - startTime,
@@ -2843,8 +3684,8 @@ export class AppointmentsController {
       return {
         success: true,
         data: {
-          original: result.original as AppointmentResponseDto,
-          followUps: result.followUps.map(apt => apt as AppointmentResponseDto),
+          original: result.original as unknown as AppointmentResponseDto,
+          followUps: result.followUps.map(apt => apt as unknown as AppointmentResponseDto),
         } as AppointmentChainResponseDto,
       };
     } catch (error) {
@@ -3042,7 +3883,7 @@ export class AppointmentsController {
 
       return {
         success: true,
-        data: result.data as AppointmentResponseDto,
+        data: result.data as unknown as AppointmentResponseDto,
       };
     } catch (error) {
       await this.loggingService.log(
@@ -3126,7 +3967,7 @@ export class AppointmentsController {
 
       return {
         success: true,
-        data: result.followUps.map(apt => apt as AppointmentResponseDto),
+        data: result.followUps.map(apt => apt as unknown as AppointmentResponseDto),
       };
     } catch (error) {
       await this.loggingService.log(
@@ -3696,5 +4537,332 @@ export class AppointmentsController {
         authorization: req.headers.authorization ? 'Bearer ***' : 'none',
       },
     };
+  }
+
+  // =============================================
+  // ANALYTICS ENDPOINTS
+  // =============================================
+
+  @Get('analytics/wait-times')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @ApiOperation({
+    summary: 'Get wait time analytics',
+    description:
+      'Retrieves analytics on patient wait times including averages, percentiles, and breakdowns by location, doctor, and hour.',
+  })
+  @ApiQuery({
+    name: 'from',
+    description: 'Start date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'to',
+    description: 'End date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'locationId',
+    description: 'Optional location ID filter',
+    type: String,
+    required: false,
+  })
+  @ApiQuery({
+    name: 'doctorId',
+    description: 'Optional doctor ID filter',
+    type: String,
+    required: false,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Wait time analytics retrieved successfully',
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Insufficient permissions',
+  })
+  async getWaitTimeAnalytics(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('locationId') locationId?: string,
+    @Query('doctorId') doctorId?: string
+  ): Promise<ServiceResponse<unknown>> {
+    const context = 'AppointmentsController.getWaitTimeAnalytics';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const dateRange = {
+        from: new Date(from),
+        to: new Date(to),
+      };
+
+      if (isNaN(dateRange.from.getTime()) || isNaN(dateRange.to.getTime())) {
+        throw this.errors.validationError('dateRange', 'Invalid date range', context);
+      }
+
+      const result = await this.analyticsService.getWaitTimeAnalytics(
+        clinicId,
+        dateRange,
+        locationId,
+        doctorId
+      );
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Wait time analytics retrieved',
+        context,
+        {
+          clinicId,
+          locationId,
+          doctorId,
+          dateRange,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: result.success,
+        data: result.data,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get wait time analytics: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Get('analytics/check-in-patterns')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @ApiOperation({
+    summary: 'Get check-in pattern analytics',
+    description:
+      'Retrieves analytics on check-in patterns including timing distribution, peak hours, and location breakdowns.',
+  })
+  @ApiQuery({
+    name: 'from',
+    description: 'Start date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'to',
+    description: 'End date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'locationId',
+    description: 'Optional location ID filter',
+    type: String,
+    required: false,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Check-in pattern analytics retrieved successfully',
+  })
+  async getCheckInPatternAnalytics(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('locationId') locationId?: string
+  ): Promise<ServiceResponse<unknown>> {
+    const context = 'AppointmentsController.getCheckInPatternAnalytics';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const dateRange = {
+        from: new Date(from),
+        to: new Date(to),
+      };
+
+      if (isNaN(dateRange.from.getTime()) || isNaN(dateRange.to.getTime())) {
+        throw this.errors.validationError('dateRange', 'Invalid date range', context);
+      }
+
+      const result = await this.analyticsService.getCheckInPatternAnalytics(
+        clinicId,
+        dateRange,
+        locationId
+      );
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Check-in pattern analytics retrieved',
+        context,
+        {
+          clinicId,
+          locationId,
+          dateRange,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: result.success,
+        data: result.data,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get check-in pattern analytics: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Get('analytics/no-show-correlation')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @ApiOperation({
+    summary: 'Get no-show correlation analytics',
+    description:
+      'Analyzes correlation between check-in status and no-show rates to identify patterns.',
+  })
+  @ApiQuery({
+    name: 'from',
+    description: 'Start date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'to',
+    description: 'End date (ISO format)',
+    type: String,
+    required: true,
+  })
+  @ApiQuery({
+    name: 'locationId',
+    description: 'Optional location ID filter',
+    type: String,
+    required: false,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'No-show correlation analytics retrieved successfully',
+  })
+  async getNoShowCorrelationAnalytics(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('locationId') locationId?: string
+  ): Promise<ServiceResponse<unknown>> {
+    const context = 'AppointmentsController.getNoShowCorrelationAnalytics';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const dateRange = {
+        from: new Date(from),
+        to: new Date(to),
+      };
+
+      if (isNaN(dateRange.from.getTime()) || isNaN(dateRange.to.getTime())) {
+        throw this.errors.validationError('dateRange', 'Invalid date range', context);
+      }
+
+      const result = await this.analyticsService.getNoShowCorrelationAnalytics(
+        clinicId,
+        dateRange,
+        locationId
+      );
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'No-show correlation analytics retrieved',
+        context,
+        {
+          clinicId,
+          locationId,
+          dateRange,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: result.success,
+        data: result.data,
+        ...(result.error ? { error: result.error } : {}),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get no-show correlation analytics: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
   }
 }

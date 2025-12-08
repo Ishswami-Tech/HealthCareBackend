@@ -11,7 +11,7 @@ import type { RbacContext, RoleAssignment, PermissionCheck } from '@core/types/r
 
 /**
  * Re-export types for backward compatibility
- * @deprecated Use types from @core/types/rbac.types instead
+ * Use types from @core/types/rbac.types instead
  */
 export type { RbacContext, RoleAssignment, PermissionCheck };
 

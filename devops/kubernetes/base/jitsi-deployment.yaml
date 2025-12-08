@@ -1,0 +1,526 @@
+# Jitsi Meet - Prosody (XMPP Server)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jitsi-prosody
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: prosody
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Prosody should be single instance
+  selector:
+    matchLabels:
+      app: jitsi
+      component: prosody
+  template:
+    metadata:
+      labels:
+        app: jitsi
+        component: prosody
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: prosody
+        image: jitsi/prosody:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Prosody needs write access for config
+          capabilities:
+            drop: ["ALL"]
+        envFrom:
+        - configMapRef:
+            name: jitsi-config
+        env:
+        - name: AUTH_TYPE
+          value: "internal"
+        - name: ENABLE_AUTH
+          value: "1"
+        - name: ENABLE_GUESTS
+          value: "1"
+        - name: JICOFO_COMPONENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jicofo-secret
+        - name: JICOFO_AUTH_USER
+          value: "focus"
+        - name: JICOFO_AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-focus-password
+        - name: JVB_AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jvb-password
+        - name: JIGASI_XMPP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jigasi-password
+        - name: JIBRI_RECORDER_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jibri-recorder-password
+        - name: JIBRI_XMPP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jibri-xmpp-password
+        - name: ENABLE_JWT
+          value: "1"
+        ports:
+        - containerPort: 5222
+          name: xmpp-client
+          protocol: TCP
+        - containerPort: 5269
+          name: xmpp-server
+          protocol: TCP
+        - containerPort: 5280
+          name: xmpp-http
+          protocol: TCP
+        - containerPort: 5347
+          name: xmpp-https
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: prosody-config
+          mountPath: /config
+        - name: prosody-plugins
+          mountPath: /prosody-plugins-custom
+      volumes:
+      - name: prosody-config
+        emptyDir: {}
+      - name: prosody-plugins
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jitsi-prosody
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: prosody
+spec:
+  type: ClusterIP
+  selector:
+    app: jitsi
+    component: prosody
+  ports:
+  - port: 5222
+    targetPort: 5222
+    protocol: TCP
+    name: xmpp-client
+  - port: 5269
+    targetPort: 5269
+    protocol: TCP
+    name: xmpp-server
+  - port: 5280
+    targetPort: 5280
+    protocol: TCP
+    name: xmpp-http
+  - port: 5347
+    targetPort: 5347
+    protocol: TCP
+    name: xmpp-https
+---
+# Jitsi Meet - Web Interface
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jitsi-web
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: web
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: jitsi
+      component: web
+  template:
+    metadata:
+      labels:
+        app: jitsi
+        component: web
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: web
+        image: jitsi/web:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Web needs write access for config
+          capabilities:
+            drop: ["ALL"]
+        envFrom:
+        - configMapRef:
+            name: jitsi-config
+        env:
+        - name: ENABLE_AUTH
+          value: "1"
+        - name: ENABLE_GUESTS
+          value: "1"
+        - name: ENABLE_LETSENCRYPT
+          value: "0"  # Use ingress TLS instead
+        - name: ENABLE_HTTP_REDIRECT
+          value: "1"
+        - name: DISABLE_HTTPS
+          value: "0"
+        - name: JICOFO_AUTH_USER
+          value: "focus"
+        - name: DISABLE_DOMAIN_VERIFICATION
+          value: "1"
+        - name: ENABLE_NOISY_MIC_DETECTION
+          value: "1"
+        - name: ENABLE_TRANSCRIPTIONS
+          value: "0"
+        - name: ENABLE_REMB
+          value: "1"
+        - name: ENABLE_TCC
+          value: "1"
+        - name: JWT_APP_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jwt-secret
+        - name: ENABLE_JWT
+          value: "1"
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        - containerPort: 443
+          name: https
+          protocol: TCP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: web-config
+          mountPath: /config
+        - name: web-letsencrypt
+          mountPath: /etc/letsencrypt
+      volumes:
+      - name: web-config
+        emptyDir: {}
+      - name: web-letsencrypt
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jitsi-web
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: web
+spec:
+  type: ClusterIP
+  selector:
+    app: jitsi
+    component: web
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+    name: http
+  - port: 443
+    targetPort: 443
+    protocol: TCP
+    name: https
+---
+# Jitsi Meet - Jicofo (Conference Focus)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jitsi-jicofo
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: jicofo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Jicofo should be single instance
+  selector:
+    matchLabels:
+      app: jitsi
+      component: jicofo
+  template:
+    metadata:
+      labels:
+        app: jitsi
+        component: jicofo
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: jicofo
+        image: jitsi/jicofo:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # Jicofo needs write access for config
+          capabilities:
+            drop: ["ALL"]
+        envFrom:
+        - configMapRef:
+            name: jitsi-config
+        env:
+        - name: AUTH_TYPE
+          value: "internal"
+        - name: ENABLE_AUTH
+          value: "1"
+        - name: XMPP_SERVER
+          value: "jitsi-prosody"
+        - name: JICOFO_COMPONENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jicofo-secret
+        - name: JICOFO_AUTH_USER
+          value: "focus"
+        - name: JICOFO_AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-focus-password
+        - name: JICOFO_RESERVATION_REST_BASE_URL
+          value: ""
+        - name: JVB_BREWERY_MUC
+          value: "jvbbrewery"
+        - name: JIGASI_BREWERY_MUC
+          value: "jigasibrewery"
+        - name: JIGASI_SIP_URI
+          value: ""
+        - name: JIBRI_BREWERY_MUC
+          value: "jibribrewery"
+        - name: JIBRI_PENDING_TIMEOUT
+          value: "90"
+        - name: TZ
+          value: "UTC"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: jicofo-config
+          mountPath: /config
+      volumes:
+      - name: jicofo-config
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jitsi-jicofo
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: jicofo
+spec:
+  type: ClusterIP
+  selector:
+    app: jitsi
+    component: jicofo
+  ports:
+  - port: 8888
+    targetPort: 8888
+    protocol: TCP
+    name: http
+---
+# Jitsi Meet - JVB (Jitsi Videobridge)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jitsi-jvb
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: jvb
+spec:
+  replicas: 2  # Scale JVB for multiple concurrent conferences
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: jitsi
+      component: jvb
+  template:
+    metadata:
+      labels:
+        app: jitsi
+        component: jvb
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: jvb
+        image: jitsi/jvb:latest
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false  # JVB needs write access for config
+          capabilities:
+            drop: ["ALL"]
+            add: ["NET_BIND_SERVICE"]  # Required for binding to port 10000
+        envFrom:
+        - configMapRef:
+            name: jitsi-config
+        env:
+        - name: DOCKER_HOST_ADDRESS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: XMPP_SERVER
+          value: "jitsi-prosody"
+        - name: JVB_AUTH_USER
+          value: "jvb"
+        - name: JVB_AUTH_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: healthcare-secrets
+              key: jitsi-jvb-password
+        - name: JVB_BREWERY_MUC
+          value: "jvbbrewery"
+        - name: JVB_PORT
+          value: "10000"
+        - name: JVB_TCP_HARVESTER_DISABLED
+          value: "true"
+        - name: JVB_TCP_PORT
+          value: "4443"
+        - name: JVB_STUN_SERVERS
+          value: "stun.l.google.com:19302,stun1.l.google.com:19302"
+        - name: JVB_ENABLE_APIS
+          value: "rest,colibri"
+        - name: JVB_WS_SERVER_ID
+          value: ""
+        ports:
+        - containerPort: 10000
+          name: rtp-udp
+          protocol: UDP
+        - containerPort: 4443
+          name: tcp
+          protocol: TCP
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+        livenessProbe:
+          httpGet:
+            path: /about/health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /about/health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: jvb-config
+          mountPath: /config
+      volumes:
+      - name: jvb-config
+        emptyDir: {}
+      restartPolicy: Always
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jitsi-jvb
+  namespace: healthcare-backend
+  labels:
+    app: jitsi
+    component: jvb
+spec:
+  type: NodePort  # NodePort for UDP RTP traffic
+  selector:
+    app: jitsi
+    component: jvb
+  ports:
+  - port: 10000
+    targetPort: 10000
+    nodePort: 30000  # UDP port for RTP
+    protocol: UDP
+    name: rtp-udp
+  - port: 4443
+    targetPort: 4443
+    protocol: TCP
+    name: tcp
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  sessionAffinity: ClientIP

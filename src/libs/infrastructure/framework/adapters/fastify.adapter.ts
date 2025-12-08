@@ -27,6 +27,7 @@ import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, NestFastifyApplication } from '@nestjs/platform-fastify';
 import { INestApplication, Logger, LogLevel } from '@nestjs/common';
 import type { FastifyInstance } from 'fastify';
+import { getEnvBoolean, getEnvWithDefault } from '@config/environment/utils';
 import {
   IFrameworkAdapter,
   IFastifyFrameworkAdapter,
@@ -130,9 +131,10 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
       }),
 
       // HTTP/2 support - enabled by default in production, can be disabled via ENABLE_HTTP2=false
+      // Use helper function (which uses dotenv) for environment variable access
       ...(options.environment === 'production' &&
       options.enableHttp2 !== false &&
-      process.env['ENABLE_HTTP2'] !== 'false'
+      getEnvBoolean('ENABLE_HTTP2', true)
         ? ({ http2: true } as { http2: true })
         : {}),
     };
@@ -448,7 +450,8 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
 export function createFrameworkAdapter(): IFrameworkAdapter {
   // Check environment variable to determine framework
   // Per AI rules: Fastify is mandatory, Express is forbidden
-  const framework = process.env['HTTP_FRAMEWORK'] || 'fastify';
+  // Use helper function (which uses dotenv) for environment variable access
+  const framework = getEnvWithDefault('HTTP_FRAMEWORK', 'fastify');
 
   switch (framework.toLowerCase()) {
     case 'fastify':

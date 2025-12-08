@@ -6,7 +6,6 @@
  */
 
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
-import { existsSync } from 'fs';
 
 import { Worker, Job } from 'bullmq';
 import { ConfigService } from '@config';
@@ -103,7 +102,8 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
   private initializeWorkers() {
     try {
       // Only initialize workers in the worker service, not in API/clinic services
-      const serviceName = process.env['SERVICE_NAME'] || 'clinic';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const serviceName = this.configService.getEnv('SERVICE_NAME', 'clinic');
       if (serviceName !== 'worker') {
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -116,10 +116,10 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
 
       // Check if cache is enabled first - skip worker initialization if cache is disabled
       // BullMQ workers require Redis/Dragonfly to function
-      const cacheEnabledEnv = process.env['CACHE_ENABLED'];
-      const isCacheEnabled = cacheEnabledEnv === 'true';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const cacheEnabled = this.configService.isCacheEnabled();
 
-      if (!isCacheEnabled) {
+      if (!cacheEnabled) {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
@@ -129,38 +129,16 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         return; // Skip worker initialization if cache is disabled
       }
 
-      // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-      // IMPORTANT: Use process.env directly, NOT configService, because:
-      // - configService.get('redis.host') returns 'localhost' from cache.config.ts default
-      // - We need to check environment variables directly to get the actual values
-      const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-      const useDragonfly = cacheProvider === 'dragonfly';
-
-      // Determine cache host - detect Docker environment to use container names
-      let cacheHost: string;
-      if (useDragonfly) {
-        cacheHost = process.env['DRAGONFLY_HOST'] || 'dragonfly';
-      } else {
-        // For Redis, detect Docker environment
-        const isDocker =
-          process.env['DOCKER_ENV'] === 'true' ||
-          process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-          (typeof process.platform !== 'undefined' &&
-            process.platform === 'linux' &&
-            existsSync('/.dockerenv'));
-        cacheHost = process.env['REDIS_HOST'] || (isDocker ? 'redis' : 'localhost');
-      }
-      const cachePort = useDragonfly
-        ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-        : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-      const cachePassword = useDragonfly
-        ? process.env['DRAGONFLY_PASSWORD']
-        : process.env['REDIS_PASSWORD'];
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const cacheHost = this.configService.getCacheHost();
+      const cachePort = this.configService.getCachePort();
+      const cachePassword = this.configService.getCachePassword();
 
       const redisConnection = {
         host: cacheHost,
         port: cachePort,
-        db: parseInt(process.env['REDIS_DB'] || '0', 10),
+        // Use ConfigService (which uses dotenv) for environment variable access
+        db: this.configService.getEnvNumber('REDIS_DB', 0),
         maxRetriesPerRequest: null,
         retryDelayOnFailover: 100,
         connectTimeout: 10000,

@@ -644,3 +644,43 @@ export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
   @IsOptional()
   clinicId?: string;
 }
+
+/**
+ * Data Transfer Object for Google OAuth authentication
+ * @class GoogleOAuthDto
+ * @description Contains Google ID token or access token for OAuth authentication
+ * @example
+ * ```typescript
+ * const googleAuth = new GoogleOAuthDto();
+ * googleAuth.token = "eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1NiIsInR5cCI6IkpXVCJ9...";
+ * googleAuth.clinicId = "clinic-uuid-123";
+ * ```
+ */
+export class GoogleOAuthDto {
+  @ApiProperty({
+    description: 'Google ID token or access token from Google OAuth',
+    example: 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjEyMzQ1NiIsInR5cCI6IkpXVCJ9...',
+    required: true,
+  })
+  @IsString({ message: 'Google token must be a string' })
+  @IsNotEmpty({ message: 'Google token is required' })
+  token!: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false,
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
+
+  @ApiProperty({
+    description: 'Studio ID for multi-tenant context',
+    example: 'studio-uuid-123',
+    required: false,
+  })
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
+  @IsOptional()
+  studioId?: string;
+}

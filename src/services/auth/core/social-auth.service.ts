@@ -5,11 +5,13 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplate } from '@core/types/common.types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
 import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
+import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class SocialAuthService {
   private readonly logger = new Logger(SocialAuthService.name);
   private readonly providers: Map<string, SocialAuthProvider> = new Map();
+  private googleOAuthClient: OAuth2Client | null = null;
 
   constructor(
     @Inject(ConfigService) private readonly configService: ConfigService,
@@ -17,21 +19,17 @@ export class SocialAuthService {
     private readonly emailService: EmailService
   ) {
     this.initializeProviders();
+    this.initializeGoogleOAuth();
   }
 
   /**
    * Initialize social auth providers
+   * Uses ConfigService (which uses dotenv) for all environment variable access
    */
   private initializeProviders(): void {
-    // Helper to safely get config values with fallback
+    // Helper to safely get config values via ConfigService (uses dotenv)
     const getConfig = (key: string, defaultValue = ''): string => {
-      try {
-        return (
-          this.configService?.get<string>(key, defaultValue) || process.env[key] || defaultValue
-        );
-      } catch {
-        return process.env[key] || defaultValue;
-      }
+      return this.configService.getEnv(key, defaultValue) || defaultValue;
     };
 
     // Google
@@ -57,6 +55,35 @@ export class SocialAuthService {
       clientSecret: getConfig('APPLE_CLIENT_SECRET'),
       redirectUri: getConfig('APPLE_REDIRECT_URI'),
     });
+  }
+
+  /**
+   * Initialize Google OAuth2 Client
+   * Uses ConfigService (which uses dotenv) for all environment variable access
+   * @see https://developers.google.com/identity/protocols/oauth2
+   */
+  private initializeGoogleOAuth(): void {
+    // Helper to safely get config values via ConfigService (uses dotenv)
+    const getConfig = (key: string, defaultValue = ''): string => {
+      return this.configService.getEnv(key, defaultValue) || defaultValue;
+    };
+
+    const clientId = getConfig('GOOGLE_CLIENT_ID');
+    const clientSecret = getConfig('GOOGLE_CLIENT_SECRET');
+    const redirectUri = getConfig('GOOGLE_REDIRECT_URI');
+
+    if (clientId && clientSecret) {
+      this.googleOAuthClient = new OAuth2Client({
+        clientId,
+        clientSecret,
+        redirectUri,
+      });
+      this.logger.log('Google OAuth2 client initialized');
+    } else {
+      this.logger.warn(
+        'Google OAuth2 client not initialized - missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET'
+      );
+    }
   }
 
   /**
@@ -246,22 +273,131 @@ export class SocialAuthService {
   }
 
   /**
-   * Verify Google token (placeholder implementation)
+   * Verify Google token using Google OAuth2 API
+   * @see https://developers.google.com/identity/protocols/oauth2
+   * @param token - Google ID token or access token
+   * @returns Google user information
+   * @throws BadRequestException if token verification fails
    */
-  private verifyGoogleToken(_token: string): unknown {
-    // In a real implementation, you would:
-    // 1. Verify the token with Google's API
-    // 2. Extract user information
-    // 3. Return the user data
+  private async verifyGoogleToken(token: string): Promise<{
+    id: string;
+    email: string;
+    given_name?: string;
+    family_name?: string;
+    picture?: string;
+    verified_email?: boolean;
+  }> {
+    if (!this.googleOAuthClient) {
+      throw new BadRequestException(
+        'Google OAuth is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET'
+      );
+    }
 
-    // For now, return mock data
-    return {
-      id: 'google_user_123',
-      email: 'user@gmail.com',
-      given_name: 'John',
-      family_name: 'Doe',
-      picture: 'https://example.com/avatar.jpg',
-    };
+    try {
+      // Verify the ID token
+      // Google ID tokens are JWT tokens that contain user information
+      const ticket = await this.googleOAuthClient.verifyIdToken({
+        idToken: token,
+        audience: (this.googleOAuthClient as { _clientId?: string })._clientId || '',
+      });
+
+      const payload = ticket.getPayload();
+
+      if (!payload) {
+        throw new BadRequestException('Invalid Google token: no payload');
+      }
+
+      // Verify email is present and verified
+      if (!payload.email) {
+        throw new BadRequestException('Google account does not have an email address');
+      }
+
+      if (payload.email_verified === false) {
+        this.logger.warn(`Google account email not verified: ${payload.email}`);
+        // Continue anyway - some Google accounts may not have verified emails
+      }
+
+      const result: {
+        id: string;
+        email: string;
+        given_name?: string;
+        family_name?: string;
+        picture?: string;
+        verified_email?: boolean;
+      } = {
+        id: payload.sub || (payload as { id?: string }).id || '',
+        email: payload.email || '',
+      };
+      if (payload.given_name) {
+        result.given_name = payload.given_name;
+      }
+      if (payload.family_name) {
+        result.family_name = payload.family_name;
+      }
+      if (payload.picture) {
+        result.picture = payload.picture;
+      }
+      if (payload.email_verified !== undefined) {
+        result.verified_email = payload.email_verified;
+      }
+      return result;
+    } catch (error) {
+      this.logger.error(
+        `Google token verification failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+
+      // If token verification fails, try to get user info using access token
+      // This handles the case where frontend sends an access token instead of ID token
+      try {
+        this.googleOAuthClient.setCredentials({ access_token: token });
+        const { data } = await this.googleOAuthClient.request<{
+          id: string;
+          email: string;
+          given_name?: string;
+          family_name?: string;
+          picture?: string;
+          verified_email?: boolean;
+        }>({
+          url: 'https://www.googleapis.com/oauth2/v2/userinfo',
+        });
+
+        if (!data.email) {
+          throw new BadRequestException('Google account does not have an email address');
+        }
+
+        const result: {
+          id: string;
+          email: string;
+          given_name?: string;
+          family_name?: string;
+          picture?: string;
+          verified_email?: boolean;
+        } = {
+          id: data.id || '',
+          email: data.email,
+        };
+        if (data.given_name) {
+          result.given_name = data.given_name;
+        }
+        if (data.family_name) {
+          result.family_name = data.family_name;
+        }
+        if (data.picture) {
+          result.picture = data.picture;
+        }
+        if (data.verified_email !== undefined) {
+          result.verified_email = data.verified_email;
+        }
+        return result;
+      } catch (accessTokenError) {
+        this.logger.error(
+          `Google access token verification also failed: ${accessTokenError instanceof Error ? accessTokenError.message : String(accessTokenError)}`
+        );
+        throw new BadRequestException(
+          `Google authentication failed: ${error instanceof Error ? error.message : 'Invalid token'}`
+        );
+      }
+    }
   }
 
   /**

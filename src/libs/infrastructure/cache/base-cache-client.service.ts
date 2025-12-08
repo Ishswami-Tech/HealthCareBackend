@@ -64,10 +64,10 @@ export abstract class BaseCacheClientService {
     protected readonly loggingService: LoggingService
   ) {
     this.isDevelopment = this.isDevEnvironment();
-    // Use ConfigService for verbose logging configuration
+    // Use ConfigService for verbose logging configuration (required, so always available)
     this.verboseLoggingEnabled =
-      this.configService?.getEnvBoolean('ENABLE_CACHE_DEBUG', false) ||
-      this.configService?.getEnvBoolean('CACHE_VERBOSE_LOGS', false);
+      this.configService.getEnvBoolean('ENABLE_CACHE_DEBUG', false) ||
+      this.configService.getEnvBoolean('CACHE_VERBOSE_LOGS', false);
   }
 
   /**
@@ -85,32 +85,14 @@ export abstract class BaseCacheClientService {
    * Uses ConfigService for Docker-aware host resolution
    */
   protected getHost(): string {
-    // Use ConfigService if available (preferred method)
-    if (this.configService) {
-      if (this.PROVIDER_NAME === 'dragonfly') {
-        return this.configService.getDragonflyHost();
-      } else if (this.PROVIDER_NAME === 'redis') {
-        return this.configService.getRedisHost();
-      }
-      // Fallback to generic cache host
-      return this.configService.getCacheHost();
+    // Use ConfigService (required, so always available)
+    if (this.PROVIDER_NAME === 'dragonfly') {
+      return this.configService.getDragonflyHost();
+    } else if (this.PROVIDER_NAME === 'redis') {
+      return this.configService.getRedisHost();
     }
-
-    // Fallback to process.env if ConfigService not available (shouldn't happen in normal flow)
-    const envHost = process.env[this.HOST_ENV_VAR];
-    if (envHost) {
-      return envHost;
-    }
-
-    // Check if we're in Docker/Kubernetes environment using ConfigService
-    // ConfigService already has Docker detection logic, but if not available, use simple checks
-    const isDocker =
-      process.env['DOCKER_ENV'] === 'true' ||
-      process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-      process.env['container'] !== undefined;
-
-    // Use provider-specific default based on environment
-    return isDocker ? this.DEFAULT_HOST : 'localhost';
+    // Fallback to generic cache host
+    return this.configService.getCacheHost();
   }
 
   /**
@@ -118,19 +100,14 @@ export abstract class BaseCacheClientService {
    * Uses ConfigService for port resolution
    */
   protected getPort(): number {
-    // Use ConfigService if available (preferred method)
-    if (this.configService) {
-      if (this.PROVIDER_NAME === 'dragonfly') {
-        return this.configService.getDragonflyPort();
-      } else if (this.PROVIDER_NAME === 'redis') {
-        return this.configService.getRedisPort();
-      }
-      // Fallback to generic cache port
-      return this.configService.getCachePort();
+    // Use ConfigService (required, so always available)
+    if (this.PROVIDER_NAME === 'dragonfly') {
+      return this.configService.getDragonflyPort();
+    } else if (this.PROVIDER_NAME === 'redis') {
+      return this.configService.getRedisPort();
     }
-
-    // Fallback to process.env if ConfigService not available
-    return parseInt(process.env[this.PORT_ENV_VAR] || '6379', 10);
+    // Fallback to generic cache port
+    return this.configService.getCachePort();
   }
 
   /**
@@ -138,19 +115,14 @@ export abstract class BaseCacheClientService {
    * Uses ConfigService for password resolution
    */
   protected getPassword(): string | undefined {
-    // Use ConfigService if available (preferred method)
-    if (this.configService) {
-      if (this.PROVIDER_NAME === 'dragonfly') {
-        return this.configService.getDragonflyPassword();
-      } else if (this.PROVIDER_NAME === 'redis') {
-        return this.configService.getRedisPassword();
-      }
-      // Fallback to generic cache password
-      return this.configService.getCachePassword();
+    // Use ConfigService (required, so always available)
+    if (this.PROVIDER_NAME === 'dragonfly') {
+      return this.configService.getDragonflyPassword();
+    } else if (this.PROVIDER_NAME === 'redis') {
+      return this.configService.getRedisPassword();
     }
-
-    // Fallback to process.env if ConfigService not available
-    return process.env[this.PASSWORD_ENV_VAR] || undefined;
+    // Fallback to generic cache password
+    return this.configService.getCachePassword();
   }
 
   /**
@@ -158,18 +130,8 @@ export abstract class BaseCacheClientService {
    * Uses ConfigService for environment detection
    */
   protected isDevEnvironment(): boolean {
-    // Use ConfigService if available (preferred method)
-    if (this.configService) {
-      return this.configService.isDevelopment();
-    }
-
-    // Fallback to process.env if ConfigService not available
-    const nodeEnv = process.env['NODE_ENV'] || 'development';
-    const isDev =
-      nodeEnv === 'development' ||
-      process.env['IS_DEV'] === 'true' ||
-      process.env['IS_DEV'] === '1';
-    return isDev;
+    // Use ConfigService (required, so always available)
+    return this.configService.isDevelopment() || this.configService.getEnvBoolean('IS_DEV', false);
   }
 
   /**
@@ -247,8 +209,8 @@ export abstract class BaseCacheClientService {
         family: 4, // IPv4
       };
 
-      // Use ConfigService to check if in production
-      const isProduction = this.configService?.isProduction() ?? false;
+      // Use ConfigService to check if in production (required, so always available)
+      const isProduction = this.configService.isProduction();
       if (isProduction) {
         options.enableOfflineQueue = false;
       }

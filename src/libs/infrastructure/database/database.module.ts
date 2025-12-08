@@ -1,5 +1,6 @@
 import { Module, Global, OnModuleInit, forwardRef, Inject } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@config';
+import { isProduction } from '@config/environment/utils';
 import * as path from 'path';
 import * as fs from 'fs';
 import { PrismaModule } from './prisma/prisma.module';
@@ -157,8 +158,8 @@ export class DatabaseModule implements OnModuleInit {
 
   async onModuleInit() {
     try {
-      // Determine environment
-      const isProduction = process.env['NODE_ENV'] === 'production';
+      // Determine environment using helper function
+      const isProductionEnv = isProduction();
       const isDocker = fs.existsSync('/.dockerenv');
       const isWindows = process.platform === 'win32';
 
@@ -175,7 +176,7 @@ export class DatabaseModule implements OnModuleInit {
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.INFO,
-        `Environment: ${isProduction ? 'Production' : 'Development'}, Docker: ${isDocker}, Windows: ${isWindows}`,
+        `Environment: ${isProductionEnv ? 'Production' : 'Development'}, Docker: ${isDocker}, Windows: ${isWindows}`,
         this.serviceName
       );
 
@@ -245,8 +246,8 @@ export class DatabaseModule implements OnModuleInit {
         this.serviceName
       );
 
-      // Update environment variable for other services to use
-      process.env['PRISMA_SCHEMA_PATH'] = resolvedSchemaPath;
+      // Note: PRISMA_SCHEMA_PATH is set via ConfigService in config files
+      // We don't modify process.env directly - ConfigService is the single source of truth
 
       // Initialize the database
       await initDatabase(this.loggingService);

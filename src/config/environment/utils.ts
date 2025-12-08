@@ -70,3 +70,95 @@ export function isDockerEnvironment(): boolean {
 export function getDefaultRedisHost(): string {
   return isDockerEnvironment() ? 'redis' : 'localhost';
 }
+
+/**
+ * Safely gets environment variable value using ENV_VARS constant
+ * This helper function satisfies TypeScript's strict type checking
+ * Use in config factories where ConfigService is not yet available
+ * Dotenv is already loaded by config.module.ts before factories run
+ * @param envVar - Environment variable name from ENV_VARS constant
+ * @returns Environment variable value or undefined
+ */
+export function getEnv(envVar: string): string | undefined {
+  return process.env[envVar];
+}
+
+/**
+ * Get environment variable with default value (mimics ConfigService.getEnv)
+ * Use in config factories where ConfigService is not yet available
+ * Dotenv is already loaded by config.module.ts before factories run
+ * @param key - Environment variable name
+ * @param defaultValue - Default value if not found
+ * @returns Environment variable value or default
+ */
+export function getEnvWithDefault(key: string, defaultValue: string): string {
+  return process.env[key] || defaultValue;
+}
+
+/**
+ * Get environment variable as number (mimics ConfigService.getEnvNumber)
+ * Use in config factories where ConfigService is not yet available
+ * @param key - Environment variable name
+ * @param defaultValue - Default value if not found or invalid
+ * @returns Parsed number or default
+ */
+export function getEnvNumber(key: string, defaultValue: number): number {
+  const value = process.env[key];
+  if (!value) {
+    return defaultValue;
+  }
+  const parsed = parseInt(value, 10);
+  return isNaN(parsed) ? defaultValue : parsed;
+}
+
+/**
+ * Get environment variable as boolean (mimics ConfigService.getEnvBoolean)
+ * Use in config factories where ConfigService is not yet available
+ * @param key - Environment variable name
+ * @param defaultValue - Default value if not found
+ * @returns Parsed boolean or default
+ */
+export function getEnvBoolean(key: string, defaultValue: boolean): boolean {
+  const value = process.env[key];
+  if (!value) {
+    return defaultValue;
+  }
+  return value.toLowerCase() === 'true';
+}
+
+/**
+ * Check if environment variable exists (mimics ConfigService.hasEnv)
+ * Use in config factories where ConfigService is not yet available
+ * @param key - Environment variable name
+ * @returns True if variable exists and has a value
+ */
+export function hasEnv(key: string): boolean {
+  return process.env[key] !== undefined;
+}
+
+/**
+ * Get environment name (mimics ConfigService.getEnvironment)
+ * Use in config factories where ConfigService is not yet available
+ * @returns Environment name (development, production, staging, test)
+ */
+export function getEnvironment(): string {
+  return process.env['NODE_ENV'] || 'development';
+}
+
+/**
+ * Check if in production (mimics ConfigService.isProduction)
+ * Use in config factories where ConfigService is not yet available
+ * @returns True if NODE_ENV is production
+ */
+export function isProduction(): boolean {
+  return process.env['NODE_ENV'] === 'production';
+}
+
+/**
+ * Check if in development (mimics ConfigService.isDevelopment)
+ * Use in config factories where ConfigService is not yet available
+ * @returns True if NODE_ENV is development
+ */
+export function isDevelopment(): boolean {
+  return process.env['NODE_ENV'] === 'development';
+}

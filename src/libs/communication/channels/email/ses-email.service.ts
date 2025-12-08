@@ -55,20 +55,15 @@ export class SESEmailService implements OnModuleInit {
 
   private initializeAWSSES(): void {
     try {
-      const awsRegion = this.configService?.get<string>('AWS_REGION') || process.env['AWS_REGION'];
-      const awsAccessKeyId =
-        this.configService?.get<string>('AWS_ACCESS_KEY_ID') || process.env['AWS_ACCESS_KEY_ID'];
-      const awsSecretAccessKey =
-        this.configService?.get<string>('AWS_SECRET_ACCESS_KEY') ||
-        process.env['AWS_SECRET_ACCESS_KEY'];
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const awsRegion = this.configService.getEnv('AWS_REGION');
+      const awsAccessKeyId = this.configService.getEnv('AWS_ACCESS_KEY_ID');
+      const awsSecretAccessKey = this.configService.getEnv('AWS_SECRET_ACCESS_KEY');
       this.fromEmail =
-        this.configService?.get<string>('AWS_SES_FROM_EMAIL') ||
-        process.env['AWS_SES_FROM_EMAIL'] ||
+        this.configService.getEnv('AWS_SES_FROM_EMAIL', 'noreply@healthcare.com') ||
         'noreply@healthcare.com';
       this.fromName =
-        this.configService?.get<string>('AWS_SES_FROM_NAME') ||
-        process.env['AWS_SES_FROM_NAME'] ||
-        'Healthcare App';
+        this.configService.getEnv('AWS_SES_FROM_NAME', 'Healthcare App') || 'Healthcare App';
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
         void this.loggingService.log(

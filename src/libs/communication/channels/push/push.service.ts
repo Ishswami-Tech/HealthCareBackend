@@ -97,15 +97,10 @@ export class PushNotificationService implements OnModuleInit {
    */
   private initializeFirebase(): void {
     try {
-      const projectId =
-        this.configService?.get<string>('FIREBASE_PROJECT_ID') ||
-        process.env['FIREBASE_PROJECT_ID'];
-      const privateKey =
-        this.configService?.get<string>('FIREBASE_PRIVATE_KEY') ||
-        process.env['FIREBASE_PRIVATE_KEY'];
-      const clientEmail =
-        this.configService?.get<string>('FIREBASE_CLIENT_EMAIL') ||
-        process.env['FIREBASE_CLIENT_EMAIL'];
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
+      const privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY');
+      const clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
 
       if (!projectId || !privateKey || !clientEmail) {
         void this.loggingService.log(
