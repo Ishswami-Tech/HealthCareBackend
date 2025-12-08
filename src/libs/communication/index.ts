@@ -17,6 +17,7 @@
 export * from './communication.service';
 export { CommunicationModule } from './communication.module';
 export * from './communication-health-monitor.service';
+export { CommunicationController } from './communication.controller';
 
 // Channel exports (for direct access if needed)
 export * from '@communication/channels/socket';
@@ -28,5 +29,5 @@ export * from '@communication/channels/chat';
 // Listeners exports (event-driven communication)
 export * from './listeners';
 
-// Notification exports (legacy REST API - use CommunicationService instead)
+// Notification exports (legacy REST API - use CommunicationController instead)
 export * from '../../services/notification/notification.module';

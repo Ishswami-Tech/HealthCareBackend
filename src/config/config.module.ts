@@ -8,6 +8,8 @@ import stagingConfig from './environment/staging.config';
 import testConfig from './environment/test.config';
 import cacheConfig, { redisConfig } from './cache.config';
 import rateLimitConfig from './rate-limit.config';
+import jitsiConfig from './jitsi.config';
+import videoConfig from './video.config';
 import { healthcareConfig } from '@infrastructure/database/config/healthcare.config';
 import { ConfigService } from './config.service';
 import { ENV_VARS } from './constants';
@@ -123,6 +125,8 @@ validateConfigEarly();
         cacheConfig, // Single source of truth for cache configuration
         redisConfig,
         rateLimitConfig,
+        jitsiConfig, // Jitsi Meet configuration (for backward compatibility)
+        videoConfig, // Video provider configuration (OpenVidu primary, Jitsi fallback)
         healthcareConfig,
       ],
       isGlobal: true,

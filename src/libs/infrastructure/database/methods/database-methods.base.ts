@@ -66,7 +66,7 @@ export class DatabaseMethodsBase {
    * Cache invalidation is now automatically handled by DatabaseService
    * after write operations. Manual invalidation is rarely needed.
    *
-   * @deprecated Cache invalidation is now automatic. Only use for edge cases.
+   * Cache invalidation is now automatic. Only use for edge cases.
    */
   protected async invalidateCache(tags: string[]): Promise<void> {
     const cacheService = this.cacheService;

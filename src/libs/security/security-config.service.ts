@@ -151,23 +151,16 @@ export class SecurityConfigService {
    */
   private async configureRateLimiting(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
+    // Use ConfigService (which uses dotenv) for all environment variable access
+    const rateLimitConfig = this.configService.getRateLimitConfig();
     await adapter.registerRateLimit(app, {
-      max: parseInt(process.env['RATE_LIMIT_MAX'] || '1000', 10),
-      timeWindow: process.env['RATE_LIMIT_WINDOW'] || '1 minute',
+      max: rateLimitConfig.max,
+      timeWindow: this.configService.getEnv('RATE_LIMIT_WINDOW', '1 minute'),
       redis: (() => {
-        // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-        const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-        const useDragonfly = cacheProvider === 'dragonfly';
-
-        const cacheHost = useDragonfly
-          ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-          : process.env['REDIS_HOST'] || 'localhost';
-        const cachePort = useDragonfly
-          ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-          : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-        const cachePassword = useDragonfly
-          ? process.env['DRAGONFLY_PASSWORD']
-          : process.env['REDIS_PASSWORD'];
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const cacheHost = this.configService.getCacheHost();
+        const cachePort = this.configService.getCachePort();
+        const cachePassword = this.configService.getCachePassword();
 
         return {
           host: cacheHost,
@@ -251,13 +244,14 @@ export class SecurityConfigService {
 
     const imgSrc = ["'self'", 'data:', 'https:', 'blob:'] as readonly string[];
 
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const urlsConfig = this.configService.getUrlsConfig();
+    const appConfig = this.configService.getAppConfig();
     const connectSrc = [
       "'self'",
-      this.configService?.get<string>('FRONTEND_URL', '') || process.env['FRONTEND_URL'] || '',
-      this.configService?.get<string>('API_URL', '') || process.env['API_URL'] || '',
-      (this.configService?.get<string>('API_URL', '') || process.env['API_URL'] || '')
-        .replace('http://', 'wss://')
-        .replace('https://', 'wss://'),
+      urlsConfig.frontend || '',
+      appConfig.apiUrl || '',
+      (appConfig.apiUrl || '').replace('http://', 'wss://').replace('https://', 'wss://'),
       'https://accounts.google.com',
       'https://oauth2.googleapis.com',
       'https://www.googleapis.com',
@@ -275,13 +269,9 @@ export class SecurityConfigService {
           frameSrc: ["'self'", 'https://accounts.google.com'] as readonly string[],
           objectSrc: ["'none'"] as readonly string[],
           baseUri: ["'self'"] as readonly string[],
-          formAction: [
-            "'self'",
-            'https://accounts.google.com',
-            this.configService?.get<string>('FRONTEND_URL', '') ||
-              process.env['FRONTEND_URL'] ||
-              '',
-          ].filter(Boolean) as readonly string[],
+          formAction: ["'self'", 'https://accounts.google.com', urlsConfig.frontend || ''].filter(
+            Boolean
+          ) as readonly string[],
           frameAncestors: ["'none'"] as readonly string[],
         },
       },
@@ -302,8 +292,9 @@ export class SecurityConfigService {
    * This method is framework-agnostic.
    */
   configureCORS(app: INestApplication): void {
-    const corsOrigin =
-      this.configService?.get<string>('CORS_ORIGIN', '*') || process.env['CORS_ORIGIN'] || '*';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const corsConfig = this.configService.getCorsConfig();
+    const corsOrigin = corsConfig.origin || '*';
     const corsOrigins =
       corsOrigin === '*' ? '*' : corsOrigin.split(',').map(origin => origin.trim());
 
@@ -360,10 +351,9 @@ export class SecurityConfigService {
       if (requestTyped.method === 'OPTIONS') {
         const origin = requestTyped.headers?.origin;
         if (origin) {
-          const corsOrigin =
-            this.configService?.get<string>('CORS_ORIGIN', '*') ||
-            process.env['CORS_ORIGIN'] ||
-            '*';
+          // Use ConfigService (which uses dotenv) for environment variable access
+          const corsConfig = this.configService.getCorsConfig();
+          const corsOrigin = corsConfig.origin || '*';
           const allowedOrigins =
             corsOrigin === '*' ? ['*'] : corsOrigin.split(',').map((o: string) => o.trim());
 
@@ -403,10 +393,11 @@ export class SecurityConfigService {
     if (!adapter || typeof adapter.registerCookie !== 'function') {
       throw new Error('Fastify adapter does not support cookie registration');
     }
-    const cookieSecret =
-      (this.configService?.get<string>('COOKIE_SECRET') as string | undefined) ||
-      process.env['COOKIE_SECRET'] ||
-      'default-cookie-secret-change-in-production-min-32-chars';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const cookieSecret = this.configService.getEnv(
+      'COOKIE_SECRET',
+      'default-cookie-secret-change-in-production-min-32-chars'
+    );
 
     const cookieOptions = {
       secret: cookieSecret,
@@ -442,31 +433,30 @@ export class SecurityConfigService {
     }
 
     // Get session secret from config (must be at least 32 characters)
+    // Use ConfigService (which uses dotenv) for environment variable access
     const sessionSecret =
-      this.configService?.get<string>('SESSION_SECRET') ||
-      process.env['SESSION_SECRET'] ||
-      'default-session-secret-change-in-production-min-32-chars-long';
+      this.configService.getEnv(
+        'SESSION_SECRET',
+        'default-session-secret-change-in-production-min-32-chars-long'
+      ) || 'default-session-secret-change-in-production-min-32-chars-long';
 
-    if (sessionSecret.length < 32) {
+    if (sessionSecret && sessionSecret.length < 32) {
       this.logger.warn(
         'SESSION_SECRET is less than 32 characters. Please use a longer secret for production.'
       );
     }
 
     // Session timeout in milliseconds (default: 24 hours)
-    const sessionTimeout =
-      this.configService?.get<number>('SESSION_TIMEOUT', 86400) ||
-      parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const sessionTimeout = this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
     const maxAge = sessionTimeout * 1000;
 
     // Cookie configuration
-    const secureCookies =
-      this.configService?.get<boolean>('SESSION_SECURE_COOKIES', true) ??
-      process.env['SESSION_SECURE_COOKIES'] !== 'false';
-
-    const sameSite = (this.configService?.get<string>('SESSION_SAME_SITE', 'strict') ||
-      process.env['SESSION_SAME_SITE'] ||
-      'strict') as 'strict' | 'lax' | 'none';
+    const secureCookies = this.configService.getEnvBoolean('SESSION_SECURE_COOKIES', true);
+    const sameSite = (this.configService.getEnv('SESSION_SAME_SITE', 'strict') || 'strict') as
+      | 'strict'
+      | 'lax'
+      | 'none';
 
     const sessionOptions: Record<string, unknown> = {
       secret: sessionSecret,

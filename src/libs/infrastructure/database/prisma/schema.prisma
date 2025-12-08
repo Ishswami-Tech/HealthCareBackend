@@ -159,6 +159,7 @@ model Clinic {
   primaryUsers          User[]                       @relation("UserPrimaryClinic")
   videoConsultations    VideoConsultation[]
   users                 User[]                       @relation("UserClinics")
+  checkIns              CheckIn[]
 
   @@index([app_name])
   @@index([isActive])
@@ -1500,6 +1501,7 @@ model CheckIn {
   appointmentId String
   locationId    String
   patientId     String
+  clinicId      String // Denormalized for performance (10M+ scale)
   checkedInAt   DateTime        @default(now())
   coordinates   Json?
   deviceInfo    Json?
@@ -1509,11 +1511,16 @@ model CheckIn {
   appointment   Appointment     @relation(fields: [appointmentId], references: [id])
   location      CheckInLocation @relation(fields: [locationId], references: [id])
   patient       Patient         @relation(fields: [patientId], references: [id])
+  clinic        Clinic          @relation(fields: [clinicId], references: [id])
 
   @@index([appointmentId])
   @@index([locationId])
   @@index([patientId])
   @@index([checkedInAt])
+  // Composite indexes for 10M+ scale analytics
+  @@index([locationId, checkedInAt]) // Location daily analytics
+  @@index([patientId, checkedInAt]) // Patient check-in history
+  @@index([clinicId, locationId, checkedInAt]) // Clinic reports
 }
 
 enum Role {

@@ -192,7 +192,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      `🚀 QueueService constructor called for ${process.env['SERVICE_NAME'] || 'unknown'} service`,
+      // Use ConfigService (which uses dotenv) for environment variable access
+      `🚀 QueueService constructor called for ${this.configService.getEnv('SERVICE_NAME', 'unknown')} service`,
       'QueueService',
       {}
     );
@@ -248,7 +249,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getCurrentDomain(): DomainType {
-    const serviceName = process.env['SERVICE_NAME'] || 'clinic';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const serviceName = this.configService.getEnv('SERVICE_NAME', 'clinic');
     switch (serviceName) {
       case 'clinic':
         return DomainType.CLINIC;
@@ -1752,28 +1754,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           },
           {
             connection: (() => {
-              // Check cache provider - use Dragonfly if CACHE_PROVIDER is dragonfly
-              const cacheProvider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
-              const useDragonfly = cacheProvider === 'dragonfly';
-
-              // Detect Docker environment to use container service names
-              const isDocker =
-                process.env['DOCKER_ENV'] === 'true' ||
-                process.env['KUBERNETES_SERVICE_HOST'] !== undefined ||
-                (typeof process.platform !== 'undefined' &&
-                  process.platform === 'linux' &&
-                  typeof process.env['HOSTNAME'] !== 'undefined');
-
-              const cacheHost = useDragonfly
-                ? process.env['DRAGONFLY_HOST'] || 'dragonfly'
-                : process.env['REDIS_HOST'] || (isDocker ? 'redis' : 'localhost');
-              const cachePort = useDragonfly
-                ? parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10)
-                : parseInt(process.env['REDIS_PORT'] || '6379', 10);
-
+              // Use ConfigService (which uses dotenv) for environment variable access
+              const password = this.configService.getCachePassword();
               return {
-                host: cacheHost,
-                port: cachePort,
+                host: this.configService.getCacheHost(),
+                port: this.configService.getCachePort(),
+                ...(password ? { password } : {}),
               };
             })(),
             concurrency: 5,

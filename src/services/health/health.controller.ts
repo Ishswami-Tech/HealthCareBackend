@@ -1,5 +1,6 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Res, Inject } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ConfigService } from '@config';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
 import { Public } from '@core/decorators/public.decorator';
@@ -9,7 +10,10 @@ import { FastifyReply } from 'fastify';
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {
+  constructor(
+    private readonly healthService: HealthService,
+    @Inject(ConfigService) private readonly configService: ConfigService
+  ) {
     // Defensive check: ensure healthService is injected
     // Note: This check is performed at construction time before LoggingService is available
     // Using console.error is acceptable here as it's a critical initialization error
@@ -255,11 +259,12 @@ export class HealthController {
     } catch (_error) {
       // Fallback: return degraded status if health check fails
       // IMPORTANT: If we can return this response, the API is healthy!
+      // Use ConfigService (which uses dotenv) for environment variable access
       const fallbackResponse: HealthCheckResponse = {
         status: 'degraded',
         timestamp: new Date().toISOString(),
-        environment: process.env['NODE_ENV'] || 'development',
-        version: process.env['npm_package_version'] || '0.0.1',
+        environment: this.configService.getEnvironment(),
+        version: this.configService.getEnv('npm_package_version') || '0.0.1',
         systemMetrics: {
           uptime: process.uptime(),
           memoryUsage: {
@@ -388,8 +393,8 @@ export class HealthController {
         baseHealth = {
           status: 'degraded',
           timestamp: new Date().toISOString(),
-          environment: process.env['NODE_ENV'] || 'development',
-          version: process.env['npm_package_version'] || '0.0.1',
+          environment: this.configService.getEnvironment(),
+          version: this.configService.getEnv('npm_package_version') || '0.0.1',
           systemMetrics: {
             uptime: process.uptime(),
             memoryUsage: {

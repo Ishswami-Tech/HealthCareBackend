@@ -1,4 +1,5 @@
 import { ENV_VARS } from '../constants';
+import { getEnv } from './utils';
 
 /**
  * Environment-specific required variables
@@ -64,15 +65,17 @@ export function validateEnvironmentConfig(
   const warnings: string[] = [];
 
   // Check required variables
+  // Use helper function (which uses dotenv) for environment variable access
   for (const varName of requiredVars) {
-    if (!process.env[varName]) {
+    if (!getEnv(varName)) {
       missing.push(varName);
     }
   }
 
   // Check recommended variables (warnings only)
+  // Use helper function (which uses dotenv) for environment variable access
   for (const varName of recommendedVars) {
-    if (!process.env[varName] && !requiredVars.includes(varName)) {
+    if (!getEnv(varName) && !requiredVars.includes(varName)) {
       warnings.push(varName);
     }
   }

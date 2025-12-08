@@ -318,6 +318,8 @@ export interface LogAnalytics {
 }
 
 // Helper function to create standardized log data
+// Uses helper functions (which use dotenv) for environment variable access
+// These mimic ConfigService methods but work in utility functions
 export function createLogData(
   type: LogType,
   level: LogLevel,
@@ -325,6 +327,14 @@ export function createLogData(
   context: string,
   metadata: Record<string, unknown> = {}
 ): LogEntry {
+  // Import helper functions that use dotenv (already loaded)
+  // Use dynamic import to avoid circular dependencies
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { getEnvironment, getEnvWithDefault } = require('@config/environment/utils') as {
+    getEnvironment: () => string;
+    getEnvWithDefault: (key: string, defaultValue: string) => string;
+  };
+
   return {
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
     type,
@@ -334,8 +344,8 @@ export function createLogData(
     metadata: {
       ...(metadata || {}),
       timestamp: new Date().toISOString(),
-      environment: process.env['NODE_ENV'] || 'development',
-      service: process.env['SERVICE_NAME'] || 'healthcare-backend',
+      environment: getEnvironment(),
+      service: getEnvWithDefault('SERVICE_NAME', 'healthcare-backend'),
     },
     timestamp: new Date(),
   };

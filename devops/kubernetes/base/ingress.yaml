@@ -13,12 +13,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://ishswami.in, https://www.ishswami.in"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://ishswami.in, https://www.ishswami.in, https://meet.ishswami.in"
     nginx.ingress.kubernetes.io/limit-rps: "100"
 spec:
   tls:
   - hosts:
     - api.ishswami.in
+    - meet.ishswami.in
     secretName: healthcare-tls
   rules:
   - host: api.ishswami.in
@@ -31,3 +32,27 @@ spec:
             name: healthcare-api
             port:
               number: 8088
+  - host: meet.ishswami.in
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: jitsi-web
+            port:
+              number: 80
+      - path: /http-bind
+        pathType: Prefix
+        backend:
+          service:
+            name: jitsi-prosody
+            port:
+              number: 5280
+      - path: /xmpp-websocket
+        pathType: Prefix
+        backend:
+          service:
+            name: jitsi-prosody
+            port:
+              number: 5280

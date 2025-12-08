@@ -4,6 +4,80 @@
  * @description All appointment-related types and interfaces for the healthcare system
  */
 
+import { AppointmentType } from './enums.types';
+import type { AppointmentBase } from './database.types';
+
+/**
+ * ============================================================================
+ * STRICT DISCRIMINATED UNION TYPES FOR ENTERPRISE-LEVEL TYPE SAFETY
+ * ============================================================================
+ * These types ensure compile-time type safety for appointment operations.
+ * Each variant has its required fields based on appointment type.
+ *
+ * @see https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions
+ */
+
+/**
+ * Video call appointment - locationId is optional
+ * @description VIDEO_CALL appointments don't require physical location
+ */
+export interface VideoCallAppointment extends Omit<AppointmentBase, 'type' | 'locationId'> {
+  type: AppointmentType.VIDEO_CALL;
+  locationId: string | null;
+}
+
+/**
+ * In-person appointment - locationId is required
+ * @description IN_PERSON appointments must have a physical location
+ */
+export interface InPersonAppointment extends Omit<AppointmentBase, 'type' | 'locationId'> {
+  type: AppointmentType.IN_PERSON;
+  locationId: string; // Required - non-nullable
+}
+
+/**
+ * Home visit appointment - locationId is optional (uses patient address)
+ * @description HOME_VISIT appointments may use patient's address
+ */
+export interface HomeVisitAppointment extends Omit<AppointmentBase, 'type' | 'locationId'> {
+  type: AppointmentType.HOME_VISIT;
+  locationId: string | null;
+}
+
+/**
+ * Discriminated union of all appointment types
+ * @description Type-safe union that allows TypeScript to narrow types based on 'type' field
+ *
+ * @example
+ * ```typescript
+ * function processAppointment(appointment: TypedAppointment) {
+ *   if (appointment.type === AppointmentType.VIDEO_CALL) {
+ *     // TypeScript knows appointment is VideoCallAppointment here
+ *     // appointment.locationId is string | null
+ *   } else if (appointment.type === AppointmentType.IN_PERSON) {
+ *     // TypeScript knows appointment is InPersonAppointment here
+ *     // appointment.locationId is string (required)
+ *   }
+ * }
+ * ```
+ */
+export type TypedAppointment = VideoCallAppointment | InPersonAppointment | HomeVisitAppointment;
+
+/**
+ * Type helper to extract appointment type from union
+ * @description Utility type for functions that work with specific appointment types
+ *
+ * @example
+ * ```typescript
+ * function createVideoRoom(
+ *   appointment: Extract<TypedAppointment, { type: AppointmentType.VIDEO_CALL }>
+ * ): Promise<VideoRoom> {
+ *   // TypeScript guarantees appointment.type === VIDEO_CALL
+ * }
+ * ```
+ */
+export type AppointmentByType<T extends AppointmentType> = Extract<TypedAppointment, { type: T }>;
+
 /**
  * Appointment context for operations
  */
@@ -1151,11 +1225,16 @@ export interface AnalyticsResult {
  */
 export interface JitsiRoomConfig {
   roomName: string;
-  moderatorPassword: string;
-  participantPassword: string;
-  encryptionKey: string;
+  meetingUrl?: string;
+  moderatorPassword?: string;
+  participantPassword?: string;
+  encryptionKey?: string;
   recordingEnabled: boolean;
   maxParticipants: number;
+  appointmentId?: string;
+  isSecure?: boolean;
+  enableRecording?: boolean;
+  hipaaCompliant?: boolean;
 }
 
 /**
@@ -1164,11 +1243,11 @@ export interface JitsiRoomConfig {
 export interface VideoConsultationSession {
   appointmentId: string;
   roomName: string;
-  status: 'pending' | 'started' | 'ended';
-  startTime?: Date;
-  endTime?: Date;
-  meetingNotes?: string;
-  recordingUrl?: string;
+  status: 'pending' | 'started' | 'ended' | 'cancelled';
+  startTime?: Date | undefined;
+  endTime?: Date | undefined;
+  meetingNotes?: string | undefined;
+  recordingUrl?: string | undefined;
   technicalIssues?: Array<{
     issueType: string;
     description: string;
@@ -1203,11 +1282,11 @@ export interface VideoCall {
   doctorId: string;
   clinicId: string;
   status: 'scheduled' | 'active' | 'completed' | 'cancelled';
-  startTime?: string;
-  endTime?: string;
-  duration?: number;
-  recordingUrl?: string;
-  meetingUrl: string;
+  startTime?: string | undefined;
+  endTime?: string | undefined;
+  duration?: number | undefined;
+  recordingUrl?: string | undefined;
+  meetingUrl?: string | undefined;
   participants: string[];
   settings: VideoCallSettings;
 }

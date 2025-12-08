@@ -5,8 +5,10 @@ import {
   UnauthorizedException,
   HttpException,
   HttpStatus,
+  Inject,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { ConfigService } from '@config';
 import { JwtService } from '@nestjs/jwt';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
@@ -137,7 +139,8 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     private readonly jwtAuthService: JwtAuthService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(ConfigService) private readonly configService: ConfigService
   ) {}
 
   /**
@@ -164,7 +167,9 @@ export class JwtAuthGuard implements CanActivate {
       }
 
       // Skip rate limiting and security checks in development mode
-      const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const isDev =
+        this.configService.isDevelopment() || this.configService.getEnvBoolean('DEV_MODE', false);
       if (isDev) {
         const token = this.extractTokenFromHeader(request);
         if (!token) {
@@ -266,7 +271,9 @@ export class JwtAuthGuard implements CanActivate {
       return true;
     } catch (error) {
       // Skip error handling in development mode
-      const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const isDev =
+        this.configService.isDevelopment() || this.configService.getEnvBoolean('DEV_MODE', false);
       if (isDev) {
         throw error;
       }
@@ -295,8 +302,10 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     // Validate origin for CORS requests
+    // Use ConfigService (which uses dotenv) for environment variable access
     if (request.headers.origin) {
-      const allowedOrigins = process.env['ALLOWED_ORIGINS']?.split(',') || [];
+      const corsConfig = this.configService.getCorsConfig();
+      const allowedOrigins = corsConfig.origin?.split(',') || [];
       if (!allowedOrigins.includes(request.headers.origin)) {
         throw new HttpException('Invalid origin', HttpStatus.FORBIDDEN);
       }
@@ -582,7 +591,9 @@ export class JwtAuthGuard implements CanActivate {
     });
 
     // Skip device fingerprint check in DEV_MODE
-    const isDev = process.env['NODE_ENV'] === 'development' || process.env['DEV_MODE'] === 'true';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const isDev =
+      this.configService.isDevelopment() || this.configService.getEnvBoolean('DEV_MODE', false);
     if (!isDev) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       if (sessionData.deviceFingerprint !== currentFingerprint) {

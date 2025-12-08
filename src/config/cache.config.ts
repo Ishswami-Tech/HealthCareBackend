@@ -12,7 +12,15 @@
 import { registerAs } from '@nestjs/config';
 import type { CacheConfig, RedisConfig } from '@core/types';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
-import { getDefaultRedisHost, parseInteger } from './environment/utils';
+import {
+  getDefaultRedisHost,
+  parseInteger,
+  getEnv,
+  getEnvWithDefault,
+  getEnvBoolean,
+  getEnvNumber,
+  isDevelopment,
+} from './environment/utils';
 
 /**
  * Check if cache is enabled
@@ -20,9 +28,8 @@ import { getDefaultRedisHost, parseInteger } from './environment/utils';
  * @returns true if cache is enabled, false otherwise
  */
 export function isCacheEnabled(): boolean {
-  const cacheEnabledEnv = process.env['CACHE_ENABLED'];
-  // Only enable cache if explicitly set to 'true'
-  return cacheEnabledEnv === 'true';
+  // Use helper function (which uses dotenv) for environment variable access
+  return getEnvBoolean('CACHE_ENABLED', false);
 }
 
 /**
@@ -34,7 +41,8 @@ export function getCacheProvider(): 'redis' | 'dragonfly' | 'memory' {
     return 'memory'; // Return memory when cache is disabled
   }
 
-  const provider = (process.env['CACHE_PROVIDER'] || 'dragonfly').toLowerCase();
+  // Use helper function (which uses dotenv) for environment variable access
+  const provider = getEnvWithDefault('CACHE_PROVIDER', 'dragonfly').toLowerCase();
   if (provider === 'redis' || provider === 'dragonfly' || provider === 'memory') {
     return provider;
   }
@@ -73,8 +81,9 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
   const enabled = isCacheEnabled();
   const provider = getCacheProvider();
 
-  const redisPassword = process.env['REDIS_PASSWORD'];
-  const dragonflyPassword = process.env['DRAGONFLY_PASSWORD'];
+  // Use helper functions (which use dotenv) for environment variable access
+  const redisPassword = getEnv('REDIS_PASSWORD');
+  const dragonflyPassword = getEnv('DRAGONFLY_PASSWORD');
 
   return {
     enabled,
@@ -82,14 +91,14 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
     // Only include provider-specific config if cache is enabled
     ...(enabled && {
       redis: {
-        host: process.env['REDIS_HOST'] || getDefaultRedisHost(),
-        port: parseInt(process.env['REDIS_PORT'] || '6379', 10),
+        host: getEnvWithDefault('REDIS_HOST', getDefaultRedisHost()),
+        port: getEnvNumber('REDIS_PORT', 6379),
         ...(redisPassword && { password: redisPassword }),
         enabled: provider === 'redis',
       },
       dragonfly: {
-        host: process.env['DRAGONFLY_HOST'] || 'dragonfly',
-        port: parseInt(process.env['DRAGONFLY_PORT'] || '6379', 10),
+        host: getEnvWithDefault('DRAGONFLY_HOST', 'dragonfly'),
+        port: getEnvNumber('DRAGONFLY_PORT', 6379),
         ...(dragonflyPassword && { password: dragonflyPassword }),
         enabled: provider === 'dragonfly',
       },
@@ -103,14 +112,15 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
  * Merged from redis.config.ts - now part of unified cache configuration
  */
 export const redisConfig = registerAs('redis', (): RedisConfig => {
+  // Use helper functions (which use dotenv) for environment variable access
   const config: RedisConfig = {
-    host: process.env[ENV_VARS.REDIS_HOST] ?? getDefaultRedisHost(),
-    port: parseInteger(process.env[ENV_VARS.REDIS_PORT], 6379, 1, 65535),
-    ttl: parseInteger(process.env['REDIS_TTL'], DEFAULT_CONFIG.REDIS_TTL, 1),
-    prefix: process.env['REDIS_PREFIX'] ?? 'healthcare:',
+    host: getEnv(ENV_VARS.REDIS_HOST) ?? getDefaultRedisHost(),
+    port: parseInteger(getEnv(ENV_VARS.REDIS_PORT), 6379, 1, 65535),
+    ttl: parseInteger(getEnv('REDIS_TTL'), DEFAULT_CONFIG.REDIS_TTL, 1),
+    prefix: getEnvWithDefault('REDIS_PREFIX', 'healthcare:'),
     // Respect cache enabled status - Redis is only enabled if cache is enabled and Redis is the provider
     enabled: isCacheEnabled() && getCacheProvider() === 'redis',
-    development: process.env[ENV_VARS.NODE_ENV] === 'development',
+    development: isDevelopment(),
   };
 
   // Validate configuration

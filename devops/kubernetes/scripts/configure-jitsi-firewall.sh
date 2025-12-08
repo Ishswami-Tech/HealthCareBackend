@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Script to help configure firewall for Jitsi Meet
+
+set -euo pipefail
+
+echo "🔥 Jitsi Meet Firewall Configuration Guide"
+echo ""
+
+echo "📋 Required Firewall Rules for Jitsi Meet:"
+echo ""
+echo "1. UDP Port 30000 (RTP Media Traffic):"
+echo "   - This is the NodePort for JVB (Jitsi Videobridge)"
+echo "   - Required for video/audio streaming"
+echo "   - Protocol: UDP"
+echo "   - Port: 30000"
+echo ""
+
+echo "2. TCP Port 443 (HTTPS):"
+echo "   - Already handled by ingress controller"
+echo "   - Protocol: TCP"
+echo "   - Port: 443"
+echo ""
+
+echo "🌐 Contabo VPS Firewall Configuration:"
+echo ""
+echo "Option 1: Using UFW (Ubuntu/Debian):"
+echo "   sudo ufw allow 30000/udp comment 'Jitsi RTP'"
+echo "   sudo ufw allow 443/tcp comment 'HTTPS'"
+echo "   sudo ufw reload"
+echo "   sudo ufw status"
+echo ""
+
+echo "Option 2: Using firewalld (CentOS/RHEL):"
+echo "   sudo firewall-cmd --permanent --add-port=30000/udp"
+echo "   sudo firewall-cmd --permanent --add-port=443/tcp"
+echo "   sudo firewall-cmd --reload"
+echo "   sudo firewall-cmd --list-ports"
+echo ""
+
+echo "Option 3: Using iptables:"
+echo "   sudo iptables -A INPUT -p udp --dport 30000 -j ACCEPT"
+echo "   sudo iptables -A INPUT -p tcp --dport 443 -j ACCEPT"
+echo "   sudo iptables-save > /etc/iptables/rules.v4"
+echo ""
+
+echo "Option 4: Contabo Control Panel:"
+echo "   - Log in to Contabo Control Panel"
+echo "   - Navigate to: Firewall -> Rules"
+echo "   - Add rule:"
+echo "     * Type: UDP"
+echo "     * Port: 30000"
+echo "     * Action: Allow"
+echo "   - Add rule:"
+echo "     * Type: TCP"
+echo "     * Port: 443"
+echo "     * Action: Allow"
+echo ""
+
+echo "🔍 Verify Firewall Rules:"
+echo "   # Check if port is open (from external machine):"
+echo "   nc -u -v <YOUR_SERVER_IP> 30000"
+echo "   telnet <YOUR_SERVER_IP> 443"
+echo ""
+
+echo "📊 Kubernetes Service Configuration:"
+echo "   The JVB service is configured as NodePort:"
+echo "   kubectl get svc jitsi-jvb -n healthcare-backend"
+echo ""
+
+echo "⚠️  Important Notes:"
+echo "   - UDP port 30000 must be open for media to work"
+echo "   - TCP port 443 is handled by ingress (usually already open)"
+echo "   - If using a cloud provider, also check security groups"
+echo "   - For AWS/GCP/Azure, check security group rules"
+echo ""
+
+echo "🧪 Test RTP Port:"
+echo "   # From external machine:"
+echo "   echo 'test' | nc -u <YOUR_SERVER_IP> 30000"
+echo ""

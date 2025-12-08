@@ -1,6 +1,7 @@
 import type { JwtModuleOptions } from '@nestjs/jwt';
 import type { SignOptions } from 'jsonwebtoken';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
+import { getEnvWithDefault, isProduction } from './environment/utils';
 
 /**
  * Validates JWT configuration
@@ -8,8 +9,9 @@ import { ENV_VARS, DEFAULT_CONFIG } from './constants';
  * @throws Error if configuration is invalid
  */
 function validateJwtConfig(config: JwtModuleOptions): void {
+  // Use helper functions (which use dotenv) for environment variable access
   if (!config.secret || config.secret === 'your-secret-key') {
-    if (process.env['NODE_ENV'] === 'production') {
+    if (isProduction()) {
       throw new Error('JWT_SECRET must be set in production environment');
     }
   }
@@ -21,12 +23,16 @@ function validateJwtConfig(config: JwtModuleOptions): void {
 
 /**
  * JWT module configuration
+ * Use helper functions (which use dotenv) for environment variable access
+ * These mimic ConfigService methods but work in config factories
  * @constant jwtConfig
  */
-const expiresInValue: string =
-  process.env[ENV_VARS.JWT_EXPIRATION] || DEFAULT_CONFIG.JWT_EXPIRATION;
+const expiresInValue: string = getEnvWithDefault(
+  ENV_VARS.JWT_EXPIRATION,
+  DEFAULT_CONFIG.JWT_EXPIRATION
+);
 export const jwtConfig: JwtModuleOptions = {
-  secret: process.env[ENV_VARS.JWT_SECRET] || 'your-secret-key',
+  secret: getEnvWithDefault(ENV_VARS.JWT_SECRET, 'your-secret-key'),
   signOptions: {
     expiresIn: expiresInValue as SignOptions['expiresIn'],
   } as SignOptions,

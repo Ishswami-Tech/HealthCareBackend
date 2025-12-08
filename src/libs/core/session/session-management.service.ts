@@ -59,28 +59,18 @@ export class SessionManagementService implements OnModuleInit {
    * Initialize session management configuration
    */
   async onModuleInit(): Promise<void> {
+    // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
-      maxSessionsPerUser:
-        this.configService?.get<number>('SESSION_MAX_PER_USER', 10) ||
-        parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10),
-      sessionTimeout:
-        this.configService?.get<number>('SESSION_TIMEOUT', 86400) ||
-        parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10), // 24 hours
-      extendOnActivity:
-        this.configService?.get<boolean>('SESSION_EXTEND_ON_ACTIVITY', true) ??
-        process.env['SESSION_EXTEND_ON_ACTIVITY'] !== 'false',
-      secureCookies:
-        this.configService?.get<boolean>('SESSION_SECURE_COOKIES', true) ??
-        process.env['SESSION_SECURE_COOKIES'] !== 'false',
-      sameSite: (this.configService?.get<string>('SESSION_SAME_SITE', 'strict') ||
-        process.env['SESSION_SAME_SITE'] ||
-        'strict') as 'strict' | 'lax' | 'none',
-      distributed:
-        this.configService?.get<boolean>('SESSION_DISTRIBUTED', true) ??
-        process.env['SESSION_DISTRIBUTED'] !== 'false',
-      partitions:
-        this.configService?.get<number>('SESSION_PARTITIONS', 16) ||
-        parseInt(process.env['SESSION_PARTITIONS'] || '16', 10),
+      maxSessionsPerUser: this.configService.getEnvNumber('SESSION_MAX_PER_USER', 10),
+      sessionTimeout: this.configService.getEnvNumber('SESSION_TIMEOUT', 86400), // 24 hours
+      extendOnActivity: this.configService.getEnvBoolean('SESSION_EXTEND_ON_ACTIVITY', true),
+      secureCookies: this.configService.getEnvBoolean('SESSION_SECURE_COOKIES', true),
+      sameSite: (this.configService.getEnv('SESSION_SAME_SITE', 'strict') || 'strict') as
+        | 'strict'
+        | 'lax'
+        | 'none',
+      distributed: this.configService.getEnvBoolean('SESSION_DISTRIBUTED', true),
+      partitions: this.configService.getEnvNumber('SESSION_PARTITIONS', 16),
     };
 
     // Setup cleanup jobs
@@ -102,8 +92,9 @@ export class SessionManagementService implements OnModuleInit {
    */
   async createSession(createSessionDto: CreateSessionDto): Promise<SessionData> {
     // Ensure config is initialized - use default if not ready
+    // Use ConfigService (which uses dotenv) for environment variable access
     const sessionTimeout =
-      this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
 
     const sessionId = this.generateSessionId();
     const now = new Date();
@@ -229,11 +220,14 @@ export class SessionManagementService implements OnModuleInit {
       session.lastActivity = now;
 
       // Extend session if configured
+      // Use ConfigService (which uses dotenv) for environment variable access
       const extendOnActivity =
-        this.config?.extendOnActivity ?? process.env['SESSION_EXTEND_ON_ACTIVITY'] !== 'false';
+        this.config?.extendOnActivity ??
+        this.configService.getEnvBoolean('SESSION_EXTEND_ON_ACTIVITY', true);
       if (extendOnActivity) {
+        // Use ConfigService (which uses dotenv) for environment variable access
         const sessionTimeout =
-          this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+          this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
         session.expiresAt = new Date(now.getTime() + sessionTimeout * 1000);
       }
 
@@ -516,7 +510,9 @@ export class SessionManagementService implements OnModuleInit {
    * @returns Redis key string
    */
   private getSessionKey(sessionId: string): string {
-    const distributed = this.config?.distributed ?? process.env['SESSION_DISTRIBUTED'] !== 'false';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const distributed =
+      this.config?.distributed ?? this.configService.getEnvBoolean('SESSION_DISTRIBUTED', true);
     if (distributed) {
       const partition = this.getPartition(sessionId);
       return `${this.SESSION_PREFIX}${partition}:${sessionId}`;
@@ -532,8 +528,9 @@ export class SessionManagementService implements OnModuleInit {
   private getPartition(sessionId: string): number {
     const hash = crypto.createHash('md5').update(sessionId).digest('hex');
     const hashInt = parseInt(hash.substring(0, 8), 16);
+    // Use ConfigService (which uses dotenv) for environment variable access
     const partitions =
-      this.config?.partitions || parseInt(process.env['SESSION_PARTITIONS'] || '16', 10);
+      this.config?.partitions || this.configService.getEnvNumber('SESSION_PARTITIONS', 16);
     return hashInt % partitions;
   }
 
@@ -562,8 +559,9 @@ export class SessionManagementService implements OnModuleInit {
     const userSessionsKey = `${this.USER_SESSIONS_PREFIX}${userId}`;
     await this.cacheService.sAdd(userSessionsKey, sessionId);
     // Set TTL on the set (max session timeout * 2 to account for cleanup)
+    // Use ConfigService (which uses dotenv) for environment variable access
     const sessionTimeout =
-      this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
     await this.cacheService.expire(userSessionsKey, sessionTimeout * 2);
   }
 
@@ -585,8 +583,9 @@ export class SessionManagementService implements OnModuleInit {
   private async addClinicSession(clinicId: string, sessionId: string): Promise<void> {
     const clinicSessionsKey = `${this.CLINIC_SESSIONS_PREFIX}${clinicId}`;
     await this.cacheService.sAdd(clinicSessionsKey, sessionId);
+    // Use ConfigService (which uses dotenv) for environment variable access
     const sessionTimeout =
-      this.config?.sessionTimeout || parseInt(process.env['SESSION_TIMEOUT'] || '86400', 10);
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
     await this.cacheService.expire(clinicSessionsKey, sessionTimeout * 2);
   }
 
@@ -618,8 +617,10 @@ export class SessionManagementService implements OnModuleInit {
   private async enforceSessionLimits(userId: string): Promise<void> {
     const sessions = await this.getUserSessions(userId);
 
+    // Use ConfigService (which uses dotenv) for environment variable access
     const maxSessionsPerUser =
-      this.config?.maxSessionsPerUser || parseInt(process.env['SESSION_MAX_PER_USER'] || '10', 10);
+      this.config?.maxSessionsPerUser ||
+      this.configService.getEnvNumber('SESSION_MAX_PER_USER', 10);
     if (sessions.length >= maxSessionsPerUser) {
       // Sort by lastActivity (oldest first)
       // Ensure lastActivity is a Date object (may be string when deserialized from cache)

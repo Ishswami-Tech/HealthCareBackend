@@ -1,5 +1,6 @@
 // External imports
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Inject } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
 
@@ -39,7 +40,10 @@ export class LoggingInterceptor implements NestInterceptor {
     '/status',
   ];
 
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    private readonly loggingService: LoggingService,
+    @Inject(ConfigService) private readonly configService: ConfigService
+  ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     const httpContext = context.switchToHttp();
@@ -54,7 +58,8 @@ export class LoggingInterceptor implements NestInterceptor {
     }
 
     // Log the incoming request (only in non-production)
-    if (process.env['NODE_ENV'] !== 'production') {
+    // Use ConfigService (which uses dotenv) for environment variable access
+    if (!this.configService.isProduction()) {
       void this.loggingService.log(LogType.REQUEST, LogLevel.INFO, `${method} ${url}`, 'API', {
         method,
         url,

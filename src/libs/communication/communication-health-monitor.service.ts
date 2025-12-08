@@ -23,10 +23,8 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
   private healthCheckInterval?: NodeJS.Timeout;
   // Background monitoring interval: 10-30 seconds (configurable, default 20 seconds)
   // Optimized for 10M+ users - frequent enough for real-time status, not too frequent to cause load
-  private readonly CHECK_INTERVAL_MS = parseInt(
-    process.env['COMMUNICATION_HEALTH_CHECK_INTERVAL_MS'] || '20000',
-    10
-  ); // Default 20 seconds (within 10-30 range)
+  // Note: Will be initialized in constructor using ConfigService
+  private CHECK_INTERVAL_MS = 20000; // Default 20 seconds (within 10-30 range)
   private cachedHealthStatus: CommunicationHealthMonitorStatus | null = null;
   private lastHealthCheckTime = 0;
   private readonly CACHE_TTL_MS = 10000; // Cache health status for 10 seconds to avoid excessive queries
@@ -59,8 +57,12 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
 
   onModuleInit(): void {
     // Skip health monitoring in development if disabled
-    const isDevelopment = process.env['NODE_ENV'] === 'development';
-    const healthCheckEnabled = process.env['COMMUNICATION_HEALTH_CHECK_ENABLED'] !== 'false';
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const isDevelopment = this.configService.isDevelopment();
+    const healthCheckEnabled = this.configService.getEnvBoolean(
+      'COMMUNICATION_HEALTH_CHECK_ENABLED',
+      true
+    );
     if (isDevelopment && !healthCheckEnabled) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -224,8 +226,9 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       // Only mark as unhealthy if service exists AND is initialized but not healthy
       if (this.emailService) {
         // Check if email service is actually initialized/enabled
-        const isEmailEnabled =
-          process.env['EMAIL_ENABLED'] !== 'false' && process.env['EMAIL_PROVIDER'] !== undefined;
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const emailConfig = this.configService.getEmailConfig();
+        const isEmailEnabled = emailConfig.host && emailConfig.host !== '';
 
         if (isEmailEnabled) {
           configuredServices.push('email');
@@ -251,9 +254,9 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       // Only mark as unhealthy if service exists AND is enabled but not connected
       if (this.whatsappService) {
         // Check if WhatsApp service is actually enabled
-        const isWhatsAppEnabled =
-          process.env['WHATSAPP_ENABLED'] !== 'false' &&
-          process.env['WHATSAPP_API_KEY'] !== undefined;
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const whatsappConfig = this.configService.getWhatsappConfig();
+        const isWhatsAppEnabled = whatsappConfig.enabled && whatsappConfig.apiKey !== '';
 
         if (isWhatsAppEnabled) {
           configuredServices.push('whatsapp');
@@ -279,10 +282,11 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       // Only mark as unhealthy if service exists AND is enabled but not healthy
       if (this.pushService) {
         // Check if Push service is actually enabled
+        // Use ConfigService (which uses dotenv) for environment variable access
         const isPushEnabled =
-          process.env['PUSH_ENABLED'] !== 'false' &&
-          (process.env['FCM_SERVER_KEY'] !== undefined ||
-            process.env['AWS_SNS_REGION'] !== undefined);
+          this.configService.getEnvBoolean('PUSH_ENABLED', false) &&
+          (this.configService.hasEnv('FCM_SERVER_KEY') ||
+            this.configService.hasEnv('AWS_SNS_REGION'));
 
         if (isPushEnabled) {
           configuredServices.push('push');

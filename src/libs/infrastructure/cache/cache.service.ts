@@ -128,39 +128,18 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Safe to call even if ConfigService is not fully initialized
    */
   private loadConfig(): HealthcareCacheConfig {
+    // Use ConfigService (which uses dotenv) for all environment variable access
     const getConfig = <T>(key: string, defaultValue: T): T => {
       try {
-        if (!this.configService) {
-          // ConfigService not available, use environment variables
-          const envValue = process.env[key];
-          if (envValue !== undefined) {
-            if (typeof defaultValue === 'number') {
-              return (parseInt(envValue, 10) || defaultValue) as T;
-            }
-            if (typeof defaultValue === 'boolean') {
-              return (envValue === 'true' || envValue === '1') as T;
-            }
-            return envValue as T;
-          }
-          return defaultValue;
+        if (typeof defaultValue === 'number') {
+          return this.configService.getEnvNumber(key, defaultValue as number) as unknown as T;
         }
-        return (
-          this.configService?.get<T>(key, defaultValue) ||
-          (process.env[key] as T | undefined) ||
-          defaultValue
-        );
+        if (typeof defaultValue === 'boolean') {
+          return this.configService.getEnvBoolean(key, defaultValue as boolean) as unknown as T;
+        }
+        return this.configService.getEnv(key, defaultValue as string) as unknown as T;
       } catch {
-        // Fallback to environment variables
-        const envValue = process.env[key];
-        if (envValue !== undefined) {
-          if (typeof defaultValue === 'number') {
-            return (parseInt(envValue, 10) || defaultValue) as T;
-          }
-          if (typeof defaultValue === 'boolean') {
-            return (envValue === 'true' || envValue === '1') as T;
-          }
-          return envValue as T;
-        }
+        // Defensive fallback - should rarely be needed
         return defaultValue;
       }
     };

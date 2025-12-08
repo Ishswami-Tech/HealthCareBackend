@@ -3,3 +3,5 @@ export { DatabaseModule, DatabaseService, DatabaseHealthStatus } from './databas
 export { LoggingModule, LoggingService } from './logging';
 export * from './cache';
 export * from './queue';
+export * from './storage';
+export * from './search';

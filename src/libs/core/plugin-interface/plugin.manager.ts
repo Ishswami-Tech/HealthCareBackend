@@ -78,12 +78,9 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
     private readonly eventEmitter: EventEmitter2,
     private readonly configService: ConfigService
   ) {
-    this.defaultTimeout =
-      this.configService?.get<number>('PLUGIN_TIMEOUT', 30000) ||
-      parseInt(process.env['PLUGIN_TIMEOUT'] || '30000', 10);
-    this.defaultRetryAttempts =
-      this.configService?.get<number>('PLUGIN_RETRY_ATTEMPTS', 3) ||
-      parseInt(process.env['PLUGIN_RETRY_ATTEMPTS'] || '3', 10);
+    // Use ConfigService (which uses dotenv) for all environment variable access
+    this.defaultTimeout = this.configService.getEnvNumber('PLUGIN_TIMEOUT', 30000);
+    this.defaultRetryAttempts = this.configService.getEnvNumber('PLUGIN_RETRY_ATTEMPTS', 3);
   }
 
   /**
@@ -686,9 +683,8 @@ export class EnterprisePluginManager implements PluginManager, OnModuleInit, OnM
    * @private
    */
   private startHealthMonitoring(): void {
-    const interval =
-      this.configService?.get<number>('PLUGIN_HEALTH_CHECK_INTERVAL', 30000) ||
-      parseInt(process.env['PLUGIN_HEALTH_CHECK_INTERVAL'] || '30000', 10); // 30 seconds
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const interval = this.configService.getEnvNumber('PLUGIN_HEALTH_CHECK_INTERVAL', 30000); // 30 seconds
 
     this.healthCheckInterval = setInterval(() => {
       void this.performHealthCheck();

@@ -17,36 +17,12 @@ export class OtpService {
     private readonly emailService: EmailService,
     @Inject(ConfigService) private readonly configService: ConfigService
   ) {
-    // ConfigService is global, so it should always be available
-    // Use process.env as fallback only if ConfigService.get fails
-    const getConfig = <T>(key: string, defaultValue: T): T => {
-      try {
-        return (
-          this.configService?.get<T>(key, defaultValue) ||
-          (process.env[key] as T | undefined) ||
-          defaultValue
-        );
-      } catch {
-        // Fallback to process.env if ConfigService.get fails
-        const envValue = process.env[key];
-        if (envValue !== undefined) {
-          if (typeof defaultValue === 'number') {
-            return (parseInt(envValue, 10) || defaultValue) as T;
-          }
-          if (typeof defaultValue === 'boolean') {
-            return (envValue === 'true' || envValue === '1') as T;
-          }
-          return envValue as T;
-        }
-        return defaultValue;
-      }
-    };
-
+    // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
-      length: getConfig('OTP_LENGTH', 6),
-      expiryMinutes: getConfig('OTP_EXPIRY_MINUTES', 5),
-      maxAttempts: getConfig('OTP_MAX_ATTEMPTS', 3),
-      cooldownMinutes: getConfig('OTP_COOLDOWN_MINUTES', 1),
+      length: this.configService.getEnvNumber('OTP_LENGTH', 6),
+      expiryMinutes: this.configService.getEnvNumber('OTP_EXPIRY_MINUTES', 5),
+      maxAttempts: this.configService.getEnvNumber('OTP_MAX_ATTEMPTS', 3),
+      cooldownMinutes: this.configService.getEnvNumber('OTP_COOLDOWN_MINUTES', 1),
     };
   }
 

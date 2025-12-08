@@ -16,6 +16,7 @@ resources:
   
   # Configuration
   - configmap.yaml
+  - jitsi-configmap.yaml
   - postgres-config.yaml
   - pgbouncer-configmap.yaml
   
@@ -28,6 +29,9 @@ resources:
   - redis-optimized.yaml  # Consolidated: replaces redis-cluster.yaml
   - dragonfly-optimized.yaml  # Consolidated: replaces dragonfly-deployment.yaml
   - pgbouncer-deployment.yaml
+  
+  # Video Conferencing (Jitsi Meet)
+  - jitsi-deployment.yaml
   
   # Jobs & Maintenance
   - init-job.yaml

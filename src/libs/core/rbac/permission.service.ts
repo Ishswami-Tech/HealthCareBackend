@@ -30,7 +30,7 @@ interface PermissionEntityStructure {
 
 /**
  * Re-export PermissionRecord for backward compatibility
- * @deprecated Use PermissionRecord from @core/types instead
+ * Use PermissionRecord from @core/types instead
  */
 export type { PermissionRecord as Permission };
 

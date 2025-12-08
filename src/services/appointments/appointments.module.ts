@@ -60,7 +60,6 @@ import { CheckInService } from './plugins/checkin/check-in.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
 import { PaymentService } from './plugins/payment/payment.service';
 import { VideoService } from './plugins/video/video.service';
-import { JitsiVideoService } from './plugins/video/jitsi-video.service';
 import { VideoConsultationTracker } from './plugins/video/video-consultation-tracker.service';
 import { AppointmentCommunicationsService } from './communications/appointment-communications.service';
 
@@ -211,7 +210,6 @@ import { CommunicationModule } from '@communication/communication.module';
     CheckInLocationService,
     PaymentService,
     VideoService,
-    JitsiVideoService,
     VideoConsultationTracker,
     AppointmentCommunicationsService,
     AppointmentTemplateService,

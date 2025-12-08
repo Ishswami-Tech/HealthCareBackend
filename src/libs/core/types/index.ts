@@ -111,6 +111,14 @@ export * from './clinic.types';
 
 // Appointment Types (centralized appointment-related types)
 // Exclude duplicates that are also in common.types and queue.types
+export * from './appointment-guards.types';
+export type {
+  VideoCallAppointment,
+  InPersonAppointment,
+  HomeVisitAppointment,
+  TypedAppointment,
+  AppointmentByType,
+} from './appointment.types';
 export {
   AppointmentFilters,
   AppointmentWithRelationsController,
@@ -198,6 +206,8 @@ export type {
   CorsConfig,
   SecurityConfig,
   WhatsappConfig,
+  JitsiConfig,
+  VideoProviderConfig,
   Config,
   ProductionConfig,
   Environment,

@@ -4,7 +4,7 @@ import { EmailController } from '@communication/channels/email/email.controller'
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { EmailQueueService } from '@communication/channels/email/email-queue.service';
 import { SESEmailService } from '@communication/channels/email/ses-email.service';
-import { ConfigModule } from '@config';
+import { ConfigModule, isCacheEnabled } from '@config';
 import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { BullModule } from '@nestjs/bullmq';
@@ -34,7 +34,8 @@ import { QueueService } from '@infrastructure/queue';
     DatabaseModule, // Optional: For email delivery logging/audit trails
     // QueueModule is already imported globally via AppModule.forRoot()
     // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
-    ...(process.env['CACHE_ENABLED'] === 'true'
+    // Use ConfigService (which uses dotenv) for environment variable access
+    ...(isCacheEnabled()
       ? [
           BullModule.registerQueue({
             name: QueueService.EMAIL_QUEUE,
