@@ -31,9 +31,10 @@ import type {
   VideoTokenResponse,
   VideoConsultationSession,
 } from '@core/types/video.types';
-import { VideoProviderFactory } from './providers/video-provider.factory';
+import { VideoProviderFactory } from '@services/video/providers/video-provider.factory';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { EventService } from '@infrastructure/events';
+import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
@@ -113,7 +114,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: EventService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -242,7 +245,27 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   ): Promise<VideoConsultationSession> {
     try {
       const provider = await this.getProvider();
-      return await provider.startConsultation(appointmentId, userId, userRole);
+      const session = await provider.startConsultation(appointmentId, userId, userRole);
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.consultation.started', {
+        eventId: `video-consultation-started-${appointmentId}-${Date.now()}`,
+        eventType: 'video.consultation.started',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'VideoService',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          sessionId: session.id,
+          userId,
+          userRole,
+          provider: provider.providerName,
+        },
+      });
+
+      return session;
     } catch (error) {
       // Try fallback if primary fails
       if (this.provider.providerName !== this.fallbackProvider.providerName) {
@@ -259,7 +282,32 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         );
 
         try {
-          return await this.fallbackProvider.startConsultation(appointmentId, userId, userRole);
+          const session = await this.fallbackProvider.startConsultation(
+            appointmentId,
+            userId,
+            userRole
+          );
+
+          // Emit event with fallback provider
+          await this.eventService.emitEnterprise('video.consultation.started', {
+            eventId: `video-consultation-started-${appointmentId}-${Date.now()}`,
+            eventType: 'video.consultation.started',
+            category: EventCategory.SYSTEM,
+            priority: EventPriority.HIGH,
+            timestamp: new Date().toISOString(),
+            source: 'VideoService',
+            version: '1.0.0',
+            payload: {
+              appointmentId,
+              sessionId: session.id,
+              userId,
+              userRole,
+              provider: this.fallbackProvider.providerName,
+              fallbackUsed: true,
+            },
+          });
+
+          return session;
         } catch (fallbackError) {
           void this.loggingService.log(
             LogType.SYSTEM,
@@ -299,12 +347,65 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         // Implementation can be extended here
       }
 
+      // Calculate duration
+      const duration =
+        session.startTime && session.endTime
+          ? Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 1000)
+          : undefined;
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.consultation.ended', {
+        eventId: `video-consultation-ended-${appointmentId}-${Date.now()}`,
+        eventType: 'video.consultation.ended',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'VideoService',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          sessionId: session.id,
+          duration,
+          provider: provider.providerName,
+        },
+      });
+
       return session;
     } catch (error) {
       // Try fallback if primary fails
       if (this.provider.providerName !== this.fallbackProvider.providerName) {
         try {
-          return await this.fallbackProvider.endConsultation(appointmentId, userId, userRole);
+          const session = await this.fallbackProvider.endConsultation(
+            appointmentId,
+            userId,
+            userRole
+          );
+
+          // Calculate duration
+          const duration =
+            session.startTime && session.endTime
+              ? Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 1000)
+              : undefined;
+
+          // Emit event with fallback provider
+          await this.eventService.emitEnterprise('video.consultation.ended', {
+            eventId: `video-consultation-ended-${appointmentId}-${Date.now()}`,
+            eventType: 'video.consultation.ended',
+            category: EventCategory.SYSTEM,
+            priority: EventPriority.HIGH,
+            timestamp: new Date().toISOString(),
+            source: 'VideoService',
+            version: '1.0.0',
+            payload: {
+              appointmentId,
+              sessionId: session.id,
+              duration,
+              provider: this.fallbackProvider.providerName,
+              fallbackUsed: true,
+            },
+          });
+
+          return session;
         } catch (fallbackError) {
           void this.loggingService.log(
             LogType.SYSTEM,

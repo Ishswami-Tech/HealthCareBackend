@@ -72,8 +72,8 @@ import { BusinessRulesDatabaseService } from './core/business-rules-database.ser
 import { QrService } from '@utils/QR';
 import { QrModule } from '@utils/QR/qr.module';
 
-// Video Module
-import { VideoModule } from './plugins/video/video.module';
+// Video Module - Standalone service
+import { VideoModule } from '@services/video/video.module';
 
 // Communication Modules
 import { CommunicationModule } from '@communication/communication.module';
