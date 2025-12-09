@@ -71,6 +71,16 @@ import {
   StartConsultationDto,
 } from '@dtos/appointment.dto';
 import {
+  VideoTokenResponseDto,
+  VideoConsultationSessionDto,
+  EndVideoConsultationDto,
+  ShareMedicalImageDto,
+  VideoCallHistoryQueryDto,
+  VideoCallResponseDto,
+  DataResponseDto,
+  SuccessResponseDto,
+} from '@dtos';
+import {
   ScanLocationQRDto,
   ScanLocationQRResponseDto,
   LocationQRCodeResponseDto,
@@ -79,9 +89,8 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
-import { VideoService } from './plugins/video/video.service';
+import { VideoService } from '@services/video/video.service';
 import type { VideoConsultationSession } from '@core/types/video.types';
-import type { VideoConsultationSession as LegacyVideoConsultationSession } from '@core/types/appointment.types';
 import { CheckInService } from './plugins/checkin/check-in.service';
 import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
@@ -1374,6 +1383,19 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Video consultation room created successfully',
+    type: DataResponseDto,
+    schema: {
+      properties: {
+        success: { type: 'boolean', example: true },
+        data: {
+          type: 'object',
+          properties: {
+            roomName: { type: 'string', example: 'appointment-123-abc' },
+          },
+        },
+        message: { type: 'string', example: 'Video consultation room created successfully' },
+      },
+    },
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -1386,7 +1408,7 @@ export class AppointmentsController {
   async createVideoConsultationRoom(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<unknown> {
+  ): Promise<DataResponseDto<{ roomName: string }>> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
@@ -1436,19 +1458,12 @@ export class AppointmentsController {
         }
       );
 
-      return {
-        success: true,
-        data: {
+      return new DataResponseDto(
+        {
           roomName: roomConfig.roomName,
-          // domain: roomConfig.domain,
-          // appointmentId: roomConfig.appointmentId,
-          // securityEnabled: roomConfig.isSecure,
-          // recordingEnabled: roomConfig.enableRecording,
-          // maxParticipants: roomConfig.maxParticipants,
-          // hipaaCompliant: roomConfig.hipaaCompliant,
         },
-        message: 'Video consultation room created successfully',
-      };
+        'Video consultation room created successfully'
+      );
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
@@ -1485,6 +1500,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Join token generated successfully',
+    type: VideoTokenResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -1497,13 +1513,7 @@ export class AppointmentsController {
   async generateVideoJoinToken(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<{
-    token: string;
-    roomName: string;
-    roomPassword?: string;
-    meetingPassword?: string;
-    encryptionKey?: string;
-  }> {
+  ): Promise<VideoTokenResponseDto> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
@@ -1569,7 +1579,18 @@ export class AppointmentsController {
         }
       );
 
-      return meetingToken;
+      // Map to DTO
+      const tokenDto = new VideoTokenResponseDto();
+      tokenDto.token = meetingToken.token;
+      tokenDto.roomName = meetingToken.roomName;
+      tokenDto.roomId = meetingToken.roomId;
+      tokenDto.meetingUrl = meetingToken.meetingUrl;
+      tokenDto.roomPassword = meetingToken.roomPassword;
+      tokenDto.meetingPassword = meetingToken.meetingPassword;
+      tokenDto.encryptionKey = meetingToken.encryptionKey;
+      tokenDto.expiresAt = meetingToken.expiresAt;
+
+      return tokenDto;
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
       await this.loggingService.log(
@@ -1608,11 +1629,20 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Video consultation started successfully',
+    type: VideoConsultationSessionDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Appointment is not a video consultation',
   })
   async startVideoConsultation(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<VideoConsultationSession> {
+  ): Promise<VideoConsultationSessionDto> {
     try {
       const userId = req.user?.sub;
       const userRole = req.user?.role;
@@ -1664,7 +1694,23 @@ export class AppointmentsController {
         consultationRole
       );
 
-      return session;
+      // Map to DTO
+      const sessionDto = new VideoConsultationSessionDto();
+      sessionDto.id = session.id;
+      sessionDto.appointmentId = session.appointmentId;
+      sessionDto.roomId = session.roomId;
+      sessionDto.roomName = session.roomName;
+      sessionDto.meetingUrl = session.meetingUrl;
+      sessionDto.status = session.status;
+      sessionDto.startTime = session.startTime;
+      sessionDto.endTime = session.endTime;
+      sessionDto.participants = session.participants;
+      sessionDto.recordingEnabled = session.recordingEnabled;
+      sessionDto.screenSharingEnabled = session.screenSharingEnabled;
+      sessionDto.chatEnabled = session.chatEnabled;
+      sessionDto.waitingRoomEnabled = session.waitingRoomEnabled;
+
+      return sessionDto;
     } catch (_error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -1699,6 +1745,8 @@ export class AppointmentsController {
     format: 'uuid',
   })
   @ApiBody({
+    type: EndVideoConsultationDto,
+    description: 'End consultation request with optional meeting notes',
     schema: {
       type: 'object',
       properties: {
@@ -1712,12 +1760,21 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Video consultation ended successfully',
+    type: VideoConsultationSessionDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Appointment is not a video consultation',
   })
   async endVideoConsultation(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Body() body: { meetingNotes?: string },
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<VideoConsultationSession> {
+  ): Promise<VideoConsultationSessionDto> {
     try {
       const userId = req.user?.sub;
       const userRole = req.user?.role;
@@ -1771,7 +1828,23 @@ export class AppointmentsController {
         body.meetingNotes
       );
 
-      return session;
+      // Map to DTO
+      const sessionDto = new VideoConsultationSessionDto();
+      sessionDto.id = session.id;
+      sessionDto.appointmentId = session.appointmentId;
+      sessionDto.roomId = session.roomId;
+      sessionDto.roomName = session.roomName;
+      sessionDto.meetingUrl = session.meetingUrl;
+      sessionDto.status = session.status;
+      sessionDto.startTime = session.startTime;
+      sessionDto.endTime = session.endTime;
+      sessionDto.participants = session.participants;
+      sessionDto.recordingEnabled = session.recordingEnabled;
+      sessionDto.screenSharingEnabled = session.screenSharingEnabled;
+      sessionDto.chatEnabled = session.chatEnabled;
+      sessionDto.waitingRoomEnabled = session.waitingRoomEnabled;
+
+      return sessionDto;
     } catch (_error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -1806,15 +1879,20 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Video consultation status retrieved successfully',
+    type: VideoConsultationSessionDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Video consultation session not found',
   })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Appointment is not a video consultation',
+  })
   async getVideoConsultationStatus(
     @Param('id', ParseUUIDPipe) appointmentId: string,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<LegacyVideoConsultationSession | null> {
+  ): Promise<VideoConsultationSessionDto> {
     try {
       const clinicId = req.clinicContext?.clinicId;
       if (!clinicId) {
@@ -1847,13 +1925,29 @@ export class AppointmentsController {
         { appointmentId }
       );
 
-      const session = await this.videoService.getConsultationStatus(appointmentId);
+      const session = await this.videoService.getConsultationSession(appointmentId);
 
       if (!session) {
         throw new NotFoundException('Video consultation session not found');
       }
 
-      return session;
+      // Map to DTO
+      const sessionDto = new VideoConsultationSessionDto();
+      sessionDto.id = session.id;
+      sessionDto.appointmentId = session.appointmentId;
+      sessionDto.roomId = session.roomId;
+      sessionDto.roomName = session.roomName;
+      sessionDto.meetingUrl = session.meetingUrl;
+      sessionDto.status = session.status;
+      sessionDto.startTime = session.startTime;
+      sessionDto.endTime = session.endTime;
+      sessionDto.participants = session.participants;
+      sessionDto.recordingEnabled = session.recordingEnabled;
+      sessionDto.screenSharingEnabled = session.screenSharingEnabled;
+      sessionDto.chatEnabled = session.chatEnabled;
+      sessionDto.waitingRoomEnabled = session.waitingRoomEnabled;
+
+      return sessionDto;
     } catch (_error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -1906,6 +2000,15 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Technical issue reported successfully',
+    type: SuccessResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Appointment not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Appointment is not a video consultation',
   })
   async reportTechnicalIssue(
     @Param('id', ParseUUIDPipe) appointmentId: string,
@@ -1915,7 +2018,7 @@ export class AppointmentsController {
       description: string;
     },
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<{ success: boolean; message: string }> {
+  ): Promise<SuccessResponseDto> {
     try {
       const userId = req.user?.sub;
 
@@ -1965,10 +2068,7 @@ export class AppointmentsController {
         body.issueType
       );
 
-      return {
-        success: true,
-        message: 'Technical issue reported successfully',
-      };
+      return new SuccessResponseDto('Technical issue reported successfully');
     } catch (_error) {
       await this.loggingService.log(
         LogType.ERROR,

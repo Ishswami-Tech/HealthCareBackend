@@ -36,3 +36,4 @@ export {
 } from './notification.dto';
 export * from './permission.dto';
 export * from './role.dto';
+export * from './video.dto';

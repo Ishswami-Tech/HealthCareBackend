@@ -380,8 +380,10 @@ services:
       - "4443:4443"
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      - "40000-57000:40000-57000/udp"
-      - "40000-57000:40000-57000/tcp"
+      # Reduced port range for Windows compatibility (OpenVidu uses coturn for TURN/STUN)
+      # Smaller range avoids Windows permission issues while still allowing media streams
+      - "50000-51000:50000-51000/udp"
+      - "50000-51000:50000-51000/tcp"
     environment:
       - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
       - OPENVIDU_CDR=false
@@ -432,8 +434,10 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      - "49152-65535:49152-65535/udp"
-      - "49152-65535:49152-65535/tcp"
+      # Small port range for Windows compatibility (avoids permission issues)
+      # Using a small range that's less likely to conflict with Windows reserved ports
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
     environment:
       - TZ=UTC
     command:
@@ -441,8 +445,9 @@ services:
       - --log-file=stdout
       - --listening-ip=0.0.0.0
       - --listening-port=3478
-      - --min-port=49152
-      - --max-port=65535
+      # Small port range for Windows compatibility (41 ports should be sufficient)
+      - --min-port=49160
+      - --max-port=49200
       - --fingerprint
       - --lt-cred-mech
       - --user=openvidu:openvidu

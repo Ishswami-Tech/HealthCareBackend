@@ -11,8 +11,8 @@ import { ConfigService } from '@config';
 import type { IVideoProvider } from '@core/types/video.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { OpenViduVideoProvider } from './openvidu-video.provider';
-import { JitsiVideoProvider } from './jitsi-video.provider';
+import { OpenViduVideoProvider } from '@services/video/providers/openvidu-video.provider';
+import { JitsiVideoProvider } from '@services/video/providers/jitsi-video.provider';
 
 /**
  * Video provider factory
@@ -111,3 +111,4 @@ export class VideoProviderFactory {
     return primary;
   }
 }
+
