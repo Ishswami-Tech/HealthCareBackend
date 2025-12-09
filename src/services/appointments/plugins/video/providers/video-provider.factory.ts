@@ -22,7 +22,9 @@ export class VideoProviderFactory {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => OpenViduVideoProvider))
     private readonly openviduProvider: OpenViduVideoProvider,
+    @Inject(forwardRef(() => JitsiVideoProvider))
     private readonly jitsiProvider: JitsiVideoProvider,
     @Optional()
     @Inject(forwardRef(() => LoggingService))

@@ -81,8 +81,9 @@ export class QueueModule {
     // Filter queues based on service type to prevent conflicts
     // Use helper functions (which use dotenv) for environment variable access
     // These mimic ConfigService methods but work in static module factories
+    // Use relative path instead of path alias for runtime require() compatibility
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getEnvWithDefault } = require('@config/environment/utils') as {
+    const { getEnvWithDefault } = require('../../../../config/environment/utils') as {
       getEnvWithDefault: (key: string, defaultValue: string) => string;
     };
     const serviceName = getEnvWithDefault('SERVICE_NAME', 'clinic');

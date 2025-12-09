@@ -329,8 +329,9 @@ export function createLogData(
 ): LogEntry {
   // Import helper functions that use dotenv (already loaded)
   // Use dynamic import to avoid circular dependencies
+  // Use relative path instead of path alias for runtime require() compatibility
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getEnvironment, getEnvWithDefault } = require('@config/environment/utils') as {
+  const { getEnvironment, getEnvWithDefault } = require('../../../config/environment/utils') as {
     getEnvironment: () => string;
     getEnvWithDefault: (key: string, defaultValue: string) => string;
   };
