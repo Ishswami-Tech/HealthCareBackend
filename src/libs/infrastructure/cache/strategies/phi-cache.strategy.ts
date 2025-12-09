@@ -8,7 +8,7 @@ import { Injectable } from '@nestjs/common';
 import { BaseCacheStrategy } from '@infrastructure/cache/strategies/base-cache.strategy';
 import type { CacheOperationOptions } from '@core/types';
 import type { ICacheProvider } from '@core/types';
-import type { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 
 /**

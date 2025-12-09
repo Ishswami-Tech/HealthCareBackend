@@ -7,7 +7,8 @@
  * @see https://www.prisma.io/docs/orm/reference/prisma-schema-reference#prisma-config-file
  */
 import { defineConfig } from 'prisma/config';
-import { getEnv, isDockerEnvironment } from '@config/environment/utils';
+// Use relative path instead of path alias - Prisma config loader doesn't resolve TypeScript path aliases
+import { getEnv, isDockerEnvironment } from '../../../../config/environment/utils';
 
 /**
  * Load environment variables with proper precedence:

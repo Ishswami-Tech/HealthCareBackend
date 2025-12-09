@@ -59,8 +59,7 @@ import { AppointmentConfirmationService } from './plugins/confirmation/appointme
 import { CheckInService } from './plugins/checkin/check-in.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
 import { PaymentService } from './plugins/payment/payment.service';
-import { VideoService } from './plugins/video/video.service';
-import { VideoConsultationTracker } from './plugins/video/video-consultation-tracker.service';
+// VideoService and VideoConsultationTracker are provided by VideoModule (imported below)
 import { AppointmentCommunicationsService } from './communications/appointment-communications.service';
 
 // New Service Imports
@@ -72,6 +71,9 @@ import { BusinessRulesDatabaseService } from './core/business-rules-database.ser
 
 import { QrService } from '@utils/QR';
 import { QrModule } from '@utils/QR/qr.module';
+
+// Video Module
+import { VideoModule } from './plugins/video/video.module';
 
 // Communication Modules
 import { CommunicationModule } from '@communication/communication.module';
@@ -113,6 +115,8 @@ import { CommunicationModule } from '@communication/communication.module';
     CommunicationModule,
     // QR Code Module
     QrModule,
+    // Video Module (provides VideoService and video providers)
+    VideoModule,
     // Note: QueueModule.forRoot() registers standard queues (appointment-queue, notification-queue, etc.) using BullMQ
     // But appointment services use clinic-specific queue names (clinic-appointment, clinic-notification, etc.) with Bull
     // These clinic-specific queues need Bull (not BullMQ) to be initialized first
@@ -209,8 +213,7 @@ import { CommunicationModule } from '@communication/communication.module';
     CheckInService,
     CheckInLocationService,
     PaymentService,
-    VideoService,
-    VideoConsultationTracker,
+    // VideoService and VideoConsultationTracker are provided by VideoModule (imported above)
     AppointmentCommunicationsService,
     AppointmentTemplateService,
     AppointmentWaitlistService,
