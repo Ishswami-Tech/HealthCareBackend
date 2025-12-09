@@ -30,4 +30,4 @@ export * from '@communication/channels/chat';
 export * from './listeners';
 
 // Notification exports (legacy REST API - use CommunicationController instead)
-export * from '../../services/notification/notification.module';
+export * from '@services/notification/notification.module';

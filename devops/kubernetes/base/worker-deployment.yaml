@@ -77,6 +77,8 @@ spec:
               key: database-url
         - name: CACHE_PROVIDER
           value: "dragonfly"
+        - name: DRAGONFLY_ENABLED
+          value: "true"
         - name: DRAGONFLY_HOST
           value: "dragonfly"
         - name: DRAGONFLY_PORT

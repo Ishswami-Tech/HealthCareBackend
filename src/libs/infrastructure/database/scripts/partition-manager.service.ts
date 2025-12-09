@@ -9,7 +9,7 @@
  */
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { DatabaseService } from '../database.service';
+import { DatabaseService } from '@database/database.service';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 

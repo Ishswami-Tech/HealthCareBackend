@@ -28,7 +28,7 @@ import { ClinicConfirmationPlugin } from './confirmation/clinic-confirmation.plu
 import { ClinicCheckInPlugin } from './checkin/clinic-checkin.plugin';
 import { ClinicPaymentPlugin } from './payment/clinic-payment.plugin';
 import { ClinicVideoPlugin } from './video/clinic-video.plugin';
-import { AppointmentCommunicationsPlugin } from '../communications/appointment-communications.plugin';
+import { AppointmentCommunicationsPlugin } from '@services/appointments/communications/appointment-communications.plugin';
 import { ClinicTemplatePlugin } from './templates/clinic-template.plugin';
 import { ClinicWaitlistPlugin } from './waitlist/clinic-waitlist.plugin';
 import { ClinicResourcePlugin } from './resources/clinic-resource.plugin';

@@ -123,8 +123,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-      console.error(`[HealthService] onModuleInit failed: ${errorMessage}`);
-      console.error(`[HealthService] Stack: ${errorStack}`);
+      // Use LoggingService if available, otherwise fallback to console.error
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService onModuleInit failed',
+          'HealthService',
+          { error: errorMessage, stack: errorStack }
+        );
+      } else {
+        console.error(`[HealthService] onModuleInit failed: ${errorMessage}`);
+        console.error(`[HealthService] Stack: ${errorStack}`);
+      }
       // Don't throw - allow app to continue without health monitoring
     }
   }
@@ -469,17 +480,37 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       // If getHealth itself fails, try to perform a basic health check
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      console.error(
-        '[HealthService] getHealth failed, attempting basic health check:',
-        errorMessage
-      );
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService getHealth failed, attempting basic health check',
+          'HealthService',
+          { error: errorMessage }
+        );
+      } else {
+        console.error(
+          '[HealthService] getHealth failed, attempting basic health check:',
+          errorMessage
+        );
+      }
       try {
         return await this.performHealthCheck();
       } catch (fallbackError) {
         // Last resort: return minimal health response with real system metrics
         const fallbackErrorMessage =
           fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
-        console.error('[HealthService] performHealthCheck also failed:', fallbackErrorMessage);
+        if (this.loggingService) {
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService performHealthCheck also failed',
+            'HealthService',
+            { error: fallbackErrorMessage }
+          );
+        } else {
+          console.error('[HealthService] performHealthCheck also failed:', fallbackErrorMessage);
+        }
         const minimalResponse = this.getMinimalHealthResponse();
         // Ensure minimal response has real system metrics
         try {
@@ -687,7 +718,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             try {
               return await this.checkCacheHealth();
             } catch (error) {
-              console.error('[HealthService] Cache health check error:', error);
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+              if (this.loggingService) {
+                void this.loggingService.log(
+                  LogType.ERROR,
+                  LogLevel.ERROR,
+                  'HealthService Cache health check error',
+                  'HealthService',
+                  { error: errorMsg }
+                );
+              } else {
+                console.error('[HealthService] Cache health check error:', error);
+              }
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Cache health check failed',
@@ -709,7 +751,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             )
           ),
         ]).catch((error): ServiceHealth & { cacheHealth?: CacheHealthMonitorStatus } => {
-          console.error('[HealthService] Cache health check promise rejected:', error);
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'HealthService Cache health check promise rejected',
+              'HealthService',
+              { error: errorMsg }
+            );
+          } else {
+            console.error('[HealthService] Cache health check promise rejected:', error);
+          }
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Cache health check failed',
@@ -723,7 +776,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             try {
               return await this.checkQueueHealth();
             } catch (error) {
-              console.error('[HealthService] Queue health check error:', error);
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+              if (this.loggingService) {
+                void this.loggingService.log(
+                  LogType.ERROR,
+                  LogLevel.ERROR,
+                  'HealthService Queue health check error',
+                  'HealthService',
+                  { error: errorMsg }
+                );
+              } else {
+                console.error('[HealthService] Queue health check error:', error);
+              }
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Queue health check failed',
@@ -745,7 +809,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             )
           ),
         ]).catch((error): ServiceHealth => {
-          console.error('[HealthService] Queue health check promise rejected:', error);
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'HealthService Queue health check promise rejected',
+              'HealthService',
+              { error: errorMsg }
+            );
+          } else {
+            console.error('[HealthService] Queue health check promise rejected:', error);
+          }
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Queue health check failed',
@@ -759,7 +834,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             try {
               return await this.checkLoggerHealth();
             } catch (error) {
-              console.error('[HealthService] Logger health check error:', error);
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+              if (this.loggingService) {
+                void this.loggingService.log(
+                  LogType.ERROR,
+                  LogLevel.ERROR,
+                  'HealthService Logger health check error',
+                  'HealthService',
+                  { error: errorMsg }
+                );
+              } else {
+                console.error('[HealthService] Logger health check error:', error);
+              }
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Logger health check failed',
@@ -781,7 +867,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             )
           ),
         ]).catch((error): ServiceHealth => {
-          console.error('[HealthService] Logger health check promise rejected:', error);
+          const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              'HealthService Logger health check promise rejected',
+              'HealthService',
+              { error: errorMsg }
+            );
+          } else {
+            console.error('[HealthService] Logger health check promise rejected:', error);
+          }
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Logger health check failed',
@@ -797,7 +894,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             try {
               return await this.checkCommunicationHealth();
             } catch (error) {
-              console.error('[HealthService] Communication health check error:', error);
+              const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+              if (this.loggingService) {
+                void this.loggingService.log(
+                  LogType.ERROR,
+                  LogLevel.ERROR,
+                  'HealthService Communication health check error',
+                  'HealthService',
+                  { error: errorMsg }
+                );
+              } else {
+                console.error('[HealthService] Communication health check error:', error);
+              }
               return {
                 status: 'unhealthy' as const,
                 details:
@@ -822,7 +930,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ),
         ]).catch(
           (error): ServiceHealth & { communicationHealth?: CommunicationHealthMonitorStatus } => {
-            console.error('[HealthService] Communication health check promise rejected:', error);
+            const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+            if (this.loggingService) {
+              void this.loggingService.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'HealthService Communication health check promise rejected',
+                'HealthService',
+                { error: errorMsg }
+              );
+            } else {
+              console.error('[HealthService] Communication health check promise rejected:', error);
+            }
             return {
               status: 'unhealthy',
               details: error instanceof Error ? error.message : 'Communication health check failed',
@@ -852,7 +971,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
               };
       } catch (error) {
-        console.error('[HealthService] Error extracting Cache health:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Error extracting Cache health',
+            'HealthService',
+            { error: errorMsg }
+          );
+        } else {
+          console.error('[HealthService] Error extracting Cache health:', error);
+        }
         cacheHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Cache check extraction failed',
@@ -876,7 +1006,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
               };
       } catch (error) {
-        console.error('[HealthService] Error extracting Queue health:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Error extracting Queue health',
+            'HealthService',
+            { error: errorMsg }
+          );
+        } else {
+          console.error('[HealthService] Error extracting Queue health:', error);
+        }
         queueHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Queue check extraction failed',
@@ -900,7 +1041,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
               };
       } catch (error) {
-        console.error('[HealthService] Error extracting Logger health:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Error extracting Logger health',
+            'HealthService',
+            { error: errorMsg }
+          );
+        } else {
+          console.error('[HealthService] Error extracting Logger health:', error);
+        }
         loggerHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Logger check extraction failed',
@@ -926,7 +1078,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
               };
       } catch (error) {
-        console.error('[HealthService] Error extracting Communication health:', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Error extracting Communication health',
+            'HealthService',
+            { error: errorMsg }
+          );
+        } else {
+          console.error('[HealthService] Error extracting Communication health:', error);
+        }
         communicationHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Communication check extraction failed',
@@ -1183,12 +1346,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorStack = error instanceof Error ? error.stack : undefined;
 
       // Log detailed error information for debugging
-      // Use console.error as fallback since loggingService might not be available
-      console.error('[HealthService] Health check failed:', errorMessage);
-      if (errorStack) {
-        console.error('[HealthService] Stack trace:', errorStack);
-      }
-
+      // Use LoggingService if available, otherwise fallback to console.error
       if (this.loggingService) {
         void this.loggingService
           .log(
@@ -1213,8 +1371,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             }
           )
           .catch(() => {
-            // Ignore logging errors
+            // Ignore logging errors - fallback to console.error
+            console.error('[HealthService] Health check failed:', errorMessage);
+            if (errorStack) {
+              console.error('[HealthService] Stack trace:', errorStack);
+            }
           });
+      } else {
+        // Fallback to console.error when LoggingService is not available
+        console.error('[HealthService] Health check failed:', errorMessage);
+        if (errorStack) {
+          console.error('[HealthService] Stack trace:', errorStack);
+        }
       }
 
       // Try to get system metrics safely - always try to get real values

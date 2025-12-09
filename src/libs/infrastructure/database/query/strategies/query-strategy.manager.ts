@@ -12,7 +12,7 @@ import type { IQueryStrategy, QueryOperationContext } from './base-query.strateg
 import { ReadQueryStrategy } from './read-query.strategy';
 import { WriteQueryStrategy } from './write-query.strategy';
 import { TransactionQueryStrategy } from './transaction-query.strategy';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 
 /**
  * Query strategy manager - selects and executes appropriate strategy

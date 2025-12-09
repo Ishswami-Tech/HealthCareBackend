@@ -20,7 +20,7 @@ import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { BaseCacheClientService } from '../base-cache-client.service';
+import { BaseCacheClientService } from '@cache/base-cache-client.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
