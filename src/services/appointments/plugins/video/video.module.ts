@@ -23,12 +23,13 @@ import { JitsiVideoProvider } from './providers/jitsi-video.provider';
     SocketModule,
   ],
   providers: [
-    // Single consolidated video service
-    VideoService,
-    // Video providers (internal - used by VideoService)
-    VideoProviderFactory,
+    // Video providers must be listed BEFORE VideoProviderFactory (which depends on them)
     OpenViduVideoProvider, // Primary provider (OpenVidu)
     JitsiVideoProvider, // Fallback provider (Jitsi)
+    // Video providers factory (depends on OpenViduVideoProvider and JitsiVideoProvider)
+    VideoProviderFactory,
+    // Single consolidated video service (depends on VideoProviderFactory)
+    VideoService,
     // Other services
     VideoConsultationTracker,
     ClinicVideoPlugin,

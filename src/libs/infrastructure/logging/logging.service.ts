@@ -116,7 +116,8 @@ export class LoggingService {
   private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
 
   constructor(
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService,
     @Optional()
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService?: DatabaseService,
