@@ -39,7 +39,7 @@ export * from './eligibility/clinic-eligibility.plugin';
 export * from '../communications';
 
 // Service Dependencies
-export * from './video/video.service';
+// VideoService is now in @services/video - use VideoModule instead
 export * from './payment/payment.service';
 export * from './queue/appointment-queue.service';
 export * from './location/appointment-location.service';
