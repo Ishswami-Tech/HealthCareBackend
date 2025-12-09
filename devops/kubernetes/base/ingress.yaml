@@ -13,12 +13,13 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "https://ishswami.in, https://www.ishswami.in, https://meet.ishswami.in"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://ishswami.in, https://www.ishswami.in, https://video.ishswami.in, https://meet.ishswami.in"
     nginx.ingress.kubernetes.io/limit-rps: "100"
 spec:
   tls:
   - hosts:
     - api.ishswami.in
+    - video.ishswami.in
     - meet.ishswami.in
     secretName: healthcare-tls
   rules:
@@ -32,6 +33,16 @@ spec:
             name: healthcare-api
             port:
               number: 8088
+  - host: video.ishswami.in
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: openvidu-server
+            port:
+              number: 4443
   - host: meet.ishswami.in
     http:
       paths:

@@ -1,6 +1,6 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseRepository, RepositoryResult, QueryOptions } from './base.repository';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 import { CreateUserDto, UpdateUserDto } from '@dtos/user.dto';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';

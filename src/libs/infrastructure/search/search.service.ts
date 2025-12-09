@@ -9,7 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { DatabaseService } from '../database/database.service';
+import { DatabaseService } from '@database/database.service';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
 import { LogType, LogLevel } from '@core/types';

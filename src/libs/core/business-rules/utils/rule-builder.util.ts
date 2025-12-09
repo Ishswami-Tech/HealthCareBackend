@@ -25,16 +25,7 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
  * @class RuleBuilder
  */
 export class RuleBuilder {
-  private rule: Partial<BusinessRule> & {
-    description?: string;
-    priority?: number;
-    category?: RuleCategory;
-    version?: string;
-    tags?: readonly string[];
-    isActive?: boolean;
-    conditions?: RuleCondition[];
-    actions?: RuleAction[];
-  } = {};
+  private rule: Partial<BusinessRule> = {};
 
   /**
    * Creates a new rule builder instance
@@ -188,8 +179,8 @@ export class RuleBuilder {
       category: this.rule.category ?? 'custom',
       version: this.rule.version ?? '1.0.0',
       tags: this.rule.tags ?? [],
-      conditions: (this.rule.conditions ?? []) as readonly RuleCondition[],
-      actions: (this.rule.actions ?? []) as readonly RuleAction[],
+      conditions: this.rule.conditions ?? [],
+      actions: this.rule.actions ?? [],
       createdAt: this.rule.createdAt ?? new Date(),
       updatedAt: this.rule.updatedAt ?? new Date(),
     };
@@ -258,10 +249,7 @@ export class RuleBuilder {
  * @class ConditionBuilder
  */
 export class ConditionBuilder {
-  private condition: Partial<RuleCondition> & {
-    operator?: 'AND' | 'OR';
-    customFunction?: string;
-  } = {};
+  private condition: Partial<RuleCondition> = {};
 
   /**
    * Creates a new condition builder
@@ -287,7 +275,7 @@ export class ConditionBuilder {
    * @returns Condition builder instance
    */
   withOperator(operator: 'AND' | 'OR'): ConditionBuilder {
-    this.condition.operator = operator;
+    this.condition = { ...this.condition, operator };
     return this;
   }
 
@@ -297,7 +285,7 @@ export class ConditionBuilder {
    * @returns Condition builder instance
    */
   withCustomFunction(customFunction: string): ConditionBuilder {
-    this.condition.customFunction = customFunction;
+    this.condition = { ...this.condition, customFunction };
     return this;
   }
 
@@ -315,10 +303,7 @@ export class ConditionBuilder {
  * @class ActionBuilder
  */
 export class ActionBuilder {
-  private action: Partial<RuleAction> & {
-    parameters?: Record<string, unknown>;
-    customFunction?: string;
-  } = {};
+  private action: Partial<RuleAction> = {};
 
   /**
    * Creates a new action builder
@@ -343,7 +328,7 @@ export class ActionBuilder {
    * @returns Action builder instance
    */
   withParameters(parameters: Record<string, unknown>): ActionBuilder {
-    this.action.parameters = parameters;
+    this.action = { ...this.action, parameters };
     return this;
   }
 
@@ -353,7 +338,7 @@ export class ActionBuilder {
    * @returns Action builder instance
    */
   withCustomFunction(customFunction: string): ActionBuilder {
-    this.action.customFunction = customFunction;
+    this.action = { ...this.action, customFunction };
     return this;
   }
 

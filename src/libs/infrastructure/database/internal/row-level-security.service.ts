@@ -44,10 +44,7 @@ export class RowLevelSecurityService {
    * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
-  applyRLSFilter<T extends Record<string, unknown>>(
-    where: T,
-    context: RLSContext
-  ): T & { clinicId?: string } {
+  applyRLSFilter<T extends Record<string, unknown>>(where: T, context: RLSContext): T {
     if (!this.enabled) {
       return where;
     }

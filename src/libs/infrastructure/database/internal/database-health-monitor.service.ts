@@ -9,7 +9,7 @@
 
 import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService as PrismaServiceClass } from '../prisma/prisma.service';
+import { PrismaService as PrismaServiceClass } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 

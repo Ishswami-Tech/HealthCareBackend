@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { CheckInService } from './check-in.service';
 import type { CheckInData } from '@core/types/appointment.types';
 

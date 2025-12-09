@@ -1,8 +1,8 @@
 import type { Config } from '@core/types';
-import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
+import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
 import { parseInteger, getEnvWithDefault, getEnvBoolean, getEnv } from './utils';
-import createJitsiConfig from '../jitsi.config';
-import { videoConfig } from '../video.config';
+import createJitsiConfig from '@config/jitsi.config';
+import { videoConfig } from '@config/video.config';
 
 /**
  * Test environment configuration

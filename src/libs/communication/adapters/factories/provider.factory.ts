@@ -15,7 +15,7 @@ import {
   EmailProvider,
   WhatsAppProvider,
   SMSProvider,
-} from '../../config/communication-config.service';
+} from '@communication/config';
 
 /**
  * Provider Factory

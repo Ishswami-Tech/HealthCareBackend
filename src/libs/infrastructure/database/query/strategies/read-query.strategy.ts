@@ -9,7 +9,7 @@
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { BaseQueryStrategy, type QueryOperationContext } from './base-query.strategy';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../plugins/base/base-plugin.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentCommunicationsService } from './appointment-communications.service';
 import type { QueueUpdateMessage, AppointmentStatusMessage } from '@core/types/appointment.types';
 

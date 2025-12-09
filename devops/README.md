@@ -18,29 +18,24 @@ This folder contains the operational configuration and scripts to run the Health
 - At least 4GB RAM available for Docker
 - WSL2 integration enabled in Docker Desktop settings
 
-**Option 1: Using the startup script (Recommended)**
+**Option 1: Using the consolidated scripts (Recommended)**
 
-**⭐ WSL2 (Recommended for Windows):**
+**⭐ Unified Script (Works on all platforms):**
 ```bash
-# Open WSL terminal
-wsl
+# Navigate to project root
+cd /path/to/HealthCareBackend
 
-# Navigate to project (adjust path if needed)
-cd /mnt/d/Projects/Doctor\ APP/HealthCareApp/HealthcareFrontend/HealthCareBackend
+# Make scripts executable (first time only)
+chmod +x devops/scripts/*.sh
 
-# Or if you're already in the project directory
-cd devops/docker
-chmod +x start-dev.sh
-./start-dev.sh
+# Start services
+./devops/scripts/healthcare.sh docker start
+
+# Or use the Docker script directly
+./devops/scripts/docker.sh start
 ```
 
-**Windows PowerShell (Alternative):**
-```powershell
-cd devops/docker
-.\start-dev.ps1
-```
-
-**Linux/Mac:**
+**Alternative (Old scripts still work):**
 ```bash
 cd devops/docker
 chmod +x start-dev.sh
@@ -74,29 +69,44 @@ docker compose -f devops/docker/docker-compose.dev.yml logs -f api
 - **PgAdmin**: http://localhost:5050 (admin@admin.com / admin)
 - **Redis Commander**: http://localhost:8082 (admin / admin)
 
-**Useful Commands:**
+**Useful Commands (Using Consolidated Scripts):**
+```bash
+# Stop all services
+./devops/scripts/docker.sh stop
+
+# Restart services
+./devops/scripts/docker.sh restart
+
+# View logs
+./devops/scripts/docker.sh logs api
+./devops/scripts/docker.sh logs postgres
+
+# Monitor logs
+./devops/scripts/docker.sh monitor api
+
+# Check health
+./devops/scripts/docker.sh health
+
+# Access container shell
+./devops/scripts/docker.sh shell api
+
+# Clean up (WARNING: deletes data)
+./devops/scripts/docker.sh clean
+```
+
+**Or use Docker Compose directly:**
 ```bash
 # Stop all services
 docker compose -f devops/docker/docker-compose.dev.yml down
 
-# Restart API service
-docker compose -f devops/docker/docker-compose.dev.yml restart api
-
-# View logs for specific service
+# View logs
 docker compose -f devops/docker/docker-compose.dev.yml logs -f api
-docker compose -f devops/docker/docker-compose.dev.yml logs -f postgres
 
-# Access container shell
-docker exec -it healthcare-api sh
-
-# Run Prisma migrations manually
+# Run Prisma migrations
 docker exec -it healthcare-api pnpm prisma:migrate
 
 # Run database seed
 docker exec -it healthcare-api pnpm seed:dev
-
-# Clean up (removes volumes - WARNING: deletes data)
-docker compose -f devops/docker/docker-compose.dev.yml down -v
 ```
 
 **What happens on startup:**
@@ -107,6 +117,26 @@ docker compose -f devops/docker/docker-compose.dev.yml down -v
 5. Application starts in development mode with hot-reload
 
 ### Kubernetes (production/staging)
+
+**Using Consolidated Scripts:**
+```bash
+# Deploy to production
+./devops/scripts/k8s.sh deploy production
+
+# Setup secrets
+./devops/scripts/k8s.sh setup-secrets production
+
+# Check status
+./devops/scripts/k8s.sh status
+
+# View logs
+./devops/scripts/k8s.sh logs deployment/healthcare-api
+
+# Port forward
+./devops/scripts/k8s.sh port-forward healthcare-api 8088
+```
+
+**Or use kubectl directly:**
 ```bash
 # Apply/update secrets (env vars required)
 DB_URL='postgresql://postgres:PW@pgbouncer:6432/userdb?pgbouncer=true' \
@@ -157,10 +187,21 @@ Helpers:
 - `k8s-walg-backup` � trigger WAL-G base backup and prune
 
 ## File Map
+- **Consolidated Scripts**: `devops/scripts/*` (Main entry point: `healthcare.sh`)
 - Kubernetes base: `devops/kubernetes/base/*` (API, Worker, Postgres, Redis, PgBouncer, RBAC, PDB, VPA, Ingress, NetworkPolicies)
 - Overlays: `devops/kubernetes/overlays/{local,staging,production}`
-- Docker: `devops/docker/*`
+- Docker: `devops/docker/*` (Old scripts still available for backward compatibility)
+- Kubernetes scripts: `devops/kubernetes/scripts/*` (Old scripts still available)
 - Nginx (optional VM reverse proxy): `devops/nginx/*`
+
+## Consolidated Scripts
+
+All DevOps operations are now consolidated into unified scripts:
+- **Main Entry**: `devops/scripts/healthcare.sh` - Routes to Docker or Kubernetes
+- **Docker**: `devops/scripts/docker.sh` - All Docker Compose operations
+- **Kubernetes**: `devops/scripts/k8s.sh` - All Kubernetes operations
+
+See `devops/scripts/README.md` for detailed usage.
 
 ## SSL/TLS & Cloudflare
 - See `devops/nginx/SSL_CERTIFICATES.md` and `devops/nginx/CLOUDFLARE_SETUP.md`

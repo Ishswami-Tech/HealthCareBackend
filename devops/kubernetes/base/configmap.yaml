@@ -29,7 +29,7 @@ data:
   REDIS_MAX_MEMORY: "2gb"
   REDIS_POLICY: "allkeys-lru"
   
-  # Dragonfly Configuration (default provider - 26x faster than Redis)
+  # Dragonfly Configuration (Primary Cache Provider - default provider - 26x faster than Redis)
   DRAGONFLY_ENABLED: "true"
   DRAGONFLY_HOST: "dragonfly"
   DRAGONFLY_PORT: "6379"
@@ -49,7 +49,7 @@ data:
   RATE_LIMIT_WINDOW: "1 minute"
 
   # CORS Configuration
-  CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in,https://api.ishswami.in,https://meet.ishswami.in"
+  CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in,https://api.ishswami.in,https://video.ishswami.in,https://meet.ishswami.in"
 
   # Frontend URLs
   FRONTEND_URL: "https://ishswami.in"
@@ -97,10 +97,19 @@ data:
   AWS_SES_FROM_EMAIL: "noreply@ishswami.in"
   AWS_SES_FROM_NAME: "Healthcare App"
 
-  # Video Consultation (Self-hosted Jitsi Meet)
-  # NOTE: These values are updated dynamically by configure-jitsi-domain.sh script
-  # Default values shown below - update via script: ./devops/kubernetes/scripts/configure-jitsi-domain.sh <base-domain> <subdomain>
-  # These values should match jitsi-configmap.yaml
+  # Video Consultation (Dual Provider: OpenVidu primary, Jitsi fallback)
+  # NOTE: These values are updated dynamically by configuration scripts
+  # OpenVidu (Primary - like Dragonfly in cache pattern)
+  # Jitsi (Fallback - like Redis in cache pattern)
+  VIDEO_ENABLED: "true"
+  VIDEO_PROVIDER: "openvidu"
+  
+  # OpenVidu Configuration (Primary Video Provider)
+  OPENVIDU_ENABLED: "true"
+  OPENVIDU_URL: "https://video.ishswami.in"
+  OPENVIDU_DOMAIN: "video.ishswami.in"
+  
+  # Jitsi Configuration (Fallback)
   JITSI_DOMAIN: "meet.ishswami.in"
   JITSI_BASE_DOMAIN: "ishswami.in"
   JITSI_SUBDOMAIN: "meet"
@@ -109,7 +118,6 @@ data:
   JITSI_ENABLE_WAITING_ROOM: "true"
   JITSI_BASE_URL: "https://meet.ishswami.in"
   JITSI_WS_URL: "wss://meet.ishswami.in/xmpp-websocket"
-  VIDEO_ENABLED: "true"
   
   # Google OAuth Configuration
   GOOGLE_CLIENT_ID: ""

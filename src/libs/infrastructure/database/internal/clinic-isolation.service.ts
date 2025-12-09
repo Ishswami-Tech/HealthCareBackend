@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { ClinicContext } from '@core/types/clinic.types';

@@ -11,8 +11,8 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { BaseQueryMiddleware, type QueryMiddlewareContext } from './base-query.middleware';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { SQLInjectionPreventionService } from '../../internal/sql-injection-prevention.service';
-import { RowLevelSecurityService } from '../../internal/row-level-security.service';
+import { SQLInjectionPreventionService } from '@database/internal/sql-injection-prevention.service';
+import { RowLevelSecurityService } from '@database/internal/row-level-security.service';
 
 /**
  * Security query middleware - SQL injection check, RLS enforcement

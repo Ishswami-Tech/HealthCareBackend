@@ -18,7 +18,7 @@ import {
   VIDHAKARMA_QUEUE,
   PANCHAKARMA_QUEUE,
   CHEQUP_QUEUE,
-} from '../queue.constants';
+} from '@queue/src/queue.constants';
 
 /**
  * Bull Board Service for Queue Management

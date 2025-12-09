@@ -1,4 +1,4 @@
-import { ENV_VARS } from '../constants';
+import { ENV_VARS } from '@config/constants';
 import { getEnv } from './utils';
 
 /**

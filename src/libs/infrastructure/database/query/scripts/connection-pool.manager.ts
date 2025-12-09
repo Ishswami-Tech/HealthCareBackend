@@ -1,6 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService as PrismaServiceClass } from '../../prisma/prisma.service';
+import { PrismaService as PrismaServiceClass } from '@database/prisma/prisma.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 
@@ -930,7 +930,7 @@ export class ConnectionPoolManager implements OnModuleInit, OnModuleDestroy {
   async executeQueryWithReadReplica<T = unknown>(
     query: string,
     params: unknown[] = [],
-    options: QueryOptions & { clinicId?: string; userId?: string } = {}
+    options: QueryOptions = {}
   ): Promise<T> {
     type HealthcareConfigShape = {
       database?: {

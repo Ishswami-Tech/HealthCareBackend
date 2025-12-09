@@ -11,7 +11,7 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { BaseQueryMiddleware, type QueryMiddlewareContext } from './base-query.middleware';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { DatabaseMetricsService } from '../../internal/database-metrics.service';
+import { DatabaseMetricsService } from '@database/internal/database-metrics.service';
 
 /**
  * Metrics query middleware - tracks query metrics

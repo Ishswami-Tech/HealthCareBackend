@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { BaseAppointmentPlugin } from '../base/base-plugin.service';
+import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentFollowUpService } from './appointment-followup.service';
 import type { FollowUpTemplate } from '@core/types/appointment.types';
 

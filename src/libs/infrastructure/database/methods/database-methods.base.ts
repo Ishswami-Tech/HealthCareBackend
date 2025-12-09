@@ -3,11 +3,11 @@
  * Provides shared dependencies and core methods for all convenience methods
  */
 
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
-import { QueryOptionsBuilder } from '../query/builders/query-options.builder';
-import { QueryKeyFactory } from '../query/factories/query-key.factory';
+import { QueryOptionsBuilder } from '@database/query/builders/query-options.builder';
+import { QueryKeyFactory } from '@database/query/factories/query-key.factory';
 import type { QueryOptions, AuditInfo } from '@core/types/database.types';
 import { LogType, LogLevel } from '@core/types';
 
