@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { VideoService } from './video.service';
-import { VideoConsultationTracker } from './video-consultation-tracker.service';
+import { VideoService } from '@services/video/video.service';
+import { VideoConsultationTracker } from '@services/video/video-consultation-tracker.service';
 
 /**
  * Interface for video plugin data validation
