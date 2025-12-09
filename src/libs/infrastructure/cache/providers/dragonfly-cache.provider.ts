@@ -15,7 +15,7 @@ import type {
   CacheRateLimitConfig,
   RateLimitOptions,
 } from '@core/types';
-import { DragonflyService } from '../dragonfly/dragonfly.service';
+import { DragonflyService } from '@cache/dragonfly/dragonfly.service';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 

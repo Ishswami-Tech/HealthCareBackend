@@ -1,9 +1,9 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { ConnectionPoolManager } from '../query/scripts/connection-pool.manager';
+import { ConnectionPoolManager } from '@database/query/scripts/connection-pool.manager';
 import type {
   DatabaseMetrics,
   ConnectionPoolMetricsInternal,

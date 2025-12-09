@@ -1,5 +1,5 @@
 import type { Config } from '@core/types';
-import { ENV_VARS, DEFAULT_CONFIG } from '../constants';
+import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
 import {
   parseInteger,
   removeTrailingSlash,

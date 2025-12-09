@@ -16,6 +16,7 @@ resources:
   
   # Configuration
   - configmap.yaml
+  - openvidu-configmap.yaml
   - jitsi-configmap.yaml
   - postgres-config.yaml
   - pgbouncer-configmap.yaml
@@ -30,7 +31,8 @@ resources:
   - dragonfly-optimized.yaml  # Consolidated: replaces dragonfly-deployment.yaml
   - pgbouncer-deployment.yaml
   
-  # Video Conferencing (Jitsi Meet)
+  # Video Conferencing (Dual Provider: OpenVidu primary, Jitsi fallback)
+  - openvidu-deployment.yaml
   - jitsi-deployment.yaml
   
   # Jobs & Maintenance

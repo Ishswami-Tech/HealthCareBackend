@@ -12,8 +12,8 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { CacheHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience';
-import { CacheService } from '../cache.service';
-import { CacheProviderFactory } from '../providers/cache-provider.factory';
+import { CacheService } from '@cache/cache.service';
+import { CacheProviderFactory } from '@cache/providers/cache-provider.factory';
 
 @Injectable()
 export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy {

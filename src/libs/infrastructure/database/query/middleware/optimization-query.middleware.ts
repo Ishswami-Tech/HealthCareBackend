@@ -11,7 +11,7 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { BaseQueryMiddleware, type QueryMiddlewareContext } from './base-query.middleware';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { HealthcareQueryOptimizerService } from '../../internal/query-optimizer.service';
+import { HealthcareQueryOptimizerService } from '@database/internal/query-optimizer.service';
 
 /**
  * Optimization query middleware - optimizes queries before execution

@@ -111,16 +111,22 @@ export function addDateRangeFilter<
   const toDate = dateTo instanceof Date ? dateTo : dateTo ? new Date(dateTo) : undefined;
 
   // Add date range to where clause
-  const whereWithDate = where as T & Record<string, DateRangeWhere>;
-  whereWithDate[fieldName] = {};
-  if (fromDate) {
-    whereWithDate[fieldName].gte = fromDate;
+  const whereWithDate = { ...where };
+  const dateRangeRecord = whereWithDate as Record<string, DateRangeWhere>;
+  if (!dateRangeRecord[fieldName]) {
+    dateRangeRecord[fieldName] = {};
   }
-  if (toDate) {
-    whereWithDate[fieldName].lte = toDate;
+  const dateRange = dateRangeRecord[fieldName];
+  if (dateRange) {
+    if (fromDate) {
+      dateRange.gte = fromDate;
+    }
+    if (toDate) {
+      dateRange.lte = toDate;
+    }
   }
 
-  return whereWithDate as T;
+  return whereWithDate;
 }
 
 /**
@@ -224,13 +230,14 @@ export function addStringFilter<T extends Record<string, unknown>>(
     return where;
   }
 
-  const whereWithString = where as T & Record<string, { contains: string; mode: string }>;
-  (whereWithString as Record<string, { contains: string; mode: string }>)[fieldName] = {
+  const whereWithString = { ...where };
+  const stringFilterRecord = whereWithString as Record<string, { contains: string; mode: string }>;
+  stringFilterRecord[fieldName] = {
     contains: searchTerm,
     mode: 'insensitive',
   };
 
-  return whereWithString as T;
+  return whereWithString;
 }
 
 /**
