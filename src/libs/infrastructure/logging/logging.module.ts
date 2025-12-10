@@ -1,15 +1,17 @@
-import { Module, Global, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { Module, Global } from '@nestjs/common';
+// ConfigModule is @Global() - no need to import it explicitly
+// ResilienceModule is not needed here - LoggingService doesn't directly depend on it
+// If CircuitBreakerService is needed, it should be injected where it's used, not at module level
 import { LoggingService } from './logging.service';
 import { LoggingController } from './logging.controller';
 import { LoggingHealthMonitorService } from './logging-health-monitor.service';
-import { ResilienceModule } from '@core/resilience';
 
 @Global()
 @Module({
   imports: [
-    ConfigModule, // Ensure ConfigService is available for LoggingService
-    forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
+    // ConfigModule is @Global() - available for injection without explicit import
+    // Removed ResilienceModule import - it was causing circular dependency issues
+    // ResilienceModule can be imported where CircuitBreakerService is actually needed
   ],
   controllers: [LoggingController],
   providers: [LoggingService, LoggingHealthMonitorService],

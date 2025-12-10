@@ -742,21 +742,17 @@ async function bootstrap() {
 
     // Session and cookie configuration
     logger.log('Session and cookie configuration initialized');
-    // Configure production security middleware
-    // if (environment === 'production') {
-    //   await securityConfigService.configureProductionSecurity(app, logger);
-    // } else {
-    //   // In development, we still need to register cookies before session
-    //   // Fastify session plugin requires @fastify/cookie to be registered first
-    //   try {
-    //     await securityConfigService.configureCookies(app);
-    //     logger.log('Fastify cookies configured for development');
-    //   } catch (cookieError) {
-    //     logger.warn(
-    //       `Failed to configure cookies (non-critical): ${cookieError instanceof Error ? cookieError.message : String(cookieError)}`
-    //     );
-    //   }
-    // }
+
+    // CRITICAL: Cookies must be registered before session
+    // Fastify session plugin requires @fastify/cookie to be registered first
+    try {
+      await securityConfigService.configureCookies(app);
+      logger.log('Fastify cookies configured');
+    } catch (cookieError) {
+      logger.warn(
+        `Failed to configure cookies (non-critical): ${cookieError instanceof Error ? cookieError.message : String(cookieError)}`
+      );
+    }
 
     // Configure Fastify session with cache-backed store (for all environments)
     // Session store uses CacheService if cache is enabled, otherwise uses in-memory store

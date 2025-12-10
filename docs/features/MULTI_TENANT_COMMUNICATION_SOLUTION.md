@@ -7,9 +7,17 @@ This document outlines the **architecture and design** for clinic-specific email
 **📊 Current Status:**
 - ✅ **Foundation Exists**: `CommunicationConfigService`, `CredentialEncryptionService`, `Clinic.settings` JSONB field
 - ✅ **Infrastructure Ready**: Existing clinic endpoints can be used (no new REST endpoints needed)
+- ✅ **Video Service Pattern Reference**: Standalone `VideoService` (`@services/video`) uses similar provider pattern (OpenVidu primary, Jitsi fallback) - can be used as reference
 - ❌ **Core Implementation Pending**: Provider adapters, service layer updates, database integration
 
 **⚠️ Implementation Status**: Foundation complete, core features pending implementation. See "Implementation Timeline" section for details.
+
+**📚 Related Patterns:**
+- **Video Service**: Similar dual-provider pattern implemented in `@services/video` (OpenVidu primary, Jitsi fallback) - see `docs/VIDEO_PROVIDER_INTEGRATION.md`
+  - **Location**: `src/services/video/` (standalone service)
+  - **Pattern**: `VideoProviderFactory` selects provider, `VideoService` uses factory
+  - **Reference Files**: `@services/video/providers/video-provider.factory.ts`, `@services/video/video.service.ts`
+- **Cache Service**: Similar dual-provider pattern (Dragonfly primary, Redis fallback) - see `src/config/cache.config.ts`
 
 ---
 
@@ -54,17 +62,19 @@ Global Configuration (Shared by ALL Clinics):
 │              CommunicationService (Orchestrator)                  │
 │  • Receives clinicId with every request                          │
 │  • Validates request and recipient preferences                   │
-│  • Routes to CommunicationService                          │
+│  • Routes to channel services (Email, WhatsApp, SMS)              │
+│  • Similar pattern to VideoService (standalone service)          │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
                            ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│         CommunicationService (Configuration Layer)          │
+│         CommunicationConfigService (Configuration Layer)          │
 │  • Fetches clinic-specific provider configuration                │
 │  • Decrypts credentials (KMS/Secrets Manager)                    │
 │  • Caches config in Redis/Dragonfly (1 hour TTL)                 │
 │  • Provides fallback to global/default config                    │
 │  • Connection pool management per clinic                         │
+│  • Similar pattern to VideoProviderFactory                      │
 └──────────────────────────┬───────────────────────────────────────┘
                            │
                            │ Provider-specific config
@@ -120,6 +130,45 @@ Global Configuration (Shared by ALL Clinics):
 4. **Graceful Degradation**: Fallback to global config or alternative providers
 5. **Connection Pooling**: Reuse connections per clinic per provider
 6. **Configuration Flexibility**: Each clinic chooses their own provider stack
+
+---
+
+## 📖 Reference Implementation: Video Service Pattern
+
+**Similar Architecture Pattern**: The video service (`@services/video`) implements a similar dual-provider pattern that can be used as a reference for communication provider implementation.
+
+### **Video Service Architecture (Reference)**
+
+**Location**: `src/services/video/` (standalone service, not in appointments plugin)
+
+**Pattern**: Dual-provider with factory selection
+- **Primary Provider**: OpenVidu (`OpenViduVideoProvider`)
+- **Fallback Provider**: Jitsi (`JitsiVideoProvider`)
+- **Factory**: `VideoProviderFactory` selects provider based on config
+- **Service**: `VideoService` uses factory with automatic fallback
+
+**Key Files:**
+- `src/services/video/video.service.ts` - Main service (uses `VideoProviderFactory`)
+- `src/services/video/providers/video-provider.factory.ts` - Factory pattern
+- `src/services/video/providers/openvidu-video.provider.ts` - Primary provider implementation
+- `src/services/video/providers/jitsi-video.provider.ts` - Fallback provider implementation
+- `src/core/types/video.types.ts` - `IVideoProvider` interface
+
+**Integration Pattern:**
+- `AppointmentsModule` imports `VideoModule` (standalone service)
+- `AppointmentsController` uses `VideoService` via dependency injection
+- `ClinicVideoPlugin` uses `VideoService` for video operations
+
+**How This Applies to Communication:**
+- **Similar Pattern**: `CommunicationProviderFactory` (like `VideoProviderFactory`)
+- **Similar Service**: `EmailService` / `WhatsAppService` (like `VideoService`)
+- **Similar Providers**: Email/WhatsApp adapters (like `OpenViduVideoProvider` / `JitsiVideoProvider`)
+- **Similar Interface**: `IEmailProviderAdapter` / `IWhatsAppProviderAdapter` (like `IVideoProvider`)
+
+**Reference Documentation:**
+- `docs/VIDEO_PROVIDER_INTEGRATION.md` - Provider integration guide
+- `docs/VIDEO_SERVICE_IMPLEMENTATION.md` - Service implementation details
+- `docs/VIDEO_SERVICE_ARCHITECTURE.md` - Architecture design
 
 ---
 
@@ -1284,15 +1333,21 @@ clinic:communication:delete         → Remove provider config
 
 #### **1. CommunicationConfigService** (Configuration Manager) ✅ EXISTS
 
+**Location:** `src/libs/communication/config/communication-config.service.ts`
+
 **Current Status:** ✅ Foundation exists, needs database integration
 
 **Responsibilities:**
 - Fetch clinic-specific provider configurations from `Clinic.settings.communicationSettings` (JSONB)
 - Decrypt credentials using `CredentialEncryptionService` ✅ (already implemented)
-- Cache configurations in Redis (1-hour TTL) ✅ (already implemented)
+- Cache configurations in Redis/Dragonfly (1-hour TTL) ✅ (already implemented)
 - Provide fallback to global configuration ✅ (already implemented)
 - Handle connection pool management (to be implemented)
 - Track provider health status (to be implemented)
+
+**Similar Pattern Reference:**
+- **Video Service**: `VideoService` (`@services/video/video.service.ts`) uses similar pattern with `VideoProviderFactory` for provider selection
+- **Cache Service**: Uses similar dual-provider pattern (Dragonfly primary, Redis fallback)
 
 **Key Methods (Current Implementation Status):**
 ```
@@ -1396,21 +1451,32 @@ private async saveToDatabase(config: ClinicCommunicationConfig): Promise<void> {
 
 **Purpose**: Abstract provider-specific implementation details
 
+**Reference Pattern**: Similar to `IVideoProvider` interface in `@core/types/video.types.ts`
+
 **Interface Definition:**
-```
+```typescript
+// Similar to IVideoProvider pattern used in VideoService
 interface EmailProviderAdapter {
+  readonly providerName: 'smtp' | 'ses' | 'sendgrid' | 'mailgun' | 'postmark';
   send(options: EmailOptions): Promise<EmailResult>;
   verify(): Promise<boolean>;  // Test connection
-  getHealthStatus(): ProviderHealthStatus;
+  isHealthy(): Promise<boolean>;  // Health check
+  isEnabled(): boolean;  // Check if provider is enabled
 }
 
 interface WhatsAppProviderAdapter {
+  readonly providerName: 'meta' | 'twilio' | 'messagebird' | 'vonage';
   sendMessage(to: string, message: string): Promise<WhatsAppResult>;
   sendTemplate(to: string, templateId: string, params: object): Promise<WhatsAppResult>;
   verify(): Promise<boolean>;
-  getHealthStatus(): ProviderHealthStatus;
+  isHealthy(): Promise<boolean>;
+  isEnabled(): boolean;
 }
 ```
+
+**Reference Implementation:**
+- See `IVideoProvider` in `@core/types/video.types.ts` for interface pattern
+- See `OpenViduVideoProvider` and `JitsiVideoProvider` in `@services/video/providers/` for implementation examples
 
 **Adapters to Implement:**
 - `SMTPEmailAdapter` (Gmail, Outlook, custom SMTP)
@@ -1427,32 +1493,71 @@ interface WhatsAppProviderAdapter {
 
 #### **3. Provider Factory** (Factory Pattern)
 
+**Location:** To be created in `src/libs/communication/adapters/factories/`
+
+**Reference Implementation:** `VideoProviderFactory` in `@services/video/providers/video-provider.factory.ts`
+
 **Responsibilities:**
 - Instantiate appropriate provider adapter based on config
 - Manage adapter lifecycle
 - Provide adapter instances to services
+- Handle health checks and automatic fallback
 
-**Pseudo-logic:**
-```
-class ProviderFactory {
-  createEmailAdapter(config: ClinicEmailConfig): EmailProviderAdapter {
-    switch (config.provider) {
-      case 'smtp': return new SMTPEmailAdapter(config.providers.smtp);
-      case 'ses': return new SESEmailAdapter(config.providers.ses);
-      case 'sendgrid': return new SendGridAdapter(config.providers.sendgrid);
+**Implementation Pattern (Reference VideoProviderFactory):**
+```typescript
+// Similar to VideoProviderFactory pattern
+@Injectable()
+export class CommunicationProviderFactory {
+  constructor(
+    private readonly smtpAdapter: SMTPEmailAdapter,
+    private readonly sesAdapter: SESEmailAdapter,
+    private readonly sendgridAdapter: SendGridAdapter,
+    private readonly metaWhatsAppAdapter: MetaWhatsAppAdapter,
+    private readonly twilioWhatsAppAdapter: TwilioWhatsAppAdapter,
+    private readonly configService: CommunicationConfigService
+  ) {}
+
+  createEmailAdapter(clinicId: string): EmailProviderAdapter {
+    const config = await this.configService.getClinicConfig(clinicId);
+    const provider = config?.email?.primary?.provider || 'ses'; // Default
+    
+    switch (provider) {
+      case 'smtp': return this.smtpAdapter;
+      case 'ses': return this.sesAdapter;
+      case 'sendgrid': return this.sendgridAdapter;
       // ... more providers
+      default: return this.sesAdapter; // Fallback
     }
   }
   
-  createWhatsAppAdapter(config: ClinicWhatsAppConfig): WhatsAppProviderAdapter {
-    switch (config.provider) {
-      case 'meta': return new MetaWhatsAppAdapter(config.providers.meta);
-      case 'twilio': return new TwilioWhatsAppAdapter(config.providers.twilio);
+  createWhatsAppAdapter(clinicId: string): WhatsAppProviderAdapter {
+    const config = await this.configService.getClinicConfig(clinicId);
+    const provider = config?.whatsapp?.primary?.provider || 'meta'; // Default
+    
+    switch (provider) {
+      case 'meta': return this.metaWhatsAppAdapter;
+      case 'twilio': return this.twilioWhatsAppAdapter;
       // ... more providers
+      default: return this.metaWhatsAppAdapter; // Fallback
     }
+  }
+
+  // Similar to VideoProviderFactory.getProviderWithFallback()
+  async getEmailAdapterWithFallback(clinicId: string): Promise<EmailProviderAdapter> {
+    const primary = this.createEmailAdapter(clinicId);
+    if (await primary.isHealthy()) {
+      return primary;
+    }
+    // Fallback to global/default adapter
+    return this.getDefaultEmailAdapter();
   }
 }
 ```
+
+**Reference Files:**
+- `@services/video/providers/video-provider.factory.ts` - Factory pattern implementation
+- `@services/video/providers/openvidu-video.provider.ts` - Provider implementation example
+- `@services/video/providers/jitsi-video.provider.ts` - Fallback provider example
 
 ---
 
@@ -1467,7 +1572,11 @@ class ProviderFactory {
 - Implement connection pooling per clinic
 - Handle fallback logic (fallback to global config if clinic config not found)
 
+**Location:** `src/libs/communication/channels/email/email.service.ts`
+
 **Current Status:** ❌ Uses global config only, needs multi-tenant support
+
+**Reference Pattern:** Similar to how `VideoService` uses `VideoProviderFactory` to select providers
 
 **Required Changes:**
 ```typescript
@@ -1532,7 +1641,11 @@ clinic-c → { smtp: SMTPAdapter }
 - Handle cross-channel fallback (WhatsApp → SMS → Email)
 - Track per-clinic delivery statistics
 
+**Location:** `src/libs/communication/communication.service.ts`
+
 **Current Status:** ❌ Needs to pass `clinicId` to channel services
+
+**Reference Pattern:** Similar to how `VideoService` extracts context and passes it to providers
 
 **Current Implementation:**
 - `CommunicationService.send()` receives `CommunicationRequest` with optional `metadata.clinicId`
@@ -2076,9 +2189,10 @@ Behavior:
 
 ### **Phase 1: Foundation (Weeks 1-2)**
 - ✅ Update database schema (`Clinic.settings` JSONB) - **ALREADY EXISTS**
-- ✅ Create `CommunicationConfigService` - **ALREADY EXISTS** (needs database integration)
+- ✅ Create `CommunicationConfigService` - **ALREADY EXISTS** (`src/libs/communication/config/communication-config.service.ts`) - needs database integration
 - ✅ Implement credential encryption - **ALREADY EXISTS** (`CredentialEncryptionService`)
-- ❌ Add provider adapter interfaces - **TO BE IMPLEMENTED**
+- ✅ **Reference Implementation**: Video service uses similar pattern (`@services/video`) - can reference `VideoProviderFactory` pattern
+- ❌ Add provider adapter interfaces - **TO BE IMPLEMENTED** (can reference `IVideoProvider` interface pattern)
 - ❌ Deploy with global fallback (no breaking changes) - **TO BE IMPLEMENTED**
 - ✅ All existing clinics continue using global config - **CURRENT STATE**
 
@@ -2518,10 +2632,20 @@ GET /api/v1/clinics/:clinicId/stats
   - `mapFromClinicCommunicationConfig()` - Convert typed config to JSONB
 
 **Phase 2: Provider Adapter Interfaces**
-- [ ] Implement `EmailProviderAdapter` interface
-- [ ] Implement `WhatsAppProviderAdapter` interface
-- [ ] Implement `SMSProviderAdapter` interface
-- [ ] Create base adapter classes with common logic (DRY)
+- [ ] Implement `EmailProviderAdapter` interface (reference: `IVideoProvider` in `@core/types/video.types.ts`)
+  - **Reference File**: `src/core/types/video.types.ts` - `IVideoProvider` interface
+  - **Pattern**: `readonly providerName`, `isEnabled()`, `isHealthy()`, provider-specific methods
+- [ ] Implement `WhatsAppProviderAdapter` interface (reference: `IVideoProvider` pattern)
+  - **Reference File**: `src/core/types/video.types.ts` - `IVideoProvider` interface
+- [ ] Implement `SMSProviderAdapter` interface (reference: `IVideoProvider` pattern)
+  - **Reference File**: `src/core/types/video.types.ts` - `IVideoProvider` interface
+- [ ] Create base adapter classes with common logic (DRY) (reference: `OpenViduVideoProvider` and `JitsiVideoProvider` implementations)
+  - **Reference Files**: 
+    - `src/services/video/providers/openvidu-video.provider.ts` - Primary provider example
+    - `src/services/video/providers/jitsi-video.provider.ts` - Fallback provider example
+- [ ] Create `CommunicationProviderFactory` (reference: `VideoProviderFactory` in `@services/video/providers/video-provider.factory.ts`)
+  - **Reference File**: `src/services/video/providers/video-provider.factory.ts`
+  - **Pattern**: Factory with `getProvider()`, `getProviderWithFallback()`, health checks
 
 **Phase 3: Provider Adapter Implementations**
 - [ ] Create SMTP email adapter
@@ -2535,11 +2659,19 @@ GET /api/v1/clinics/:clinicId/stats
 - [ ] Create AWS SNS adapter
 
 **Phase 4: Service Layer Updates**
-- [ ] Update `EmailService` to accept `clinicId` and use `CommunicationConfigService`
-- [ ] Update `WhatsAppService` to accept `clinicId` and use `CommunicationConfigService`
-- [ ] Update `CommunicationService` (orchestrator) to pass `clinicId` to channel services
-- [ ] Implement connection pooling per clinic
-- [ ] Add fallback logic (clinic config → global config)
+- [ ] Update `EmailService` to accept `clinicId` and use `CommunicationConfigService` (reference: `VideoService` provider selection pattern)
+  - **Reference File**: `src/services/video/video.service.ts` - How `VideoService` uses `VideoProviderFactory`
+  - **Pattern**: Inject factory, call `getProvider()` or `getProviderWithFallback()`, use provider methods
+- [ ] Update `WhatsAppService` to accept `clinicId` and use `CommunicationConfigService` (reference: `VideoService` provider selection pattern)
+  - **Reference File**: `src/services/video/video.service.ts` - Provider selection and fallback logic
+- [ ] Update `CommunicationService` (orchestrator) to pass `clinicId` to channel services (reference: `VideoService` context extraction)
+  - **Reference File**: `src/services/video/video.service.ts` - How service extracts context and passes to providers
+  - **Location**: `src/libs/communication/communication.service.ts` - Lines 649-700 (`sendEmail()`), 705-741 (`sendWhatsApp()`)
+- [ ] Implement connection pooling per clinic (reference: Video service connection management)
+  - **Pattern**: Similar to how video providers manage connections per clinic
+- [ ] Add fallback logic (clinic config → global config) (reference: `VideoProviderFactory.getProviderWithFallback()`)
+  - **Reference File**: `src/services/video/providers/video-provider.factory.ts` - `getProviderWithFallback()` method
+  - **Pattern**: Health check primary, fallback to secondary, log fallback events
 
 **Phase 5: Testing & Validation**
 - [ ] Add `testEmailConfig()` method to `CommunicationConfigService`
@@ -2569,6 +2701,16 @@ GET /api/v1/clinics/:clinicId/stats
 
 - **Current Communication System**: `src/libs/communication/README.md`
 - **Clinic Management**: `src/services/clinic/README.md`
+- **Video Service (Reference Pattern)**: 
+  - `docs/VIDEO_PROVIDER_INTEGRATION.md` - Similar dual-provider pattern (OpenVidu primary, Jitsi fallback)
+  - `docs/VIDEO_SERVICE_IMPLEMENTATION.md` - Standalone service architecture
+  - `docs/VIDEO_SERVICE_ARCHITECTURE.md` - Microservice-ready design
+  - **Service Location**: `src/services/video/` (standalone service, not in appointments plugin)
+  - **Key Files**: 
+    - `src/services/video/video.service.ts` - Main service
+    - `src/services/video/providers/video-provider.factory.ts` - Factory pattern
+    - `src/services/video/providers/openvidu-video.provider.ts` - Primary provider
+    - `src/services/video/providers/jitsi-video.provider.ts` - Fallback provider
 - **RBAC & Security**: `.ai-rules/security.md`
 - **Multi-Tenant Architecture**: `.ai-rules/architecture.md`
 - **Database Guidelines**: `.ai-rules/database.md`
@@ -2595,8 +2737,16 @@ GET /api/v1/clinics/:clinicId/stats
 - ✅ Encryption service implemented (`CredentialEncryptionService`)
 - ✅ Config service foundation exists (`CommunicationConfigService`)
 - ✅ Clinic endpoints ready (no new endpoints needed)
-- ❌ Provider adapters need implementation
-- ❌ Service layer needs multi-tenant updates
+- ✅ **Reference Implementation Available**: Video service (`@services/video`) implements similar provider pattern
+  - **Service Location**: `src/services/video/` (standalone service)
+  - **Integration**: `AppointmentsModule` imports `VideoModule`, uses `VideoService` via DI
+  - **Pattern**: `VideoProviderFactory` selects provider, `VideoService` uses factory with health checks
+  - **Reference Files**: 
+    - `src/services/video/video.service.ts` - Main service implementation
+    - `src/services/video/providers/video-provider.factory.ts` - Factory pattern
+    - `src/core/types/video.types.ts` - `IVideoProvider` interface
+- ❌ Provider adapters need implementation (can reference `IVideoProvider` and `VideoProviderFactory` patterns)
+- ❌ Service layer needs multi-tenant updates (can reference `VideoService` integration pattern)
 
 ---
 
@@ -2617,8 +2767,20 @@ GET /api/v1/clinics/:clinicId/stats
 2. ✅ `Clinic.settings` JSONB field exists
 3. ✅ `CredentialEncryptionService` implemented
 4. ✅ `CommunicationConfigService` foundation exists
-5. ❌ Provider adapters need to be implemented
-6. ❌ Service layer needs multi-tenant updates
+5. ✅ **Reference Pattern Available**: Video service (`@services/video`) implements similar provider pattern
+   - **Service Location**: `src/services/video/` (standalone service, not in appointments plugin)
+   - **Integration Pattern**: `AppointmentsModule` imports `VideoModule`, uses `VideoService` via DI
+   - **Factory Pattern**: `VideoProviderFactory` selects provider based on config
+   - **Fallback Pattern**: Automatic fallback from OpenVidu (primary) to Jitsi (fallback)
+   - **Health Checks**: Providers implement `isHealthy()` for automatic fallback
+   - **Reference Files**:
+     - `src/services/video/video.service.ts` - Service implementation
+     - `src/services/video/providers/video-provider.factory.ts` - Factory implementation
+     - `src/services/video/providers/openvidu-video.provider.ts` - Primary provider
+     - `src/services/video/providers/jitsi-video.provider.ts` - Fallback provider
+     - `src/core/types/video.types.ts` - `IVideoProvider` interface
+6. ❌ Provider adapters need to be implemented (can reference `IVideoProvider` pattern)
+7. ❌ Service layer needs multi-tenant updates (can reference `VideoService` pattern)
 
 **Recommended Start Date:** After core appointment and user management features are stable
 

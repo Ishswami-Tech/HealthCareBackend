@@ -38,9 +38,12 @@ export class DragonflyCacheProvider implements IAdvancedCacheProvider {
   constructor(
     @Inject(forwardRef(() => DragonflyService))
     private readonly dragonflyService: DragonflyService,
-    @Inject(ConfigService) private readonly configService: ConfigService
+    // ConfigService injected with forwardRef to handle circular dependencies (same pattern as CacheService)
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService: ConfigService
   ) {
     // DragonflyService injected via forwardRef to handle circular dependencies
+    // ConfigService injected with forwardRef to match pattern used in CacheService
   }
 
   // ===== BASIC ICacheProvider METHODS =====

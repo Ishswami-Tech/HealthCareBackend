@@ -60,4 +60,3 @@ import { JitsiVideoProvider } from './providers/jitsi-video.provider';
   ],
 })
 export class VideoModule {}
-

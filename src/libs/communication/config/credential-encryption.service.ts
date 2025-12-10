@@ -38,9 +38,10 @@ export class CredentialEncryptionService {
     private readonly loggingService: LoggingService
   ) {
     // Get encryption key from environment or generate one (for development)
+    // Use getEnv() with default to avoid throwing errors when key is not found
     this.encryptionKey =
-      this.configService.get<string>('COMMUNICATION_ENCRYPTION_KEY') ||
-      this.configService.get<string>('ENCRYPTION_KEY') ||
+      this.configService.getEnv('COMMUNICATION_ENCRYPTION_KEY', '') ||
+      this.configService.getEnv('ENCRYPTION_KEY', '') ||
       'default-key-change-in-production';
 
     if (this.encryptionKey === 'default-key-change-in-production') {

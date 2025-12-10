@@ -403,8 +403,40 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
    * @description
    * Registers the session plugin for managing user sessions.
    * Requires @fastify/cookie to be registered first.
+   * This method ensures @fastify/cookie is registered before session.
    */
   async registerSession(app: INestApplication, options: Record<string, unknown>): Promise<void> {
+    const fastifyApp = app as NestFastifyApplication;
+    const fastifyInstance = fastifyApp.getHttpAdapter().getInstance();
+
+    // CRITICAL: Ensure @fastify/cookie is registered before @fastify/session
+    // Always register cookie plugin first (Fastify handles duplicate registrations gracefully)
+    // Get cookie secret from options or use default
+    const cookieSecret =
+      (options['cookieSecret'] as string) ||
+      (options['cookie'] as { secret?: string })?.secret ||
+      'default-cookie-secret-change-in-production-min-32-chars';
+
+    try {
+      // Try to register cookie plugin - if already registered, this will be a no-op or handled gracefully
+      await fastifyInstance.register(fastifyCookie, {
+        secret: cookieSecret,
+      });
+    } catch (cookieError) {
+      // If cookie is already registered, that's fine - continue with session registration
+      // Fastify may throw if plugin is already registered, but we can proceed
+      const errorMessage = cookieError instanceof Error ? cookieError.message : String(cookieError);
+      if (
+        !errorMessage.includes('already registered') &&
+        !errorMessage.includes('already exists')
+      ) {
+        // Re-throw if it's a different error
+        throw cookieError;
+      }
+      // Otherwise, cookie is already registered - proceed
+    }
+
+    // Now register session plugin (cookie dependency is satisfied)
     await this.registerPlugin(app, fastifySession, options);
   }
 
