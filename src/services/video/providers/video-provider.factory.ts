@@ -111,4 +111,3 @@ export class VideoProviderFactory {
     return primary;
   }
 }
-

@@ -21,9 +21,8 @@ import {
   IsObject,
   IsArray,
 } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { VideoCallStatus } from './appointment.dto';
-import type { VideoTokenResponse, VideoConsultationSession } from '@core/types/video.types';
 
 /**
  * User information for video consultation
@@ -176,6 +175,7 @@ export class ShareMedicalImageDto {
   @ApiProperty({
     description: 'Medical image data (base64 encoded or URL)',
     type: 'object',
+    additionalProperties: true,
   })
   @IsObject({ message: 'Image data must be an object' })
   @IsNotEmpty({ message: 'Image data is required' })
@@ -500,4 +500,3 @@ export class VideoCallResponseDto {
   @IsNumber({}, { message: 'Duration must be a number' })
   duration?: number;
 }
-
