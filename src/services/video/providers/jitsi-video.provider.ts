@@ -452,4 +452,3 @@ export class JitsiVideoProvider implements IVideoProvider {
     }
   }
 }
-

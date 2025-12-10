@@ -74,9 +74,6 @@ import {
   VideoTokenResponseDto,
   VideoConsultationSessionDto,
   EndVideoConsultationDto,
-  ShareMedicalImageDto,
-  VideoCallHistoryQueryDto,
-  VideoCallResponseDto,
   DataResponseDto,
   SuccessResponseDto,
 } from '@dtos';
@@ -90,7 +87,6 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { VideoService } from '@services/video/video.service';
-import type { VideoConsultationSession } from '@core/types/video.types';
 import { CheckInService } from './plugins/checkin/check-in.service';
 import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
@@ -1585,10 +1581,18 @@ export class AppointmentsController {
       tokenDto.roomName = meetingToken.roomName;
       tokenDto.roomId = meetingToken.roomId;
       tokenDto.meetingUrl = meetingToken.meetingUrl;
-      tokenDto.roomPassword = meetingToken.roomPassword;
-      tokenDto.meetingPassword = meetingToken.meetingPassword;
-      tokenDto.encryptionKey = meetingToken.encryptionKey;
-      tokenDto.expiresAt = meetingToken.expiresAt;
+      if (meetingToken.roomPassword) {
+        tokenDto.roomPassword = meetingToken.roomPassword;
+      }
+      if (meetingToken.meetingPassword) {
+        tokenDto.meetingPassword = meetingToken.meetingPassword;
+      }
+      if (meetingToken.encryptionKey) {
+        tokenDto.encryptionKey = meetingToken.encryptionKey;
+      }
+      if (meetingToken.expiresAt) {
+        tokenDto.expiresAt = meetingToken.expiresAt;
+      }
 
       return tokenDto;
     } catch (_error) {

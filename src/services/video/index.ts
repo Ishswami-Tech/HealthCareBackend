@@ -10,4 +10,3 @@ export { VideoConsultationTracker } from './video-consultation-tracker.service';
 export { VideoProviderFactory } from './providers/video-provider.factory';
 export { OpenViduVideoProvider } from './providers/openvidu-video.provider';
 export { JitsiVideoProvider } from './providers/jitsi-video.provider';
-
