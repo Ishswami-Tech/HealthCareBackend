@@ -20,7 +20,9 @@
     "lint:check": "pnpm exec eslint \"{src,apps,libs}/**/*.ts\" --max-warnings 0",
     "format": "prettier --write \"src/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\"",
+    "check:forbidden-comments": "node scripts/check-forbidden-comments.js",
     "security:audit": "pnpm audit --audit-level=moderate",
+    "security:fix": "node scripts/fix-vulnerabilities.js",
     "prisma:validate": "prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma --check",
     "env:validate": "ts-node -r tsconfig-paths/register scripts/validate-env.ts",
     "deps:check": "pnpm exec depcheck --ignores='@nestjs/*,@types/*,eslint-*,prettier,typescript,ts-node,tsconfig-paths,prisma,@prisma/client,glob,js-yaml' || echo 'Dependency check completed'",
@@ -77,10 +79,9 @@
     "@nestjs/config": "^4.0.0",
     "@nestjs/core": "^11.1.9",
     "@nestjs/event-emitter": "^3.0.1",
-    "@nestjs/jwt": "^11.0.1",
+    "@nestjs/jwt": "^11.0.2",
     "@nestjs/mapped-types": "^2.1.0",
     "@nestjs/microservices": "^11.1.9",
-    "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.9",
     "@nestjs/platform-fastify": "^11.1.9",
     "@nestjs/platform-socket.io": "^11.1.9",
@@ -105,13 +106,10 @@
     "fastify": "^5.6.2",
     "firebase-admin": "^13.6.0",
     "google-auth-library": "^10.5.0",
-    "googleapis": "^166.0.0",
     "ioredis": "^5.5.0",
     "jsonwebtoken": "^9.0.3",
     "mailtrap": "^4.1.0",
     "nodemailer": "^7.0.7",
-    "passport": "^0.7.0",
-    "passport-local": "^1.0.0",
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
     "qrcode": "^1.5.4",
@@ -130,11 +128,10 @@
     "@nestjs/cli": "^11.0.12",
     "@nestjs/schematics": "^11.0.0",
     "@swc/cli": "^0.7.9",
-    "@swc/core": "^1.15.2",
+    "@swc/core": "^1.15.3",
     "@types/express": "^5.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.10.1",
-    "@types/passport-local": "^1.0.38",
     "@types/qrcode": "^1.5.5",
     "@types/redis-info": "^3.0.3",
     "cross-env": "^10.1.0",
@@ -164,7 +161,9 @@
   "packageManager": "pnpm@9.15.4",
   "pnpm": {
     "overrides": {
-      "jws": ">=3.2.3"
+      "jws": ">=4.0.1",
+      "jsonwebtoken>jws": ">=4.0.1",
+      "gtoken>jws": ">=4.0.1"
     }
   }
 }

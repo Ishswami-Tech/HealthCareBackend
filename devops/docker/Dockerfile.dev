@@ -24,8 +24,11 @@ COPY package.json pnpm-lock.yaml ./
 # Install dependencies (skip postinstall since Prisma schema isn't available yet)
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
-# Copy all source files (including Prisma schema)
+# Copy all source files (including Prisma schema and SWC configuration)
+# .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
+# Explicitly verify SWC config files are present (cross-platform compatibility)
 COPY . .
+RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration files verified" || (echo "[ERROR] SWC config files missing!" && exit 1)
 
 # Now generate Prisma client (schema is available)
 # Run prisma generate directly (skip the copy script if it doesn't exist)
