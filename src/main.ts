@@ -262,17 +262,9 @@ async function _setupWebSocketAdapter(
             connectWithTimeout(pubClient, 'Pub'),
             connectWithTimeout(subClient, 'Sub'),
           ]);
-          // Verify clients are actually connected before proceeding
-          if (
-            !pubClient ||
-            !subClient ||
-            typeof (pubClient as { isOpen?: () => boolean }).isOpen !== 'function' ||
-            !(pubClient as { isOpen?: () => boolean }).isOpen?.() ||
-            typeof (subClient as { isOpen?: () => boolean }).isOpen !== 'function' ||
-            !(subClient as { isOpen?: () => boolean }).isOpen?.()
-          ) {
-            throw new Error('Clients not properly connected after connection attempt');
-          }
+          // If connect() resolves successfully, clients are connected and ready
+          // The connect() promise only resolves when connection is established
+          logger.log('[WebSocket] Pub/Sub clients connected successfully');
         } catch (connectionError) {
           // Cache is disabled - WebSocket adapter is optional
           // Log warning but continue without Redis adapter
@@ -837,10 +829,12 @@ async function bootstrap() {
 
     // Configure filters and interceptors separately (not in configure method)
     if (loggingService) {
+      // Get ConfigService from app context for HttpExceptionFilter
+      const configService = app.get(ConfigService);
       middlewareManager.configureFilters(app, [
         {
           filter: HttpExceptionFilter,
-          constructorArgs: [loggingService],
+          constructorArgs: [loggingService, configService],
         },
       ]);
       middlewareManager.configureInterceptors(app, [

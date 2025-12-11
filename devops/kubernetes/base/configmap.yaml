@@ -108,6 +108,11 @@ data:
   OPENVIDU_ENABLED: "true"
   OPENVIDU_URL: "https://video.ishswami.in"
   OPENVIDU_DOMAIN: "video.ishswami.in"
+  # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
+  # Enable webhooks to reduce Socket.IO load for video events
+  OPENVIDU_WEBHOOK_ENABLED: "false"
+  OPENVIDU_WEBHOOK_ENDPOINT: "https://api.ishswami.in/api/v1/webhooks/openvidu"
+  OPENVIDU_WEBHOOK_EVENTS: "sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped"
   
   # Jitsi Configuration (Fallback)
   JITSI_DOMAIN: "meet.ishswami.in"

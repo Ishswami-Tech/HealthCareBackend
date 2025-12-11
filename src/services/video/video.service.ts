@@ -40,9 +40,12 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
 import type { VideoCallAppointment } from '@core/types/appointment.types';
 import type { VideoCall, VideoCallSettings, ServiceResponse } from '@core/types';
-import type { VideoConsultationSession as LegacyVideoConsultationSession } from '@core/types/appointment.types';
+import type { VideoConsultationSession as AppointmentVideoConsultationSession } from '@core/types/appointment.types';
+import {
+  getVideoConsultationDelegate,
+  getVideoRecordingDelegate,
+} from '@core/types/video-database.types';
 
-// Re-export types for backward compatibility
 export type { VideoCall, VideoCallSettings };
 
 // Type aliases for response data structures using existing ServiceResponse<T>
@@ -447,11 +450,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get consultation status (alias for getConsultationSession for backward compatibility)
+   * Get consultation status
+   * Returns consultation session in appointment format for plugin compatibility
    */
   async getConsultationStatus(
     appointmentId: string
-  ): Promise<LegacyVideoConsultationSession | null> {
+  ): Promise<AppointmentVideoConsultationSession | null> {
     const session = await this.getConsultationSession(appointmentId);
     if (!session) {
       return null;
@@ -513,9 +517,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Store technical issue in cache
       const cacheKey = `video_session:${appointmentId}`;
-      const cachedSession = await this.cacheService.get<LegacyVideoConsultationSession>(cacheKey);
+      const cachedSessionValue: unknown = await this.cacheService.get(cacheKey);
 
-      if (cachedSession) {
+      if (
+        cachedSessionValue &&
+        typeof cachedSessionValue === 'object' &&
+        cachedSessionValue !== null
+      ) {
+        const cachedSession = cachedSessionValue as AppointmentVideoConsultationSession;
         if (!cachedSession.technicalIssues) {
           cachedSession.technicalIssues = [];
         }
@@ -575,9 +584,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Update session with recording URL in cache
       const cacheKey = `video_session:${appointmentId}`;
-      const cachedSession = await this.cacheService.get<LegacyVideoConsultationSession>(cacheKey);
+      const cachedSessionValue: unknown = await this.cacheService.get(cacheKey);
 
-      if (cachedSession) {
+      if (
+        cachedSessionValue &&
+        typeof cachedSessionValue === 'object' &&
+        cachedSessionValue !== null
+      ) {
+        const cachedSession = cachedSessionValue as AppointmentVideoConsultationSession;
         cachedSession.recordingUrl = recordingUrl;
         await this.cacheService.set(cacheKey, cachedSession, this.MEETING_CACHE_TTL);
       }
@@ -608,7 +622,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ============================================================================
-  // LEGACY VIDEO CALL METHODS (for backward compatibility)
+  // VIDEO CALL METHODS (used by appointment plugin)
   // ============================================================================
 
   async createVideoCall(
@@ -980,8 +994,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // startVirtualFitting method removed - healthcare application only
-
   async getVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCallHistoryResponse> {
     const startTime = Date.now();
     const cacheKey = `videocalls:history:${userId}:${clinicId || 'all'}`;
@@ -1041,9 +1053,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // getVirtualFittingHistory method removed - healthcare application only
-
-  // Helper methods - Real database integration
+  // ============================================================================
+  // HELPER METHODS
+  // ============================================================================
   /**
    * Validates appointment and narrows to VideoCallAppointment
    * @param appointmentId - The appointment ID
@@ -1087,8 +1099,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     // Return type-narrowed appointment
     return appointment;
   }
-
-  // validateFashionAppointment method removed - healthcare application only
 
   private async generateMeetingUrl(appointmentId: string): Promise<string> {
     // Use provider to generate meeting URL
@@ -1144,30 +1154,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private async storeVideoCall(videoCall: VideoCall): Promise<void> {
     try {
-      // Check if VideoConsultation already exists
-      const existing = (await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoConsultation: {
-              findUnique: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoConsultation.findUnique({
+      const existing = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        return await delegate.findUnique({
           where: { appointmentId: videoCall.appointmentId },
         });
-      })) as { id: string } | null;
+      });
 
       if (existing) {
-        // Update existing consultation
         await this.databaseService.executeHealthcareWrite(
           async client => {
-            return await (
-              client as unknown as {
-                videoConsultation: {
-                  update: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).videoConsultation.update({
+            const delegate = getVideoConsultationDelegate(client);
+            return await delegate.update({
               where: { id: existing.id },
               data: {
                 meetingUrl: videoCall.meetingUrl,
@@ -1196,17 +1194,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           }
         );
       } else {
-        // Create new VideoConsultation
         const roomId = `room-${videoCall.appointmentId}-${Date.now()}`;
         await this.databaseService.executeHealthcareWrite(
           async client => {
-            return await (
-              client as unknown as {
-                videoConsultation: {
-                  create: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).videoConsultation.create({
+            const delegate = getVideoConsultationDelegate(client);
+            return await delegate.create({
               data: {
                 appointmentId: videoCall.appointmentId,
                 patientId: videoCall.patientId,
@@ -1288,16 +1280,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return JSON.parse(cached as string) as VideoCall;
     }
 
-    // Query database - try by callId (roomId) or appointmentId
-    let consultation = (await this.databaseService.executeHealthcareRead(async client => {
-      return await (
-        client as unknown as {
-          videoConsultation: {
-            findFirst: <T>(args: T) => Promise<unknown>;
-            findUnique: <T>(args: T) => Promise<unknown>;
-          };
-        }
-      ).videoConsultation.findFirst({
+    let consultation = await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = getVideoConsultationDelegate(client);
+      return await delegate.findFirst({
         where: {
           OR: [{ roomId: callId }, { appointmentId: callId }],
         },
@@ -1305,66 +1290,23 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           participants: true,
         },
       });
-    })) as {
-      id: string;
-      appointmentId: string;
-      patientId: string;
-      doctorId: string;
-      clinicId: string;
-      roomId: string;
-      status: string;
-      meetingUrl: string | null;
-      startTime: Date | null;
-      endTime: Date | null;
-      duration: number | null;
-      recordingUrl: string | null;
-      recordingEnabled: boolean;
-      screenSharingEnabled: boolean;
-      chatEnabled: boolean;
-      waitingRoomEnabled: boolean;
-      autoRecord: boolean;
-      maxParticipants: number;
-      participants: Array<{ userId: string }>;
-    } | null;
+    });
 
-    // If not found by roomId/appointmentId, try finding by VideoCall id pattern
     if (!consultation && callId.startsWith('vc-')) {
       const appointmentIdMatch = callId.match(/vc-(.+?)-/);
       if (appointmentIdMatch && appointmentIdMatch[1]) {
-        consultation = (await this.databaseService.executeHealthcareRead(async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                findUnique: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.findUnique({
-            where: { appointmentId: appointmentIdMatch[1] },
+        const matchedAppointmentId: string = appointmentIdMatch[1];
+        consultation = await this.databaseService.executeHealthcareRead(async client => {
+          const delegate = getVideoConsultationDelegate(client);
+          return await delegate.findFirst({
+            where: {
+              OR: [{ appointmentId: matchedAppointmentId }],
+            },
             include: {
               participants: true,
             },
           });
-        })) as {
-          id: string;
-          appointmentId: string;
-          patientId: string;
-          doctorId: string;
-          clinicId: string;
-          roomId: string;
-          status: string;
-          meetingUrl: string | null;
-          startTime: Date | null;
-          endTime: Date | null;
-          duration: number | null;
-          recordingUrl: string | null;
-          recordingEnabled: boolean;
-          screenSharingEnabled: boolean;
-          chatEnabled: boolean;
-          waitingRoomEnabled: boolean;
-          autoRecord: boolean;
-          maxParticipants: number;
-          participants: Array<{ userId: string }>;
-        } | null;
+        });
       }
     }
 
@@ -1403,39 +1345,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async getVideoConsultationByCallId(callId: string): Promise<VideoConsultation | null> {
-    return (await this.databaseService.executeHealthcareRead(async client => {
-      return await (
-        client as unknown as {
-          videoConsultation: {
-            findFirst: <T>(args: T) => Promise<unknown>;
-          };
-        }
-      ).videoConsultation.findFirst({
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = getVideoConsultationDelegate(client);
+      return await delegate.findFirst({
         where: {
           OR: [{ roomId: callId }, { appointmentId: callId }],
         },
       });
-    })) as {
-      id: string;
-      appointmentId: string;
-      patientId: string;
-      doctorId: string;
-      clinicId: string;
-      roomId: string;
-      status: string;
-      meetingUrl: string | null;
-      startTime: Date | null;
-      endTime: Date | null;
-      duration: number | null;
-      recordingUrl: string | null;
-      recordingEnabled: boolean;
-      screenSharingEnabled: boolean;
-      chatEnabled: boolean;
-      waitingRoomEnabled: boolean;
-      autoRecord: boolean;
-      maxParticipants: number;
-      participants: Array<{ userId: string }>;
-    } | null;
+    });
   }
 
   private mapDbStatusToVideoCallStatus(
@@ -1457,31 +1374,23 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private async updateVideoCall(videoCall: VideoCall): Promise<void> {
     try {
-      // Update database
-      const consultation = (await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoConsultation: {
-              findFirst: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoConsultation.findFirst({
+      const consultation = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        return await delegate.findFirst({
           where: {
-            OR: [{ appointmentId: videoCall.appointmentId }, { id: videoCall.id }],
+            OR: [
+              { appointmentId: videoCall.appointmentId },
+              ...(videoCall.id ? [{ roomId: videoCall.id }] : []),
+            ],
           },
         });
-      })) as { id: string; clinicId: string; doctorId: string } | null;
+      });
 
       if (consultation) {
         await this.databaseService.executeHealthcareWrite(
           async client => {
-            return await (
-              client as unknown as {
-                videoConsultation: {
-                  update: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).videoConsultation.update({
+            const delegate = getVideoConsultationDelegate(client);
+            return await delegate.update({
               where: { id: consultation.id },
               data: {
                 status: this.mapVideoCallStatusToDbStatus(videoCall.status),
@@ -1546,16 +1455,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException(`Video consultation not found for call ${callId}`);
       }
 
-      // Update consultation to mark recording as started
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          return await delegate.update({
             where: { id: consultation.id },
             data: {
               isRecording: true,
@@ -1577,16 +1480,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // For now, generate a recording ID
       const recordingId = `rec-${consultation.id}-${Date.now()}`;
 
-      // Store recording record
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoRecording: {
-                create: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoRecording.create({
+          const delegate = getVideoRecordingDelegate(client);
+          return await delegate.create({
             data: {
               consultationId: consultation.id,
               fileName: `recording-${recordingId}.mp4`,
@@ -1633,15 +1530,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         throw new NotFoundException(`Video consultation not found for call ${callId}`);
       }
 
-      // Get the recording
-      const recording = (await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoRecording: {
-              findFirst: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoRecording.findFirst({
+      const recording = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = getVideoRecordingDelegate(client);
+        return await delegate.findFirst({
           where: {
             consultationId: consultation.id,
             isProcessed: false,
@@ -1650,7 +1541,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             createdAt: 'desc',
           },
         });
-      })) as { id: string; storageUrl: string | null } | null;
+      });
 
       if (!recording) {
         throw new NotFoundException(`Recording not found for call ${callId}`);
@@ -1662,16 +1553,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           ? Math.floor((consultation.endTime.getTime() - consultation.startTime.getTime()) / 1000)
           : 0;
 
-      // Update recording
       const updatedRecording = (await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoRecording: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoRecording.update({
+          const delegate = getVideoRecordingDelegate(client);
+          return await delegate.update({
             where: { id: recording.id },
             data: {
               duration,
@@ -1691,16 +1576,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         }
       )) as { storageUrl: string | null };
 
-      // Update consultation
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          return await delegate.update({
             where: { id: consultation.id },
             data: {
               isRecording: false,
@@ -1756,15 +1635,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private async fetchVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCall[]> {
     try {
-      // Query video consultations where user is a participant
-      const consultations = (await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoConsultation: {
-              findMany: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoConsultation.findMany({
+      const consultations = await this.databaseService.executeHealthcareRead(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        return await delegate.findMany({
           where: {
             ...(clinicId && { clinicId }),
             OR: [
@@ -1785,73 +1658,32 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           orderBy: {
             createdAt: 'desc',
           },
-          take: 50, // Limit to last 50 consultations
+          take: 50,
         });
-      })) as Array<{
-        id: string;
-        appointmentId: string;
-        patientId: string;
-        doctorId: string;
-        clinicId: string;
-        status: string;
-        meetingUrl: string | null;
-        startTime: Date | null;
-        endTime: Date | null;
-        duration: number | null;
-        recordingUrl: string | null;
-        recordingEnabled: boolean;
-        screenSharingEnabled: boolean;
-        chatEnabled: boolean;
-        waitingRoomEnabled: boolean;
-        autoRecord: boolean;
-        maxParticipants: number;
-        participants: Array<{ userId: string }>;
-      }>;
+      });
 
-      // Map to VideoCall format
-      const videoCalls = consultations.map(
-        (consultation: {
-          id: string;
-          appointmentId: string;
-          patientId: string;
-          doctorId: string;
-          clinicId: string;
-          status: string;
-          meetingUrl: string | null;
-          startTime: Date | null;
-          endTime: Date | null;
-          duration: number | null;
-          recordingUrl: string | null;
-          recordingEnabled: boolean;
-          screenSharingEnabled: boolean;
-          chatEnabled: boolean;
-          waitingRoomEnabled: boolean;
-          autoRecord: boolean;
-          maxParticipants: number;
-          participants: Array<{ userId: string }>;
-        }) => ({
-          id: consultation.id,
-          appointmentId: consultation.appointmentId,
-          patientId: consultation.patientId,
-          doctorId: consultation.doctorId,
-          clinicId: consultation.clinicId,
-          status: this.mapDbStatusToVideoCallStatus(consultation.status),
-          ...(consultation.meetingUrl && { meetingUrl: consultation.meetingUrl }),
-          participants: consultation.participants.map((p: { userId: string }) => p.userId),
-          ...(consultation.startTime && { startTime: consultation.startTime.toISOString() }),
-          ...(consultation.endTime && { endTime: consultation.endTime.toISOString() }),
-          ...(consultation.duration && { duration: consultation.duration }),
-          ...(consultation.recordingUrl && { recordingUrl: consultation.recordingUrl }),
-          settings: {
-            maxParticipants: consultation.maxParticipants,
-            recordingEnabled: consultation.recordingEnabled,
-            screenSharingEnabled: consultation.screenSharingEnabled,
-            chatEnabled: consultation.chatEnabled,
-            waitingRoomEnabled: consultation.waitingRoomEnabled,
-            autoRecord: consultation.autoRecord,
-          },
-        })
-      );
+      const videoCalls = consultations.map(consultation => ({
+        id: consultation.id,
+        appointmentId: consultation.appointmentId,
+        patientId: consultation.patientId,
+        doctorId: consultation.doctorId,
+        clinicId: consultation.clinicId,
+        status: this.mapDbStatusToVideoCallStatus(consultation.status),
+        ...(consultation.meetingUrl && { meetingUrl: consultation.meetingUrl }),
+        participants: consultation.participants.map((p: { userId: string }) => p.userId),
+        ...(consultation.startTime && { startTime: consultation.startTime.toISOString() }),
+        ...(consultation.endTime && { endTime: consultation.endTime.toISOString() }),
+        ...(consultation.duration && { duration: consultation.duration }),
+        ...(consultation.recordingUrl && { recordingUrl: consultation.recordingUrl }),
+        settings: {
+          maxParticipants: consultation.maxParticipants,
+          recordingEnabled: consultation.recordingEnabled,
+          screenSharingEnabled: consultation.screenSharingEnabled,
+          chatEnabled: consultation.chatEnabled,
+          waitingRoomEnabled: consultation.waitingRoomEnabled,
+          autoRecord: consultation.autoRecord,
+        },
+      }));
 
       return videoCalls;
     } catch (error) {
@@ -1878,6 +1710,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    * Get current provider name
    */
   getCurrentProvider(): string {
+    if (!this.provider) {
+      return 'unknown';
+    }
     return this.provider.providerName;
   }
 
@@ -1885,6 +1720,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    * Get fallback provider name
    */
   getFallbackProvider(): string {
+    if (!this.fallbackProvider) {
+      return 'unknown';
+    }
     return this.fallbackProvider.providerName;
   }
 
@@ -1893,10 +1731,489 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    */
   async isHealthy(): Promise<boolean> {
     try {
+      if (!this.provider) {
+        return false;
+      }
       const provider = await this.getProvider();
       return await provider.isHealthy();
     } catch {
       return false;
+    }
+  }
+
+  // ============================================================================
+  // OPENVIDU PRO FEATURES
+  // ============================================================================
+
+  /**
+   * OpenVidu Pro - Start recording for a session
+   */
+  async startOpenViduRecording(
+    appointmentId: string,
+    options?: {
+      outputMode?: 'COMPOSED' | 'INDIVIDUAL';
+      resolution?: string;
+      frameRate?: number;
+      customLayout?: string;
+    }
+  ): Promise<{ recordingId: string; status: string }> {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Recording feature is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.startOpenViduRecording'
+        );
+      }
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_RECORD_NOT_FOUND,
+          `Consultation session not found for appointment ${appointmentId}`,
+          undefined,
+          { appointmentId },
+          'VideoService.startOpenViduRecording'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        startRecording: (
+          sessionId: string,
+          options?: {
+            outputMode?: 'COMPOSED' | 'INDIVIDUAL';
+            resolution?: string;
+            frameRate?: number;
+            customLayout?: string;
+          }
+        ) => Promise<{ id: string; status: string }>;
+      };
+
+      const recording = await openviduProvider.startRecording(consultation.roomId, options);
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.recording.started', {
+        eventId: `video-recording-started-${appointmentId}-${Date.now()}`,
+        eventType: 'video.recording.started',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'VideoService',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          recordingId: recording.id,
+          sessionId: consultation.roomId,
+          outputMode: options?.outputMode,
+        },
+      });
+
+      return {
+        recordingId: recording.id,
+        status: recording.status,
+      };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to start OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.startOpenViduRecording',
+        {
+          appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Stop recording
+   */
+  async stopOpenViduRecording(
+    appointmentId: string,
+    recordingId: string
+  ): Promise<{ recordingId: string; url?: string; duration: number }> {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Recording feature is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.stopOpenViduRecording'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        stopRecording: (recordingId: string) => Promise<{
+          id: string;
+          url?: string;
+          duration: number;
+        }>;
+      };
+
+      const recording = await openviduProvider.stopRecording(recordingId);
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.recording.stopped', {
+        eventId: `video-recording-stopped-${appointmentId}-${Date.now()}`,
+        eventType: 'video.recording.stopped',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'VideoService',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          recordingId: recording.id,
+          url: recording.url,
+          duration: recording.duration,
+        },
+      });
+
+      return {
+        recordingId: recording.id,
+        ...(recording.url !== undefined && {
+          url: recording.url,
+        }),
+        duration: recording.duration,
+      };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to stop OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.stopOpenViduRecording',
+        {
+          appointmentId,
+          recordingId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get recordings for a session
+   */
+  async getOpenViduRecordings(appointmentId: string): Promise<
+    Array<{
+      recordingId: string;
+      url?: string;
+      duration: number;
+      size: number;
+      status: string;
+      createdAt: string;
+    }>
+  > {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Recording feature is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.getOpenViduRecordings'
+        );
+      }
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_RECORD_NOT_FOUND,
+          `Consultation session not found for appointment ${appointmentId}`,
+          undefined,
+          { appointmentId },
+          'VideoService.getOpenViduRecordings'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        listRecordings: (sessionId?: string) => Promise<
+          Array<{
+            id: string;
+            url?: string;
+            duration: number;
+            size: number;
+            status: string;
+            createdAt: number;
+          }>
+        >;
+      };
+
+      const recordings = await openviduProvider.listRecordings(consultation.roomId);
+
+      return recordings.map(rec => ({
+        recordingId: rec.id,
+        ...(rec.url !== undefined && { url: rec.url }),
+        duration: rec.duration,
+        size: rec.size,
+        status: rec.status,
+        createdAt: new Date(rec.createdAt).toISOString(),
+      }));
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getOpenViduRecordings',
+        {
+          appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Manage participant (kick, mute, etc.)
+   */
+  async manageOpenViduParticipant(
+    appointmentId: string,
+    connectionId: string,
+    action: 'kick' | 'mute' | 'unmute' | 'forceUnpublish'
+  ): Promise<void> {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Participant management is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.manageOpenViduParticipant'
+        );
+      }
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_RECORD_NOT_FOUND,
+          `Consultation session not found for appointment ${appointmentId}`,
+          undefined,
+          { appointmentId },
+          'VideoService.manageOpenViduParticipant'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        kickParticipant: (sessionId: string, connectionId: string) => Promise<void>;
+        forceUnpublish: (sessionId: string, streamId: string) => Promise<void>;
+        getParticipants: (
+          sessionId: string
+        ) => Promise<Array<{ connectionId: string; streams: Array<{ streamId: string }> }>>;
+      };
+
+      if (action === 'kick') {
+        await openviduProvider.kickParticipant(consultation.roomId, connectionId);
+      } else if (action === 'forceUnpublish') {
+        const participants = await openviduProvider.getParticipants(consultation.roomId);
+        const participant = participants.find(p => p.connectionId === connectionId);
+        if (participant && participant.streams.length > 0 && participant.streams[0]) {
+          await openviduProvider.forceUnpublish(
+            consultation.roomId,
+            participant.streams[0].streamId
+          );
+        }
+      }
+      // Note: mute/unmute are typically handled client-side in OpenVidu
+      // But can be implemented via signal API if needed
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.participant.managed', {
+        eventId: `video-participant-managed-${appointmentId}-${Date.now()}`,
+        eventType: 'video.participant.managed',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'VideoService',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          connectionId,
+          action,
+        },
+      });
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to manage OpenVidu participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.manageOpenViduParticipant',
+        {
+          appointmentId,
+          connectionId,
+          action,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get participants for a session
+   */
+  async getOpenViduParticipants(appointmentId: string): Promise<
+    Array<{
+      id: string;
+      connectionId: string;
+      role: string;
+      location?: string;
+      platform?: string;
+      streams: Array<{
+        streamId: string;
+        hasAudio: boolean;
+        hasVideo: boolean;
+        audioActive: boolean;
+        videoActive: boolean;
+        typeOfVideo: 'CAMERA' | 'SCREEN';
+      }>;
+    }>
+  > {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Participant management is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.getOpenViduParticipants'
+        );
+      }
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_RECORD_NOT_FOUND,
+          `Consultation session not found for appointment ${appointmentId}`,
+          undefined,
+          { appointmentId },
+          'VideoService.getOpenViduParticipants'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        getParticipants: (sessionId: string) => Promise<
+          Array<{
+            id: string;
+            connectionId: string;
+            role: string;
+            location?: string;
+            platform?: string;
+            streams: Array<{
+              streamId: string;
+              hasAudio: boolean;
+              hasVideo: boolean;
+              audioActive: boolean;
+              videoActive: boolean;
+              typeOfVideo: 'CAMERA' | 'SCREEN';
+            }>;
+          }>
+        >;
+      };
+
+      return await openviduProvider.getParticipants(consultation.roomId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getOpenViduParticipants',
+        {
+          appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get session analytics
+   */
+  async getOpenViduSessionAnalytics(appointmentId: string): Promise<{
+    sessionId: string;
+    duration: number;
+    numberOfParticipants: number;
+    numberOfConnections: number;
+    recordingCount: number;
+    recordingTotalDuration: number;
+    recordingTotalSize: number;
+    connections: Array<{
+      connectionId: string;
+      duration: number;
+      location?: string;
+      platform?: string;
+      publishers: number;
+      subscribers: number;
+    }>;
+  }> {
+    try {
+      const provider = await this.getProvider();
+      if (provider.providerName !== 'openvidu') {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Session analytics is only available with OpenVidu provider',
+          undefined,
+          { provider: provider.providerName },
+          'VideoService.getOpenViduSessionAnalytics'
+        );
+      }
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_RECORD_NOT_FOUND,
+          `Consultation session not found for appointment ${appointmentId}`,
+          undefined,
+          { appointmentId },
+          'VideoService.getOpenViduSessionAnalytics'
+        );
+      }
+
+      const openviduProvider = provider as unknown as {
+        getSessionAnalytics: (sessionId: string) => Promise<{
+          sessionId: string;
+          duration: number;
+          numberOfParticipants: number;
+          numberOfConnections: number;
+          recordingCount: number;
+          recordingTotalDuration: number;
+          recordingTotalSize: number;
+          connections: Array<{
+            connectionId: string;
+            duration: number;
+            location?: string;
+            platform?: string;
+            publishers: number;
+            subscribers: number;
+          }>;
+        }>;
+      };
+
+      return await openviduProvider.getSessionAnalytics(consultation.roomId);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getOpenViduSessionAnalytics',
+        {
+          appointmentId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
     }
   }
 }

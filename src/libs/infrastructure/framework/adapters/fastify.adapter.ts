@@ -410,30 +410,39 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
     const fastifyInstance = fastifyApp.getHttpAdapter().getInstance();
 
     // CRITICAL: Ensure @fastify/cookie is registered before @fastify/session
-    // Always register cookie plugin first (Fastify handles duplicate registrations gracefully)
-    // Get cookie secret from options or use default
-    const cookieSecret =
-      (options['cookieSecret'] as string) ||
-      (options['cookie'] as { secret?: string })?.secret ||
-      'default-cookie-secret-change-in-production-min-32-chars';
+    // Check if cookie plugin is already registered before attempting to register it
+    // @fastify/cookie adds a 'serializeCookie' decorator, so we check for that
+    const isCookiePluginRegistered = fastifyInstance.hasDecorator('serializeCookie');
 
-    try {
-      // Try to register cookie plugin - if already registered, this will be a no-op or handled gracefully
-      await fastifyInstance.register(fastifyCookie, {
-        secret: cookieSecret,
-      });
-    } catch (cookieError) {
-      // If cookie is already registered, that's fine - continue with session registration
-      // Fastify may throw if plugin is already registered, but we can proceed
-      const errorMessage = cookieError instanceof Error ? cookieError.message : String(cookieError);
-      if (
-        !errorMessage.includes('already registered') &&
-        !errorMessage.includes('already exists')
-      ) {
-        // Re-throw if it's a different error
-        throw cookieError;
+    if (!isCookiePluginRegistered) {
+      // Get cookie secret from options or use default
+      const cookieSecret =
+        (options['cookieSecret'] as string) ||
+        (options['cookie'] as { secret?: string })?.secret ||
+        'default-cookie-secret-change-in-production-min-32-chars';
+
+      try {
+        // Register cookie plugin only if not already registered
+        await fastifyInstance.register(fastifyCookie, {
+          secret: cookieSecret,
+        });
+      } catch (cookieError) {
+        // If cookie registration fails, check if it's because it's already registered
+        // Fastify may throw various errors for duplicate registrations
+        const errorMessage =
+          cookieError instanceof Error ? cookieError.message : String(cookieError);
+        const isDuplicateError =
+          errorMessage.includes('already registered') ||
+          errorMessage.includes('already exists') ||
+          errorMessage.includes('decorator') ||
+          errorMessage.includes('has already been added');
+
+        if (!isDuplicateError) {
+          // Re-throw if it's a different error (not a duplicate registration)
+          throw cookieError;
+        }
+        // Otherwise, cookie is already registered (or registration failed for duplicate) - proceed
       }
-      // Otherwise, cookie is already registered - proceed
     }
 
     // Now register session plugin (cookie dependency is satisfied)

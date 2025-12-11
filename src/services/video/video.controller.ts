@@ -6,6 +6,7 @@
  * Microservice-ready design
  */
 
+// 1. External imports (NestJS, npm packages)
 import {
   Controller,
   Get,
@@ -14,22 +15,28 @@ import {
   Param,
   Query,
   UseGuards,
+  UsePipes,
   HttpCode,
   HttpStatus,
   Request,
   ParseUUIDPipe,
-  BadRequestException,
-  NotFoundException,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
   ApiResponse,
   ApiParam,
-  ApiQuery,
   ApiBearerAuth,
   ApiBody,
 } from '@nestjs/swagger';
+import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
+
+// 2. Internal imports - Infrastructure layer
+import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events';
+
+// 3. Internal imports - Core layer
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
@@ -37,31 +44,64 @@ import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { HealthcareErrorsService, HealthcareError } from '@core/errors';
+import { EventCategory, EventPriority } from '@core/types';
 import { Role } from '@core/types/enums.types';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import type { VideoTokenResponse, VideoConsultationSession } from '@core/types/video.types';
-import { VideoService } from './video.service';
+
+// 4. Internal imports - Configuration
+import { ValidationPipeConfig } from '@config/validation-pipe.config';
+
+// 5. Internal imports - DTOs
 import {
   VideoTokenResponseDto,
   VideoConsultationSessionDto,
   EndVideoConsultationDto,
   VideoCallHistoryQueryDto,
+  VideoCallHistoryResponseDto,
+  VideoCallResponseDto,
+  GenerateVideoTokenDto,
+  StartVideoConsultationDto,
+  ReportTechnicalIssueDto,
+  ShareMedicalImageDto,
+  ShareMedicalImageResponseDto,
   SuccessResponseDto,
+  StartRecordingDto,
+  StopRecordingDto,
+  ManageParticipantDto,
+  RecordingResponseDto,
+  RecordingListResponseDto,
+  ParticipantListResponseDto,
+  SessionAnalyticsResponseDto,
 } from '@dtos';
-import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
-import { EventService } from '@infrastructure/events';
-import { EventCategory, EventPriority } from '@core/types';
+
+// 6. Local imports (same directory)
+import { VideoService } from './video.service';
+// Central health indicators from HealthModule
+import {
+  DatabaseHealthIndicator,
+  CacheHealthIndicator,
+  CommunicationHealthIndicator,
+  VideoHealthIndicator,
+} from '@services/health/health-indicators';
 
 @Controller('video')
 @ApiTags('video')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UsePipes(new ValidationPipe(ValidationPipeConfig.getOptions()))
 @ApiBearerAuth()
 export class VideoController {
   constructor(
     private readonly videoService: VideoService,
     private readonly loggingService: LoggingService,
-    private readonly eventService: EventService
+    private readonly eventService: EventService,
+    private readonly errors: HealthcareErrorsService,
+    private readonly health: HealthCheckService,
+    private readonly videoHealthIndicator: VideoHealthIndicator,
+    private readonly communicationHealthIndicator: CommunicationHealthIndicator,
+    private readonly databaseHealthIndicator: DatabaseHealthIndicator,
+    private readonly cacheHealthIndicator: CacheHealthIndicator
   ) {}
 
   private isVideoTokenResponse(value: unknown): value is VideoTokenResponse {
@@ -81,7 +121,7 @@ export class VideoController {
 
   private extractVideoTokenResponse(value: unknown): VideoTokenResponse {
     if (!this.isVideoTokenResponse(value)) {
-      throw new Error('Invalid VideoTokenResponse');
+      throw this.errors.internalServerError('VideoController.extractVideoTokenResponse');
     }
     const tokenValue: string = value.token;
     const roomNameValue: string = value.roomName;
@@ -144,7 +184,7 @@ export class VideoController {
 
   private extractVideoConsultationSession(value: unknown): VideoConsultationSession {
     if (!this.isVideoConsultationSession(value)) {
-      throw new Error('Invalid VideoConsultationSession');
+      throw this.errors.internalServerError('VideoController.extractVideoConsultationSession');
     }
     const idValue: string = value.id;
     const appointmentIdValue: string = value.appointmentId;
@@ -196,44 +236,66 @@ export class VideoController {
     encryptionKey: string | undefined,
     expiresAt: Date | undefined
   ): VideoTokenResponseDto {
-    const VideoTokenResponseDtoConstructor = VideoTokenResponseDto;
-    const dtoInstance: unknown = new VideoTokenResponseDtoConstructor();
-    if (
-      typeof dtoInstance !== 'object' ||
-      dtoInstance === null ||
-      !('token' in dtoInstance) ||
-      !('roomName' in dtoInstance) ||
-      !('roomId' in dtoInstance) ||
-      !('meetingUrl' in dtoInstance)
-    ) {
-      throw new Error('Failed to create VideoTokenResponseDto');
-    }
-    const dto = dtoInstance as VideoTokenResponseDto;
-    const dtoToken: string = token;
-    const dtoRoomName: string = roomName;
-    const dtoRoomId: string = roomId;
-    const dtoMeetingUrl: string = meetingUrl;
-    dto.token = dtoToken;
-    dto.roomName = dtoRoomName;
-    dto.roomId = dtoRoomId;
-    dto.meetingUrl = dtoMeetingUrl;
+    const dtoData: {
+      token: string;
+      roomName: string;
+      roomId: string;
+      meetingUrl: string;
+      roomPassword?: string;
+      meetingPassword?: string;
+      encryptionKey?: string;
+      expiresAt?: Date;
+    } = {
+      token,
+      roomName,
+      roomId,
+      meetingUrl,
+    };
     if (roomPassword !== undefined) {
-      const dtoRoomPassword: string = roomPassword;
-      dto.roomPassword = dtoRoomPassword;
+      dtoData.roomPassword = roomPassword;
     }
     if (meetingPassword !== undefined) {
-      const dtoMeetingPassword: string = meetingPassword;
-      dto.meetingPassword = dtoMeetingPassword;
+      dtoData.meetingPassword = meetingPassword;
     }
     if (encryptionKey !== undefined) {
-      const dtoEncryptionKey: string = encryptionKey;
-      dto.encryptionKey = dtoEncryptionKey;
+      dtoData.encryptionKey = encryptionKey;
     }
     if (expiresAt !== undefined) {
-      const dtoExpiresAt: Date = expiresAt;
-      dto.expiresAt = dtoExpiresAt;
+      dtoData.expiresAt = expiresAt;
     }
-    return dto;
+    const VideoTokenResponseDtoClassRef: typeof VideoTokenResponseDto = VideoTokenResponseDto;
+    const dtoInstanceRawUnknownValue: unknown = new VideoTokenResponseDtoClassRef();
+    if (
+      typeof dtoInstanceRawUnknownValue !== 'object' ||
+      dtoInstanceRawUnknownValue === null ||
+      !('token' in dtoInstanceRawUnknownValue)
+    ) {
+      throw this.errors.internalServerError('VideoController.createVideoTokenResponseDto');
+    }
+    const dtoInstanceRawValue: Record<string, unknown> = dtoInstanceRawUnknownValue as Record<
+      string,
+      unknown
+    >;
+    const dtoInstanceUnknownValue: unknown = Object.assign(dtoInstanceRawValue, dtoData);
+    if (
+      typeof dtoInstanceUnknownValue !== 'object' ||
+      dtoInstanceUnknownValue === null ||
+      !('token' in dtoInstanceUnknownValue) ||
+      typeof (dtoInstanceUnknownValue as { token: unknown }).token !== 'string' ||
+      !('roomName' in dtoInstanceUnknownValue) ||
+      typeof (dtoInstanceUnknownValue as { roomName: unknown }).roomName !== 'string' ||
+      !('roomId' in dtoInstanceUnknownValue) ||
+      typeof (dtoInstanceUnknownValue as { roomId: unknown }).roomId !== 'string' ||
+      !('meetingUrl' in dtoInstanceUnknownValue) ||
+      typeof (dtoInstanceUnknownValue as { meetingUrl: unknown }).meetingUrl !== 'string'
+    ) {
+      throw this.errors.internalServerError('VideoController.createVideoTokenResponseDto');
+    }
+    const validatedDtoUnknownValue: unknown = dtoInstanceUnknownValue;
+    const validatedDtoValue: VideoTokenResponseDto =
+      validatedDtoUnknownValue as VideoTokenResponseDto;
+    const returnValueResult: VideoTokenResponseDto = validatedDtoValue;
+    return returnValueResult;
   }
 
   private createVideoConsultationSessionDto(
@@ -255,39 +317,75 @@ export class VideoController {
     chatEnabled: boolean,
     waitingRoomEnabled: boolean
   ): VideoConsultationSessionDto {
-    const VideoConsultationSessionDtoConstructor = VideoConsultationSessionDto;
-    const dtoInstance: unknown = new VideoConsultationSessionDtoConstructor();
+    const dtoData: {
+      id: string;
+      appointmentId: string;
+      roomId: string;
+      roomName: string;
+      meetingUrl: string;
+      status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED';
+      startTime: Date | null;
+      endTime: Date | null;
+      participants: Array<{
+        userId: string;
+        role: 'HOST' | 'PARTICIPANT';
+        joinedAt: Date | null;
+      }>;
+      recordingEnabled: boolean;
+      screenSharingEnabled: boolean;
+      chatEnabled: boolean;
+      waitingRoomEnabled: boolean;
+    } = {
+      id,
+      appointmentId,
+      roomId,
+      roomName,
+      meetingUrl,
+      status,
+      startTime,
+      endTime,
+      participants,
+      recordingEnabled,
+      screenSharingEnabled,
+      chatEnabled,
+      waitingRoomEnabled,
+    };
+    const VideoConsultationSessionDtoClass: typeof VideoConsultationSessionDto =
+      VideoConsultationSessionDto;
+    const dtoInstanceRawUnknown: unknown = new VideoConsultationSessionDtoClass();
     if (
-      typeof dtoInstance !== 'object' ||
-      dtoInstance === null ||
-      !('id' in dtoInstance) ||
-      !('appointmentId' in dtoInstance) ||
-      !('roomId' in dtoInstance) ||
-      !('roomName' in dtoInstance) ||
-      !('meetingUrl' in dtoInstance)
+      typeof dtoInstanceRawUnknown !== 'object' ||
+      dtoInstanceRawUnknown === null ||
+      !('id' in dtoInstanceRawUnknown)
     ) {
-      throw new Error('Failed to create VideoConsultationSessionDto');
+      throw this.errors.internalServerError('VideoController.createVideoConsultationSessionDto');
     }
-    const dto = dtoInstance as VideoConsultationSessionDto;
-    const dtoId: string = id;
-    const dtoAppointmentId: string = appointmentId;
-    const dtoRoomId: string = roomId;
-    const dtoRoomName: string = roomName;
-    const dtoMeetingUrl: string = meetingUrl;
-    dto.id = dtoId;
-    dto.appointmentId = dtoAppointmentId;
-    dto.roomId = dtoRoomId;
-    dto.roomName = dtoRoomName;
-    dto.meetingUrl = dtoMeetingUrl;
-    dto.status = status;
-    dto.startTime = startTime;
-    dto.endTime = endTime;
-    dto.participants = participants;
-    dto.recordingEnabled = recordingEnabled;
-    dto.screenSharingEnabled = screenSharingEnabled;
-    dto.chatEnabled = chatEnabled;
-    dto.waitingRoomEnabled = waitingRoomEnabled;
-    return dto;
+    const dtoInstanceRaw: Record<string, unknown> = dtoInstanceRawUnknown as Record<
+      string,
+      unknown
+    >;
+    const dtoInstanceUnknown: unknown = Object.assign(dtoInstanceRaw, dtoData);
+    if (
+      typeof dtoInstanceUnknown !== 'object' ||
+      dtoInstanceUnknown === null ||
+      !('id' in dtoInstanceUnknown) ||
+      typeof (dtoInstanceUnknown as { id: unknown }).id !== 'string' ||
+      !('appointmentId' in dtoInstanceUnknown) ||
+      typeof (dtoInstanceUnknown as { appointmentId: unknown }).appointmentId !== 'string' ||
+      !('roomId' in dtoInstanceUnknown) ||
+      typeof (dtoInstanceUnknown as { roomId: unknown }).roomId !== 'string' ||
+      !('roomName' in dtoInstanceUnknown) ||
+      typeof (dtoInstanceUnknown as { roomName: unknown }).roomName !== 'string' ||
+      !('meetingUrl' in dtoInstanceUnknown) ||
+      typeof (dtoInstanceUnknown as { meetingUrl: unknown }).meetingUrl !== 'string'
+    ) {
+      throw this.errors.internalServerError('VideoController.createVideoConsultationSessionDto');
+    }
+    const validatedDtoUnknown: unknown = dtoInstanceUnknown;
+    const validatedDto: VideoConsultationSessionDto =
+      validatedDtoUnknown as VideoConsultationSessionDto;
+    const returnValue: VideoConsultationSessionDto = validatedDto;
+    return returnValue;
   }
 
   /**
@@ -303,45 +401,12 @@ export class VideoController {
     description: 'Generate a secure token for joining a video consultation.',
   })
   @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['appointmentId', 'userId', 'userRole', 'displayName'],
-      properties: {
-        appointmentId: {
-          type: 'string',
-          format: 'uuid',
-          description: 'ID of the appointment',
-        },
-        userId: {
-          type: 'string',
-          format: 'uuid',
-          description: 'ID of the user requesting the token',
-        },
-        userRole: {
-          type: 'string',
-          enum: ['patient', 'doctor'],
-          description: 'Role of the user in the consultation',
-        },
-        displayName: {
-          type: 'string',
-          description: 'Display name of the user',
-        },
-        email: {
-          type: 'string',
-          format: 'email',
-          description: 'Email of the user (optional)',
-        },
-        avatar: {
-          type: 'string',
-          description: 'Avatar URL of the user (optional)',
-        },
-      },
-    },
+    type: GenerateVideoTokenDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Token generated successfully',
-    type: VideoTokenResponseDto,
+    type: (): typeof VideoTokenResponseDto => VideoTokenResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -352,15 +417,7 @@ export class VideoController {
     description: 'Invalid request',
   })
   async generateToken(
-    @Body()
-    body: {
-      appointmentId: string;
-      userId: string;
-      userRole: 'patient' | 'doctor';
-      displayName: string;
-      email?: string;
-      avatar?: string;
-    },
+    @Body() body: GenerateVideoTokenDto,
     @Request() _req: ClinicAuthenticatedRequest
   ): Promise<VideoTokenResponseDto> {
     try {
@@ -369,13 +426,13 @@ export class VideoController {
         body.userId,
         body.userRole,
         {
-          displayName: body.displayName,
-          email: body.email || '',
-          ...(body.avatar && { avatar: body.avatar }),
+          displayName: body.userInfo.displayName,
+          email: body.userInfo.email,
+          ...(body.userInfo.avatar && { avatar: body.userInfo.avatar }),
         }
       );
       if (!this.isVideoTokenResponse(tokenResponseResult)) {
-        throw new Error('Invalid token response from video service');
+        throw this.errors.internalServerError('VideoController.generateToken');
       }
       const tokenResponse: VideoTokenResponse = tokenResponseResult;
       const responseToken: string = tokenResponse.token;
@@ -404,7 +461,7 @@ export class VideoController {
       });
 
       // Map to DTO - all values already extracted above
-      const tokenDto = this.createVideoTokenResponseDto(
+      const tokenDtoResult: unknown = this.createVideoTokenResponseDto(
         responseToken,
         responseRoomName,
         responseRoomId,
@@ -414,25 +471,26 @@ export class VideoController {
         responseEncryptionKey,
         responseExpiresAt
       );
+      if (
+        typeof tokenDtoResult !== 'object' ||
+        tokenDtoResult === null ||
+        !('token' in tokenDtoResult) ||
+        typeof (tokenDtoResult as { token: unknown }).token !== 'string'
+      ) {
+        throw this.errors.internalServerError('VideoController.generateToken');
+      }
+      const tokenDto: VideoTokenResponseDto = tokenDtoResult as VideoTokenResponseDto;
 
       return tokenDto;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to generate video token: ${errorMessage}`,
-        'VideoController.generateToken',
-        {
-          appointmentId: body.appointmentId,
-          userId: body.userId,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.generateToken';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -449,44 +507,19 @@ export class VideoController {
     description: 'Start a video consultation session.',
   })
   @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['appointmentId', 'userId', 'userRole'],
-      properties: {
-        appointmentId: {
-          type: 'string',
-          format: 'uuid',
-          description: 'ID of the appointment',
-        },
-        userId: {
-          type: 'string',
-          format: 'uuid',
-          description: 'ID of the user starting the consultation',
-        },
-        userRole: {
-          type: 'string',
-          enum: ['patient', 'doctor'],
-          description: 'Role of the user',
-        },
-      },
-    },
+    type: StartVideoConsultationDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Consultation started successfully',
-    type: VideoConsultationSessionDto,
+    type: (): typeof VideoConsultationSessionDto => VideoConsultationSessionDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Appointment not found',
   })
   async startConsultation(
-    @Body()
-    body: {
-      appointmentId: string;
-      userId: string;
-      userRole: 'patient' | 'doctor';
-    },
+    @Body() body: StartVideoConsultationDto,
     @Request() _req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
     try {
@@ -496,7 +529,7 @@ export class VideoController {
         body.userRole
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
-        throw new Error('Invalid session response from video service');
+        throw this.errors.internalServerError('VideoController.endConsultation');
       }
       const session: VideoConsultationSession = sessionResult;
       const sessionId: string = session.id;
@@ -532,7 +565,7 @@ export class VideoController {
       });
 
       // Map to DTO - all values already extracted above
-      const sessionDto = this.createVideoConsultationSessionDto(
+      const sessionDtoResult: unknown = this.createVideoConsultationSessionDto(
         sessionId,
         sessionAppointmentId,
         sessionRoomId,
@@ -547,25 +580,27 @@ export class VideoController {
         sessionChatEnabled,
         sessionWaitingRoomEnabled
       );
+      if (
+        typeof sessionDtoResult !== 'object' ||
+        sessionDtoResult === null ||
+        !('id' in sessionDtoResult) ||
+        typeof (sessionDtoResult as { id: unknown }).id !== 'string'
+      ) {
+        throw this.errors.internalServerError('VideoController.startConsultation');
+      }
+      const sessionDto: VideoConsultationSessionDto =
+        sessionDtoResult as VideoConsultationSessionDto;
 
       return sessionDto;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to start consultation: ${errorMessage}`,
-        'VideoController.startConsultation',
-        {
-          appointmentId: body.appointmentId,
-          userId: body.userId,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.startConsultation';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -587,20 +622,14 @@ export class VideoController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Consultation ended successfully',
-    type: VideoConsultationSessionDto,
+    type: (): typeof VideoConsultationSessionDto => VideoConsultationSessionDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
     description: 'Consultation session not found',
   })
   async endConsultation(
-    @Body()
-    body: {
-      appointmentId: string;
-      userId: string;
-      userRole: 'patient' | 'doctor';
-      meetingNotes?: string;
-    },
+    @Body() body: EndVideoConsultationDto,
     @Request() _req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
     try {
@@ -611,7 +640,7 @@ export class VideoController {
         body.meetingNotes
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
-        throw new Error('Invalid session response from video service');
+        throw this.errors.internalServerError('VideoController.endConsultation');
       }
       const session: VideoConsultationSession = sessionResult;
       const sessionId: string = session.id;
@@ -652,7 +681,7 @@ export class VideoController {
       });
 
       // Map to DTO - all values already extracted above
-      const sessionDto = this.createVideoConsultationSessionDto(
+      const sessionDtoResult: unknown = this.createVideoConsultationSessionDto(
         sessionId,
         sessionAppointmentId,
         sessionRoomId,
@@ -667,25 +696,27 @@ export class VideoController {
         sessionChatEnabled,
         sessionWaitingRoomEnabled
       );
+      if (
+        typeof sessionDtoResult !== 'object' ||
+        sessionDtoResult === null ||
+        !('id' in sessionDtoResult) ||
+        typeof (sessionDtoResult as { id: unknown }).id !== 'string'
+      ) {
+        throw this.errors.internalServerError('VideoController.endConsultation');
+      }
+      const sessionDto: VideoConsultationSessionDto =
+        sessionDtoResult as VideoConsultationSessionDto;
 
       return sessionDto;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to end consultation: ${errorMessage}`,
-        'VideoController.endConsultation',
-        {
-          appointmentId: body.appointmentId,
-          userId: body.userId,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.endConsultation';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -710,7 +741,7 @@ export class VideoController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Consultation status retrieved successfully',
-    type: VideoConsultationSessionDto,
+    type: (): typeof VideoConsultationSessionDto => VideoConsultationSessionDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -723,10 +754,16 @@ export class VideoController {
     try {
       const sessionResult: unknown = await this.videoService.getConsultationSession(appointmentId);
       if (sessionResult === null) {
-        throw new NotFoundException('Video consultation session not found');
+        throw this.errors.notFoundError(
+          'Video consultation session',
+          'VideoController.getConsultationStatus',
+          {
+            appointmentId,
+          }
+        );
       }
       if (!this.isVideoConsultationSession(sessionResult)) {
-        throw new NotFoundException('Invalid session response from video service');
+        throw this.errors.internalServerError('VideoController.getConsultationStatus');
       }
       const session: VideoConsultationSession = sessionResult;
       const sessionId: string = session.id;
@@ -744,7 +781,7 @@ export class VideoController {
       const sessionWaitingRoomEnabled: boolean = session.waitingRoomEnabled;
 
       // Map to DTO - all values already extracted above
-      const sessionDto = this.createVideoConsultationSessionDto(
+      const sessionDtoResult: unknown = this.createVideoConsultationSessionDto(
         sessionId,
         sessionAppointmentId,
         sessionRoomId,
@@ -759,24 +796,27 @@ export class VideoController {
         sessionChatEnabled,
         sessionWaitingRoomEnabled
       );
+      if (
+        typeof sessionDtoResult !== 'object' ||
+        sessionDtoResult === null ||
+        !('id' in sessionDtoResult) ||
+        typeof (sessionDtoResult as { id: unknown }).id !== 'string'
+      ) {
+        throw this.errors.internalServerError('VideoController.getConsultationStatus');
+      }
+      const sessionDto: VideoConsultationSessionDto =
+        sessionDtoResult as VideoConsultationSessionDto;
 
       return sessionDto;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get consultation status: ${errorMessage}`,
-        'VideoController.getConsultationStatus',
-        {
-          appointmentId,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.getConsultationStatus';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -799,40 +839,30 @@ export class VideoController {
     format: 'uuid',
   })
   @ApiBody({
-    schema: {
-      type: 'object',
-      required: ['issueType', 'description'],
-      properties: {
-        issueType: {
-          type: 'string',
-          enum: ['audio', 'video', 'connection', 'other'],
-          description: 'Type of technical issue',
-        },
-        description: {
-          type: 'string',
-          description: 'Detailed description of the issue',
-        },
-      },
-    },
+    type: ReportTechnicalIssueDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Technical issue reported successfully',
     type: SuccessResponseDto,
   })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid request data',
+  })
   async reportTechnicalIssue(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body()
-    body: {
-      issueType: 'audio' | 'video' | 'connection' | 'other';
-      description: string;
-    },
+    @Body() body: ReportTechnicalIssueDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
     try {
       const userId = req.user?.sub;
       if (!userId) {
-        throw new BadRequestException('User ID required');
+        throw this.errors.validationError(
+          'userId',
+          'User ID required',
+          'VideoController.reportTechnicalIssue'
+        );
       }
 
       await this.videoService.reportTechnicalIssue(
@@ -861,21 +891,14 @@ export class VideoController {
 
       return new SuccessResponseDto('Technical issue reported successfully');
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to report technical issue: ${errorMessage}`,
-        'VideoController.reportTechnicalIssue',
-        {
-          appointmentId,
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.reportTechnicalIssue';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
@@ -891,35 +914,19 @@ export class VideoController {
     summary: 'Get video call history',
     description: 'Get video call history for a user.',
   })
-  @ApiQuery({
-    name: 'userId',
-    description: 'ID of the user',
-    type: 'string',
-    format: 'uuid',
-    required: false,
-  })
-  @ApiQuery({
-    name: 'clinicId',
-    description: 'ID of the clinic',
-    type: 'string',
-    format: 'uuid',
-    required: false,
-  })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Video call history retrieved successfully',
-    // Note: Using object type as VideoCallResponseDto doesn't match history structure
+    type: (): typeof VideoCallHistoryResponseDto => VideoCallHistoryResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid request parameters',
   })
   async getVideoCallHistory(
     @Query() query: VideoCallHistoryQueryDto,
     @Request() req: ClinicAuthenticatedRequest
-  ): Promise<{
-    userId: string;
-    clinicId?: string;
-    calls: unknown[];
-    total: number;
-    retrievedAt: string;
-  }> {
+  ): Promise<VideoCallHistoryResponseDto> {
     try {
       const queryValue: unknown = query;
       const queryUserIdValue: string | undefined =
@@ -964,7 +971,11 @@ export class VideoController {
           : undefined);
 
       if (!userId) {
-        throw new BadRequestException('User ID is required');
+        throw this.errors.validationError(
+          'userId',
+          'User ID is required',
+          'VideoController.getVideoCallHistory'
+        );
       }
 
       const historyResult: unknown = await this.videoService.getVideoCallHistory(userId, clinicId);
@@ -973,11 +984,14 @@ export class VideoController {
         historyResult === null ||
         !('data' in historyResult)
       ) {
-        throw new BadRequestException('Invalid history response from video service');
+        throw this.errors.internalServerError('VideoController.getVideoCallHistory');
       }
       const history = historyResult as { data: unknown };
       if (!history.data) {
-        throw new BadRequestException('No history data available');
+        throw this.errors.notFoundError(
+          'Video call history',
+          'VideoController.getVideoCallHistory'
+        );
       }
 
       // Return history data structure (different from VideoCallResponseDto)
@@ -995,7 +1009,10 @@ export class VideoController {
         !('retrievedAt' in historyDataResult) ||
         typeof (historyDataResult as { retrievedAt: unknown }).retrievedAt !== 'string'
       ) {
-        throw new BadRequestException('No history data available');
+        throw this.errors.notFoundError(
+          'Video call history',
+          'VideoController.getVideoCallHistory'
+        );
       }
       const validatedHistoryData = historyDataResult as {
         userId: string;
@@ -1009,50 +1026,150 @@ export class VideoController {
       const dataTotal: number = validatedHistoryData.total;
       const dataRetrievedAt: string = validatedHistoryData.retrievedAt;
       const dataClinicId: string | undefined = validatedHistoryData.clinicId;
-      const result: {
-        userId: string;
-        clinicId?: string;
-        calls: unknown[];
-        total: number;
-        retrievedAt: string;
-      } = {
-        userId: dataUserId,
-        calls: dataCalls,
-        total: dataTotal,
-        retrievedAt: dataRetrievedAt,
-      };
 
+      const result = new VideoCallHistoryResponseDto();
+      result.userId = dataUserId;
+      result.calls = dataCalls as VideoCallResponseDto[];
+      result.total = dataTotal;
+      result.retrievedAt = dataRetrievedAt;
       if (dataClinicId !== undefined && dataClinicId !== null) {
         result.clinicId = dataClinicId;
       }
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get video call history: ${errorMessage}`,
-        'VideoController.getVideoCallHistory',
-        {
-          error: errorMessage,
-        }
-      );
-      if (error instanceof Error) {
+      const context = 'VideoController.getVideoCallHistory';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
         throw error;
       }
-      throw new Error(String(error));
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
     }
   }
 
   /**
-   * Health check endpoint
+   * Share medical image during consultation
+   */
+  @Post('consultation/:appointmentId/share-image')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('video', 'update', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Share medical image',
+    description: 'Share a medical image during a video consultation session.',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    description: 'ID of the appointment',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiBody({
+    type: ShareMedicalImageDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Medical image shared successfully',
+    type: ShareMedicalImageResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'Video call not found',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'User is not a participant in this call',
+  })
+  async shareMedicalImage(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Body() body: ShareMedicalImageDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ShareMedicalImageResponseDto> {
+    try {
+      const userId = req.user?.sub || body.userId;
+      if (!userId) {
+        throw this.errors.validationError(
+          'userId',
+          'User ID required',
+          'VideoController.shareMedicalImage'
+        );
+      }
+
+      // Get consultation to find callId
+      const consultation = await this.videoService.getConsultationSession(appointmentId);
+      if (!consultation) {
+        throw this.errors.notFoundError(
+          'Video consultation session',
+          'VideoController.shareMedicalImage',
+          {
+            appointmentId,
+          }
+        );
+      }
+
+      const callId = consultation.roomId || appointmentId;
+      const result = await this.videoService.shareMedicalImage(callId, userId, body.imageData);
+
+      if (
+        !result ||
+        typeof result !== 'object' ||
+        !('data' in result) ||
+        typeof result.data !== 'object' ||
+        result.data === null ||
+        !('imageUrl' in result.data) ||
+        typeof (result.data as { imageUrl: unknown }).imageUrl !== 'string'
+      ) {
+        throw this.errors.internalServerError('VideoController.shareMedicalImage');
+      }
+
+      const response: ShareMedicalImageResponseDto = {
+        imageUrl: (result.data as { imageUrl: string }).imageUrl,
+        callId,
+        userId,
+      };
+
+      // Emit event
+      await this.eventService.emitEnterprise('video.medical.image.shared', {
+        eventId: `video-image-shared-${appointmentId}-${Date.now()}`,
+        eventType: 'video.medical.image.shared',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'VideoController',
+        version: '1.0.0',
+        payload: {
+          appointmentId,
+          callId,
+          userId,
+          imageUrl: response.imageUrl,
+        },
+      });
+
+      return response;
+    } catch (error) {
+      const context = 'VideoController.shareMedicalImage';
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, context);
+        throw error;
+      }
+      const healthcareError = this.errors.internalServerError(context);
+      this.errors.handleError(healthcareError, context);
+      throw healthcareError;
+    }
+  }
+
+  /**
+   * Health check endpoint using @nestjs/terminus
    */
   @Get('health')
+  @HealthCheck()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Video service health check',
-    description: 'Check the health status of the video service and providers.',
+    description: 'Check the health status of the video service and providers using Terminus health checks.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -1060,25 +1177,349 @@ export class VideoController {
     schema: {
       type: 'object',
       properties: {
-        status: { type: 'string', example: 'healthy' },
-        primaryProvider: { type: 'string', example: 'openvidu' },
-        fallbackProvider: { type: 'string', example: 'jitsi' },
-        isHealthy: { type: 'boolean', example: true },
+        status: { type: 'string', example: 'ok' },
+        info: {
+          type: 'object',
+          properties: {
+            video: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'up' },
+                primaryProvider: { type: 'string', example: 'openvidu' },
+                fallbackProvider: { type: 'string', example: 'jitsi' },
+              },
+            },
+            communication: { type: 'object' },
+            database: { type: 'object' },
+            cache: { type: 'object' },
+          },
+        },
+        error: { type: 'object' },
+        details: { type: 'object' },
       },
     },
   })
-  async healthCheck(): Promise<{
-    status: string;
-    primaryProvider: string;
-    fallbackProvider: string;
-    isHealthy: boolean;
-  }> {
-    const isHealthy = await this.videoService.isHealthy();
-    return {
-      status: isHealthy ? 'healthy' : 'unhealthy',
-      primaryProvider: this.videoService.getCurrentProvider(),
-      fallbackProvider: this.videoService.getFallbackProvider(),
-      isHealthy,
-    };
+  async healthCheck() {
+    return await this.health.check([
+      () => this.videoHealthIndicator.check('video'),
+      () => this.communicationHealthIndicator.check('communication'),
+      () => this.databaseHealthIndicator.check('database'),
+      () => this.cacheHealthIndicator.check('cache'),
+    ]);
+  }
+
+  // ============================================================================
+  // OPENVIDU PRO FEATURES - RECORDING
+  // ============================================================================
+
+  @Post('recording/start')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Start OpenVidu recording',
+    description: 'Start recording for a video consultation session (OpenVidu Pro feature).',
+  })
+  @ApiBody({ type: StartRecordingDto })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Recording started successfully',
+    type: RecordingResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid request or provider not OpenVidu',
+  })
+  async startRecording(
+    @Body() dto: StartRecordingDto,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<RecordingResponseDto> {
+    try {
+      const recordingOptions: {
+        outputMode?: 'COMPOSED' | 'INDIVIDUAL';
+        resolution?: string;
+        frameRate?: number;
+        customLayout?: string;
+      } = {};
+      if (dto.outputMode !== undefined) {
+        recordingOptions.outputMode = dto.outputMode;
+      }
+      if (dto.resolution !== undefined) {
+        recordingOptions.resolution = dto.resolution;
+      }
+      if (dto.frameRate !== undefined) {
+        recordingOptions.frameRate = dto.frameRate;
+      }
+      if (dto.customLayout !== undefined) {
+        recordingOptions.customLayout = dto.customLayout;
+      }
+
+      const result: { recordingId: string; status: string } =
+        await this.videoService.startOpenViduRecording(dto.appointmentId, recordingOptions);
+
+      const response: RecordingResponseDto = {
+        recordingId: result.recordingId,
+        url: '',
+        duration: 0,
+        size: 0,
+        status: result.status as 'starting' | 'started' | 'stopped' | 'ready' | 'failed',
+        createdAt: new Date().toISOString(),
+      };
+
+      return response;
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.startRecording');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.startRecording');
+    }
+  }
+
+  @Post('recording/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Stop OpenVidu recording',
+    description: 'Stop an active recording (OpenVidu Pro feature).',
+  })
+  @ApiBody({ type: StopRecordingDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Recording stopped successfully',
+    type: RecordingResponseDto,
+  })
+  async stopRecording(
+    @Body() dto: StopRecordingDto,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<RecordingResponseDto> {
+    try {
+      const result: { recordingId: string; url?: string; duration: number } =
+        await this.videoService.stopOpenViduRecording(dto.appointmentId, dto.recordingId);
+
+      const response: RecordingResponseDto = {
+        recordingId: result.recordingId,
+        url: result.url || '',
+        duration: result.duration,
+        size: 0,
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+      };
+
+      return response;
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.stopRecording');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.stopRecording');
+    }
+  }
+
+  @Get('recording/:appointmentId')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get recordings for a session',
+    description: 'Get all recordings for a video consultation session (OpenVidu Pro feature).',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    type: 'string',
+    format: 'uuid',
+    description: 'Appointment ID',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Recordings retrieved successfully',
+    type: RecordingListResponseDto,
+  })
+  async getRecordings(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<RecordingListResponseDto> {
+    try {
+      type RecordingReturnType = Awaited<
+        ReturnType<typeof this.videoService.getOpenViduRecordings>
+      >[number];
+      const recordings = await this.videoService.getOpenViduRecordings(appointmentId);
+
+      const response: RecordingListResponseDto = {
+        count: recordings.length,
+        recordings: recordings.map((rec: RecordingReturnType) => ({
+          recordingId: rec.recordingId,
+          url: rec.url || '',
+          duration: rec.duration,
+          size: rec.size,
+          status: rec.status as 'starting' | 'started' | 'stopped' | 'ready' | 'failed',
+          createdAt: rec.createdAt,
+        })),
+      };
+
+      return response;
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getRecordings');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getRecordings');
+    }
+  }
+
+  // ============================================================================
+  // OPENVIDU PRO FEATURES - PARTICIPANT MANAGEMENT
+  // ============================================================================
+
+  @Post('participant/manage')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Manage participant',
+    description: 'Kick, mute, unmute, or force unpublish a participant (OpenVidu Pro feature).',
+  })
+  @ApiBody({ type: ManageParticipantDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Participant action completed successfully',
+    type: SuccessResponseDto,
+  })
+  async manageParticipant(
+    @Body() dto: ManageParticipantDto,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<SuccessResponseDto> {
+    try {
+      await this.videoService.manageOpenViduParticipant(
+        dto.appointmentId,
+        dto.connectionId,
+        dto.action
+      );
+
+      return new SuccessResponseDto(`Participant ${dto.action} completed successfully`);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.manageParticipant');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.manageParticipant');
+    }
+  }
+
+  @Get('participants/:appointmentId')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get participants',
+    description: 'Get all participants in a video consultation session (OpenVidu Pro feature).',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    type: 'string',
+    format: 'uuid',
+    description: 'Appointment ID',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Participants retrieved successfully',
+    type: ParticipantListResponseDto,
+  })
+  async getParticipants(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<ParticipantListResponseDto> {
+    try {
+      type ParticipantReturnType = Awaited<
+        ReturnType<typeof this.videoService.getOpenViduParticipants>
+      >[number];
+      const participants = await this.videoService.getOpenViduParticipants(appointmentId);
+
+      const response: ParticipantListResponseDto = {
+        count: participants.length,
+        participants: participants.map((p: ParticipantReturnType) => ({
+          id: p.id,
+          connectionId: p.connectionId,
+          role: p.role as 'PUBLISHER' | 'SUBSCRIBER' | 'MODERATOR',
+          ...(p.location !== undefined && { location: p.location }),
+          ...(p.platform !== undefined && { platform: p.platform }),
+          streams: p.streams.map((s: ParticipantReturnType['streams'][number]) => ({
+            streamId: s.streamId,
+            hasAudio: s.hasAudio,
+            hasVideo: s.hasVideo,
+            audioActive: s.audioActive,
+            videoActive: s.videoActive,
+            typeOfVideo: s.typeOfVideo,
+          })),
+        })),
+      };
+
+      return response;
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getParticipants');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getParticipants');
+    }
+  }
+
+  // ============================================================================
+  // OPENVIDU PRO FEATURES - ANALYTICS
+  // ============================================================================
+
+  @Get('analytics/:appointmentId')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get session analytics',
+    description: 'Get detailed analytics for a video consultation session (OpenVidu Pro feature).',
+  })
+  @ApiParam({
+    name: 'appointmentId',
+    type: 'string',
+    format: 'uuid',
+    description: 'Appointment ID',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Analytics retrieved successfully',
+    type: SessionAnalyticsResponseDto,
+  })
+  async getSessionAnalytics(
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<SessionAnalyticsResponseDto> {
+    try {
+      const analytics = await this.videoService.getOpenViduSessionAnalytics(appointmentId);
+
+      const response: SessionAnalyticsResponseDto = {
+        sessionId: analytics.sessionId,
+        duration: analytics.duration,
+        numberOfParticipants: analytics.numberOfParticipants,
+        numberOfConnections: analytics.numberOfConnections,
+        recordingCount: analytics.recordingCount,
+        recordingTotalDuration: analytics.recordingTotalDuration,
+        recordingTotalSize: analytics.recordingTotalSize,
+        connections: analytics.connections.map(
+          (
+            conn: Awaited<
+              ReturnType<typeof this.videoService.getOpenViduSessionAnalytics>
+            >['connections'][number]
+          ) => ({
+            connectionId: conn.connectionId,
+            duration: conn.duration,
+            ...(conn.location !== undefined && { location: conn.location }),
+            ...(conn.platform !== undefined && { platform: conn.platform }),
+            publishers: conn.publishers,
+            subscribers: conn.subscribers,
+          })
+        ),
+      };
+
+      return response;
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getSessionAnalytics');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getSessionAnalytics');
+    }
   }
 }

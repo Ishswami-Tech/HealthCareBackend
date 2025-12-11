@@ -6,6 +6,8 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database';
@@ -20,10 +22,14 @@ import type {
   VideoTokenResponse,
   VideoConsultationSession,
   OpenViduRoomConfig,
+  OpenViduRecording,
+  OpenViduParticipant,
+  OpenViduSessionAnalytics,
+  OpenViduSessionInfo,
 } from '@core/types/video.types';
-import axios from 'axios';
 import * as crypto from 'crypto';
 import type { VideoProviderConfig } from '@core/types/video.types';
+import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 
 @Injectable()
 export class OpenViduVideoProvider implements IVideoProvider {
@@ -37,6 +43,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService
   ) {
@@ -78,13 +85,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
   private async createOrGetSession(roomName: string): Promise<OpenViduRoomConfig> {
     try {
       // Try to get existing session
-      const response = await axios.get<OpenViduRoomConfig>(
-        `${this.apiUrl}/api/sessions/${roomName}`,
-        {
+      const response = await firstValueFrom(
+        this.httpService.get<OpenViduRoomConfig>(`${this.apiUrl}/api/sessions/${roomName}`, {
           headers: {
             Authorization: this.getAuthHeader(),
           },
-        }
+        })
       );
 
       if (response.data) {
@@ -92,7 +98,15 @@ export class OpenViduVideoProvider implements IVideoProvider {
       }
     } catch (error) {
       // Session doesn't exist, create new one
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
+      if (
+        error &&
+        typeof error === 'object' &&
+        'response' in error &&
+        error.response &&
+        typeof error.response === 'object' &&
+        'status' in error.response &&
+        error.response.status === 404
+      ) {
         // Session doesn't exist, create it
       } else {
         throw error;
@@ -100,27 +114,29 @@ export class OpenViduVideoProvider implements IVideoProvider {
     }
 
     // Create new session
-    const createResponse = await axios.post<OpenViduRoomConfig>(
-      `${this.apiUrl}/api/sessions`,
-      {
-        customSessionId: roomName,
-        mediaMode: 'ROUTED',
-        recordingMode: 'MANUAL',
-        defaultRecordingProperties: {
-          name: `Consultation-${roomName}`,
-          hasAudio: true,
-          hasVideo: true,
-          outputMode: 'COMPOSED',
-          resolution: '1280x720',
-          frameRate: 30,
+    const createResponse = await firstValueFrom(
+      this.httpService.post<OpenViduRoomConfig>(
+        `${this.apiUrl}/api/sessions`,
+        {
+          customSessionId: roomName,
+          mediaMode: 'ROUTED',
+          recordingMode: 'MANUAL',
+          defaultRecordingProperties: {
+            name: `Consultation-${roomName}`,
+            hasAudio: true,
+            hasVideo: true,
+            outputMode: 'COMPOSED',
+            resolution: '1280x720',
+            frameRate: 30,
+          },
         },
-      },
-      {
-        headers: {
-          Authorization: this.getAuthHeader(),
-          'Content-Type': 'application/json',
-        },
-      }
+        {
+          headers: {
+            Authorization: this.getAuthHeader(),
+            'Content-Type': 'application/json',
+          },
+        }
+      )
     );
 
     return createResponse.data;
@@ -176,52 +192,41 @@ export class OpenViduVideoProvider implements IVideoProvider {
         id?: string;
         session?: string;
       }
-      const tokenResponse = await axios.post<OpenViduTokenResponse>(
-        `${this.apiUrl}/api/tokens`,
-        {
-          session: session.id,
-          role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
-          data: JSON.stringify({
-            userId,
-            userRole,
-            displayName: userInfo.displayName,
-            email: userInfo.email,
-            avatar: userInfo.avatar,
-          }),
-        },
-        {
-          headers: {
-            Authorization: this.getAuthHeader(),
-            'Content-Type': 'application/json',
+      const tokenResponse = await firstValueFrom(
+        this.httpService.post<OpenViduTokenResponse>(
+          `${this.apiUrl}/api/tokens`,
+          {
+            session: session.id,
+            role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
+            data: JSON.stringify({
+              userId,
+              userRole,
+              displayName: userInfo.displayName,
+              email: userInfo.email,
+              avatar: userInfo.avatar,
+            }),
           },
-        }
+          {
+            headers: {
+              Authorization: this.getAuthHeader(),
+              'Content-Type': 'application/json',
+            },
+          }
+        )
       );
 
       const token = tokenResponse.data.token;
       const meetingUrl = `${this.apiUrl}/#/sessions/${session.id}?token=${token}`;
 
-      // Create or update VideoConsultation in database
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const existing = await (
-            client as unknown as {
-              videoConsultation: {
-                findUnique: <T>(args: T) => Promise<unknown>;
-                upsert: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.findUnique({
+          const delegate = getVideoConsultationDelegate(client);
+          const existing = await delegate.findUnique({
             where: { appointmentId },
           });
 
           if (!existing) {
-            await (
-              client as unknown as {
-                videoConsultation: {
-                  create: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).videoConsultation.create({
+            await delegate.create({
               data: {
                 appointmentId,
                 patientId: appointment.patientId,
@@ -316,17 +321,25 @@ export class OpenViduVideoProvider implements IVideoProvider {
         }
       }
 
-      // Update session status
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          // Find consultation by appointmentId to get its id
+          const consultation = await delegate.findUnique({
             where: { appointmentId },
+          });
+          if (!consultation) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_RECORD_NOT_FOUND,
+              `Video consultation not found for appointment ${appointmentId}`,
+              undefined,
+              { appointmentId },
+              'OpenViduVideoProvider.startConsultation'
+            );
+          }
+          // Update using id
+          return await delegate.update({
+            where: { id: consultation.id },
             data: {
               status: 'ACTIVE',
               startTime: new Date(),
@@ -382,17 +395,25 @@ export class OpenViduVideoProvider implements IVideoProvider {
         );
       }
 
-      // Update session status
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          // Find consultation by appointmentId to get its id
+          const consultation = await delegate.findUnique({
             where: { appointmentId },
+          });
+          if (!consultation) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_RECORD_NOT_FOUND,
+              `Video consultation not found for appointment ${appointmentId}`,
+              undefined,
+              { appointmentId },
+              'OpenViduVideoProvider.endConsultation'
+            );
+          }
+          // Update using id
+          return await delegate.update({
+            where: { id: consultation.id },
             data: {
               status: 'ENDED',
               endTime: new Date(),
@@ -434,15 +455,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
     try {
       const consultation = await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoConsultation: {
-              findUnique: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoConsultation.findUnique({
-          where: { appointmentId },
-          include: { participants: true },
+        const delegate = getVideoConsultationDelegate(client);
+        return await delegate.findFirst({
+          where: {
+            OR: [{ appointmentId }],
+          },
+          include: {
+            participants: true,
+          },
         });
       });
 
@@ -499,15 +519,402 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async isHealthy(): Promise<boolean> {
     try {
-      const response = await axios.get(`${this.apiUrl}/api/config`, {
-        headers: {
-          Authorization: this.getAuthHeader(),
-        },
-        timeout: 5000,
-      });
+      const response = await firstValueFrom(
+        this.httpService.get(`${this.apiUrl}/api/config`, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+          timeout: 5000,
+        })
+      );
       return response.status === 200;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Start recording
+   */
+  async startRecording(
+    sessionId: string,
+    options?: {
+      outputMode?: 'COMPOSED' | 'INDIVIDUAL';
+      resolution?: string;
+      frameRate?: number;
+      customLayout?: string;
+    }
+  ): Promise<OpenViduRecording> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post<OpenViduRecording>(
+          `${this.apiUrl}/api/recordings/start`,
+          {
+            session: sessionId,
+            ...(options?.outputMode && { outputMode: options.outputMode }),
+            ...(options?.resolution && { resolution: options.resolution }),
+            ...(options?.frameRate && { frameRate: options.frameRate }),
+            ...(options?.customLayout && { customLayout: options.customLayout }),
+          },
+          {
+            headers: {
+              Authorization: this.getAuthHeader(),
+              'Content-Type': 'application/json',
+            },
+          }
+        )
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OpenVidu recording started: ${response.data.id}`,
+        'OpenViduVideoProvider.startRecording',
+        {
+          sessionId,
+          recordingId: response.data.id,
+          outputMode: options?.outputMode,
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to start OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.startRecording',
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Stop recording
+   */
+  async stopRecording(recordingId: string): Promise<OpenViduRecording> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.post<OpenViduRecording>(
+          `${this.apiUrl}/api/recordings/stop/${recordingId}`,
+          {},
+          {
+            headers: {
+              Authorization: this.getAuthHeader(),
+              'Content-Type': 'application/json',
+            },
+          }
+        )
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OpenVidu recording stopped: ${recordingId}`,
+        'OpenViduVideoProvider.stopRecording',
+        {
+          recordingId,
+          status: response.data.status,
+        }
+      );
+
+      return response.data;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to stop OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.stopRecording',
+        {
+          recordingId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get recording
+   */
+  async getRecording(recordingId: string): Promise<OpenViduRecording> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<OpenViduRecording>(`${this.apiUrl}/api/recordings/${recordingId}`, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+        })
+      );
+
+      return response.data;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.getRecording',
+        {
+          recordingId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - List recordings
+   */
+  async listRecordings(sessionId?: string): Promise<OpenViduRecording[]> {
+    try {
+      const url = sessionId
+        ? `${this.apiUrl}/api/recordings?sessionId=${sessionId}`
+        : `${this.apiUrl}/api/recordings`;
+      const response = await firstValueFrom(
+        this.httpService.get<{ numberOfElements: number; content: OpenViduRecording[] }>(url, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+        })
+      );
+
+      return response.data.content || [];
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to list OpenVidu recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.listRecordings',
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Delete recording
+   */
+  async deleteRecording(recordingId: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(`${this.apiUrl}/api/recordings/${recordingId}`, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+        })
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OpenVidu recording deleted: ${recordingId}`,
+        'OpenViduVideoProvider.deleteRecording',
+        {
+          recordingId,
+        }
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to delete OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.deleteRecording',
+        {
+          recordingId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get session info with Pro features
+   */
+  async getSessionInfo(sessionId: string): Promise<OpenViduSessionInfo> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get<OpenViduSessionInfo>(`${this.apiUrl}/api/sessions/${sessionId}`, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+        })
+      );
+
+      return response.data;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu session info: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.getSessionInfo',
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get participants
+   */
+  async getParticipants(sessionId: string): Promise<OpenViduParticipant[]> {
+    try {
+      const sessionInfo = await this.getSessionInfo(sessionId);
+      return sessionInfo.connections.content || [];
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.getParticipants',
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Kick participant
+   */
+  async kickParticipant(sessionId: string, connectionId: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(
+          `${this.apiUrl}/api/sessions/${sessionId}/connection/${connectionId}`,
+          {
+            headers: {
+              Authorization: this.getAuthHeader(),
+            },
+          }
+        )
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OpenVidu participant kicked: ${connectionId}`,
+        'OpenViduVideoProvider.kickParticipant',
+        {
+          sessionId,
+          connectionId,
+        }
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to kick OpenVidu participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.kickParticipant',
+        {
+          sessionId,
+          connectionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Force unpublish stream
+   */
+  async forceUnpublish(sessionId: string, streamId: string): Promise<void> {
+    try {
+      await firstValueFrom(
+        this.httpService.delete(`${this.apiUrl}/api/sessions/${sessionId}/stream/${streamId}`, {
+          headers: {
+            Authorization: this.getAuthHeader(),
+          },
+        })
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OpenVidu stream force unpublished: ${streamId}`,
+        'OpenViduVideoProvider.forceUnpublish',
+        {
+          sessionId,
+          streamId,
+        }
+      );
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to force unpublish OpenVidu stream: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.forceUnpublish',
+        {
+          sessionId,
+          streamId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * OpenVidu Pro - Get session analytics
+   */
+  async getSessionAnalytics(sessionId: string): Promise<OpenViduSessionAnalytics> {
+    try {
+      // OpenVidu Pro provides analytics via /api/sessions/{sessionId}
+      // Additional analytics can be obtained from the session info
+      const sessionInfo = await this.getSessionInfo(sessionId);
+
+      const analytics: OpenViduSessionAnalytics = {
+        sessionId: sessionInfo.id,
+        createdAt: sessionInfo.createdAt,
+        duration: Math.floor((Date.now() - sessionInfo.createdAt) / 1000),
+        numberOfParticipants: sessionInfo.connections.numberOfElements,
+        numberOfConnections: sessionInfo.connections.numberOfElements,
+        connections: sessionInfo.connections.content.map(conn => ({
+          connectionId: conn.connectionId,
+          createdAt: conn.createdAt,
+          duration: Math.floor((Date.now() - conn.createdAt) / 1000),
+          location: conn.location ?? undefined,
+          platform: conn.platform ?? undefined,
+          clientData: conn.clientData ?? undefined,
+          serverData: conn.serverData ?? undefined,
+          publishers: conn.streams.filter(s => s.typeOfVideo === 'CAMERA').length,
+          subscribers: conn.streams.filter(s => s.typeOfVideo === 'SCREEN').length,
+        })),
+        recordingCount: sessionInfo.recordings.numberOfElements,
+        recordingTotalDuration: sessionInfo.recordings.content.reduce(
+          (sum, rec) => sum + (rec.duration || 0),
+          0
+        ),
+        recordingTotalSize: sessionInfo.recordings.content.reduce((sum, rec) => sum + (rec.size || 0), 0),
+      };
+
+      return analytics;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to get OpenVidu session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.getSessionAnalytics',
+        {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw error;
     }
   }
 }

@@ -31,7 +31,13 @@ import { SocketService } from '@communication/channels/socket';
 import { EmailService } from '@communication/channels/email';
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { HealthcareErrorsService } from '@core/errors';
-import axios, { AxiosError } from 'axios';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import {
+  isHttpServiceAvailable,
+  type HealthCheckHttpResponse,
+  toHealthCheckResponse,
+} from '@core/types/http.types';
 import cluster from 'cluster';
 import * as os from 'os';
 
@@ -82,6 +88,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => CacheHealthMonitorService))
     private readonly cacheHealthMonitor?: CacheHealthMonitorService,
     @Optional() @Inject(forwardRef(() => ConfigService)) private readonly config?: ConfigService,
+    @Optional() private readonly httpService?: HttpService,
     @Optional() private readonly queueService?: QueueService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
@@ -2745,12 +2752,28 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             const baseUrl = appConfig?.apiUrl || 'http://localhost:8088';
             const socketTestUrl = `${baseUrl}/socket-test`;
 
-            await Promise.race([
-              axios.get(socketTestUrl, { timeout: 3000, validateStatus: () => true }),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
-              ),
-            ]);
+            try {
+              // Type assertion needed for strict TypeScript mode
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+              const httpServiceCheck = this.httpService;
+              // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+              if (isHttpServiceAvailable(httpServiceCheck)) {
+                const httpService = httpServiceCheck;
+                await Promise.race([
+                  firstValueFrom(
+                    httpService.get<unknown>(socketTestUrl, {
+                      timeout: 3000,
+                      validateStatus: () => true,
+                    })
+                  ),
+                  new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
+                  ),
+                ]);
+              }
+            } catch {
+              // HttpService not available, skip HTTP check
+            }
           } catch (_httpError) {
             // HTTP check failed, but service is initialized so it's still healthy
           }
@@ -2816,20 +2839,38 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           const apiPrefix = appConfig?.apiPrefix || '/api/v1';
           const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
-          const httpCheck = await Promise.race([
-            axios.get(emailStatusUrl, { timeout: 3000, validateStatus: () => true }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
-            ),
-          ]);
+          try {
+            // Type assertion needed for strict TypeScript mode
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+            const httpServiceCheck = this.httpService;
+            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+            if (isHttpServiceAvailable(httpServiceCheck)) {
+              const httpService = httpServiceCheck;
+              const httpCheck = await Promise.race([
+                firstValueFrom(
+                  httpService.get<unknown>(emailStatusUrl, {
+                    timeout: 3000,
+                    validateStatus: () => true,
+                  })
+                ),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
+                ),
+              ]);
 
-          if (httpCheck.status < 500) {
-            return {
-              status: 'healthy',
-              details: 'Email service endpoint is accessible',
-              responseTime: Math.round(performance.now() - startTime),
-              lastChecked: new Date().toISOString(),
-            };
+              const healthResponse: HealthCheckHttpResponse<unknown> =
+                toHealthCheckResponse(httpCheck);
+              if (healthResponse.status < 500) {
+                return {
+                  status: 'healthy',
+                  details: 'Email service endpoint is accessible',
+                  responseTime: Math.round(performance.now() - startTime),
+                  lastChecked: new Date().toISOString(),
+                };
+              }
+            }
+          } catch {
+            // HttpService not available, continue to fallback
           }
         } catch (_httpError) {
           // HTTP check failed
@@ -2844,6 +2885,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       }
 
       try {
+        if (!this.emailService) {
+          return {
+            status: 'unhealthy',
+            details: 'Email service is not available',
+            responseTime: Math.round(performance.now() - startTime),
+            lastChecked: new Date().toISOString(),
+          };
+        }
+
         const _isHealthy = this.emailService.isHealthy();
 
         // Also check HTTP endpoint for real-time status
@@ -2854,23 +2904,37 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
         try {
-          const httpCheck = await Promise.race([
-            axios.get(emailStatusUrl, { timeout: 3000, validateStatus: () => true }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
-            ),
-          ]);
+          // Type assertion needed for strict TypeScript mode
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+          const httpServiceCheck = this.httpService;
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+          if (isHttpServiceAvailable(httpServiceCheck)) {
+            const httpService = httpServiceCheck;
+            const httpCheck = await Promise.race([
+              firstValueFrom(
+                httpService.get<unknown>(emailStatusUrl, {
+                  timeout: 3000,
+                  validateStatus: () => true,
+                })
+              ),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
+              ),
+            ]);
 
-          // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
-          if (httpCheck.status < 500) {
-            return {
-              status: 'healthy',
-              details: 'Email service is configured and accessible',
-              responseTime: Math.round(performance.now() - startTime),
-              lastChecked: new Date().toISOString(),
-            };
+            // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
+            const healthResponse: HealthCheckHttpResponse<unknown> =
+              toHealthCheckResponse(httpCheck);
+            if (healthResponse.status < 500) {
+              return {
+                status: 'healthy',
+                details: 'Email service is configured and accessible',
+                responseTime: Math.round(performance.now() - startTime),
+                lastChecked: new Date().toISOString(),
+              };
+            }
           }
-        } catch (_httpError) {
+        } catch {
           // HTTP check failed, fall back to internal check
         }
 
@@ -2992,15 +3056,26 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   ): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
+      // Type assertion needed for strict TypeScript mode
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const httpServiceCheck = this.httpService;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      if (!isHttpServiceAvailable(httpServiceCheck)) {
+        throw new Error('HttpService is not available for external service check');
+      }
+      const httpService = httpServiceCheck;
+
       const response = await Promise.race([
-        axios.get(url, {
-          timeout,
-          validateStatus: () => true, // Don't throw on any status code
-          // Add headers to avoid CORS issues and improve compatibility
-          headers: {
-            'User-Agent': 'Healthcare-HealthCheck/1.0',
-          },
-        }),
+        firstValueFrom(
+          httpService.get<unknown>(url, {
+            timeout,
+            validateStatus: () => true, // Don't throw on any status code
+            // Add headers to avoid CORS issues and improve compatibility
+            headers: {
+              'User-Agent': 'Healthcare-HealthCheck/1.0',
+            },
+          })
+        ),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Request timeout')), timeout)
         ),
@@ -3009,13 +3084,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const responseTime = Math.round(performance.now() - startTime);
       // Accept any HTTP response (even 404/401/500) as service is responding
       // Only connection errors (ECONNREFUSED, ETIMEDOUT) indicate service is down
-      const isHealthy = response.status !== undefined;
+      const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
+      const isHealthy = healthResponse.status !== undefined;
+      const statusCode = healthResponse.status;
 
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
         details: isHealthy
-          ? `${serviceName} is accessible (status: ${response.status})`
-          : `${serviceName} returned status ${response.status}`,
+          ? `${serviceName} is accessible (status: ${statusCode})`
+          : `${serviceName} returned status ${String(statusCode)}`,
         responseTime,
         lastChecked: new Date().toISOString(),
       };
@@ -3064,11 +3141,22 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
       const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
+      // Type assertion needed for strict TypeScript mode
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+      const httpServiceCheck = this.httpService;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+      if (!isHttpServiceAvailable(httpServiceCheck)) {
+        throw new Error('HttpService is not available for internal endpoint check');
+      }
+      const httpService = httpServiceCheck;
+
       const response = await Promise.race([
-        axios.get(url, {
-          timeout: timeout + 1000, // Add buffer to timeout
-          validateStatus: () => true, // Don't throw on any status code
-        }),
+        firstValueFrom(
+          httpService.get<unknown>(url, {
+            timeout: timeout + 1000, // Add buffer to timeout
+            validateStatus: () => true, // Don't throw on any status code
+          })
+        ),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Request timeout')), timeout + 1000)
         ),
@@ -3076,24 +3164,21 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       const responseTime = Math.round(performance.now() - startTime);
       // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
-      const isHealthy = response.status < 500;
+      const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
+      const isHealthy = healthResponse.status < 500;
+      const statusCode = healthResponse.status;
 
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
         details: isHealthy
           ? `${serviceName} endpoint is accessible`
-          : `${serviceName} endpoint returned status ${response.status}`,
+          : `${serviceName} endpoint returned status ${String(statusCode)}`,
         responseTime,
         lastChecked: new Date().toISOString(),
       };
     } catch (error) {
       const responseTime = Math.round(performance.now() - startTime);
-      const errorMessage =
-        error instanceof AxiosError
-          ? error.message
-          : error instanceof Error
-            ? error.message
-            : 'Unknown error';
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
       return {
         status: 'unhealthy',

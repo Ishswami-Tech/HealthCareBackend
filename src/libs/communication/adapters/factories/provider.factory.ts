@@ -9,7 +9,11 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { EmailProviderAdapter, WhatsAppProviderAdapter, SMSProviderAdapter } from '../interfaces';
+import {
+  EmailProviderAdapter,
+  WhatsAppProviderAdapter,
+  SMSProviderAdapter,
+} from '@communication/adapters/interfaces';
 import {
   CommunicationConfigService,
   EmailProvider,

@@ -306,6 +306,9 @@ export interface VideoProviderConfig {
     readonly secret: string;
     readonly domain: string;
     readonly enabled: boolean;
+    readonly webhookEnabled?: boolean;
+    readonly webhookEndpoint?: string;
+    readonly webhookEvents?: string;
   };
   /** Jitsi configuration (for fallback) */
   readonly jitsi?: {

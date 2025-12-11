@@ -171,7 +171,7 @@ export class CommunicationConfigService implements OnModuleInit {
       const encryptedConfig = await this.encryptConfig(config);
 
       // Save to database
-      this.saveToDatabase(encryptedConfig);
+      await this.saveToDatabase(encryptedConfig);
 
       // Invalidate cache
       await this.cacheService.delete(cacheKey);
@@ -237,19 +237,123 @@ export class CommunicationConfigService implements OnModuleInit {
 
   /**
    * Fetch configuration from database
+   * Reads from Clinic.settings.communicationSettings (JSONB field)
    */
-  private fetchFromDatabase(_clinicId: string): Promise<ClinicCommunicationConfig | null> {
-    // Database schema migration needed for communication_config table
-    // For now, return null to use default config
-    return Promise.resolve(null);
+  private async fetchFromDatabase(clinicId: string): Promise<ClinicCommunicationConfig | null> {
+    try {
+      const clinic = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinic.findUnique({
+          where: { id: clinicId },
+          select: { settings: true },
+        });
+      });
+
+      if (!clinic?.settings || typeof clinic.settings !== 'object') {
+        return null;
+      }
+
+      const settings = clinic.settings as Record<string, unknown>;
+      // Use bracket notation for index signature access
+      const communicationSettings = settings['communicationSettings'];
+
+      if (!communicationSettings || typeof communicationSettings !== 'object') {
+        return null;
+      }
+
+      // Map to ClinicCommunicationConfig format
+      // Omit excludes createdAt and updatedAt, so we create new ones
+      const config = communicationSettings as unknown as Omit<
+        ClinicCommunicationConfig,
+        'clinicId' | 'createdAt' | 'updatedAt'
+      >;
+
+      return {
+        clinicId,
+        ...config,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to fetch communication config from database: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService.fetchFromDatabase',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return null;
+    }
   }
 
   /**
    * Save configuration to database
+   * Writes to Clinic.settings.communicationSettings (JSONB field)
+   * Preserves other settings when updating
    */
-  private saveToDatabase(_config: ClinicCommunicationConfig): void {
-    // Database schema migration needed for communication_config table
-    this.logger.warn('Database save not yet implemented - schema migration needed');
+  private async saveToDatabase(config: ClinicCommunicationConfig): Promise<void> {
+    try {
+      // Get current clinic settings to preserve other settings
+      const currentClinic = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinic.findUnique({
+          where: { id: config.clinicId },
+          select: { settings: true },
+        });
+      });
+
+      const currentSettings =
+        currentClinic?.settings && typeof currentClinic.settings === 'object'
+          ? (currentClinic.settings as Record<string, unknown>)
+          : {};
+
+      // Prepare communication settings (exclude clinicId, createdAt, updatedAt from JSON)
+      const { clinicId: _clinicId, ...communicationSettings } = config;
+      const updatedSettings = {
+        ...currentSettings,
+        communicationSettings: {
+          ...communicationSettings,
+          updatedAt: new Date().toISOString(),
+          createdAt: communicationSettings.createdAt
+            ? new Date(communicationSettings.createdAt).toISOString()
+            : new Date().toISOString(),
+        },
+      };
+
+      // Save to database with audit trail
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await client.clinic.update({
+            where: { id: config.clinicId },
+            data: {
+              settings: updatedSettings as never, // Prisma Json type
+            },
+          });
+        },
+        {
+          userId: 'system', // TODO: Get from context when available
+          userRole: 'SYSTEM',
+          clinicId: config.clinicId,
+          operation: 'UPDATE_COMMUNICATION_CONFIG',
+          resourceType: 'COMMUNICATION_CONFIG',
+          resourceId: config.clinicId,
+          timestamp: new Date(),
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to save communication config to database: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService.saveToDatabase',
+        {
+          clinicId: config.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
   }
 
   /**
