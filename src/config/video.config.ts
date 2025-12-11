@@ -46,16 +46,28 @@ export const videoConfig = registerAs('video', (): VideoProviderConfig => {
   const enabled = isVideoEnabled();
   const provider = getVideoProvider();
 
+  const openviduConfig: VideoProviderConfig['openvidu'] = {
+    url: getEnvWithDefault('OPENVIDU_URL', 'https://video.yourdomain.com'),
+    secret: getEnv('OPENVIDU_SECRET') || '',
+    domain: getEnvWithDefault('OPENVIDU_DOMAIN', 'video.yourdomain.com'),
+    enabled: provider === 'openvidu' && enabled,
+    webhookEnabled: getEnvBoolean('OPENVIDU_WEBHOOK_ENABLED', false),
+  };
+
+  const webhookEndpoint = getEnv('OPENVIDU_WEBHOOK_ENDPOINT');
+  if (webhookEndpoint !== undefined && webhookEndpoint !== null && webhookEndpoint !== '') {
+    openviduConfig.webhookEndpoint = webhookEndpoint;
+  }
+
+  const webhookEvents = getEnv('OPENVIDU_WEBHOOK_EVENTS');
+  if (webhookEvents !== undefined && webhookEvents !== null && webhookEvents !== '') {
+    openviduConfig.webhookEvents = webhookEvents;
+  }
+
   return {
     enabled,
     provider,
-    // OpenVidu configuration
-    openvidu: {
-      url: getEnvWithDefault('OPENVIDU_URL', 'https://video.yourdomain.com'),
-      secret: getEnv('OPENVIDU_SECRET') || '',
-      domain: getEnvWithDefault('OPENVIDU_DOMAIN', 'video.yourdomain.com'),
-      enabled: provider === 'openvidu' && enabled,
-    },
+    openvidu: openviduConfig,
     // Jitsi configuration (for fallback)
     jitsi: {
       domain: getEnvWithDefault('JITSI_DOMAIN', 'localhost:8443'),

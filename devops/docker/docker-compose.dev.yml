@@ -82,10 +82,16 @@ services:
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
       
       # OpenVidu Configuration (Primary Video Provider - like Dragonfly in cache pattern)
+      # NOTE: For development, use localhost. For production, set OPENVIDU_URL and OPENVIDU_DOMAIN env vars
       OPENVIDU_ENABLED: "true"
       OPENVIDU_URL: ${OPENVIDU_URL:-https://localhost:4443}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
       OPENVIDU_DOMAIN: ${OPENVIDU_DOMAIN:-localhost}
+      # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
+      # Set to true to enable webhooks and reduce Socket.IO load for video events
+      OPENVIDU_WEBHOOK_ENABLED: ${OPENVIDU_WEBHOOK_ENABLED:-false}
+      OPENVIDU_WEBHOOK_ENDPOINT: ${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      OPENVIDU_WEBHOOK_EVENTS: ${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
       
       # Jitsi Configuration (Fallback - like Redis in cache pattern)
       JITSI_DOMAIN: ${JITSI_DOMAIN:-localhost:8443}
@@ -402,9 +408,9 @@ services:
       - OPENVIDU_RECORDING_CUSTOM_LAYOUT=/opt/openvidu/custom-layout
       - OPENVIDU_RECORDING_AUTOSTOP_TIMEOUT=120
       - OPENVIDU_RECORDING_ALWAYS=never
-      - OPENVIDU_WEBHOOK=false
-      - OPENVIDU_WEBHOOK_ENDPOINT=
-      - OPENVIDU_WEBHOOK_EVENTS=
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
       - OPENVIDU_WEBHOOK_HEADERS=
       - OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE=
       - COTURN_IP=coturn
@@ -422,7 +428,10 @@ services:
       - healthcare-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "https://localhost:4443/api/config", "-k", "-u", "OPENVIDUAPP:${OPENVIDU_SECRET:-MY_SECRET}"]
+      # Check if supervisor processes are running (kms and openvidu-server)
+      # curl is not available in the container, so we check process status instead
+      # Both kms and openvidu-server must be RUNNING
+      test: ["CMD-SHELL", "supervisorctl status kms openvidu-server | grep -c RUNNING | grep -q 2 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -14,12 +14,18 @@ import {
   OnModuleDestroy,
   Optional,
 } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+import {
+  isHttpServiceAvailable,
+  type HealthCheckHttpResponse,
+  toHealthCheckResponse,
+} from '@core/types/http.types';
 import { ConfigService } from '@config';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggingHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience';
 import { LoggingService } from './logging.service';
-import axios from 'axios';
 
 /**
  * Type guard to check if logging service is available and has a valid log method
@@ -64,6 +70,7 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService | null,
+    @Optional() private readonly httpService?: HttpService,
     @Optional() private readonly circuitBreakerService?: CircuitBreakerService
   ) {
     // Circuit breaker is managed by CircuitBreakerService using named instances
@@ -463,9 +470,20 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
       // Use lightweight HTTP check - just verify endpoint responds (any status code means service is responding)
       // Accept any status code including 404, 500, etc. - as long as we get a response, the server is up
-      const httpCheckPromise = axios.get(loggerUrl, {
-        timeout: QUERY_TIMEOUT_MS,
-        validateStatus: () => true, // Accept any status code - server responding is what matters
+      const httpServiceCheck = this.httpService;
+      if (!isHttpServiceAvailable(httpServiceCheck)) {
+        throw new Error('HttpService is not available for logging endpoint check');
+      }
+      const httpService = httpServiceCheck;
+
+      const httpCheckPromise: Promise<{ status: number }> = firstValueFrom(
+        httpService.get<unknown>(loggerUrl, {
+          timeout: QUERY_TIMEOUT_MS,
+          validateStatus: () => true, // Accept any status code - server responding is what matters
+        })
+      ).then(response => {
+        const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
+        return { status: healthResponse.status };
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
