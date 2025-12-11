@@ -40,10 +40,12 @@ data:
   OPENVIDU_RECORDING_AUTOSTOP_TIMEOUT: "120"
   OPENVIDU_RECORDING_ALWAYS: "never"
   
-  # Webhook Configuration (disabled by default)
+  # Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
+  # Enable webhooks to reduce Socket.IO load for video events
+  # Set OPENVIDU_WEBHOOK_ENDPOINT to your API webhook URL (e.g., https://api.yourdomain.com/api/v1/webhooks/openvidu)
   OPENVIDU_WEBHOOK: "false"
   OPENVIDU_WEBHOOK_ENDPOINT: ""
-  OPENVIDU_WEBHOOK_EVENTS: ""
+  OPENVIDU_WEBHOOK_EVENTS: "sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped"
   OPENVIDU_WEBHOOK_HEADERS: ""
   OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE: ""
   

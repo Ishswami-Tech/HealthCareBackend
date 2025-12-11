@@ -1,5 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { HttpModule } from '@nestjs/axios';
+import { TerminusModule } from '@nestjs/terminus';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { PushModule } from '@communication/channels/push/push.module';
@@ -45,6 +47,8 @@ import { CommunicationConfigModule } from './config/communication-config.module'
  */
 @Module({
   imports: [
+    HttpModule, // HTTP client for WhatsApp API calls
+    TerminusModule, // Health checks
     EventEmitterModule, // Required for EventEmitter2 injection
     EmailModule, // Email services (SMTP, SES, templates, queue)
     WhatsAppModule, // WhatsApp Business API

@@ -2,6 +2,14 @@
  * Video Consultation Data Transfer Objects
  * @module @dtos/video.dto
  * @description DTOs for video consultation operations following appointment.dto.ts pattern
+ *
+ * @see {@link ./appointment.dto.ts} for shared enums and appointment-related DTOs:
+ * - VideoCallStatus enum (reused from appointment.dto.ts)
+ * - AppointmentType.VIDEO_CALL for video call appointments
+ * - AppointmentResponseDto for appointment data in video contexts
+ *
+ * Note: StartConsultationDto in appointment.dto.ts is for general consultations.
+ * StartVideoConsultationDto here is specifically for video consultations with appointment context.
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -149,6 +157,25 @@ export class EndVideoConsultationDto {
   @IsUUID('4', { message: 'User ID must be a valid UUID' })
   @IsNotEmpty({ message: 'User ID is required' })
   userId!: string;
+
+  @ApiProperty({
+    example: 'patient',
+    description: 'User role in the consultation',
+    enum: ['patient', 'doctor'],
+  })
+  @IsEnum(['patient', 'doctor'], {
+    message: 'User role must be either "patient" or "doctor"',
+  })
+  @IsNotEmpty({ message: 'User role is required' })
+  userRole!: 'patient' | 'doctor';
+
+  @ApiPropertyOptional({
+    example: 'Patient felt better after consultation',
+    description: 'Optional meeting notes',
+  })
+  @IsOptional()
+  @IsString({ message: 'Meeting notes must be a string' })
+  meetingNotes?: string;
 }
 
 /**
@@ -183,17 +210,47 @@ export class ShareMedicalImageDto {
 }
 
 /**
+ * Response DTO for sharing medical image
+ * @class ShareMedicalImageResponseDto
+ */
+export class ShareMedicalImageResponseDto {
+  @ApiProperty({
+    example: 'https://images.example.com/medical/call-123/user-456/1234567890.jpg',
+    description: 'URL of the uploaded medical image',
+  })
+  @IsUrl({}, { message: 'Image URL must be a valid URL' })
+  @IsNotEmpty({ message: 'Image URL is required' })
+  imageUrl!: string;
+
+  @ApiProperty({
+    example: 'call-uuid-123',
+    description: 'Video call ID where the image was shared',
+  })
+  @IsString({ message: 'Call ID must be a string' })
+  @IsNotEmpty({ message: 'Call ID is required' })
+  callId!: string;
+
+  @ApiProperty({
+    example: 'user-uuid-123',
+    description: 'User ID who shared the image',
+  })
+  @IsString({ message: 'User ID must be a string' })
+  @IsNotEmpty({ message: 'User ID is required' })
+  userId!: string;
+}
+
+/**
  * Data Transfer Object for video call history query
  * @class VideoCallHistoryQueryDto
  */
 export class VideoCallHistoryQueryDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'user-uuid-123',
-    description: 'User ID to get history for',
+    description: 'User ID to get history for (optional, defaults to authenticated user)',
   })
+  @IsOptional()
   @IsUUID('4', { message: 'User ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'User ID is required' })
-  userId!: string;
+  userId?: string;
 
   @ApiPropertyOptional({
     example: 'clinic-uuid-123',
@@ -228,6 +285,175 @@ export class VideoCallHistoryQueryDto {
   @Min(1, { message: 'Limit must be at least 1' })
   @Max(100, { message: 'Limit cannot exceed 100' })
   limit?: number = 20;
+}
+
+/**
+ * Data Transfer Object for reporting technical issues
+ * @class ReportTechnicalIssueDto
+ */
+export class ReportTechnicalIssueDto {
+  @ApiProperty({
+    example: 'audio',
+    description: 'Type of technical issue',
+    enum: ['audio', 'video', 'connection', 'other'],
+  })
+  @IsEnum(['audio', 'video', 'connection', 'other'], {
+    message: 'Issue type must be one of: audio, video, connection, other',
+  })
+  @IsNotEmpty({ message: 'Issue type is required' })
+  issueType!: 'audio' | 'video' | 'connection' | 'other';
+
+  @ApiProperty({
+    example: 'Audio cutting out intermittently during consultation',
+    description: 'Detailed description of the technical issue',
+  })
+  @IsString({ message: 'Description must be a string' })
+  @IsNotEmpty({ message: 'Description is required' })
+  description!: string;
+}
+
+/**
+ * Data Transfer Object for video call response
+ * @class VideoCallResponseDto
+ */
+export class VideoCallResponseDto {
+  @ApiProperty({
+    example: 'vc-appointment-123-1234567890',
+    description: 'Video call ID',
+  })
+  @IsString({ message: 'Call ID must be a string' })
+  id!: string;
+
+  @ApiProperty({
+    example: 'appointment-uuid-123',
+    description: 'Appointment ID',
+  })
+  @IsString({ message: 'Appointment ID must be a string' })
+  appointmentId!: string;
+
+  @ApiProperty({
+    example: 'patient-uuid-123',
+    description: 'Patient ID',
+  })
+  @IsString({ message: 'Patient ID must be a string' })
+  patientId!: string;
+
+  @ApiProperty({
+    example: 'doctor-uuid-123',
+    description: 'Doctor ID',
+  })
+  @IsString({ message: 'Doctor ID must be a string' })
+  doctorId!: string;
+
+  @ApiProperty({
+    example: 'clinic-uuid-123',
+    description: 'Clinic ID',
+  })
+  @IsString({ message: 'Clinic ID must be a string' })
+  clinicId!: string;
+
+  @ApiProperty({
+    example: 'scheduled',
+    description: 'Video call status',
+    enum: VideoCallStatus,
+  })
+  @IsEnum(VideoCallStatus, {
+    message: 'Status must be a valid video call status',
+  })
+  status!: VideoCallStatus;
+
+  @ApiProperty({
+    example: 'https://video.example.com/room/appointment-123',
+    description: 'Meeting URL',
+  })
+  @IsUrl({}, { message: 'Meeting URL must be a valid URL' })
+  meetingUrl!: string;
+
+  @ApiProperty({
+    description: 'Call participants',
+    type: [String],
+  })
+  @IsArray({ message: 'Participants must be an array' })
+  @IsString({ each: true, message: 'Each participant must be a string' })
+  participants!: string[];
+
+  @ApiProperty({
+    description: 'Video call settings',
+    type: Object,
+  })
+  @IsObject({ message: 'Settings must be an object' })
+  settings!: {
+    maxParticipants: number;
+    recordingEnabled: boolean;
+    screenSharingEnabled: boolean;
+    chatEnabled: boolean;
+    waitingRoomEnabled: boolean;
+    autoRecord: boolean;
+  };
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T10:00:00.000Z',
+    description: 'Call start time',
+  })
+  @IsOptional()
+  startTime?: string;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T10:30:00.000Z',
+    description: 'Call end time',
+  })
+  @IsOptional()
+  endTime?: string;
+
+  @ApiPropertyOptional({
+    example: 1800,
+    description: 'Call duration in seconds',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Duration must be a number' })
+  duration?: number;
+}
+
+/**
+ * Data Transfer Object for video call history response
+ * @class VideoCallHistoryResponseDto
+ */
+export class VideoCallHistoryResponseDto {
+  @ApiProperty({
+    example: 'user-uuid-123',
+    description: 'User ID for the history',
+  })
+  @IsString({ message: 'User ID must be a string' })
+  userId!: string;
+
+  @ApiPropertyOptional({
+    example: 'clinic-uuid-123',
+    description: 'Clinic ID (if filtered)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Clinic ID must be a string' })
+  clinicId?: string;
+
+  @ApiProperty({
+    description: 'List of video calls',
+    type: [VideoCallResponseDto],
+  })
+  @IsArray({ message: 'Calls must be an array' })
+  calls!: VideoCallResponseDto[];
+
+  @ApiProperty({
+    example: 25,
+    description: 'Total number of calls',
+  })
+  @IsNumber({}, { message: 'Total must be a number' })
+  total!: number;
+
+  @ApiProperty({
+    example: '2024-01-15T12:00:00.000Z',
+    description: 'Timestamp when history was retrieved',
+  })
+  @IsString({ message: 'Retrieved at must be a string' })
+  retrievedAt!: string;
 }
 
 /**
@@ -400,103 +626,300 @@ export class VideoConsultationSessionDto {
 }
 
 /**
- * Data Transfer Object for video call response
- * @class VideoCallResponseDto
+ * Data Transfer Object for starting OpenVidu recording
+ * @class StartRecordingDto
  */
-export class VideoCallResponseDto {
-  @ApiProperty({
-    example: 'vc-appointment-123-1234567890',
-    description: 'Video call ID',
-  })
-  @IsString({ message: 'Call ID must be a string' })
-  id!: string;
-
+export class StartRecordingDto {
   @ApiProperty({
     example: 'appointment-uuid-123',
-    description: 'Appointment ID',
+    description: 'Appointment ID for the video consultation',
   })
-  @IsString({ message: 'Appointment ID must be a string' })
+  @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'Appointment ID is required' })
+  appointmentId!: string;
+
+  @ApiPropertyOptional({
+    example: 'COMPOSED',
+    description: 'Recording output mode',
+    enum: ['COMPOSED', 'INDIVIDUAL'],
+  })
+  @IsOptional()
+  @IsEnum(['COMPOSED', 'INDIVIDUAL'], {
+    message: 'Output mode must be either "COMPOSED" or "INDIVIDUAL"',
+  })
+  outputMode?: 'COMPOSED' | 'INDIVIDUAL';
+
+  @ApiPropertyOptional({
+    example: '1280x720',
+    description: 'Recording resolution',
+  })
+  @IsOptional()
+  @IsString({ message: 'Resolution must be a string' })
+  resolution?: string;
+
+  @ApiPropertyOptional({
+    example: 30,
+    description: 'Recording frame rate',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Frame rate must be a number' })
+  @Min(1, { message: 'Frame rate must be at least 1' })
+  @Max(60, { message: 'Frame rate must be at most 60' })
+  frameRate?: number;
+
+  @ApiPropertyOptional({
+    example: 'custom-layout-id',
+    description: 'Custom layout ID for recording',
+  })
+  @IsOptional()
+  @IsString({ message: 'Custom layout ID must be a string' })
+  customLayout?: string;
+}
+
+/**
+ * Data Transfer Object for stopping OpenVidu recording
+ * @class StopRecordingDto
+ */
+export class StopRecordingDto {
+  @ApiProperty({
+    example: 'appointment-uuid-123',
+    description: 'Appointment ID for the video consultation',
+  })
+  @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
 
   @ApiProperty({
-    example: 'patient-uuid-123',
-    description: 'Patient ID',
+    example: 'recording-id-123',
+    description: 'Recording ID to stop',
   })
-  @IsString({ message: 'Patient ID must be a string' })
-  patientId!: string;
+  @IsString({ message: 'Recording ID must be a string' })
+  @IsNotEmpty({ message: 'Recording ID is required' })
+  recordingId!: string;
+}
+
+/**
+ * Data Transfer Object for participant management
+ * @class ManageParticipantDto
+ */
+export class ManageParticipantDto {
+  @ApiProperty({
+    example: 'appointment-uuid-123',
+    description: 'Appointment ID for the video consultation',
+  })
+  @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'Appointment ID is required' })
+  appointmentId!: string;
 
   @ApiProperty({
-    example: 'doctor-uuid-123',
-    description: 'Doctor ID',
+    example: 'connection-id-123',
+    description: 'OpenVidu connection ID of the participant',
   })
-  @IsString({ message: 'Doctor ID must be a string' })
-  doctorId!: string;
+  @IsString({ message: 'Connection ID must be a string' })
+  @IsNotEmpty({ message: 'Connection ID is required' })
+  connectionId!: string;
 
   @ApiProperty({
-    example: 'clinic-uuid-123',
-    description: 'Clinic ID',
+    example: 'kick',
+    description: 'Action to perform on participant',
+    enum: ['kick', 'mute', 'unmute', 'forceUnpublish'],
   })
-  @IsString({ message: 'Clinic ID must be a string' })
-  clinicId!: string;
+  @IsEnum(['kick', 'mute', 'unmute', 'forceUnpublish'], {
+    message: 'Action must be one of: kick, mute, unmute, forceUnpublish',
+  })
+  @IsNotEmpty({ message: 'Action is required' })
+  action!: 'kick' | 'mute' | 'unmute' | 'forceUnpublish';
+}
+
+/**
+ * Data Transfer Object for getting session analytics
+ * @class GetSessionAnalyticsDto
+ */
+export class GetSessionAnalyticsDto {
+  @ApiProperty({
+    example: 'appointment-uuid-123',
+    description: 'Appointment ID for the video consultation',
+  })
+  @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'Appointment ID is required' })
+  appointmentId!: string;
+}
+
+/**
+ * Response DTO for OpenVidu recording
+ * @class RecordingResponseDto
+ */
+export class RecordingResponseDto {
+  @ApiProperty({
+    example: 'recording-id-123',
+    description: 'Recording ID',
+  })
+  recordingId!: string;
 
   @ApiProperty({
-    example: 'scheduled',
-    description: 'Video call status',
-    enum: VideoCallStatus,
+    example: 'https://video.example.com/recordings/recording-id-123.mp4',
+    description: 'Recording URL',
   })
-  @IsEnum(VideoCallStatus, {
-    message: 'Status must be a valid video call status',
-  })
-  status!: VideoCallStatus;
+  url!: string;
 
   @ApiProperty({
-    example: 'https://video.example.com/room/appointment-123',
-    description: 'Meeting URL',
+    example: 3600,
+    description: 'Recording duration in seconds',
   })
-  @IsUrl({}, { message: 'Meeting URL must be a valid URL' })
-  meetingUrl!: string;
+  duration!: number;
 
   @ApiProperty({
-    description: 'Call participants',
-    type: [String],
+    example: 104857600,
+    description: 'Recording size in bytes',
   })
-  @IsArray({ message: 'Participants must be an array' })
-  @IsString({ each: true, message: 'Each participant must be a string' })
-  participants!: string[];
+  size!: number;
 
   @ApiProperty({
-    description: 'Video call settings',
-    type: Object,
+    example: 'ready',
+    description: 'Recording status',
+    enum: ['starting', 'started', 'stopped', 'ready', 'failed'],
   })
-  @IsObject({ message: 'Settings must be an object' })
-  settings!: {
-    maxParticipants: number;
-    recordingEnabled: boolean;
-    screenSharingEnabled: boolean;
-    chatEnabled: boolean;
-    waitingRoomEnabled: boolean;
-    autoRecord: boolean;
-  };
+  status!: 'starting' | 'started' | 'stopped' | 'ready' | 'failed';
 
-  @ApiPropertyOptional({
-    example: '2024-01-15T10:00:00.000Z',
-    description: 'Call start time',
+  @ApiProperty({
+    example: '2025-12-11T10:00:00Z',
+    description: 'Recording creation timestamp',
   })
-  @IsOptional()
-  startTime?: string;
+  createdAt!: string;
+}
 
-  @ApiPropertyOptional({
-    example: '2024-01-15T10:30:00.000Z',
-    description: 'Call end time',
+/**
+ * Response DTO for OpenVidu session analytics
+ * @class SessionAnalyticsResponseDto
+ */
+export class SessionAnalyticsResponseDto {
+  @ApiProperty({
+    example: 'session-id-123',
+    description: 'Session ID',
   })
-  @IsOptional()
-  endTime?: string;
+  sessionId!: string;
 
-  @ApiPropertyOptional({
-    example: 1800,
-    description: 'Call duration in seconds',
+  @ApiProperty({
+    example: 3600,
+    description: 'Session duration in seconds',
   })
-  @IsOptional()
-  @IsNumber({}, { message: 'Duration must be a number' })
-  duration?: number;
+  duration!: number;
+
+  @ApiProperty({
+    example: 2,
+    description: 'Number of participants',
+  })
+  numberOfParticipants!: number;
+
+  @ApiProperty({
+    example: 2,
+    description: 'Number of connections',
+  })
+  numberOfConnections!: number;
+
+  @ApiProperty({
+    example: 1,
+    description: 'Number of recordings',
+  })
+  recordingCount!: number;
+
+  @ApiProperty({
+    example: 3600,
+    description: 'Total recording duration in seconds',
+  })
+  recordingTotalDuration!: number;
+
+  @ApiProperty({
+    example: 104857600,
+    description: 'Total recording size in bytes',
+  })
+  recordingTotalSize!: number;
+
+  @ApiProperty({
+    description: 'Connection details',
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        connectionId: { type: 'string' },
+        duration: { type: 'number' },
+        location: { type: 'string' },
+        platform: { type: 'string' },
+        publishers: { type: 'number' },
+        subscribers: { type: 'number' },
+      },
+    },
+  })
+  connections!: Array<{
+    connectionId: string;
+    duration: number;
+    location?: string;
+    platform?: string;
+    publishers: number;
+    subscribers: number;
+  }>;
+}
+
+/**
+ * Response DTO for OpenVidu participant list
+ * @class ParticipantListResponseDto
+ */
+export class ParticipantListResponseDto {
+  @ApiProperty({
+    example: 2,
+    description: 'Number of participants',
+  })
+  count!: number;
+
+  @ApiProperty({
+    description: 'List of participants',
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        id: { type: 'string' },
+        connectionId: { type: 'string' },
+        role: { type: 'string', enum: ['PUBLISHER', 'SUBSCRIBER', 'MODERATOR'] },
+        location: { type: 'string' },
+        platform: { type: 'string' },
+        streams: { type: 'array' },
+      },
+    },
+  })
+  participants!: Array<{
+    id: string;
+    connectionId: string;
+    role: 'PUBLISHER' | 'SUBSCRIBER' | 'MODERATOR';
+    location?: string;
+    platform?: string;
+    streams: Array<{
+      streamId: string;
+      hasAudio: boolean;
+      hasVideo: boolean;
+      audioActive: boolean;
+      videoActive: boolean;
+      typeOfVideo: 'CAMERA' | 'SCREEN';
+    }>;
+  }>;
+}
+
+/**
+ * Response DTO for OpenVidu recording list
+ * @class RecordingListResponseDto
+ */
+export class RecordingListResponseDto {
+  @ApiProperty({
+    example: 5,
+    description: 'Number of recordings',
+  })
+  count!: number;
+
+  @ApiProperty({
+    description: 'List of recordings',
+    type: 'array',
+    items: {
+      type: 'object',
+    },
+  })
+  recordings!: Array<RecordingResponseDto>;
 }

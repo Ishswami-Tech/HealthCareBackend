@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@config';
 import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
@@ -22,6 +23,7 @@ import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config
 @Module({
   imports: [
     ConfigModule,
+    HttpModule, // HTTP client for WhatsApp API calls
     LoggingModule,
     DatabaseModule, // Optional: For message delivery logging/audit trails
   ],

@@ -1,18 +1,32 @@
 import { Controller, Get, Res, Inject } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
 import { ConfigService } from '@config';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
 import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
+import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
+import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
+import { QueueHealthIndicator } from './health-indicators/queue-health.indicator';
+import { LoggingHealthIndicator } from './health-indicators/logging-health.indicator';
+import { CommunicationHealthIndicator } from './health-indicators/communication-health.indicator';
+import { VideoHealthIndicator } from './health-indicators/video-health.indicator';
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(
     private readonly healthService: HealthService,
-    @Inject(ConfigService) private readonly configService: ConfigService
+    @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly health: HealthCheckService,
+    private readonly databaseHealthIndicator: DatabaseHealthIndicator,
+    private readonly cacheHealthIndicator: CacheHealthIndicator,
+    private readonly queueHealthIndicator: QueueHealthIndicator,
+    private readonly loggingHealthIndicator: LoggingHealthIndicator,
+    private readonly communicationHealthIndicator: CommunicationHealthIndicator,
+    private readonly videoHealthIndicator: VideoHealthIndicator
   ) {
     // Defensive check: ensure healthService is injected
     // Note: This check is performed at construction time before LoggingService is available
@@ -23,20 +37,21 @@ export class HealthController {
   }
 
   /**
-   * Basic Health Check Endpoint
+   * Basic Health Check Endpoint using @nestjs/terminus
    *
-   * Returns real-time health status of core services.
+   * Returns real-time health status of core services using Terminus health indicators.
    * Always performs fresh health checks for accurate status.
    * Uses robust database health check with dedicated connection pool.
    * Perfect for load balancers, monitoring tools, and real-time status checks.
    */
   @Get()
+  @HealthCheck()
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
   @ApiOperation({
-    summary: 'Get real-time health status of core services',
+    summary: 'Get real-time health status of core services using Terminus',
     description:
-      "Real-time health check with fresh status. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool (won't exhaust main pool). Perfect for load balancers and monitoring.",
+      "Real-time health check with fresh status using @nestjs/terminus. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool (won't exhaust main pool). Perfect for load balancers and monitoring.",
   })
   @ApiResponse({
     status: 200,
@@ -248,14 +263,19 @@ export class HealthController {
       },
     },
   })
-  async getHealth(@Res() res: FastifyReply): Promise<void> {
+  async getHealth(@Res() res: FastifyReply) {
     try {
-      // Ensure healthService is available
-      if (!this.healthService) {
-        throw new Error('HealthService is not available');
-      }
-      const health = await this.healthService.getHealth();
-      return res.status(200).send(health);
+      // Use Terminus health checks
+      const healthCheckResult = await this.health.check([
+        () => this.databaseHealthIndicator.check('database'),
+        () => this.cacheHealthIndicator.check('cache'),
+        () => this.queueHealthIndicator.check('queue'),
+        () => this.loggingHealthIndicator.check('logging'),
+        () => this.communicationHealthIndicator.check('communication'),
+        () => this.videoHealthIndicator.check('video'),
+      ]);
+
+      return res.status(200).send(healthCheckResult);
     } catch (_error) {
       // Fallback: return degraded status if health check fails
       // IMPORTANT: If we can return this response, the API is healthy!

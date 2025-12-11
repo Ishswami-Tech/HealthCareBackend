@@ -219,3 +219,9 @@ export type { RedisPrefixKey, RedisPrefixValue, EnvVarName } from '@config/const
 
 // Framework Types (consolidated: includes framework wrapper types and adapter interfaces)
 export * from './framework.types';
+
+// Video Types (centralized video provider types)
+export * from './video.types';
+
+// HTTP Types (HTTP service types for @nestjs/axios)
+export * from './http.types';

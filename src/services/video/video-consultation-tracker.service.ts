@@ -1,4 +1,5 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
+import { ConfigService } from '@config';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -74,6 +75,7 @@ export class VideoConsultationTracker {
   private readonly HEARTBEAT_INTERVAL = 30000; // 30 seconds
   private readonly CONNECTION_TIMEOUT = 60000; // 1 minute
   private typedEventService?: IEventService;
+  private readonly webhookEnabled: boolean;
 
   constructor(
     @Inject(forwardRef(() => EventService))
@@ -81,13 +83,27 @@ export class VideoConsultationTracker {
     private readonly socketService: SocketService,
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService?: ConfigService
   ) {
     // Type guard ensures type safety when using the service
     if (!isEventService(this.eventService)) {
       throw new Error('EventService is not available or invalid');
     }
     this.typedEventService = this.eventService;
+
+    // Check if webhooks are enabled (optimized architecture)
+    if (this.configService) {
+      const videoConfig = this.configService.get<{ openvidu?: { webhookEnabled?: boolean } }>(
+        'video'
+      );
+      this.webhookEnabled = videoConfig?.openvidu?.webhookEnabled === true;
+    } else {
+      this.webhookEnabled = false;
+    }
+
     this.initializeEventListeners();
     this.startHeartbeatMonitoring();
   }
@@ -445,11 +461,14 @@ export class VideoConsultationTracker {
       // Save updated metrics
       await this.saveConsultationMetrics(appointmentId, metrics);
 
-      // Emit real-time update
+      // Emit real-time update via Socket.IO
+      // Note: If webhooks are enabled, OpenVidu webhook events will also trigger updates
+      // This provides redundancy and handles cases where webhooks might be delayed
       this.socketService.sendToRoom(`consultation_${appointmentId}`, 'connection_quality_update', {
         userId,
         quality,
         timestamp: new Date().toISOString(),
+        source: this.webhookEnabled ? 'hybrid' : 'socket-only', // Indicate source for debugging
       });
     } catch (_error) {
       await this.loggingService.log(
@@ -636,6 +655,9 @@ export class VideoConsultationTracker {
 
   /**
    * Emit consultation event
+   *
+   * Note: If webhooks are enabled, OpenVidu webhook events will also trigger updates.
+   * This method provides redundancy and handles application-level events that webhooks don't cover.
    */
   private async emitConsultationEvent(event: ConsultationEvent): Promise<void> {
     try {
@@ -647,8 +669,11 @@ export class VideoConsultationTracker {
         userRole: event.userRole,
         timestamp: event.timestamp.toISOString(),
         data: (event.data || {}) as Record<string, string | number | boolean | null>,
+        source: this.webhookEnabled ? 'hybrid' : 'socket-only', // Indicate source for debugging
       };
       // Emit to WebSocket room
+      // Note: If webhooks are enabled, some events may come from both webhooks and this method
+      // This is intentional for redundancy and handling events webhooks don't cover
       this.socketService.sendToRoom(
         `consultation_${event.appointmentId}`,
         'consultation_event',

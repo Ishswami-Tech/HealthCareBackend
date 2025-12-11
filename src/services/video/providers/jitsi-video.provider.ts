@@ -20,6 +20,7 @@ import type {
   VideoTokenResponse,
   VideoConsultationSession,
 } from '@core/types/video.types';
+import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
 
@@ -163,27 +164,15 @@ export class JitsiVideoProvider implements IVideoProvider {
       const meetingUrl = `${jitsiConfig.baseUrl}/${roomName}`;
       const token = this.generateJitsiToken(userId, userRole, userInfo, roomName);
 
-      // Create or update VideoConsultation in database
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const existing = await (
-            client as unknown as {
-              videoConsultation: {
-                findUnique: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.findUnique({
+          const delegate = getVideoConsultationDelegate(client);
+          const existing = await delegate.findUnique({
             where: { appointmentId },
           });
 
           if (!existing) {
-            await (
-              client as unknown as {
-                videoConsultation: {
-                  create: <T>(args: T) => Promise<unknown>;
-                };
-              }
-            ).videoConsultation.create({
+            await delegate.create({
               data: {
                 appointmentId,
                 patientId: appointment.patientId,
@@ -265,14 +254,23 @@ export class JitsiVideoProvider implements IVideoProvider {
 
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          // Find consultation by appointmentId to get its id
+          const consultation = await delegate.findUnique({
             where: { appointmentId },
+          });
+          if (!consultation) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_RECORD_NOT_FOUND,
+              `Video consultation not found for appointment ${appointmentId}`,
+              undefined,
+              { appointmentId },
+              'JitsiVideoProvider.startConsultation'
+            );
+          }
+          // Update using id
+          return await delegate.update({
+            where: { id: consultation.id },
             data: {
               status: 'ACTIVE',
               startTime: new Date(),
@@ -330,13 +328,8 @@ export class JitsiVideoProvider implements IVideoProvider {
 
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await (
-            client as unknown as {
-              videoConsultation: {
-                update: <T>(args: T) => Promise<unknown>;
-              };
-            }
-          ).videoConsultation.update({
+          const delegate = getVideoConsultationDelegate(client);
+          return await delegate.update({
             where: { appointmentId },
             data: {
               status: 'ENDED',
@@ -379,15 +372,14 @@ export class JitsiVideoProvider implements IVideoProvider {
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
     try {
       const consultation = await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            videoConsultation: {
-              findUnique: <T>(args: T) => Promise<unknown>;
-            };
-          }
-        ).videoConsultation.findUnique({
-          where: { appointmentId },
-          include: { participants: true },
+        const delegate = getVideoConsultationDelegate(client);
+        return await delegate.findFirst({
+          where: {
+            OR: [{ appointmentId }],
+          },
+          include: {
+            participants: true,
+          },
         });
       });
 
