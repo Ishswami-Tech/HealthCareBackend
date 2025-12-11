@@ -32,8 +32,8 @@ import { JitsiVideoProvider } from './providers/jitsi-video.provider';
 // Webhook handlers (optimized architecture)
 import { OpenViduWebhookController } from './webhooks/openvidu-webhook.controller';
 import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
-// Health indicators - all from central HealthModule
-import { VideoHealthIndicator } from '@services/health/health-indicators';
+// Note: VideoHealthIndicator is provided by HealthModule (imported above)
+// It's exported from HealthModule and available for injection in controllers
 
 @Module({
   imports: [

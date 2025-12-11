@@ -2754,9 +2754,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
             try {
               // Type assertion needed for strict TypeScript mode
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
               const httpServiceCheck = this.httpService;
-              // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
               if (isHttpServiceAvailable(httpServiceCheck)) {
                 const httpService = httpServiceCheck;
                 await Promise.race([
@@ -2841,9 +2841,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           try {
             // Type assertion needed for strict TypeScript mode
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
             const httpServiceCheck = this.httpService;
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
             if (isHttpServiceAvailable(httpServiceCheck)) {
               const httpService = httpServiceCheck;
               const httpCheck = await Promise.race([
@@ -2905,9 +2905,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         try {
           // Type assertion needed for strict TypeScript mode
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
           const httpServiceCheck = this.httpService;
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
           if (isHttpServiceAvailable(httpServiceCheck)) {
             const httpService = httpServiceCheck;
             const httpCheck = await Promise.race([
@@ -3057,9 +3057,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     const startTime = performance.now();
     try {
       // Type assertion needed for strict TypeScript mode
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       const httpServiceCheck = this.httpService;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       if (!isHttpServiceAvailable(httpServiceCheck)) {
         throw new Error('HttpService is not available for external service check');
       }
@@ -3142,9 +3142,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
       // Type assertion needed for strict TypeScript mode
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+
       const httpServiceCheck = this.httpService;
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+
       if (!isHttpServiceAvailable(httpServiceCheck)) {
         throw new Error('HttpService is not available for internal endpoint check');
       }

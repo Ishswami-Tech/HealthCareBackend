@@ -329,8 +329,21 @@ export class JitsiVideoProvider implements IVideoProvider {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const delegate = getVideoConsultationDelegate(client);
-          return await delegate.update({
+          // Find consultation by appointmentId to get its id
+          const consultation = await delegate.findUnique({
             where: { appointmentId },
+          });
+          if (!consultation) {
+            throw new HealthcareError(
+              ErrorCode.DATABASE_RECORD_NOT_FOUND,
+              `Consultation session not found for appointment ${appointmentId}`,
+              undefined,
+              { appointmentId },
+              'JitsiVideoProvider.endConsultation'
+            );
+          }
+          return await delegate.update({
+            where: { id: consultation.id },
             data: {
               status: 'ENDED',
               endTime: new Date(),
