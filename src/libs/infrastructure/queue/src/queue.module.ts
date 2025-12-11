@@ -1,6 +1,9 @@
 import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService, isCacheEnabled } from '@config';
+// Import helper functions for environment variable access in static factory
+// Use top-level import for strict TypeScript compliance (no require())
+import { getEnvWithDefault } from '../../../../config/environment/utils';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -79,13 +82,7 @@ export class QueueModule {
     }
 
     // Filter queues based on service type to prevent conflicts
-    // Use helper functions (which use dotenv) for environment variable access
-    // These mimic ConfigService methods but work in static module factories
-    // Use relative path instead of path alias for runtime require() compatibility
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getEnvWithDefault } = require('../../../../config/environment/utils') as {
-      getEnvWithDefault: (key: string, defaultValue: string) => string;
-    };
+    // Helper function is imported at top-level for strict TypeScript compliance
     const serviceName = getEnvWithDefault('SERVICE_NAME', 'clinic');
 
     // Define service-specific queues with domain prefixes

@@ -1,96 +1,61 @@
 # Dependencies
 node_modules
 npm-debug.log
+pnpm-debug.log
 yarn-error.log
-pnpm-debug.log*
 
 # Build outputs
 dist
 build
-.next
-out
+*.tsbuildinfo
 
 # Environment files
 .env
 .env.local
-.env*.local
-.env.development
-.env.test
-.env.production
+.env.*.local
+*.env
 
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Testing
 coverage
 .nyc_output
 *.test.ts
 *.spec.ts
-test
-tests
-__tests__
-jest.config.js
 
-# IDE
-.idea
-.vscode
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
+# Documentation (optional - uncomment if you want to exclude)
+# docs
 
 # Git
 .git
 .gitignore
-.gitattributes
-.github
 
 # CI/CD
 .github
-.gitlab-ci.yml
-.travis.yml
-circle.yml
 
-# Documentation
-*.md
-!README.md
-docs
-documentation
-
-# Docker
-.dockerignore
-Dockerfile*
-docker-compose*.yml
-
-# DevOps
-devops
-scripts
-backups
+# Logs
+logs
+*.log
 
 # Temporary files
-*.tmp
-*.temp
-.cache
-.temp
 tmp
+temp
+*.tmp
 
-# Package manager lock files (keep only pnpm)
-package-lock.json
-yarn.lock
-.yarnrc.yml
-.npmrc
+# Prisma generated (will be regenerated in container)
+# Note: Keep schema.prisma, exclude only generated files
+**/prisma/generated
 
-# Prisma
-prisma/migrations
-*.db
-*.db-journal
-
-# Other
-.claude
-.ai-rules
+# CRITICAL: .swcrc and nest-cli.json MUST be included for SWC compiler to work
+# These files are NOT excluded and will be copied to Docker images
+# Required for all environments: Windows, Linux (Docker), macOS, Kubernetes
+# The explicit configFile path in nest-cli.json ensures cross-platform compatibility
