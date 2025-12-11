@@ -32,17 +32,11 @@ export function isHttpServiceAvailable(
  * @param service - The HttpService instance (may be undefined)
  * @returns True if the service is available and has all required methods
  */
-export function hasHttpServiceMethods(
-  service: HttpService | undefined
-): service is HttpService & {
-  get: <T = unknown>(
-    url: string,
-    config?: AxiosRequestConfig
-  ) => Observable<AxiosResponse<T>>;
+export function hasHttpServiceMethods(service: HttpService | undefined): service is HttpService & {
+  get: <T = unknown>(url: string, config?: AxiosRequestConfig) => Observable<AxiosResponse<T>>;
 } {
   return (
-    isHttpServiceAvailable(service) &&
-    typeof (service as { get?: unknown }).get === 'function'
+    isHttpServiceAvailable(service) && typeof (service as { get?: unknown }).get === 'function'
   );
 }
 
@@ -92,19 +86,14 @@ export interface SafeHttpService {
  * @param service - HttpService instance (may be undefined)
  * @returns SafeHttpService if available, null otherwise
  */
-export function createSafeHttpService(
-  service: HttpService | undefined
-): SafeHttpService | null {
+export function createSafeHttpService(service: HttpService | undefined): SafeHttpService | null {
   if (!isHttpServiceAvailable(service)) {
     return null;
   }
 
   return {
     service,
-    get: <T = unknown>(
-      url: string,
-      config?: AxiosRequestConfig
-    ): Observable<AxiosResponse<T>> => {
+    get: <T = unknown>(url: string, config?: AxiosRequestConfig): Observable<AxiosResponse<T>> => {
       return service.get<T>(url, config);
     },
   };
@@ -143,6 +132,5 @@ export function getHttpService(
     throw new Error(errorMessage);
   }
   // TypeScript should narrow the type here, but we add explicit assertion for strict mode
-  return service as HttpService;
+  return service;
 }
-

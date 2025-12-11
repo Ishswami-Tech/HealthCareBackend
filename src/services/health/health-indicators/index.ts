@@ -9,4 +9,3 @@ export { QueueHealthIndicator } from './queue-health.indicator';
 export { LoggingHealthIndicator } from './logging-health.indicator';
 export { CommunicationHealthIndicator } from './communication-health.indicator';
 export { VideoHealthIndicator } from './video-health.indicator';
-

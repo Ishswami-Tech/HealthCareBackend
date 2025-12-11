@@ -883,23 +883,48 @@ export class OpenViduVideoProvider implements IVideoProvider {
         duration: Math.floor((Date.now() - sessionInfo.createdAt) / 1000),
         numberOfParticipants: sessionInfo.connections.numberOfElements,
         numberOfConnections: sessionInfo.connections.numberOfElements,
-        connections: sessionInfo.connections.content.map(conn => ({
-          connectionId: conn.connectionId,
-          createdAt: conn.createdAt,
-          duration: Math.floor((Date.now() - conn.createdAt) / 1000),
-          location: conn.location ?? undefined,
-          platform: conn.platform ?? undefined,
-          clientData: conn.clientData ?? undefined,
-          serverData: conn.serverData ?? undefined,
-          publishers: conn.streams.filter(s => s.typeOfVideo === 'CAMERA').length,
-          subscribers: conn.streams.filter(s => s.typeOfVideo === 'SCREEN').length,
-        })),
+        connections: sessionInfo.connections.content.map(conn => {
+          const connection: {
+            connectionId: string;
+            createdAt: number;
+            duration: number;
+            location?: string;
+            platform?: string;
+            clientData?: string;
+            serverData?: string;
+            publishers: number;
+            subscribers: number;
+          } = {
+            connectionId: conn.connectionId,
+            createdAt: conn.createdAt,
+            duration: Math.floor((Date.now() - conn.createdAt) / 1000),
+            publishers: conn.streams.filter(s => s.typeOfVideo === 'CAMERA').length,
+            subscribers: conn.streams.filter(s => s.typeOfVideo === 'SCREEN').length,
+          };
+          // Only include optional properties if they have values (for exactOptionalPropertyTypes)
+          if (conn.location !== null && conn.location !== undefined) {
+            connection.location = conn.location;
+          }
+          if (conn.platform !== null && conn.platform !== undefined) {
+            connection.platform = conn.platform;
+          }
+          if (conn.clientData !== null && conn.clientData !== undefined) {
+            connection.clientData = conn.clientData;
+          }
+          if (conn.serverData !== null && conn.serverData !== undefined) {
+            connection.serverData = conn.serverData;
+          }
+          return connection;
+        }),
         recordingCount: sessionInfo.recordings.numberOfElements,
         recordingTotalDuration: sessionInfo.recordings.content.reduce(
           (sum, rec) => sum + (rec.duration || 0),
           0
         ),
-        recordingTotalSize: sessionInfo.recordings.content.reduce((sum, rec) => sum + (rec.size || 0), 0),
+        recordingTotalSize: sessionInfo.recordings.content.reduce(
+          (sum, rec) => sum + (rec.size || 0),
+          0
+        ),
       };
 
       return analytics;

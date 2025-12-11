@@ -10,9 +10,7 @@ import { LoggingHealthMonitorService } from '@infrastructure/logging/logging-hea
 
 @Injectable()
 export class LoggingHealthIndicator extends HealthIndicator {
-  constructor(
-    @Optional() private readonly loggingHealthMonitor?: LoggingHealthMonitorService
-  ) {
+  constructor(@Optional() private readonly loggingHealthMonitor?: LoggingHealthMonitorService) {
     super();
   }
 
