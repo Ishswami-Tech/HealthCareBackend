@@ -18,9 +18,16 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
+# Copy all source files including SWC configuration
+# .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
+# Explicitly verify SWC config files are present (cross-platform compatibility)
 COPY . .
+RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration files verified" || (echo "[ERROR] SWC config files missing!" && exit 1)
 
 RUN pnpm prisma:generate
+# Build using SWC compiler (configured in nest-cli.json with explicit configFile path)
+# Type checking runs in parallel with SWC compilation
+# Works on all platforms: Windows, Linux (Docker), macOS
 RUN pnpm build
 
 # Ensure Prisma schema is available in dist

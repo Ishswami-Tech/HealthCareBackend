@@ -9,6 +9,8 @@
 import { defineConfig } from 'prisma/config';
 // Use relative path instead of path alias - Prisma config loader doesn't resolve TypeScript path aliases
 import { getEnv, isDockerEnvironment } from '../../../../config/environment/utils';
+// Import dotenv for local development (strict TypeScript compliance - no require())
+import * as dotenv from 'dotenv';
 
 /**
  * Load environment variables with proper precedence:
@@ -25,8 +27,7 @@ function loadEnvWithPrecedence(): void {
   if (!isDocker) {
     // Load .env file for local development (outside Docker)
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require('dotenv/config');
+      dotenv.config();
     } catch {
       // dotenv not available, that's fine
     }

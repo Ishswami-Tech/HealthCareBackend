@@ -5,6 +5,10 @@
  * ===================================================================
  */
 
+// Import helper functions for environment variable access
+// Use top-level import for strict TypeScript compliance (no require())
+import { getEnvironment, getEnvWithDefault } from '../../../config/environment/utils';
+
 export enum LogLevel {
   ERROR = 'ERROR',
   WARN = 'WARN',
@@ -327,14 +331,7 @@ export function createLogData(
   context: string,
   metadata: Record<string, unknown> = {}
 ): LogEntry {
-  // Import helper functions that use dotenv (already loaded)
-  // Use dynamic import to avoid circular dependencies
-  // Use relative path instead of path alias for runtime require() compatibility
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { getEnvironment, getEnvWithDefault } = require('../../../config/environment/utils') as {
-    getEnvironment: () => string;
-    getEnvWithDefault: (key: string, defaultValue: string) => string;
-  };
+  // Helper functions are imported at top-level for strict TypeScript compliance
 
   return {
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 15)}`,
