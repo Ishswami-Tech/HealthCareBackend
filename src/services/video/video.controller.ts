@@ -1169,7 +1169,8 @@ export class VideoController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Video service health check',
-    description: 'Check the health status of the video service and providers using Terminus health checks.',
+    description:
+      'Check the health status of the video service and providers using Terminus health checks.',
   })
   @ApiResponse({
     status: HttpStatus.OK,

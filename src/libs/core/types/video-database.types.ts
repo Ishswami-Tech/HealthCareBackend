@@ -64,7 +64,9 @@ export interface VideoRecordingDbModel {
  * Prisma guarantees this delegate exists at runtime
  */
 export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
-  findUnique: (args: { where: { appointmentId: string } }) => Promise<VideoConsultationDbModel | null>;
+  findUnique: (args: {
+    where: { appointmentId: string };
+  }) => Promise<VideoConsultationDbModel | null>;
   findFirst: (args: {
     where: { OR: Array<{ roomId: string } | { appointmentId: string }> };
     include?: { participants: boolean };
@@ -93,30 +95,37 @@ export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
   ) {
     throw new Error('Prisma client does not have videoConsultation delegate');
   }
-  return (client as unknown as {
-    videoConsultation: {
-      findUnique: (args: { where: { appointmentId: string } }) => Promise<VideoConsultationDbModel | null>;
-      findFirst: (args: {
-        where: { OR: Array<{ roomId: string } | { appointmentId: string }> };
-        include?: { participants: boolean };
-      }) => Promise<VideoConsultationWithParticipants | null>;
-      findMany: (args: {
-        where?: {
-          clinicId?: string;
-          OR?: Array<
-            | { patientId: string }
-            | { doctorId: string }
-            | { participants: { some: { userId: string } } }
-          >;
-        };
-        include?: { participants: boolean };
-        orderBy?: { createdAt: 'desc' | 'asc' };
-        take?: number;
-      }) => Promise<VideoConsultationWithParticipants[]>;
-      create: (args: { data: unknown }) => Promise<VideoConsultationDbModel>;
-      update: (args: { where: { id: string }; data: unknown }) => Promise<VideoConsultationDbModel>;
-    };
-  }).videoConsultation;
+  return (
+    client as unknown as {
+      videoConsultation: {
+        findUnique: (args: {
+          where: { appointmentId: string };
+        }) => Promise<VideoConsultationDbModel | null>;
+        findFirst: (args: {
+          where: { OR: Array<{ roomId: string } | { appointmentId: string }> };
+          include?: { participants: boolean };
+        }) => Promise<VideoConsultationWithParticipants | null>;
+        findMany: (args: {
+          where?: {
+            clinicId?: string;
+            OR?: Array<
+              | { patientId: string }
+              | { doctorId: string }
+              | { participants: { some: { userId: string } } }
+            >;
+          };
+          include?: { participants: boolean };
+          orderBy?: { createdAt: 'desc' | 'asc' };
+          take?: number;
+        }) => Promise<VideoConsultationWithParticipants[]>;
+        create: (args: { data: unknown }) => Promise<VideoConsultationDbModel>;
+        update: (args: {
+          where: { id: string };
+          data: unknown;
+        }) => Promise<VideoConsultationDbModel>;
+      };
+    }
+  ).videoConsultation;
 }
 
 /**
@@ -139,14 +148,16 @@ export function getVideoRecordingDelegate(client: PrismaTransactionClient): {
   ) {
     throw new Error('Prisma client does not have videoRecording delegate');
   }
-  return (client as unknown as {
-    videoRecording: {
-      findFirst: (args: {
-        where: { consultationId: string; isProcessed: boolean };
-        orderBy?: { createdAt: 'desc' | 'asc' };
-      }) => Promise<VideoRecordingDbModel | null>;
-      create: (args: { data: unknown }) => Promise<VideoRecordingDbModel>;
-      update: (args: { where: { id: string }; data: unknown }) => Promise<VideoRecordingDbModel>;
-    };
-  }).videoRecording;
+  return (
+    client as unknown as {
+      videoRecording: {
+        findFirst: (args: {
+          where: { consultationId: string; isProcessed: boolean };
+          orderBy?: { createdAt: 'desc' | 'asc' };
+        }) => Promise<VideoRecordingDbModel | null>;
+        create: (args: { data: unknown }) => Promise<VideoRecordingDbModel>;
+        update: (args: { where: { id: string }; data: unknown }) => Promise<VideoRecordingDbModel>;
+      };
+    }
+  ).videoRecording;
 }
