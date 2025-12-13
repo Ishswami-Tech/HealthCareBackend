@@ -1,6 +1,6 @@
-import { Injectable, Logger, Inject } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { TokenPayload, AuthTokens } from '@core/types';
 import * as crypto from 'crypto';
@@ -22,7 +22,7 @@ export class JwtAuthService {
 
   constructor(
     private readonly jwtService: JwtService,
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly cacheService: CacheService
   ) {
     this.logger.log('🔐 Advanced JWT Service initializing for 100K+ users...');

@@ -188,7 +188,13 @@ export class QueryOptionsBuilder {
    * Build query options
    */
   build(): QueryOptions {
-    return { ...this.options } as QueryOptions;
+    // IMPORTANT:
+    // QueryOptionsBuilder is injected and shared across services.
+    // If we don't reset after build, options can leak between calls (stale where/include/select),
+    // causing incorrect caching keys and even incorrect query behavior.
+    const built = { ...this.options } as QueryOptions;
+    this.reset();
+    return built;
   }
 
   /**

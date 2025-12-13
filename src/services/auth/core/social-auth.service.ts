@@ -1,5 +1,5 @@
 import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailTemplate } from '@core/types/common.types';
@@ -14,7 +14,7 @@ export class SocialAuthService {
   private googleOAuthClient: OAuth2Client | null = null;
 
   constructor(
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly emailService: EmailService
   ) {

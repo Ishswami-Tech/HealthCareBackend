@@ -292,19 +292,23 @@ export class RbacGuard implements CanActivate {
   private async checkAppointmentOwnership(appointmentId: string, userId: string): Promise<boolean> {
     try {
       const appointment = await this.databaseService.executeHealthcareRead<{
-        patientId: string;
-        doctorId: string | null;
+        userId: string;
         clinicId: string;
+        patient: { userId: string } | null;
+        doctor: { userId: string } | null;
       } | null>(async client => {
         const result = await client.appointment.findUnique({
           where: { id: appointmentId },
           select: {
-            patientId: true,
-            doctorId: true,
+            userId: true,
             clinicId: true,
+            patient: { select: { userId: true } },
+            doctor: { select: { userId: true } },
           },
         });
-        return result as { patientId: string; doctorId: string | null; clinicId: string } | null;
+        return result as
+          | { userId: string; clinicId: string; patient: { userId: string } | null; doctor: { userId: string } | null }
+          | null;
       });
 
       if (!appointment) {
@@ -318,13 +322,16 @@ export class RbacGuard implements CanActivate {
         return false;
       }
 
-      // Patient owns appointment if they are the patient
-      if (appointment.patientId === userId) {
+      // Appointment ownership is based on authenticated User.id (not Patient.id / Doctor.id)
+      if (appointment.userId === userId) {
         return true;
       }
 
-      // Doctor owns appointment if they are the assigned doctor
-      if (appointment.doctorId === userId) {
+      if (appointment.patient?.userId === userId) {
+        return true;
+      }
+
+      if (appointment.doctor?.userId === userId) {
         return true;
       }
 

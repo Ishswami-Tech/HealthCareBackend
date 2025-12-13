@@ -18,8 +18,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Step 3: Test endpoints
-Write-Host "`n[3/3] Testing appointment endpoints..." -ForegroundColor Yellow
-node test-appointment-endpoints.js
+Write-Host "`n[3/3] Testing appointment endpoints (role-based)..." -ForegroundColor Yellow
+node test-scripts/appointments/test-all-appointments-sequential.js
 
 Write-Host "`n========================================" -ForegroundColor Green
 Write-Host "  Setup and Test Complete!" -ForegroundColor Green

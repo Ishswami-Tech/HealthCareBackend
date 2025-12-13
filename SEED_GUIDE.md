@@ -77,7 +77,7 @@ After seeding, a `test-ids.json` file is created in the project root with:
 
 ### Using Test IDs
 
-The test scripts (`test-auth-endpoints.js`, `test-appointment-endpoints.js`) automatically load this file:
+The test scripts in `test-scripts/` automatically load this file:
 
 ```javascript
 // Automatically loaded if test-ids.json exists
@@ -251,8 +251,12 @@ const clinic1 = await prisma.clinic.create({
 
 2. **Run tests** (automatically uses test-ids.json):
    ```bash
-   node test-auth-endpoints.js
-   node test-appointment-endpoints.js
+   # Test all services
+   node test-scripts/test-all-apis.js
+   
+   # Test specific services
+   node test-scripts/auth/test-all-auth-sequential.js
+   node test-scripts/appointments/test-all-appointments-sequential.js
    ```
 
 ### Manual Testing with Seed Data
