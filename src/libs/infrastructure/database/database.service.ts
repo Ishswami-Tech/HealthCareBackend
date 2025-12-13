@@ -366,13 +366,35 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     const operationName = 'READ_OPERATION';
     const queryOptions = options || {};
 
-    // Generate cache key if caching is enabled
+    // Generate cache key if caching is enabled.
+    // IMPORTANT: Cache keys MUST include query-defining params (where/include/select/pagination/etc).
+    // A coarse key (e.g., only operationName) causes collisions and returns the wrong entity.
+    const cacheParams: Record<string, unknown> = {
+      ...(queryOptions.clinicId ? { clinicId: queryOptions.clinicId } : {}),
+      ...(queryOptions.userId ? { userId: queryOptions.userId } : {}),
+      ...(queryOptions.where ? { where: queryOptions.where } : {}),
+      ...(queryOptions.select ? { select: queryOptions.select } : {}),
+      ...(queryOptions.include ? { include: queryOptions.include } : {}),
+      ...(queryOptions.orderBy ? { orderBy: queryOptions.orderBy } : {}),
+      ...(queryOptions.page !== undefined ? { page: queryOptions.page } : {}),
+      ...(queryOptions.limit !== undefined ? { limit: queryOptions.limit } : {}),
+      ...(queryOptions.cacheStrategy ? { cacheStrategy: queryOptions.cacheStrategy } : {}),
+      ...(queryOptions.hipaaCompliant !== undefined
+        ? { hipaaCompliant: queryOptions.hipaaCompliant }
+        : {}),
+    };
+
+    const hasDiscriminatingParams =
+      'where' in cacheParams ||
+      'select' in cacheParams ||
+      'include' in cacheParams ||
+      'orderBy' in cacheParams ||
+      'page' in cacheParams ||
+      'limit' in cacheParams;
+
     const cacheKey =
-      queryOptions.useCache !== false && this.queryCache
-        ? this.queryKeyFactory.fromOperation(operationName, {
-            clinicId: queryOptions.clinicId,
-            userId: queryOptions.userId,
-          })
+      queryOptions.useCache !== false && this.queryCache && hasDiscriminatingParams
+        ? this.queryKeyFactory.fromOperation(operationName, cacheParams)
         : null;
 
     // Check cache first (if enabled and not bypassed)

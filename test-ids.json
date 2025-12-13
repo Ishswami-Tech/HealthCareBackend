@@ -1,41 +1,41 @@
 {
   "clinics": [
-    "d54239eb-11f4-41fd-8316-5a55b88bd554",
-    "94b7f08d-c9d1-4009-a170-6a46782cdbc9"
+    "e3a44772-4f74-4636-a628-c9996b4fa149",
+    "31a12f37-6345-4257-9fa5-cd5ccec27940"
   ],
   "clinicNames": [
     "Aadesh Ayurvedalay",
     "Shri Vishwamurthi Ayurvedalay"
   ],
-  "demoDoctorId": "9b504ae3-30db-4806-8151-934164bb6628",
-  "demoPatientId": "f5f59038-5de6-4eb6-8743-6a83059a13dc",
-  "demoReceptionistId": "9ca9e4c0-bd59-41aa-9ee6-285c09d7d1fe",
-  "demoClinicAdminId": "44ac1b9a-a4cf-4bdc-aad1-dcc6d5edcf4f",
-  "superAdminId": "504042ec-255b-4bb2-a122-7f1b3473f2db",
+  "demoDoctorId": "20386a0e-6312-4156-b9b9-0455f6f4b81f",
+  "demoPatientId": "5d3cbf42-ec3f-4ee3-be21-35f75a65006e",
+  "demoReceptionistId": "715db479-a9d1-4da3-b83f-3bffbade07db",
+  "demoClinicAdminId": "ab25b9a3-6f71-4d20-9735-c65419a2569f",
+  "superAdminId": "12d7cadc-c550-478d-9ca6-75169e46e4c8",
   "doctors": [
-    "b0b02a9b-25a7-46dc-a1a7-466eba0a52cb",
-    "b9bb6935-34ea-412c-be70-95b81d4cf7f1",
-    "38582361-7221-45d7-891a-43a96d154f51",
-    "b10b5326-9b9f-4091-ae50-925fa5a78d75",
-    "051ec2ab-4131-485f-8406-213fa8327867"
+    "630f9876-aac6-43f8-88d8-fff421191d25",
+    "45142b99-d891-4ad9-880f-86503c1db47e",
+    "391c07e4-2267-4718-9b68-1f53f55910ea",
+    "d2699f97-74bb-4f59-92fc-d7eb6fed1aa4",
+    "4ee61e40-9f28-4afb-bee6-44e11bb1e9b8"
   ],
   "patients": [
-    "e6cd91b5-4fc9-4694-9923-79d6932433ca",
-    "584ba161-8444-4a40-aecb-2489ccfbdee6",
-    "2220672f-e1cb-473b-a754-93009f36fbb4",
-    "f1eb981d-d8cb-495f-9565-1d419f7deb0b",
-    "c3b1c72c-268b-4185-83a5-f471864f3b96"
+    "5f364293-ffcd-4bba-9444-01a9bc1b66d5",
+    "330bd7f5-8204-4634-90da-1ed52f6171e2",
+    "b4bd5918-a81f-4766-8b33-276e5b7077ef",
+    "2f390efc-90da-4c13-811c-c640519961f3",
+    "d9e5db10-55cc-4f71-840d-5ce273f2ffbd"
   ],
   "locations": {
     "clinic1": [
-      "38548862-a859-4073-9971-c1f3ad9e97ff",
-      "e70ac28d-44b5-47b3-b1ac-c5030735c512",
-      "934b8ed2-d400-4282-9314-6cefe3aef736"
+      "7647e25e-3a32-48cf-8ca6-3e843609c4b9",
+      "375cf879-c477-46ec-a09e-431d3fec88bd",
+      "27a1dd49-7554-4b0c-b4f3-fcd0a65a8620"
     ],
     "clinic2": [
-      "873adece-d526-41b1-8563-b922e12593d3",
-      "86764b38-1a1f-468c-9106-d2917de86ee7",
-      "e899aa01-4ad2-4d71-89a7-06abaeec71a8"
+      "ca872c6e-3566-4fc8-ada7-af003381653c",
+      "32352973-b688-4402-9e13-053509911b4d",
+      "27e802d5-9610-4456-98ca-7a5ab3380f49"
     ]
   }
 }

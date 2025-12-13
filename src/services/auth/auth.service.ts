@@ -1,6 +1,6 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
@@ -37,7 +37,7 @@ export class AuthService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly jwtService: JwtService,
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly logging: LoggingService,
     private readonly eventService: EventService,

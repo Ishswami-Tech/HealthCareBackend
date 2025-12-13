@@ -1,5 +1,5 @@
 // External imports
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Inject } from '@nestjs/common';
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Optional } from '@nestjs/common';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 import { Observable } from 'rxjs';
@@ -43,7 +43,7 @@ export class LoggingInterceptor implements NestInterceptor {
 
   constructor(
     private readonly loggingService: LoggingService,
-    @Inject(ConfigService) private readonly configService: ConfigService
+    @Optional() private readonly configService?: ConfigService
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -60,7 +60,8 @@ export class LoggingInterceptor implements NestInterceptor {
 
     // Log the incoming request (only in non-production)
     // Use ConfigService (which uses dotenv) for environment variable access
-    if (!this.configService.isProduction()) {
+    // If ConfigService is unavailable (edge case during bootstrap/cycles), default to production-safe behavior.
+    if (!(this.configService?.isProduction() ?? true)) {
       void this.loggingService.log(LogType.REQUEST, LogLevel.INFO, `${method} ${url}`, 'API', {
         method,
         url,

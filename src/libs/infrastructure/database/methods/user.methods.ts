@@ -12,6 +12,21 @@ import type { UserCreateInput, UserUpdateInput, UserWhereInput } from '@core/typ
  * All methods use executeRead/Write for full optimization layers
  */
 export class UserMethods extends DatabaseMethodsBase {
+  private readonly userInclude = {
+    doctor: true,
+    patient: true,
+    receptionists: true,
+    clinicAdmins: true,
+    superAdmin: true,
+    pharmacist: true,
+    therapist: true,
+    labTechnician: true,
+    financeBilling: true,
+    supportStaff: true,
+    nurse: true,
+    counselor: true,
+  } as const;
+
   /**
    * Find user by ID with full relations
    */
@@ -19,22 +34,9 @@ export class UserMethods extends DatabaseMethodsBase {
     return await this.executeRead<UserWithRelations | null>(async prisma => {
       return await prisma.user.findUnique({
         where: { id },
-        include: {
-          doctor: true,
-          patient: true,
-          receptionists: true,
-          clinicAdmins: true,
-          superAdmin: true,
-          pharmacist: true,
-          therapist: true,
-          labTechnician: true,
-          financeBilling: true,
-          supportStaff: true,
-          nurse: true,
-          counselor: true,
-        },
+        include: this.userInclude,
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where({ id }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
   }
 
   /**
@@ -44,22 +46,9 @@ export class UserMethods extends DatabaseMethodsBase {
     return await this.executeRead<UserWithRelations | null>(async prisma => {
       return await prisma.user.findUnique({
         where: { email },
-        include: {
-          doctor: true,
-          patient: true,
-          receptionists: true,
-          clinicAdmins: true,
-          superAdmin: true,
-          pharmacist: true,
-          therapist: true,
-          labTechnician: true,
-          financeBilling: true,
-          supportStaff: true,
-          nurse: true,
-          counselor: true,
-        },
+        include: this.userInclude,
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where({ email }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
   }
 
   /**

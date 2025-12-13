@@ -228,6 +228,15 @@ export class CreateAppointmentDto {
   @IsNotEmpty({ message: 'Clinic ID is required' })
   clinicId!: string;
 
+  @ApiPropertyOptional({
+    example: 'location-uuid-123',
+    description:
+      'Clinic location ID for in-person appointments. Required for in-person appointment types.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+
   @ApiProperty({
     example: '2024-01-15T10:00:00.000Z',
     description: 'Appointment date and time',
@@ -353,6 +362,8 @@ export class UpdateAppointmentDto {
   @IsOptional()
   @IsString({ message: 'Notes must be a string' })
   @Transform(({ value }): string => (typeof value === 'string' ? value.trim() : (value as string)))
+  notes?: string;
+
   @ApiPropertyOptional({
     example: 'doctor-uuid-456',
     description: 'New doctor ID for the appointment',

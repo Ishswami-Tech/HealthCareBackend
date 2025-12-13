@@ -717,7 +717,8 @@ export class AppointmentsService {
                 completeDto.medications,
                 completeDto.tests,
                 completeDto.restrictions,
-                completeDto.notes
+                completeDto.notes,
+                userId // Pass authenticated user ID for permission check
               );
 
               await this.loggingService.log(
@@ -1457,17 +1458,20 @@ export class AppointmentsService {
     medications?: string[],
     tests?: string[],
     restrictions?: string[],
-    notes?: string
+    notes?: string,
+    authenticatedUserId?: string // Add authenticated user ID parameter
   ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
       // RBAC: Check permission to create follow-up plans
+      // Use authenticated user ID, not doctorId (doctorId is the appointment's doctor, not the user creating the plan)
+      const userIdForPermissionCheck = authenticatedUserId || doctorId;
       const permissionCheck = await this.rbacService.checkPermission({
-        userId: doctorId,
+        userId: userIdForPermissionCheck,
         clinicId,
         resource: 'appointments',
-        action: 'create',
+        action: 'update', // Follow-up plans are created as part of appointment updates
       });
 
       if (!permissionCheck.hasPermission) {

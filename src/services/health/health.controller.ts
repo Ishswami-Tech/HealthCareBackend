@@ -1,7 +1,7 @@
 import { Controller, Get, Res, Inject } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
-import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
-import { ConfigService } from '@config';
+import { HealthCheck, HealthCheckService, HealthCheckError } from '@nestjs/terminus';
+import { ConfigService } from '@config/config.service';
 import { HealthService } from './health.service';
 import { HealthCheckResponse, DetailedHealthCheckResponse } from '@core/types/common.types';
 import { Public } from '@core/decorators/public.decorator';
@@ -19,7 +19,7 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
 export class HealthController {
   constructor(
     private readonly healthService: HealthService,
-    @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly configService: ConfigService,
     private readonly health: HealthCheckService,
     private readonly databaseHealthIndicator: DatabaseHealthIndicator,
     private readonly cacheHealthIndicator: CacheHealthIndicator,
@@ -277,6 +277,27 @@ export class HealthController {
 
       return res.status(200).send(healthCheckResult);
     } catch (_error) {
+      // Terminus throws when ANY indicator reports "down".
+      // The error normally contains the structured health result in `causes` (HealthCheckError),
+      // or in `response` (framework-wrapped exception). Return that instead of a generic payload.
+      if (_error instanceof HealthCheckError) {
+        const causes = _error.causes;
+        if (typeof causes === 'object' && causes !== null) {
+          return res.status(200).send(causes);
+        }
+      }
+      if (typeof _error === 'object' && _error !== null) {
+        const errRecord = _error as Record<string, unknown>;
+        const causes = errRecord['causes'];
+        if (typeof causes === 'object' && causes !== null) {
+          return res.status(200).send(causes);
+        }
+        const response = errRecord['response'];
+        if (typeof response === 'object' && response !== null) {
+          return res.status(200).send(response);
+        }
+      }
+
       // Fallback: return degraded status if health check fails
       // IMPORTANT: If we can return this response, the API is healthy!
       // Use ConfigService (which uses dotenv) for environment variable access

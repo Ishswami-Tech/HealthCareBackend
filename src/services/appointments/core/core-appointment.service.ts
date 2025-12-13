@@ -51,6 +51,10 @@ import type {
   Clinic,
 } from '@core/types/database.types';
 import type { AppointmentUpdateInput } from '@core/types/input.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 
 export type AppointmentData = Appointment;
 export type PatientData = Patient;
@@ -146,18 +150,91 @@ export class CoreAppointmentService {
         };
       }
 
-      // 2. Check for scheduling conflicts
+      // 3. Normalize relation IDs
+      // The API layer may supply User IDs for doctor/patient, while Prisma relations require entity IDs.
+      const resolvedIds = await this.databaseService.executeHealthcareRead<{
+        patientId: string | null;
+        doctorId: string | null;
+        locationId: string | null;
+      }>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+
+        const patient = await typedClient.patient.findFirst({
+          where: {
+            OR: [{ id: createDto.patientId }, { userId: createDto.patientId }],
+          } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        const doctor = await typedClient.doctor.findFirst({
+          where: {
+            OR: [{ id: createDto.doctorId }, { userId: createDto.doctorId }],
+          } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        const rawLocationId = (createDto as { locationId?: string }).locationId;
+        const location = rawLocationId
+          ? await typedClient.clinicLocation.findFirst({
+              where: {
+                OR: [{ id: rawLocationId }, { locationId: rawLocationId }],
+              } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs)
+          : null;
+
+        return {
+          patientId: patient?.id ?? null,
+          doctorId: doctor?.id ?? null,
+          locationId: location?.id ?? null,
+        };
+      });
+
+      if (!resolvedIds.patientId) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: 'Patient record not found for the provided patientId',
+          metadata: {
+            processingTime: Date.now() - startTime,
+          },
+        };
+      }
+
+      if (!resolvedIds.doctorId) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: 'Doctor record not found for the provided doctorId',
+          metadata: {
+            processingTime: Date.now() - startTime,
+          },
+        };
+      }
+
+      if (isInPersonAppointmentType(createDto.type) && !resolvedIds.locationId) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: 'Location record not found for the provided locationId',
+          metadata: {
+            processingTime: Date.now() - startTime,
+          },
+        };
+      }
+
+      // 4. Check for scheduling conflicts
       const appointmentDate = new Date(createDto.appointmentDate);
       const existingAppointments = await this.getExistingTimeSlots(
-        createDto.doctorId,
+        resolvedIds.doctorId,
         createDto.clinicId,
         appointmentDate
       );
 
       const conflictResult = await this.conflictResolutionService.resolveSchedulingConflict(
         {
-          patientId: createDto.patientId,
-          doctorId: createDto.doctorId,
+          patientId: resolvedIds.patientId,
+          doctorId: resolvedIds.doctorId,
           clinicId: createDto.clinicId,
           requestedTime: appointmentDate,
           duration: createDto.duration,
@@ -165,7 +242,7 @@ export class CoreAppointmentService {
           serviceType: createDto.type,
           ...(createDto.notes && { notes: createDto.notes }),
         },
-        this.convertToTimeSlots(existingAppointments, createDto.doctorId, createDto.clinicId),
+        this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, createDto.clinicId),
         { allowOverlap: false, suggestAlternatives: true }
       );
 
@@ -190,6 +267,9 @@ export class CoreAppointmentService {
 
       const appointmentData: Record<string, unknown> = {
         ...createDto,
+        patientId: resolvedIds.patientId,
+        doctorId: resolvedIds.doctorId,
+        ...(resolvedIds.locationId && { locationId: resolvedIds.locationId }),
         userId: context.userId, // Add required userId
         status: AppointmentStatus.SCHEDULED,
         priority: createDto.priority || AppointmentPriority.NORMAL,

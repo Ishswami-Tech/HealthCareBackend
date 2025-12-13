@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { EmailService } from '@communication/channels/email/email.service';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { EmailTemplate } from '@core/types/common.types';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
@@ -15,7 +15,7 @@ export class OtpService {
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
-    @Inject(ConfigService) private readonly configService: ConfigService
+    private readonly configService: ConfigService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
