@@ -89,10 +89,43 @@ export class AppointmentMethods extends DatabaseMethodsBase {
    * Create appointment
    */
   async createAppointmentSafe(data: AppointmentCreateInput): Promise<AppointmentWithRelations> {
+    // Prisma requires nested relation inputs for required relations (e.g. `clinic`),
+    // while our centralized `AppointmentCreateInput` carries scalar foreign keys.
+    // Normalize to Prisma's expected shape here.
+    const dataRecord = data as unknown as Record<string, unknown>;
+    const clinicId = typeof dataRecord['clinicId'] === 'string' ? dataRecord['clinicId'] : '';
+    const locationId = typeof dataRecord['locationId'] === 'string' ? dataRecord['locationId'] : undefined;
+    const doctorId = typeof dataRecord['doctorId'] === 'string' ? dataRecord['doctorId'] : '';
+    const patientId = typeof dataRecord['patientId'] === 'string' ? dataRecord['patientId'] : '';
+    const userId = typeof dataRecord['userId'] === 'string' ? dataRecord['userId'] : '';
+
+    const prismaCreateData: Record<string, unknown> = { ...dataRecord };
+    // Replace scalar FK fields with nested connects for Prisma create()
+    delete prismaCreateData['clinicId'];
+    delete prismaCreateData['locationId'];
+    delete prismaCreateData['doctorId'];
+    delete prismaCreateData['patientId'];
+    delete prismaCreateData['userId'];
+    if (clinicId) {
+      prismaCreateData['clinic'] = { connect: { id: clinicId } };
+    }
+    if (locationId) {
+      prismaCreateData['location'] = { connect: { id: locationId } };
+    }
+    if (doctorId) {
+      prismaCreateData['doctor'] = { connect: { id: doctorId } };
+    }
+    if (patientId) {
+      prismaCreateData['patient'] = { connect: { id: patientId } };
+    }
+    if (userId) {
+      prismaCreateData['user'] = { connect: { id: userId } };
+    }
+
     const result = await this.executeWrite<AppointmentWithRelations>(
       async prisma => {
         return await prisma.appointment.create({
-          data,
+          data: prismaCreateData as unknown as Parameters<typeof prisma.appointment.create>[0]['data'],
           include: {
             patient: {
               include: {
@@ -105,13 +138,14 @@ export class AppointmentMethods extends DatabaseMethodsBase {
               },
             },
             clinic: true,
+            location: true,
           },
         });
       },
       {
         userId: 'system',
         userRole: 'system',
-        clinicId: data.clinicId || '',
+        clinicId,
         operation: 'CREATE_APPOINTMENT',
         resourceType: 'APPOINTMENT',
         resourceId: 'pending',
@@ -123,7 +157,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       await this.invalidateCache([
         this.queryKeyFactory.appointment(result.id),
         'appointments',
-        ...(data.clinicId ? [this.queryKeyFactory.clinic(data.clinicId, 'appointments')] : []),
+        ...(clinicId ? [this.queryKeyFactory.clinic(clinicId, 'appointments')] : []),
       ]);
     }
 

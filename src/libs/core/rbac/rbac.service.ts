@@ -54,7 +54,9 @@ export class RbacService {
         context.userId,
         context.clinicId,
         context.resource,
-        context.action
+        context.action,
+        // Ownership-based permissions must be cached per-resource
+        context.resourceId || 'no-resource'
       );
       const cached = await this.cacheService.get<PermissionCheck>(cacheKey);
 
@@ -504,6 +506,7 @@ export class RbacService {
       ],
       DOCTOR: [
         'appointments:read',
+        'appointments:create',
         'appointments:update',
         'patients:read',
         'patients:update',
@@ -527,6 +530,8 @@ export class RbacService {
       PATIENT: [
         'appointments:read',
         'appointments:create',
+        // Patients can update/cancel their own appointments (controllers enforce ownership where applicable)
+        'appointments:update',
         'profile:read',
         'profile:update',
         'medical-records:read',
@@ -784,20 +789,26 @@ export class RbacService {
    */
   private async checkAppointmentOwnership(appointmentId: string, userId: string): Promise<boolean> {
     try {
-      const appointment = (await this.databaseService.findAppointmentByIdSafe(appointmentId)) as {
-        id: string;
-        patientId: string;
-        doctorId: string;
-        clinicId: string;
-        appointmentDate: Date;
-        status: string;
-        createdAt: Date;
-        updatedAt: Date;
-      } | null;
+      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      if (!appointment) {
+        return false;
+      }
 
-      return appointment
-        ? appointment.patientId === userId || appointment.doctorId === userId
-        : false;
+      // Prisma schema uses entity IDs for relations:
+      // - Appointment.patientId -> Patient.id (NOT User.id)
+      // - Appointment.doctorId  -> Doctor.id  (NOT User.id)
+      // But requests use User.id as the authenticated principal.
+      const record = appointment as unknown as {
+        userId?: string;
+        patient?: { userId?: string };
+        doctor?: { userId?: string };
+      };
+
+      return (
+        record.userId === userId ||
+        record.patient?.userId === userId ||
+        record.doctor?.userId === userId
+      );
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -848,6 +859,7 @@ export class RbacService {
       ],
       DOCTOR: [
         'appointments:read',
+        'appointments:create',
         'appointments:update',
         'patients:read',
         'patients:update',

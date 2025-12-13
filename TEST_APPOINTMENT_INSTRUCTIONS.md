@@ -1,6 +1,16 @@
 # Appointment Endpoints Testing Guide
 
-This guide explains how to test the appointment endpoints using the automated test script.
+This guide explains how to test the appointment endpoints using the automated role-based test scripts.
+
+## ⚠️ Migration Notice
+
+**The old test files have been archived to `test-scripts/archive/`**
+
+The new role-based test structure provides:
+- ✅ Comprehensive role-based testing (PATIENT, DOCTOR, RECEPTIONIST, CLINIC_ADMIN)
+- ✅ Better organization and maintainability
+- ✅ Shared utilities and consistent patterns
+- ✅ Sequential execution for proper test ordering
 
 ## Prerequisites
 
@@ -14,244 +24,219 @@ This guide explains how to test the appointment endpoints using the automated te
    pnpm prisma:migrate:dev
    ```
 
-3. **Test Data**: You need at least one doctor and one clinic in the database for appointment tests to work properly.
+3. **Test Data**: The test scripts use seeded test users. Ensure you've run the seed script:
+   ```bash
+   pnpm exec dotenv -e .env.development -- ts-node -r tsconfig-paths/register quick-seed.ts
+   ```
 
 ## Quick Start
 
-### Option 1: Using Environment Variables (Recommended)
-
-Set the required environment variables before running tests:
+### Test All Appointment Endpoints (All Roles)
 
 ```bash
-# Windows (PowerShell)
-$env:TEST_CLINIC_ID="your-clinic-id-here"
-$env:TEST_DOCTOR_ID="your-doctor-id-here"
-node test-appointment-endpoints.js
+# Test all roles sequentially (recommended)
+node test-scripts/appointments/test-all-appointments-sequential.js
 
-# Windows (CMD)
-set TEST_CLINIC_ID=your-clinic-id-here
-set TEST_DOCTOR_ID=your-doctor-id-here
-node test-appointment-endpoints.js
-
-# Linux/Mac
-export TEST_CLINIC_ID="your-clinic-id-here"
-export TEST_DOCTOR_ID="your-doctor-id-here"
-node test-appointment-endpoints.js
+# Test all roles in parallel
+node test-scripts/appointments/test-all-appointments.js
 ```
 
-### Option 2: Using Default Test IDs
-
-The script uses default test IDs if environment variables are not set:
-- `TEST_CLINIC_ID`: Defaults to `test-clinic-123`
-- `TEST_DOCTOR_ID`: Defaults to `test-doctor-123`
-
-Simply run:
-```bash
-node test-appointment-endpoints.js
-```
-
-**Note**: This will likely fail for actual appointment creation unless you have entities with these IDs in your database.
-
-## Getting Real Test Data
-
-### Method 1: Query the Database
-
-Use Prisma Studio to find existing clinic and doctor IDs:
+### Test Specific Role
 
 ```bash
-pnpm prisma:studio
+# Test PATIENT role
+node test-scripts/appointments/test-patient-appointments.js
+
+# Test DOCTOR role
+node test-scripts/appointments/test-doctor-appointments.js
+
+# Test RECEPTIONIST role
+node test-scripts/appointments/test-receptionist-appointments.js
+
+# Test CLINIC_ADMIN role
+node test-scripts/appointments/test-clinic-admin-appointments.js
 ```
 
-Navigate to:
-1. **Clinic** table → Copy an ID
-2. **Doctor** table → Copy an ID
-
-### Method 2: Use SQL Queries
-
-Connect to your database and run:
-
-```sql
--- Get a clinic ID
-SELECT id FROM "Clinic" LIMIT 1;
-
--- Get a doctor ID (with user relationship)
-SELECT d.id, d.name, u.email
-FROM "Doctor" d
-JOIN "User" u ON d."userId" = u.id
-LIMIT 1;
-```
-
-### Method 3: Create Test Data via API
-
-You can create test data using the API endpoints directly:
+### Test All Services
 
 ```bash
-# Register as admin/receptionist first, then:
-# 1. Create a clinic via POST /api/v1/clinics
-# 2. Create a doctor via POST /api/v1/doctors
+# Test all services for all roles
+node test-scripts/test-all-apis.js
+```
+
+## Test Structure
+
+The new test structure is organized as follows:
+
+```
+test-scripts/
+├── appointments/
+│   ├── test-patient-appointments.js          # PATIENT role tests
+│   ├── test-doctor-appointments.js           # DOCTOR role tests
+│   ├── test-receptionist-appointments.js     # RECEPTIONIST role tests
+│   ├── test-clinic-admin-appointments.js     # CLINIC_ADMIN role tests
+│   ├── test-all-appointments.js              # Run all roles in parallel
+│   ├── test-all-appointments-sequential.js   # Run all roles sequentially
+│   └── _shared-utils.js                      # Shared utilities
+├── auth/                                      # Auth endpoint tests
+├── users/                                     # User endpoint tests
+├── clinic/                                    # Clinic endpoint tests
+├── billing/                                   # Billing endpoint tests
+├── ehr/                                       # EHR endpoint tests
+├── video/                                     # Video endpoint tests
+├── notification/                              # Notification endpoint tests
+└── test-all-apis.js                          # Master test runner
 ```
 
 ## Test Coverage
 
-The script tests the following endpoints:
+The appointment test scripts cover the following endpoints for each role:
 
 ### Core Appointment Endpoints
 1. ✅ **POST /appointments** - Create new appointment
-2. ✅ **GET /appointments/my-appointments** - Get current user's appointments
-3. ✅ **GET /appointments** - Get all appointments (staff only)
-4. ✅ **GET /appointments/doctor/:doctorId/availability** - Check doctor availability
-5. ✅ **GET /appointments/user/:userId/upcoming** - Get upcoming appointments
-6. ✅ **GET /appointments/:id** - Get appointment by ID
-7. ✅ **PUT /appointments/:id** - Update appointment
-8. ✅ **DELETE /appointments/:id** - Cancel appointment
+2. ✅ **GET /appointments** - Get all appointments (role-based filtering)
+3. ✅ **GET /appointments/my-appointments** - Get current user's appointments (PATIENT)
+4. ✅ **GET /appointments/:id** - Get appointment by ID
+5. ✅ **PUT /appointments/:id** - Update appointment
+6. ✅ **DELETE /appointments/:id** - Cancel appointment
+7. ✅ **GET /appointments/doctor/:doctorId/availability** - Check doctor availability
+8. ✅ **GET /appointments/user/:userId/upcoming** - Get upcoming appointments
 
-### Video Consultation Endpoints
-9. ✅ **POST /appointments/:id/video/create-room** - Create video room (staff only)
-10. ✅ **POST /appointments/:id/video/join-token** - Generate join token
+### Appointment Management
+9. ✅ **POST /appointments/:id/check-in** - Check in to appointment
+10. ✅ **POST /appointments/:id/check-in/force** - Force check-in (staff only)
+11. ✅ **POST /appointments/check-in/scan-qr** - Scan QR code for check-in
+12. ✅ **GET /appointments/check-in/locations** - Get check-in locations
+13. ✅ **POST /appointments/check-in/locations** - Create check-in location (admin)
+
+### Appointment Workflow
+14. ✅ **POST /appointments/:id/start** - Start consultation
+15. ✅ **POST /appointments/:id/complete** - Complete appointment
+16. ✅ **POST /appointments/:id/follow-up** - Create follow-up plan
+17. ✅ **GET /appointments/:id/chain** - Get appointment chain
+18. ✅ **GET /appointments/:id/follow-ups** - Get follow-up appointments
+
+### Video Consultation
+19. ✅ **POST /appointments/:id/video/create-room** - Create video room
+20. ✅ **POST /appointments/:id/video/join-token** - Generate join token
+21. ✅ **POST /appointments/:id/video/start** - Start video consultation
+22. ✅ **POST /appointments/:id/video/end** - End video consultation
+23. ✅ **GET /appointments/:id/video/status** - Get video status
+24. ✅ **POST /appointments/:id/video/report-issue** - Report technical issue
+
+### Analytics (Admin Only)
+25. ✅ **GET /appointments/analytics/wait-times** - Wait time analytics
+26. ✅ **GET /appointments/analytics/check-in-patterns** - Check-in patterns
+27. ✅ **GET /appointments/analytics/no-show-correlation** - No-show correlation
 
 ## Expected Results
 
-### Successful Scenario
+### Successful Test Run
 
 ```
-========================================
-  Appointment Endpoints Test Suite
-========================================
+============================================================
+Running All Appointment Endpoint Tests by Role (Sequential)
+============================================================
 
-=== Test 1: POST /appointments - Create Appointment ===
-✓ Create Appointment: OK
-ℹ Appointment ID: abc-123-def-456
+============================================================
+Running RECEPTIONIST tests...
+============================================================
+✓ Create Appointment: PASSED
+✓ Get All Appointments: PASSED
+✓ Get Appointment By ID: PASSED
+...
 
-=== Test 2: GET /appointments/my-appointments ===
-✓ Get My Appointments: OK
-ℹ Found 1 appointment(s)
-
-=== Test 3: GET /appointments - Get All Appointments (Staff) ===
-⚠ Get All Appointments: Expected failure (Patients cannot access)
-
-... (more tests)
-
-========================================
-  Test Summary
-========================================
-Passed: 8
+RECEPTIONIST Test Summary
+============================================================
+Passed: 16
 Failed: 0
 Skipped: 0
-========================================
+Total: 16
+============================================================
+
+Overall Test Summary
+============================================================
+Passed: 4/4
+  - RECEPTIONIST, PATIENT, DOCTOR, CLINIC_ADMIN
+============================================================
 ```
 
-### Common Failures
+## Role-Based Permissions
 
-#### 1. Missing Clinic Context
-```
-✗ Create Appointment failed: 400 - {"message": "Clinic context is required"}
-```
-**Solution**: Ensure `X-Clinic-ID` header is set correctly and the clinic exists.
+### PATIENT Role
+- ✅ Can create appointments
+- ✅ Can view own appointments
+- ✅ Can update/cancel own appointments
+- ✅ Can check in to own appointments
+- ❌ Cannot view all appointments
+- ❌ Cannot force check-in
 
-#### 2. Doctor Not Found
-```
-✗ Create Appointment failed: 404 - {"message": "Doctor not found"}
-```
-**Solution**: Verify the doctor ID exists in the database and is associated with the clinic.
+### DOCTOR Role
+- ✅ Can view appointments assigned to them
+- ✅ Can start/complete consultations
+- ✅ Can create follow-up plans
+- ✅ Can view appointment chains
+- ⚠️ May not be able to create appointments (depends on RBAC)
 
-#### 3. Permission Denied
-```
-✗ Get All Appointments failed: 403 - {"message": "Insufficient permissions"}
-```
-**Solution**: This is expected for patient role on certain endpoints (marked as "⚠ Expected failure").
+### RECEPTIONIST Role
+- ✅ Can create appointments for patients
+- ✅ Can view all clinic appointments
+- ✅ Can check in patients
+- ✅ Can force check-in
+- ✅ Can manage check-in locations
 
-#### 4. Invalid Date/Time
-```
-✗ Create Appointment failed: 400 - {"message": "Cannot check availability for past dates"}
-```
-**Solution**: The script uses tomorrow's date, but verify your system clock is correct.
+### CLINIC_ADMIN Role
+- ✅ Can view all clinic appointments
+- ✅ Can access analytics endpoints
+- ✅ Can manage check-in locations
+- ✅ Can view cross-clinic data
 
-## Customizing Tests
+## Test Data
 
-### Modify Appointment Data
+The test scripts automatically use seeded test users:
 
-Edit the `testCreateAppointment()` function in `test-appointment-endpoints.js`:
+- **PATIENT**: `patient1@example.com` / `test1234`
+- **DOCTOR**: `doctor1@example.com` / `test1234`
+- **RECEPTIONIST**: `receptionist1@example.com` / `test1234`
+- **CLINIC_ADMIN**: `clinicadmin1@example.com` / `test1234`
 
-```javascript
-const appointmentData = {
-  doctorId: doctorId,
-  date: new Date(Date.now() + 86400000).toISOString().split('T')[0], // Tomorrow
-  time: '10:00',
-  duration: 30,
-  type: 'CONSULTATION',
-  reason: 'Custom reason here',
-  notes: 'Custom notes here',
-};
-```
-
-### Add More Tests
-
-Add new test functions following the pattern:
-
-```javascript
-async function testCustomEndpoint() {
-  console.log('=== Test X: YOUR TEST NAME ===');
-
-  const result = await makeRequest('GET', '/your-endpoint', null, {
-    Authorization: `Bearer ${accessToken}`,
-    'X-Clinic-ID': clinicId,
-  });
-
-  if (result.ok) {
-    console.log('✓ Your Test: OK');
-  } else {
-    console.log(`✗ Your Test failed: ${result.status}`);
-  }
-  console.log('');
-}
-```
-
-Then add it to the `tests` array in `runTests()`.
+Test IDs (clinic, doctor, patient, location) are automatically loaded from `test-ids.json` if available, or extracted from API responses.
 
 ## Troubleshooting
 
-### Tests Pass But No Appointments Created
+### Tests Fail with 401 Unauthorized
 
-Check:
-1. Database constraints (foreign keys for doctor, patient, clinic)
-2. RBAC permissions for the PATIENT role
-3. Doctor availability configuration
-
-### Video Endpoints Fail
-
-The video consultation endpoints may require additional setup:
-- Jitsi configuration
-- Video service initialization
-- Proper appointment status (must be CONFIRMED or SCHEDULED)
-
-### Rate Limiting Errors
-
-If you see 429 errors:
-```
-✗ Test failed: 429 - {"message": "Too many requests"}
+**Solution**: Ensure the server is running and test users are seeded:
+```bash
+pnpm exec dotenv -e .env.development -- ts-node -r tsconfig-paths/register quick-seed.ts
 ```
 
-Wait a few seconds between test runs or adjust rate limits in `.env.development`:
-```env
-RATE_LIMIT_MAX=1000
-AUTH_RATE_LIMIT=10
-```
+### Tests Fail with 403 Forbidden
+
+**Solution**: This may be expected for certain roles. The tests handle 403 as valid responses for RBAC permission checks.
+
+### Tests Fail with 404 Not Found
+
+**Solution**: Ensure test data exists (clinics, doctors, locations). The tests will skip tests that require missing data.
+
+### No Appointments Available
+
+**Solution**: The sequential test runner creates appointments in the correct order:
+1. RECEPTIONIST creates appointments
+2. PATIENT creates appointments
+3. DOCTOR uses existing appointments
+4. CLINIC_ADMIN uses existing appointments
 
 ## Integration with CI/CD
 
-To use in automated testing pipelines:
+Add to `package.json`:
 
-```bash
-# Exit with error code on failure
-node test-appointment-endpoints.js || exit 1
-```
-
-Or add to `package.json`:
 ```json
 {
   "scripts": {
-    "test:appointments": "node test-appointment-endpoints.js",
-    "test:all": "node test-auth-endpoints.js && node test-appointment-endpoints.js"
+    "test:appointments": "node test-scripts/appointments/test-all-appointments-sequential.js",
+    "test:auth": "node test-scripts/auth/test-all-auth-sequential.js",
+    "test:all": "node test-scripts/test-all-apis.js"
   }
 }
 ```
@@ -259,15 +244,24 @@ Or add to `package.json`:
 Then run:
 ```bash
 pnpm test:appointments
+pnpm test:all
 ```
+
+## Migration from Old Test Files
+
+If you were using the old test files:
+- `test-appointment-endpoints.js` → Use `test-scripts/appointments/test-*-appointments.js`
+- `test-auth-endpoints.js` → Use `test-scripts/auth/test-*-auth.js`
+- `test-all-endpoints.js` → Use `test-scripts/test-all-apis.js`
+
+Old files are archived in `test-scripts/archive/` for reference.
 
 ## Next Steps
 
-1. Create similar test scripts for other modules (users, clinics, billing, etc.)
-2. Add more comprehensive validation checks
-3. Integrate with a proper testing framework (Jest, Mocha, etc.)
-4. Add performance benchmarks
-5. Create automated data seeding scripts
+1. ✅ All appointment endpoints are now tested with role-based coverage
+2. ✅ All other services (auth, users, clinic, billing, ehr, video, notification) have role-based tests
+3. ✅ Use `test-scripts/test-all-apis.js` for comprehensive testing
+4. ✅ Each service has sequential test runners for proper test ordering
 
 ## Support
 
@@ -275,4 +269,5 @@ If you encounter issues:
 1. Check server logs for detailed error messages
 2. Verify database schema is up to date (`pnpm prisma:migrate:dev`)
 3. Ensure all required services are running (PostgreSQL, Redis/Dragonfly)
-4. Review the CLAUDE.md file for architecture guidelines
+4. Review the test output for specific error messages
+5. Check `test-scripts/README.md` for more information

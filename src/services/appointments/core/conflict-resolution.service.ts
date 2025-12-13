@@ -146,11 +146,8 @@ export class ConflictResolutionService {
       }
 
       // Step 5: Apply business rules validation
-      ((result as { meta?: unknown }).meta as Record<string, unknown>)['rulesApplied'] =
-        this.applyBusinessRules(request, result, resolvedOptions);
-
-      ((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'] =
-        Date.now() - startTime;
+      result.metadata.rulesApplied = this.applyBusinessRules(request, result, resolvedOptions);
+      result.metadata.processingTimeMs = Date.now() - startTime;
 
       // Emit resolution event for monitoring via EventService
       if (this.typedEventService) {
@@ -165,15 +162,13 @@ export class ConflictResolutionService {
           payload: {
             request,
             result,
-            processingTime: ((result as { meta?: unknown }).meta as Record<string, unknown>)[
-              'processingTimeMs'
-            ],
+            processingTime: result.metadata.processingTimeMs,
           },
         } as EnterpriseEventPayload);
       }
 
       this.logger.log(
-        `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(((result as { meta?: unknown }).meta as Record<string, unknown>)['processingTimeMs'])}ms)`
+        `✅ Conflict resolution complete: ${result.resolution.strategy} (${String(result.metadata.processingTimeMs)}ms)`
       );
 
       return result;

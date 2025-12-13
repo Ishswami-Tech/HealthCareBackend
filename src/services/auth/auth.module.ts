@@ -1,6 +1,7 @@
 import { Module, OnModuleInit } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@config';
+import { ConfigModule } from '@config/config.module';
+import { ConfigService } from '@config/config.service';
 
 // Core modules
 import { DatabaseModule } from '@infrastructure/database';

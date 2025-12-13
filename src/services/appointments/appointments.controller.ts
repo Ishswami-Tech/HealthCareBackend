@@ -3654,7 +3654,8 @@ export class AppointmentsController {
         createDto.medications,
         createDto.tests,
         createDto.restrictions,
-        createDto.notes
+        createDto.notes,
+        userId // Pass authenticated user ID for permission check
       )) as { success: boolean; followUpId: string; scheduledFor: Date; message: string };
 
       await this.loggingService.log(

@@ -693,35 +693,43 @@ export class SessionManagementService implements OnModuleInit {
    * @returns void
    */
   syncToFastifySession(sessionData: SessionData, fastifySession: FastifySession): void {
+    // NOTE:
+    // `@fastify/session` exposes `sessionId` as a read-only getter on the Session object.
+    // Assigning to it throws: "Cannot set property sessionId of #<Session> which has only a getter".
+    // Store our app session id under a separate key and use Reflect.set to avoid hard crashes
+    // if any property is non-writable at runtime.
+    const target = fastifySession as unknown as Record<string, unknown>;
+
     if (sessionData.sessionId) {
-      fastifySession.sessionId = sessionData.sessionId;
+      // Keep Fastify's own session id intact; store our session id separately.
+      Reflect.set(target, 'healthcareSessionId', sessionData.sessionId);
     }
     if (sessionData.userId) {
-      fastifySession.userId = sessionData.userId;
+      Reflect.set(target, 'userId', sessionData.userId);
     }
     if (sessionData.clinicId) {
-      fastifySession.clinicId = sessionData.clinicId;
+      Reflect.set(target, 'clinicId', sessionData.clinicId);
     }
     if (sessionData.userAgent) {
-      fastifySession.userAgent = sessionData.userAgent;
+      Reflect.set(target, 'userAgent', sessionData.userAgent);
     }
     if (sessionData.ipAddress) {
-      fastifySession.ipAddress = sessionData.ipAddress;
+      Reflect.set(target, 'ipAddress', sessionData.ipAddress);
     }
     if (sessionData.loginTime) {
-      fastifySession.loginTime = sessionData.loginTime;
+      Reflect.set(target, 'loginTime', sessionData.loginTime);
     }
     if (sessionData.lastActivity) {
-      fastifySession.lastActivity = sessionData.lastActivity;
+      Reflect.set(target, 'lastActivity', sessionData.lastActivity);
     }
     if (sessionData.expiresAt) {
-      fastifySession.expiresAt = sessionData.expiresAt;
+      Reflect.set(target, 'expiresAt', sessionData.expiresAt);
     }
     if (sessionData.isActive !== undefined) {
-      fastifySession.isActive = sessionData.isActive;
+      Reflect.set(target, 'isActive', sessionData.isActive);
     }
     if (sessionData.metadata) {
-      fastifySession.metadata = sessionData.metadata;
+      Reflect.set(target, 'metadata', sessionData.metadata);
     }
   }
 
