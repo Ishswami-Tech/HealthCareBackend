@@ -8,6 +8,7 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import type { AxiosResponse } from 'axios';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database';
@@ -546,7 +547,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
     }
   ): Promise<OpenViduRecording> {
     try {
-      const response = await firstValueFrom(
+      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
         this.httpService.post<OpenViduRecording>(
           `${this.apiUrl}/api/recordings/start`,
           {
@@ -598,7 +599,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async stopRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
-      const response = await firstValueFrom(
+      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
         this.httpService.post<OpenViduRecording>(
           `${this.apiUrl}/api/recordings/stop/${recordingId}`,
           {},
@@ -643,7 +644,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async getRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
-      const response = await firstValueFrom(
+      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
         this.httpService.get<OpenViduRecording>(`${this.apiUrl}/api/recordings/${recordingId}`, {
           headers: {
             Authorization: this.getAuthHeader(),
@@ -675,7 +676,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
       const url = sessionId
         ? `${this.apiUrl}/api/recordings?sessionId=${sessionId}`
         : `${this.apiUrl}/api/recordings`;
-      const response = await firstValueFrom(
+      const response: AxiosResponse<{ numberOfElements: number; content: OpenViduRecording[] }> =
+        await firstValueFrom(
         this.httpService.get<{ numberOfElements: number; content: OpenViduRecording[] }>(url, {
           headers: {
             Authorization: this.getAuthHeader(),
@@ -741,7 +743,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async getSessionInfo(sessionId: string): Promise<OpenViduSessionInfo> {
     try {
-      const response = await firstValueFrom(
+      const response: AxiosResponse<OpenViduSessionInfo> = await firstValueFrom(
         this.httpService.get<OpenViduSessionInfo>(`${this.apiUrl}/api/sessions/${sessionId}`, {
           headers: {
             Authorization: this.getAuthHeader(),

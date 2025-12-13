@@ -17,7 +17,6 @@ import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/s
 
 // Internal imports - Infrastructure
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingService } from '@infrastructure/logging';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -31,6 +30,7 @@ import {
   LogLevel,
   LogType,
 } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Controller for cache management and monitoring.
@@ -42,7 +42,8 @@ import {
 export class CacheController {
   constructor(
     private readonly cacheService: CacheService,
-    @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE') private readonly loggingService: LoggerLike
   ) {}
 
   /**

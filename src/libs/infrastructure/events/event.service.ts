@@ -82,14 +82,15 @@ import {
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 // Internal imports - Infrastructure
-import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { CacheService } from '@infrastructure/cache';
+import type { LoggingService } from '@infrastructure/logging/logging.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
+// Logging is injected via token to avoid SWC TDZ circular-import issues
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
-import { CircuitBreakerService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 
 // Internal imports - Types (EventCategory and EventPriority are used as values)
 import { EventCategory, EventPriority } from '@core/types';
@@ -124,9 +125,9 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly eventEmitter: EventEmitter2,
-    @Inject(forwardRef(() => LoggingService))
+    @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService,
-    @Inject(forwardRef(() => CacheService))
+    @Inject('CACHE_SERVICE')
     private readonly cacheService: CacheService,
     @Optional()
     @Inject(forwardRef(() => CircuitBreakerService))

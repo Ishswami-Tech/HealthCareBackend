@@ -15,16 +15,18 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 
 // Internal imports - Infrastructure
-import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { BaseCacheClientService } from '@cache/base-cache-client.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import type { LoggerLike } from '@core/types';
 
 @Injectable()
 export class RedisService extends BaseCacheClientService implements OnModuleInit, OnModuleDestroy {
@@ -105,7 +107,8 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService)) loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE') loggingService: LoggerLike
   ) {
     super(configService, loggingService);
 
