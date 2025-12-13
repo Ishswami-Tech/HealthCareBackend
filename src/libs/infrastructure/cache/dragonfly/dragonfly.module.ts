@@ -4,7 +4,7 @@ import { Module, Global, OnModuleInit } from '@nestjs/common';
 // Internal imports - Infrastructure
 // ConfigModule is @Global() - no need to import it explicitly
 // LoggingModule is @Global() - no need to import it explicitly
-import { isCacheEnabled, getCacheProvider } from '@config';
+import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 import { DragonflyService } from './dragonfly.service';
 
 @Global()

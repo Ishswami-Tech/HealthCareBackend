@@ -120,3 +120,5 @@ check-db.js
 get-doctor-id.js
 force-seed.js
 run-seed.js
+
+.pnpm-store/*

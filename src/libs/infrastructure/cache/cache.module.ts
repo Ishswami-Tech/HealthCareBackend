@@ -16,13 +16,13 @@
 import { Module, Global, forwardRef, DynamicModule, Provider } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { EventsModule } from '@infrastructure/events';
 import { ResilienceModule } from '@core/resilience';
 import { DatabaseModule } from '@infrastructure/database';
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
-import { getEnvWithDefault } from '../../../config/environment/utils';
+import { getEnvWithDefault } from '@config/environment/utils';
 // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 // LoggingModule is @Global() and already available - LoggingService can be injected
 
@@ -117,6 +117,11 @@ export class CacheModule {
     const baseProviders: Provider[] = [
       // Core Services
       CacheService,
+      // Alias token for safe cross-module injection (avoids SWC TDZ cycles)
+      {
+        provide: 'CACHE_SERVICE',
+        useExisting: CacheService,
+      } as Provider,
 
       // Multi-Layer Cache Services (L1)
       InMemoryCacheService, // L1: In-memory cache
@@ -169,9 +174,12 @@ export class CacheModule {
       | typeof CacheKeyFactory
       | typeof CacheHealthMonitorService
       | typeof CacheWarmingService
+      | 'CACHE_SERVICE'
     > = [
       // Only export CacheService as single entry point (L2: Distributed cache)
       CacheService,
+      // Also export the alias token
+      'CACHE_SERVICE',
       // Export MultiLayerCacheService for advanced multi-layer usage
       MultiLayerCacheService,
       // Export key factory for convenience

@@ -28,9 +28,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { PrismaService } from './prisma/prisma.service';
-import { LoggingService } from '@infrastructure/logging';
-import { CacheService } from '@infrastructure/cache';
-import { CircuitBreakerService } from '@core/resilience';
+import type { LoggingService } from '@infrastructure/logging/logging.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -156,7 +156,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
-    @Inject(forwardRef(() => LoggingService))
+    @Inject('LOGGING_SERVICE')
     protected readonly loggingService: LoggingService,
     @Inject(forwardRef(() => SQLInjectionPreventionService))
     protected readonly sqlInjectionPrevention: SQLInjectionPreventionService,
@@ -185,7 +185,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     @Inject(QueryKeyFactory)
     protected readonly queryKeyFactory: QueryKeyFactory,
     @Optional()
-    @Inject(forwardRef(() => CacheService))
+    @Inject('CACHE_SERVICE')
     protected readonly cacheService?: CacheService,
     @Optional()
     @Inject(forwardRef(() => CircuitBreakerService))

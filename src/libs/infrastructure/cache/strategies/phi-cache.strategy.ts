@@ -8,8 +8,8 @@ import { Injectable } from '@nestjs/common';
 import { BaseCacheStrategy } from '@infrastructure/cache/strategies/base-cache.strategy';
 import type { CacheOperationOptions } from '@core/types';
 import type { ICacheProvider } from '@core/types';
-import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * PHI cache strategy - enhanced security and audit logging
@@ -21,7 +21,7 @@ export class PHICacheStrategy extends BaseCacheStrategy {
 
   constructor(
     cacheProvider: ICacheProvider,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggerLike
   ) {
     super(cacheProvider);
   }

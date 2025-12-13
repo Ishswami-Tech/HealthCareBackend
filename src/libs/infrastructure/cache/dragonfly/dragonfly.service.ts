@@ -8,10 +8,12 @@
  */
 
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
-import { LoggingService } from '@infrastructure/logging';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 import { LogType, LogLevel } from '@core/types';
 import { BaseCacheClientService } from '../base-cache-client.service';
+import type { LoggerLike } from '@core/types';
 
 @Injectable()
 export class DragonflyService
@@ -39,8 +41,9 @@ export class DragonflyService
   constructor(
     @Inject(forwardRef(() => ConfigService))
     configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    loggingService: LoggerLike
   ) {
     super(configService, loggingService);
     // Don't initialize client here - wait for onModuleInit when PRODUCTION_CONFIG is ready

@@ -19,9 +19,10 @@
  */
 
 import { Injectable, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Cache entry with expiration
@@ -49,8 +50,9 @@ export class InMemoryCacheService implements OnModuleDestroy {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // Load configuration with defaults
     this.maxSize = this.configService.getEnvNumber('L1_CACHE_MAX_SIZE', 10000);

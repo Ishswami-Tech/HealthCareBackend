@@ -4,15 +4,24 @@
  * @description Manages and selects appropriate cache strategy
  */
 
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import type { ICacheStrategy, ICacheProvider } from '@core/types';
 import type { CacheOperationOptions } from '@core/types';
 import { SWRCacheStrategy } from '@infrastructure/cache/strategies/swr-cache.strategy';
 import { StandardCacheStrategy } from '@infrastructure/cache/strategies/standard-cache.strategy';
 import { EmergencyCacheStrategy } from '@infrastructure/cache/strategies/emergency-cache.strategy';
 import { PHICacheStrategy } from '@infrastructure/cache/strategies/phi-cache.strategy';
-import { LoggingService } from '@infrastructure/logging/logging.service';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
+
+interface LoggerLike {
+  log(
+    type: import('@core/types').LogType,
+    level: import('@core/types').LogLevel,
+    message: string,
+    source: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void>;
+}
 
 /**
  * Cache strategy manager - selects and executes appropriate strategy
@@ -24,8 +33,9 @@ export class CacheStrategyManager {
 
   constructor(
     private readonly providerFactory: CacheProviderFactory,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing logging module (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // Get provider from factory (provider-agnostic)
     this.cacheProvider = this.providerFactory.getBasicProvider();
@@ -33,7 +43,7 @@ export class CacheStrategyManager {
     // Initialize strategies in priority order
     this.strategies = [
       new EmergencyCacheStrategy(this.cacheProvider),
-      new PHICacheStrategy(this.cacheProvider, loggingService),
+      new PHICacheStrategy(this.cacheProvider, this.loggingService),
       new SWRCacheStrategy(this.cacheProvider),
       new StandardCacheStrategy(this.cacheProvider), // Fallback
     ];

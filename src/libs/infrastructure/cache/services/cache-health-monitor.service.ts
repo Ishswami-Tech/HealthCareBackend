@@ -7,13 +7,14 @@
  */
 
 import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import type { CacheHealthMonitorStatus } from '@core/types';
-import { CircuitBreakerService } from '@core/resilience';
-import { CacheService } from '@cache/cache.service';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
+import type { CacheService } from '@cache/cache.service';
 import { CacheProviderFactory } from '@cache/providers/cache-provider.factory';
+import type { LoggerLike } from '@core/types';
 
 @Injectable()
 export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -36,9 +37,10 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
-    @Inject(forwardRef(() => CacheService))
+    // Use string tokens to avoid SWC TDZ circular-import issues
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike,
+    @Inject('CACHE_SERVICE')
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,

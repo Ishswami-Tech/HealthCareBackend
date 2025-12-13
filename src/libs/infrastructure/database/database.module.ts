@@ -1,5 +1,6 @@
 import { Module, Global, OnModuleInit, forwardRef, Inject } from '@nestjs/common';
-import { ConfigModule, ConfigService } from '@config';
+import { ConfigModule } from '@config/config.module';
+import { ConfigService } from '@config/config.service';
 import { isProduction } from '@config/environment/utils';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -136,6 +137,11 @@ import { QueryKeyFactory } from './query/factories/query-key.factory';
     },
     // DatabaseService - depends on everything above
     DatabaseService,
+    // Alias token for safe cross-module injection (avoids SWC TDZ cycles)
+    {
+      provide: 'DATABASE_SERVICE',
+      useExisting: DatabaseService,
+    },
   ],
   exports: [
     // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY export
@@ -143,6 +149,7 @@ import { QueryKeyFactory } from './query/factories/query-key.factory';
     // It includes all optimization layers: connection pooling, caching, query optimization, metrics, HIPAA compliance
     // DO NOT export any other components - they are internal infrastructure
     DatabaseService,
+    'DATABASE_SERVICE',
     ClinicIsolationService, // Export for GuardsModule to resolve circular dependency
   ],
 })

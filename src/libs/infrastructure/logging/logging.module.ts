@@ -16,9 +16,18 @@ import { LoggingHealthMonitorService } from './logging-health-monitor.service';
     // ResilienceModule can be imported where CircuitBreakerService is actually needed
   ],
   controllers: [LoggingController],
-  providers: [LoggingService, LoggingHealthMonitorService],
+  providers: [
+    LoggingService,
+    LoggingHealthMonitorService,
+    // Alias token for safer injection across infra modules
+    {
+      provide: 'LOGGING_SERVICE',
+      useExisting: LoggingService,
+    },
+  ],
   exports: [
     LoggingService,
+    'LOGGING_SERVICE',
     // Export health monitor for HealthService
     LoggingHealthMonitorService,
   ],

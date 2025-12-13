@@ -5,8 +5,9 @@
  */
 
 import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging/logging.service';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Feature flags for cache system
@@ -33,8 +34,9 @@ export class FeatureFlagsService implements OnModuleInit {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // Don't load flags in constructor - wait for onModuleInit
     // ConfigService might not be fully initialized yet

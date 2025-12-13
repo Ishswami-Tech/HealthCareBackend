@@ -6,7 +6,9 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 import type { IAdvancedCacheProvider, ICacheProvider } from '@core/types';
 import { RedisCacheProvider } from './redis-cache.provider';
 import { DragonflyCacheProvider } from './dragonfly-cache.provider';

@@ -6,10 +6,13 @@
  */
 
 import { Inject, forwardRef } from '@nestjs/common';
-import { ConfigService, isCacheEnabled, getCacheProvider } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code.
+// SWC/CommonJS can expose circular import TDZ issues via barrel exports.
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled, getCacheProvider } from '@config/cache.config';
 import Redis from 'ioredis';
-import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
@@ -60,8 +63,9 @@ export abstract class BaseCacheClientService {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     protected readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    protected readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    protected readonly loggingService: LoggerLike
   ) {
     this.isDevelopment = this.isDevEnvironment();
     // Use ConfigService for verbose logging configuration (required, so always available)

@@ -1,11 +1,12 @@
 import { Injectable, OnModuleInit, Optional, Inject, forwardRef } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { ConfigService } from '@config';
-import { CacheService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
-import { DatabaseService } from '@infrastructure/database';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
+import type { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@infrastructure/queue';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Comprehensive Cache Warming Service
@@ -21,11 +22,13 @@ export class CacheWarmingService implements OnModuleInit {
   private isWarmingInProgress = false;
 
   constructor(
+    @Inject('CACHE_SERVICE')
     private readonly cacheService: CacheService,
-    @Inject(forwardRef(() => DatabaseService))
+    @Inject('DATABASE_SERVICE')
     private readonly databaseService: DatabaseService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Optional() private readonly queueService?: QueueService

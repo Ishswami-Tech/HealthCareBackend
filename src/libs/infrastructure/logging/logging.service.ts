@@ -1,11 +1,11 @@
 // External imports
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
 
 // Internal imports - Infrastructure
-import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingHealthMonitorService } from '@infrastructure/logging/logging-health-monitor.service';
+import type { DatabaseService } from '@infrastructure/database/database.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -119,14 +119,11 @@ export class LoggingService {
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
     @Optional()
-    @Inject(forwardRef(() => DatabaseService))
+    @Inject('DATABASE_SERVICE')
     private readonly databaseService?: DatabaseService,
     @Optional()
-    @Inject(forwardRef(() => CacheService))
+    @Inject('CACHE_SERVICE')
     private readonly cacheService?: CacheService,
-    @Optional()
-    @Inject(forwardRef(() => LoggingHealthMonitorService))
-    private readonly healthMonitor?: LoggingHealthMonitorService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.serviceName = this.configService.getEnv('SERVICE_NAME', 'healthcare') || 'healthcare';
@@ -1170,10 +1167,6 @@ export class LoggingService {
    * Uses dedicated health check with timeout protection and caching
    */
   async healthCheck(): Promise<boolean> {
-    if (this.healthMonitor) {
-      const healthStatus = await this.healthMonitor.getHealthStatus();
-      return healthStatus.healthy;
-    }
     // Fallback: service exists and log method is callable
     return typeof this.log === 'function';
   }
@@ -1183,13 +1176,6 @@ export class LoggingService {
    * Uses optimized health monitor for real-time status
    */
   async getHealthStatus(): Promise<[boolean, number]> {
-    if (this.healthMonitor) {
-      const healthStatus = await this.healthMonitor.getHealthStatus();
-      return [
-        healthStatus.healthy,
-        healthStatus.service.latency || healthStatus.endpoint.latency || 0,
-      ];
-    }
     // Fallback: service exists
     return [typeof this.log === 'function', 0];
   }

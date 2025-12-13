@@ -32,6 +32,17 @@
  * Import types directly: import type { Config, AppConfig, ... } from '@core/types'
  */
 
+/**
+ * Configuration Module Exports
+ * @module Config
+ * @description Centralized exports for configuration module
+ *
+ * NOTE (SWC):
+ * If you see a TDZ error involving this barrel, it means there is a circular import chain.
+ * The correct fix is to break the cycle by importing from specific modules
+ * (e.g. `@config/config.service`, `@config/cache.config`) in early-boot infrastructure code.
+ */
+
 export { ConfigModule } from './config.module';
 export { ConfigService } from './config.service';
 export * from './constants';

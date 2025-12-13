@@ -21,10 +21,11 @@ import {
   type HealthCheckHttpResponse,
   toHealthCheckResponse,
 } from '@core/types/http.types';
-import { ConfigService } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggingHealthMonitorStatus } from '@core/types';
-import { CircuitBreakerService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { LoggingService } from './logging.service';
 
 /**

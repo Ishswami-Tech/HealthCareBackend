@@ -1,5 +1,5 @@
 import { Injectable, OnModuleDestroy, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { PrismaService as PrismaServiceClass } from '@database/prisma/prisma.service';
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
