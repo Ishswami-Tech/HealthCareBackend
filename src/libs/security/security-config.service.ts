@@ -296,7 +296,9 @@ export class SecurityConfigService {
     const corsConfig = this.configService.getCorsConfig();
     const corsOrigin = corsConfig.origin || '*';
     const corsOrigins =
-      corsOrigin === '*' ? '*' : corsOrigin.split(',').map(origin => origin.trim());
+      corsOrigin === '*'
+        ? '*'
+        : corsOrigin.split(',').map((origin: string) => origin.trim());
 
     app.enableCors({
       origin: corsOrigins,

@@ -7,13 +7,13 @@
  */
 
 import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import type { QueueHealthMonitorStatus } from '@core/types';
-import { CircuitBreakerService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { QueueService } from './queue.service';
 import { SharedWorkerService } from './shared-worker.service';
+import type { LoggerLike } from '@core/types';
 
 @Injectable()
 export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -47,8 +47,8 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     private readonly circuitBreakerService: CircuitBreakerService,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike,
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService,
     @Inject(forwardRef(() => SharedWorkerService))

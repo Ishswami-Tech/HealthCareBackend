@@ -16,7 +16,8 @@ import {
   forwardRef,
   Optional,
 } from '@nestjs/common';
-import { ConfigService } from '@config';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
 
 // Interfaces - Centralized
 import type { IAdvancedCacheProvider } from '@core/types';
@@ -24,7 +25,7 @@ import type { IAdvancedCacheProvider } from '@core/types';
 // Services
 import { CacheRepository } from '@infrastructure/cache/repositories/cache.repository';
 import { CacheKeyFactory } from '@infrastructure/cache/factories/cache-key.factory';
-import { CircuitBreakerService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { CacheMetricsService } from '@infrastructure/cache/services/cache-metrics.service';
 import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flags.service';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
@@ -38,8 +39,8 @@ import { InMemoryCacheService } from '@infrastructure/cache/layers/in-memory-cac
 
 // Types
 import type { CacheOperationOptions, HealthcareCacheConfig } from '@core/types';
-import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Main cache service - single entry point for all cache operations
@@ -77,8 +78,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     private readonly errorHandler: CacheErrorHandler,
     @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike,
     @Optional()
     @Inject(forwardRef(() => InMemoryCacheService))
     private readonly l1CacheService: InMemoryCacheService | null

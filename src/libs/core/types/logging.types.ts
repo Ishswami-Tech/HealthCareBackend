@@ -77,6 +77,21 @@ export enum LogType {
 }
 
 /**
+ * Minimal logger contract for infrastructure services.
+ *
+ * Use this instead of importing `LoggingService` at runtime to avoid SWC TDZ circular-import crashes.
+ */
+export interface LoggerLike {
+  log(
+    type: LogType,
+    level: LogLevel,
+    message: string,
+    source: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void>;
+}
+
+/**
  * Log context for distributed tracing and correlation
  * @interface LogContext
  */

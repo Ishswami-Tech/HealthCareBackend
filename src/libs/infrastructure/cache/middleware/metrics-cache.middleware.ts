@@ -4,11 +4,20 @@
  * @description Tracks cache metrics
  */
 
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { BaseCacheMiddleware } from './base-cache.middleware';
 import type { CacheMiddlewareContext } from './cache-middleware.interface';
-import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
+
+interface LoggerLike {
+  log(
+    type: LogType,
+    level: LogLevel,
+    message: string,
+    source: string,
+    metadata?: Record<string, unknown>
+  ): Promise<void>;
+}
 
 /**
  * Metrics middleware for cache operations
@@ -23,8 +32,9 @@ export class MetricsCacheMiddleware extends BaseCacheMiddleware {
   };
 
   constructor(
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing logging module/service (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     super();
     // LoggingService injected via forwardRef

@@ -7,15 +7,15 @@
  */
 
 import { Injectable, Inject, forwardRef, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@logging';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import type { CommunicationHealthMonitorStatus } from '@core/types';
-import { CircuitBreakerService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PushNotificationService } from '@communication/channels/push/push.service';
+import type { LoggerLike } from '@core/types';
 
 @Injectable()
 export class CommunicationHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -39,8 +39,8 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
     private readonly circuitBreakerService: CircuitBreakerService,
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService,
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike,
     @Inject(forwardRef(() => SocketService))
     private readonly socketService?: SocketService,
     @Inject(forwardRef(() => EmailService))

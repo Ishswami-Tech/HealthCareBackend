@@ -17,12 +17,13 @@
  */
 
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@infrastructure/logging';
-import { CacheService } from '@infrastructure/cache/cache.service';
+// IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
+import { ConfigService } from '@config/config.service';
+import type { CacheService } from '@infrastructure/cache/cache.service';
 import { InMemoryCacheService } from './in-memory-cache.service';
 import type { CacheOperationOptions } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Multi-layer cache service
@@ -36,13 +37,14 @@ export class MultiLayerCacheService {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Inject(forwardRef(() => CacheService))
+    @Inject('CACHE_SERVICE')
     private readonly l2CacheService: CacheService, // L2: Distributed cache (existing CacheService)
     @Optional()
     @Inject(forwardRef(() => InMemoryCacheService))
     private readonly l1CacheService: InMemoryCacheService | null, // L1: In-memory cache
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {
     // Load configuration
     this.enableL1 = this.configService.getEnvBoolean('L1_CACHE_ENABLED', true);
