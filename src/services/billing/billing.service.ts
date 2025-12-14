@@ -8,7 +8,13 @@ import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
-import { LogLevel, LogType } from '@core/types';
+import {
+  LogLevel,
+  LogType,
+  EventCategory,
+  EventPriority,
+  EnterpriseEventPayload,
+} from '@core/types';
 import { SubscriptionStatus, InvoiceStatus, PaymentStatus } from '@core/types/enums.types';
 import {
   CreateBillingPlanDto,
@@ -22,6 +28,13 @@ import {
 } from './dto/billing.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
+import { PaymentService } from '@payment/payment.service';
+import type {
+  PaymentIntentOptions,
+  PaymentResult,
+  PaymentStatusResult,
+  PaymentProvider,
+} from '@core/types/payment.types';
 
 // Import centralized types
 import type {
@@ -44,7 +57,8 @@ export class BillingService {
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly invoicePDFService: InvoicePDFService,
-    private readonly whatsAppService: WhatsAppService
+    private readonly whatsAppService: WhatsAppService,
+    private readonly paymentService: PaymentService
   ) {}
 
   // ============ Billing Plans ============
@@ -433,6 +447,9 @@ export class BillingService {
     return updated;
   }
 
+  /**
+   * Manually renew subscription (public method for admin use)
+   */
   async renewSubscription(id: string) {
     const subscription = await this.getSubscription(id);
 
@@ -976,6 +993,592 @@ export class BillingService {
       appointmentId,
     });
     await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+  }
+
+  // ============ Payment Processing ============
+
+  /**
+   * Process subscription payment (monthly for in-person appointments)
+   * Creates invoice and payment intent for subscription renewal
+   */
+  async processSubscriptionPayment(
+    subscriptionId: string,
+    provider?: PaymentProvider
+  ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+
+    if (!subscription) {
+      throw new NotFoundException('Subscription not found');
+    }
+
+    if (!subscription.plan) {
+      throw new BadRequestException('Subscription plan not found');
+    }
+
+    // Create invoice for subscription renewal
+    const invoice = await this.createInvoice({
+      userId: subscription.userId,
+      clinicId: subscription.clinicId,
+      subscriptionId: subscription.id,
+      amount: subscription.plan.amount,
+      tax: 0,
+      discount: 0,
+      dueDate: new Date(subscription.currentPeriodEnd).toISOString(),
+      description: `Subscription renewal for ${subscription.plan.name}`,
+      lineItems: {
+        items: [
+          {
+            description: subscription.plan.name,
+            amount: subscription.plan.amount,
+            quantity: 1,
+          },
+        ],
+      },
+      metadata: {
+        subscriptionId: subscription.id,
+        planId: subscription.planId,
+        periodStart: subscription.currentPeriodStart.toISOString(),
+        periodEnd: subscription.currentPeriodEnd.toISOString(),
+      },
+    });
+
+    // Get user details for payment
+    const user = await this.databaseService.findUserByIdSafe(subscription.userId);
+
+    // Create payment intent via payment service
+    const baseUrl = process.env['APP_URL'] || 'https://your-app.com';
+    const paymentIntentOptions: PaymentIntentOptions = {
+      amount: subscription.plan.amount * 100, // Convert to paise
+      currency: subscription.plan.currency || 'INR',
+      orderId: invoice.invoiceNumber,
+      customerId: subscription.userId,
+      ...(user?.email && { customerEmail: user.email }),
+      ...(user?.phone && { customerPhone: user.phone }),
+      ...(user?.name && { customerName: user.name }),
+      description: `Subscription payment for ${subscription.plan.name}`,
+      isSubscription: true,
+      subscriptionId: subscription.id,
+      subscriptionInterval: subscription.plan.interval.toLowerCase() as
+        | 'daily'
+        | 'weekly'
+        | 'monthly'
+        | 'quarterly'
+        | 'yearly',
+      clinicId: subscription.clinicId,
+      metadata: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        subscriptionId: subscription.id,
+        planId: subscription.planId,
+        baseUrl,
+        redirectUrl: `${baseUrl}/payment/callback`,
+        callbackUrl: `${baseUrl}/api/payments/webhook`,
+      },
+    };
+
+    const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
+      subscription.clinicId,
+      paymentIntentOptions,
+      provider
+    );
+
+    // Extract payment intent details with proper type checking
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl =
+      paymentIntentResult.metadata &&
+      typeof paymentIntentResult.metadata === 'object' &&
+      !Array.isArray(paymentIntentResult.metadata)
+        ? paymentIntentResult.metadata['redirectUrl']
+        : undefined;
+
+    // Create payment record
+    const payment = await this.createPayment({
+      amount: subscription.plan.amount,
+      clinicId: subscription.clinicId,
+      userId: subscription.userId,
+      invoiceId: invoice.id,
+      subscriptionId: subscription.id,
+      ...(paymentId && { transactionId: paymentId }),
+      description: `Subscription payment for ${subscription.plan.name}`,
+      metadata: {
+        paymentIntentId: paymentId,
+        orderId,
+        provider: providerName,
+        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+      },
+    });
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Subscription payment intent created',
+      'BillingService',
+      {
+        subscriptionId,
+        invoiceId: invoice.id,
+        paymentId: payment.id,
+        amount: subscription.plan.amount,
+      }
+    );
+
+    return {
+      invoice,
+      paymentIntent: paymentIntentResult,
+    };
+  }
+
+  /**
+   * Process per-appointment payment (for video appointments)
+   * Creates invoice and payment intent for single appointment
+   */
+  async processAppointmentPayment(
+    appointmentId: string,
+    amount: number,
+    appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
+    provider?: PaymentProvider
+  ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+
+    if (!appointment) {
+      throw new NotFoundException('Appointment not found');
+    }
+
+    // Get user details
+    const user = await this.databaseService.findUserByIdSafe(appointment.patientId);
+
+    // Create invoice for appointment payment
+    const invoice = await this.createInvoice({
+      userId: appointment.patientId,
+      clinicId: appointment.clinicId,
+      amount,
+      tax: 0,
+      discount: 0,
+      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
+      description: `Payment for ${appointmentType} appointment`,
+      lineItems: {
+        items: [
+          {
+            description: `${appointmentType} Appointment`,
+            amount,
+            quantity: 1,
+          },
+        ],
+      },
+      metadata: {
+        appointmentId: appointment.id,
+        appointmentType,
+      },
+    });
+
+    // Create payment intent via payment service
+    const baseUrl = process.env['APP_URL'] || 'https://your-app.com';
+    const paymentIntentOptions: PaymentIntentOptions = {
+      amount: amount * 100, // Convert to paise
+      currency: 'INR',
+      orderId: invoice.invoiceNumber,
+      customerId: appointment.patientId,
+      ...(user?.email && { customerEmail: user.email }),
+      ...(user?.phone && { customerPhone: user.phone }),
+      ...(user?.name && { customerName: user.name }),
+      description: `Payment for ${appointmentType} appointment`,
+      appointmentId: appointment.id,
+      appointmentType,
+      clinicId: appointment.clinicId,
+      metadata: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        appointmentId: appointment.id,
+        appointmentType,
+        baseUrl,
+        redirectUrl: `${baseUrl}/payment/callback`,
+        callbackUrl: `${baseUrl}/api/payments/webhook`,
+      },
+    };
+
+    const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
+      appointment.clinicId,
+      paymentIntentOptions,
+      provider
+    );
+
+    // Extract payment intent details with proper type checking
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl =
+      paymentIntentResult.metadata &&
+      typeof paymentIntentResult.metadata === 'object' &&
+      !Array.isArray(paymentIntentResult.metadata)
+        ? paymentIntentResult.metadata['redirectUrl']
+        : undefined;
+
+    // Create payment record
+    const payment = await this.createPayment({
+      amount,
+      clinicId: appointment.clinicId,
+      userId: appointment.patientId,
+      appointmentId: appointment.id,
+      invoiceId: invoice.id,
+      ...(paymentId && { transactionId: paymentId }),
+      description: `Payment for ${appointmentType} appointment`,
+      metadata: {
+        paymentIntentId: paymentId,
+        orderId,
+        provider: providerName,
+        appointmentType,
+        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+      },
+    });
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Appointment payment intent created',
+      'BillingService',
+      {
+        appointmentId,
+        invoiceId: invoice.id,
+        paymentId: payment.id,
+        amount,
+        appointmentType,
+      }
+    );
+
+    return {
+      invoice,
+      paymentIntent: paymentIntentResult,
+    };
+  }
+
+  /**
+   * Handle payment callback/webhook
+   * Updates payment status and processes completion
+   */
+  async handlePaymentCallback(
+    clinicId: string,
+    paymentId: string,
+    orderId: string,
+    provider?: PaymentProvider
+  ): Promise<{ payment: unknown; invoice?: unknown }> {
+    try {
+      // Verify payment status with provider
+      const paymentStatus: PaymentStatusResult = await this.paymentService.verifyPayment(
+        clinicId,
+        { paymentId, orderId },
+        provider
+      );
+
+      // Find payment record
+      const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+      if (!payment) {
+        // Try to find by transactionId
+        const payments = await this.databaseService.findPaymentsSafe({
+          transactionId: paymentId,
+        });
+        if (payments.length === 0) {
+          throw new NotFoundException('Payment record not found');
+        }
+        const foundPayment = payments[0]!;
+
+        // Update payment status
+        const updatedPayment = await this.updatePayment(foundPayment.id, {
+          status: paymentStatus.status as PaymentStatus,
+          transactionId: paymentStatus.transactionId || paymentId,
+        });
+
+        // If payment completed and linked to invoice, mark invoice as paid
+        if (
+          paymentStatus.status === 'completed' &&
+          'invoiceId' in foundPayment &&
+          foundPayment.invoiceId
+        ) {
+          await this.markInvoiceAsPaid(foundPayment.invoiceId);
+        }
+
+        // If payment is for subscription, update subscription
+        if (
+          paymentStatus.status === 'completed' &&
+          'subscriptionId' in foundPayment &&
+          foundPayment.subscriptionId
+        ) {
+          await this.renewSubscriptionAfterPayment(foundPayment.subscriptionId);
+        }
+
+        const paymentCompletedEvent: EnterpriseEventPayload = {
+          eventId: `payment-completed-${foundPayment.id}`,
+          eventType: 'payment.completed',
+          category: EventCategory.BILLING,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'BillingService',
+          version: '1.0.0',
+          clinicId,
+          ...(foundPayment.userId && { userId: foundPayment.userId }),
+          metadata: {
+            paymentId: foundPayment.id,
+            amount: paymentStatus.amount,
+            status: paymentStatus.status,
+            ...(foundPayment.appointmentId && { appointmentId: foundPayment.appointmentId }),
+            ...(foundPayment.subscriptionId && { subscriptionId: foundPayment.subscriptionId }),
+          },
+        };
+        await this.eventService.emitEnterprise('payment.completed', paymentCompletedEvent);
+
+        // Also emit simple event for @OnEvent listeners
+        if (foundPayment.appointmentId && paymentStatus.status === 'completed') {
+          await this.eventService.emit('payment.completed', {
+            appointmentId: foundPayment.appointmentId,
+            paymentId: foundPayment.id,
+            status: paymentStatus.status,
+            clinicId,
+          });
+        }
+
+        return { payment: updatedPayment };
+      }
+
+      // Update payment status
+      const updatedPayment = await this.updatePayment(payment.id, {
+        status: paymentStatus.status as PaymentStatus,
+        transactionId: paymentStatus.transactionId || paymentId,
+      });
+
+      // If payment completed and linked to invoice, mark invoice as paid
+      if (paymentStatus.status === 'completed' && 'invoiceId' in payment && payment.invoiceId) {
+        const invoice = await this.markInvoiceAsPaid(payment.invoiceId);
+        return { payment: updatedPayment, invoice };
+      }
+
+      // If payment is for subscription, update subscription
+      if (
+        paymentStatus.status === 'completed' &&
+        'subscriptionId' in payment &&
+        payment.subscriptionId
+      ) {
+        await this.renewSubscriptionAfterPayment(payment.subscriptionId);
+      }
+
+      const paymentCompletedEvent: EnterpriseEventPayload = {
+        eventId: `payment-completed-${payment.id}`,
+        eventType: 'payment.completed',
+        category: EventCategory.BILLING,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'BillingService',
+        version: '1.0.0',
+        clinicId,
+        ...(payment.userId && { userId: payment.userId }),
+        metadata: {
+          paymentId: payment.id,
+          amount: paymentStatus.amount,
+          status: paymentStatus.status,
+          ...(payment.appointmentId && { appointmentId: payment.appointmentId }),
+          ...(payment.subscriptionId && { subscriptionId: payment.subscriptionId }),
+        },
+      };
+      await this.eventService.emitEnterprise('payment.completed', paymentCompletedEvent);
+
+      // Also emit simple event for @OnEvent listeners
+      if (payment.appointmentId && paymentStatus.status === 'completed') {
+        await this.eventService.emit('payment.completed', {
+          appointmentId: payment.appointmentId,
+          paymentId: payment.id,
+          status: paymentStatus.status,
+          clinicId,
+        });
+      }
+
+      return { payment: updatedPayment };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to handle payment callback: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingService',
+        {
+          clinicId,
+          paymentId,
+          orderId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Renew subscription after successful payment (internal method)
+   */
+  private async renewSubscriptionAfterPayment(subscriptionId: string): Promise<void> {
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
+
+    if (!subscription || !subscription.plan) {
+      return;
+    }
+
+    // Calculate new period
+    const newPeriodStart = new Date(subscription.currentPeriodEnd);
+    const newPeriodEnd = this.calculatePeriodEnd(
+      newPeriodStart,
+      subscription.plan.interval,
+      subscription.plan.intervalCount
+    );
+
+    // Reset appointment usage for new period
+    const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
+      ? null
+      : subscription.plan.appointmentsIncluded || null;
+
+    await this.databaseService.updateSubscriptionSafe(subscriptionId, {
+      currentPeriodStart: newPeriodStart,
+      currentPeriodEnd: newPeriodEnd,
+      status: SubscriptionStatus.ACTIVE,
+      appointmentsUsed: 0,
+      ...(appointmentsRemaining !== null && { appointmentsRemaining }),
+    });
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Subscription renewed after payment',
+      'BillingService',
+      {
+        subscriptionId,
+        newPeriodStart: newPeriodStart.toISOString(),
+        newPeriodEnd: newPeriodEnd.toISOString(),
+      }
+    );
+
+    await this.eventService.emit('billing.subscription.renewed', {
+      subscriptionId,
+      periodStart: newPeriodStart,
+      periodEnd: newPeriodEnd,
+    });
+  }
+
+  /**
+   * Process refund for a payment
+   */
+  async refundPayment(
+    clinicId: string,
+    paymentId: string,
+    amount?: number,
+    reason?: string,
+    provider?: PaymentProvider
+  ): Promise<{
+    success: boolean;
+    refundId?: string;
+    amount: number;
+    status: string;
+    error?: string;
+  }> {
+    try {
+      // Get payment to verify it exists and get amount
+      const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+      if (!payment) {
+        throw new NotFoundException('Payment not found');
+      }
+
+      // Verify payment belongs to clinic
+      if (payment.clinicId !== clinicId) {
+        throw new BadRequestException('Payment does not belong to this clinic');
+      }
+
+      // Check if payment is already refunded
+      if ('refundAmount' in payment && payment.refundAmount && payment.refundAmount > 0) {
+        const totalRefunded = payment.refundAmount;
+        const paymentAmount = payment.amount;
+        if (totalRefunded >= paymentAmount) {
+          throw new BadRequestException('Payment has already been fully refunded');
+        }
+        if (amount && totalRefunded + amount > paymentAmount) {
+          throw new BadRequestException(
+            `Refund amount exceeds remaining amount. Remaining: ₹${paymentAmount - totalRefunded}`
+          );
+        }
+      }
+
+      // Process refund via payment service
+      const refundOptions: {
+        paymentId: string;
+        amount?: number;
+        reason?: string;
+        metadata?: Record<string, string | number | boolean>;
+      } = {
+        paymentId: payment.transactionId || paymentId,
+        metadata: {
+          clinicId,
+          originalPaymentId: payment.id,
+          refundedBy: 'system',
+        },
+      };
+      if (amount !== undefined) {
+        refundOptions.amount = amount * 100; // Convert to paise
+      }
+      if (reason !== undefined) {
+        refundOptions.reason = reason;
+      }
+      const refundResult = await this.paymentService.refund(clinicId, refundOptions, provider);
+
+      if (!refundResult.success) {
+        throw new BadRequestException(refundResult.error || 'Refund failed');
+      }
+
+      // Update payment record with refund information
+      const currentRefundAmount = ('refundAmount' in payment && payment.refundAmount) || 0;
+      const refundAmount = refundResult.amount;
+      const newRefundAmount = currentRefundAmount + refundAmount;
+
+      await this.updatePayment(payment.id, {
+        refundAmount: newRefundAmount,
+        status:
+          newRefundAmount >= payment.amount ? PaymentStatus.REFUNDED : PaymentStatus.COMPLETED,
+      });
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Payment refund processed successfully',
+        'BillingService',
+        {
+          paymentId: payment.id,
+          refundId: refundResult.refundId,
+          amount: refundAmount,
+          clinicId,
+        }
+      );
+
+      const result: {
+        success: boolean;
+        refundId?: string;
+        amount: number;
+        status: string;
+        error?: string;
+      } = {
+        success: true,
+        amount: refundAmount,
+        status: refundResult.status,
+      };
+      if (refundResult.refundId !== undefined) {
+        result.refundId = refundResult.refundId;
+      }
+      return result;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process refund: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingService',
+        {
+          paymentId,
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
   }
 
   async cancelSubscriptionAppointment(appointmentId: string) {

@@ -225,3 +225,6 @@ export * from './video.types';
 
 // HTTP Types (HTTP service types for @nestjs/axios)
 export * from './http.types';
+
+// Payment Types (centralized payment provider types)
+export * from './payment.types';
