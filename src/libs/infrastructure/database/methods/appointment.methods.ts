@@ -94,7 +94,8 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     // Normalize to Prisma's expected shape here.
     const dataRecord = data as unknown as Record<string, unknown>;
     const clinicId = typeof dataRecord['clinicId'] === 'string' ? dataRecord['clinicId'] : '';
-    const locationId = typeof dataRecord['locationId'] === 'string' ? dataRecord['locationId'] : undefined;
+    const locationId =
+      typeof dataRecord['locationId'] === 'string' ? dataRecord['locationId'] : undefined;
     const doctorId = typeof dataRecord['doctorId'] === 'string' ? dataRecord['doctorId'] : '';
     const patientId = typeof dataRecord['patientId'] === 'string' ? dataRecord['patientId'] : '';
     const userId = typeof dataRecord['userId'] === 'string' ? dataRecord['userId'] : '';
@@ -125,7 +126,9 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     const result = await this.executeWrite<AppointmentWithRelations>(
       async prisma => {
         return await prisma.appointment.create({
-          data: prismaCreateData as unknown as Parameters<typeof prisma.appointment.create>[0]['data'],
+          data: prismaCreateData as unknown as Parameters<
+            typeof prisma.appointment.create
+          >[0]['data'],
           include: {
             patient: {
               include: {

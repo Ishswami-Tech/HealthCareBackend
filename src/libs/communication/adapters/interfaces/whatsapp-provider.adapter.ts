@@ -14,11 +14,12 @@
 export interface WhatsAppOptions {
   to: string; // Phone number with country code
   from?: string; // Sender number (optional, uses default)
-  message: string;
+  message?: string; // Required for non-template messages
   mediaUrl?: string;
   mediaType?: 'image' | 'video' | 'audio' | 'document';
-  templateId?: string;
+  templateId?: string; // Required for template messages
   templateParams?: Record<string, string>;
+  language?: string; // Language code for templates (default: 'en')
   metadata?: Record<string, unknown>;
 }
 

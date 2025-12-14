@@ -123,7 +123,7 @@ export class LoggingService {
     private readonly databaseService?: DatabaseService,
     @Optional()
     @Inject('CACHE_SERVICE')
-    private readonly cacheService?: CacheService,
+    private readonly cacheService?: CacheService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.serviceName = this.configService.getEnv('SERVICE_NAME', 'healthcare') || 'healthcare';
@@ -1166,7 +1166,7 @@ export class LoggingService {
    * Health check using optimized health monitor
    * Uses dedicated health check with timeout protection and caching
    */
-  async healthCheck(): Promise<boolean> {
+  healthCheck(): boolean {
     // Fallback: service exists and log method is callable
     return typeof this.log === 'function';
   }
@@ -1175,7 +1175,7 @@ export class LoggingService {
    * Get health status with latency
    * Uses optimized health monitor for real-time status
    */
-  async getHealthStatus(): Promise<[boolean, number]> {
+  getHealthStatus(): [boolean, number] {
     // Fallback: service exists
     return [typeof this.log === 'function', 0];
   }
