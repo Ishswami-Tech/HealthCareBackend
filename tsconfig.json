@@ -43,6 +43,7 @@
       "@events/*": ["src/libs/infrastructure/events/*"],
       "@queue/*": ["src/libs/infrastructure/queue/*"],
       "@security/*": ["src/libs/security/*"],
+      "@payment/*": ["src/libs/payment/*"],
       "@config": ["src/config"],
       "@config/*": ["src/config/*"],
       "@prisma/client": ["src/libs/infrastructure/database/prisma/generated/client"]

@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { BillingService } from './billing.service';
+import { DatabaseService } from '@infrastructure/database';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel, AppointmentStatus } from '@core/types';
 
 /**
  * Billing event listeners for automatic invoice generation and delivery
@@ -9,7 +12,11 @@ import { BillingService } from './billing.service';
 export class BillingEventsListener {
   private readonly logger = new Logger(BillingEventsListener.name);
 
-  constructor(private readonly billingService: BillingService) {}
+  constructor(
+    private readonly billingService: BillingService,
+    private readonly databaseService: DatabaseService,
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Auto-send subscription confirmation when subscription is created
@@ -100,6 +107,83 @@ export class BillingEventsListener {
       this.logger.error(
         `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         error instanceof Error ? error.stack : undefined
+      );
+    }
+  }
+
+  /**
+   * Confirm appointment when payment is completed for appointment
+   * Listens to payment.completed simple event (emitted after enterprise event)
+   */
+  @OnEvent('payment.completed')
+  async handlePaymentCompleted(payload: {
+    appointmentId?: string;
+    paymentId: string;
+    status: string;
+    clinicId: string;
+  }) {
+    this.logger.log(`Handling payment.completed event for payment ${payload.paymentId}`);
+
+    try {
+      // Only process if payment is for an appointment and status is completed
+      if (payload.appointmentId && payload.status === 'completed' && payload.clinicId) {
+        const appointmentId = payload.appointmentId;
+        // Update appointment status to CONFIRMED after successful payment
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            return await client.appointment.update({
+              where: { id: appointmentId },
+              data: {
+                status: AppointmentStatus.CONFIRMED,
+              },
+            });
+          },
+          {
+            userId: 'system',
+            clinicId: payload.clinicId,
+            resourceType: 'APPOINTMENT',
+            operation: 'UPDATE',
+            resourceId: appointmentId,
+            userRole: 'system',
+            details: {
+              reason: 'Payment completed',
+              paymentId: payload.paymentId,
+            },
+          }
+        );
+
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.INFO,
+          'Appointment confirmed after payment completion',
+          'BillingEventsListener',
+          {
+            appointmentId: payload.appointmentId,
+            paymentId: payload.paymentId,
+            clinicId: payload.clinicId,
+          }
+        );
+
+        this.logger.log(
+          `Appointment ${payload.appointmentId} confirmed after payment ${payload.paymentId}`
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        `Failed to confirm appointment after payment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        error instanceof Error ? error.stack : undefined
+      );
+
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to confirm appointment after payment: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingEventsListener',
+        {
+          appointmentId: payload.appointmentId,
+          paymentId: payload.paymentId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }
