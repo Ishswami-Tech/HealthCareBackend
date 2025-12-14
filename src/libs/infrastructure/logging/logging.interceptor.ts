@@ -1,5 +1,11 @@
 // External imports
-import { Injectable, NestInterceptor, ExecutionContext, CallHandler, Optional } from '@nestjs/common';
+import {
+  Injectable,
+  NestInterceptor,
+  ExecutionContext,
+  CallHandler,
+  Optional,
+} from '@nestjs/common';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 import { Observable } from 'rxjs';

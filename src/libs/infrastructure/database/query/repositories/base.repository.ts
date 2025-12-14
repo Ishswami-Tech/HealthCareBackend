@@ -175,8 +175,7 @@ export abstract class BaseRepository<
   TCreateInput,
   TUpdateInput,
   TId = string,
-> implements IBaseRepository<TEntity, TCreateInput, TUpdateInput, TId>
-{
+> implements IBaseRepository<TEntity, TCreateInput, TUpdateInput, TId> {
   protected readonly serviceName: string;
   protected readonly cacheEnabled: boolean;
   protected readonly defaultCacheTTL: number = 3600; // 1 hour default
