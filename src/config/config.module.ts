@@ -12,7 +12,9 @@ import jitsiConfig from './jitsi.config';
 import videoConfig from './video.config';
 import { healthcareConfig } from '@infrastructure/database/config/healthcare.config';
 import { ConfigService } from './config.service';
+import { PaymentConfigService } from './payment-config.service';
 import { ENV_VARS } from './constants';
+import { CommunicationConfigModule } from '@communication/config/communication-config.module';
 import {
   validateEnvironmentConfig,
   getEnvironmentValidationErrorMessage,
@@ -119,6 +121,7 @@ validateConfigEarly();
 @Global()
 @Module({
   imports: [
+    CommunicationConfigModule, // For CredentialEncryptionService used by PaymentConfigService
     NestConfigModule.forRoot({
       load: [
         getConfigFactory(), // Get appropriate config based on NODE_ENV
@@ -145,8 +148,8 @@ validateConfigEarly();
       },
     }),
   ],
-  providers: [ConfigService],
-  exports: [ConfigService],
+  providers: [ConfigService, PaymentConfigService],
+  exports: [ConfigService, PaymentConfigService],
 })
 export class ConfigModule {
   /**

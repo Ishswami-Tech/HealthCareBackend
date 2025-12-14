@@ -36,6 +36,7 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
+import { PaymentProvider } from '@core/types';
 
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
@@ -235,6 +236,47 @@ export class BillingController {
     return this.billingService.updatePayment(id, updatePaymentDto);
   }
 
+  /**
+   * Process refund for a payment
+   */
+  @Post('payments/:id/refund')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('payments', 'update')
+  async refundPayment(
+    @Param('id') paymentId: string,
+    @Body() body: { amount?: number; reason?: string },
+    @Query('clinicId') clinicId: string,
+    @Query('provider') provider?: string
+  ) {
+    // Convert provider string to PaymentProvider enum
+    let paymentProvider: PaymentProvider | undefined;
+    if (provider) {
+      const normalizedProvider = provider.toLowerCase();
+      if (normalizedProvider === 'razorpay') {
+        paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'phonepe') {
+        paymentProvider = PaymentProvider.PHONEPE;
+      }
+    }
+
+    const result = await this.billingService.refundPayment(
+      clinicId,
+      paymentId,
+      body.amount,
+      body.reason,
+      paymentProvider
+    );
+    return {
+      success: result.success,
+      refundId: result.refundId,
+      amount: result.amount,
+      status: result.status,
+      message: result.success
+        ? 'Refund processed successfully'
+        : `Refund failed: ${result.error || 'Unknown error'}`,
+    };
+  }
+
   // ============ Analytics ============
 
   @Get('analytics/revenue')
@@ -375,5 +417,113 @@ export class BillingController {
   async sendSubscriptionConfirmation(@Param('id') subscriptionId: string) {
     await this.billingService.sendSubscriptionConfirmation(subscriptionId);
     return { message: 'Subscription confirmation sent successfully' };
+  }
+
+  // ============ Payment Processing ============
+
+  /**
+   * Process subscription payment (monthly for in-person appointments)
+   */
+  @Post('subscriptions/:id/process-payment')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
+  @RequireResourcePermission('payments', 'create')
+  async processSubscriptionPayment(
+    @Param('id') subscriptionId: string,
+    @Query('provider') provider?: string
+  ) {
+    // Convert provider string to PaymentProvider enum
+    let paymentProvider: PaymentProvider | undefined;
+    if (provider) {
+      const normalizedProvider = provider.toLowerCase();
+      if (normalizedProvider === 'razorpay') {
+        paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'phonepe') {
+        paymentProvider = PaymentProvider.PHONEPE;
+      }
+    }
+
+    const result = await this.billingService.processSubscriptionPayment(
+      subscriptionId,
+      paymentProvider
+    );
+    return {
+      success: true,
+      invoice: result.invoice,
+      paymentIntent: result.paymentIntent,
+      message: 'Payment intent created successfully. Redirect user to payment gateway.',
+    };
+  }
+
+  /**
+   * Process per-appointment payment (for video appointments)
+   */
+  @Post('appointments/:id/process-payment')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'create')
+  async processAppointmentPayment(
+    @Param('id') appointmentId: string,
+    @Body() body: { amount: number; appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
+    @Query('provider') provider?: string
+  ) {
+    // Convert provider string to PaymentProvider enum
+    let paymentProvider: PaymentProvider | undefined;
+    if (provider) {
+      const normalizedProvider = provider.toLowerCase();
+      if (normalizedProvider === 'razorpay') {
+        paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'phonepe') {
+        paymentProvider = PaymentProvider.PHONEPE;
+      }
+    }
+
+    const result = await this.billingService.processAppointmentPayment(
+      appointmentId,
+      body.amount,
+      body.appointmentType,
+      paymentProvider
+    );
+    return {
+      success: true,
+      invoice: result.invoice,
+      paymentIntent: result.paymentIntent,
+      message: 'Payment intent created successfully. Redirect user to payment gateway.',
+    };
+  }
+
+  /**
+   * Handle payment callback (called after payment completion)
+   */
+  @Post('payments/callback')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('payments', 'update')
+  async handlePaymentCallback(
+    @Query('clinicId') clinicId: string,
+    @Query('paymentId') paymentId: string,
+    @Query('orderId') orderId: string,
+    @Query('provider') provider?: string
+  ) {
+    // Convert provider string to PaymentProvider enum
+    let paymentProvider: PaymentProvider | undefined;
+    if (provider) {
+      const normalizedProvider = provider.toLowerCase();
+      if (normalizedProvider === 'razorpay') {
+        paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'phonepe') {
+        paymentProvider = PaymentProvider.PHONEPE;
+      }
+    }
+
+    const result = await this.billingService.handlePaymentCallback(
+      clinicId,
+      paymentId,
+      orderId,
+      paymentProvider
+    );
+    return {
+      success: true,
+      payment: result.payment,
+      invoice: result.invoice,
+      message: 'Payment processed successfully',
+    };
   }
 }
