@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, Inject } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config';
 import {
   EmailTemplate,
@@ -30,6 +30,8 @@ import {
   generateSecurityAlertTemplate,
   generateSuspiciousActivityTemplate,
 } from '@communication/templates/emailTemplates';
+import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
+import { CommunicationConfigService } from '@communication/config';
 
 /**
  * Email configuration interface
@@ -70,7 +72,11 @@ export class EmailService implements OnModuleInit {
    */
   constructor(
     @Inject(ConfigService) private readonly configService: ConfigService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => ProviderFactory))
+    private readonly providerFactory: ProviderFactory,
+    @Inject(forwardRef(() => CommunicationConfigService))
+    private readonly communicationConfigService: CommunicationConfigService
   ) {}
 
   /**
@@ -237,51 +243,136 @@ export class EmailService implements OnModuleInit {
    * Sends a simple body-based email without templates
    * This method provides a unified interface for simple email sending
    * and handles provider selection internally (SMTP, Mailtrap, SES, etc.)
+   * Supports multi-tenant communication via clinicId
    *
    * @param options - Simple email options with body content
+   * @param clinicId - Optional clinic ID for multi-tenant provider selection
    * @returns Promise resolving to email result with messageId
    */
-  async sendSimpleEmail(options: {
-    to: string | string[];
-    subject: string;
-    body: string;
-    isHtml?: boolean;
-    replyTo?: string;
-    cc?: string[];
-    bcc?: string[];
-  }): Promise<{ success: boolean; messageId?: string; error?: string }> {
-    if (!this.isInitialized) {
-      void this.loggingService.log(
-        LogType.EMAIL,
-        LogLevel.WARN,
-        'Email service is not initialized, skipping email send',
-        'EmailService'
-      );
-      return { success: false, error: 'Service not initialized' };
-    }
-
+  async sendSimpleEmail(
+    options: {
+      to: string | string[];
+      subject: string;
+      body: string;
+      isHtml?: boolean;
+      replyTo?: string;
+      cc?: string[];
+      bcc?: string[];
+    },
+    clinicId?: string
+  ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
-      const emailContent = options.body;
 
-      // Use EmailOptions with html/text field and a simple template
-      // The html/text field will take precedence over template in sendViaSMTP/sendViaAPI
+      // If clinicId is provided, use multi-tenant provider adapter
+      if (clinicId) {
+        try {
+          const adapter = await this.providerFactory.getEmailProviderWithFallback(clinicId);
+          if (adapter) {
+            const clinicConfig = await this.communicationConfigService.getClinicConfig(clinicId);
+            const defaultFrom = clinicConfig?.email?.defaultFrom || 'noreply@healthcare.com';
+            const defaultFromName = clinicConfig?.email?.defaultFromName || 'Healthcare App';
+
+            // Send to all recipients
+            // Use adapter's EmailOptions interface
+            type AdapterEmailOptions = {
+              to: string | string[];
+              from: string;
+              fromName?: string;
+              subject: string;
+              body: string;
+              html?: boolean;
+              cc?: string | string[];
+              bcc?: string | string[];
+              replyTo?: string;
+            };
+            const results = await Promise.allSettled(
+              toAddresses.map(async to => {
+                const emailOptions: AdapterEmailOptions = {
+                  to,
+                  from: defaultFrom,
+                  fromName: defaultFromName,
+                  subject: options.subject,
+                  body: options.body,
+                  html: options.isHtml !== false,
+                };
+                if (options.replyTo) {
+                  emailOptions.replyTo = options.replyTo;
+                }
+                if (options.cc && options.cc.length > 0) {
+                  emailOptions.cc = options.cc;
+                }
+                if (options.bcc && options.bcc.length > 0) {
+                  emailOptions.bcc = options.bcc;
+                }
+                const result = await adapter.send(emailOptions);
+                return result;
+              })
+            );
+
+            const allSuccessful = results.every(r => r.status === 'fulfilled' && r.value.success);
+            const firstResult = results[0];
+
+            if (
+              allSuccessful &&
+              firstResult &&
+              firstResult.status === 'fulfilled' &&
+              firstResult.value.success
+            ) {
+              return {
+                success: true,
+                messageId:
+                  firstResult.value.messageId || `email:${toAddresses.join(',')}:${Date.now()}`,
+              };
+            }
+
+            const errorMessage =
+              firstResult && firstResult.status === 'fulfilled'
+                ? firstResult.value.error || 'Failed to send email'
+                : 'Failed to send email';
+
+            return {
+              success: false,
+              error: errorMessage,
+            };
+          }
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            `Failed to use clinic-specific email provider, falling back to global: ${error instanceof Error ? error.message : String(error)}`,
+            'EmailService',
+            { clinicId }
+          );
+          // Fall through to global provider
+        }
+      }
+
+      // Fallback to global provider (existing behavior)
+      if (!this.isInitialized) {
+        void this.loggingService.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          'Email service is not initialized, skipping email send',
+          'EmailService'
+        );
+        return { success: false, error: 'Service not initialized' };
+      }
+
+      const emailContent = options.body;
       const baseEmailOptions: EmailOptions = {
-        to: toAddresses[0]!, // EmailService.sendEmail expects single recipient
+        to: toAddresses[0]!,
         subject: options.subject,
-        template: EmailTemplate.WELCOME, // Dummy template, html/text will be used instead
+        template: EmailTemplate.WELCOME,
         context: {},
         ...(options.isHtml !== false ? { html: emailContent } : { text: emailContent }),
       };
 
-      // Send to all recipients if multiple
       const results = await Promise.allSettled(
         toAddresses.map(async (to, index) => {
           if (index === 0) {
-            // First recipient uses the prepared options
             return await this.sendEmail(baseEmailOptions);
           } else {
-            // Additional recipients
             return await this.sendEmail({
               ...baseEmailOptions,
               to,

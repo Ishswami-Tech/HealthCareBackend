@@ -645,6 +645,7 @@ export class CommunicationService implements OnModuleInit {
    * Send email using EmailService (unified email provider interface)
    * EmailService handles provider selection internally (SMTP, Mailtrap, SES, etc.)
    * This provides a single entry point for all email operations
+   * Supports multi-tenant communication via clinicId
    */
   private async sendEmail(
     request: CommunicationRequest,
@@ -661,14 +662,24 @@ export class CommunicationService implements OnModuleInit {
         };
       }
 
+      // Extract clinicId from request metadata
+      const clinicId =
+        request.metadata && typeof request.metadata === 'object' && 'clinicId' in request.metadata
+          ? (request.metadata['clinicId'] as string | undefined)
+          : undefined;
+
       // Use EmailService as the unified email provider interface
       // EmailService handles provider selection (SMTP, Mailtrap, SES, etc.) internally
-      const emailResult = await this.emailService.sendSimpleEmail({
-        to: recipient.email,
-        subject: request.title,
-        body: request.body,
-        isHtml: true,
-      });
+      // Pass clinicId for multi-tenant provider routing
+      const emailResult = await this.emailService.sendSimpleEmail(
+        {
+          to: recipient.email,
+          subject: request.title,
+          body: request.body,
+          isHtml: true,
+        },
+        clinicId
+      );
 
       return {
         channel: 'email',
@@ -701,6 +712,7 @@ export class CommunicationService implements OnModuleInit {
 
   /**
    * Send WhatsApp message
+   * Supports multi-tenant communication via clinicId
    */
   private async sendWhatsApp(
     request: CommunicationRequest,
@@ -717,11 +729,20 @@ export class CommunicationService implements OnModuleInit {
         };
       }
 
+      // Extract clinicId from request metadata
+      const clinicId =
+        request.metadata && typeof request.metadata === 'object' && 'clinicId' in request.metadata
+          ? (request.metadata['clinicId'] as string | undefined)
+          : undefined;
+
       // Use WhatsApp service to send message
-      // For now, we'll use a simple text message
-      // In production, you might want to use templates
+      // Pass clinicId for multi-tenant provider routing
       const message = `${request.title}\n\n${request.body}`;
-      const success = await this.whatsAppService.sendCustomMessage(recipient.phoneNumber, message);
+      const success = await this.whatsAppService.sendCustomMessage(
+        recipient.phoneNumber,
+        message,
+        clinicId
+      );
 
       return {
         channel: 'whatsapp',

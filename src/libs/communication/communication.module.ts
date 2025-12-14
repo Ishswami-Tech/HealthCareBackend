@@ -16,6 +16,7 @@ import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import { CommunicationController } from './communication.controller';
 import { CommunicationConfigModule } from './config/communication-config.module';
+import { CommunicationAdaptersModule } from './adapters/adapters.module';
 
 /**
  * Unified Communication Module
@@ -58,6 +59,7 @@ import { CommunicationConfigModule } from './config/communication-config.module'
     NotificationModule, // REST API endpoints in @services/notification (for external API access)
     ListenersModule, // Event-driven communication listeners
     CommunicationConfigModule, // Multi-tenant communication configuration
+    CommunicationAdaptersModule, // Provider adapters (SMTP, SES, SendGrid, Meta WhatsApp, Twilio)
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService

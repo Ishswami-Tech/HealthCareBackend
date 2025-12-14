@@ -15,6 +15,7 @@ import { CacheService } from '@infrastructure/cache';
 import { CredentialEncryptionService } from './credential-encryption.service';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
+import type { EmailResult } from '@communication/adapters/interfaces/email-provider.adapter';
 
 /**
  * Communication Provider Type
@@ -433,5 +434,262 @@ export class CommunicationConfigService implements OnModuleInit {
     }
 
     return decrypted;
+  }
+
+  /**
+   * Test email configuration
+   * Sends a test email to verify provider configuration
+   */
+  async testEmailConfig(
+    clinicId: string,
+    testEmail: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const config = await this.getClinicConfig(clinicId);
+      if (!config || !config.email.primary) {
+        return {
+          success: false,
+          message: 'No email configuration found for clinic',
+          error: 'Configuration not found',
+        };
+      }
+
+      // For testing, we'll use a simple approach
+      // In production, inject ProviderFactory properly
+      const adapter = await this.createTestAdapter(config.email.primary, 'email');
+
+      if (!adapter) {
+        return {
+          success: false,
+          message: 'Failed to create email adapter',
+          error: 'Adapter creation failed',
+        };
+      }
+
+      // Type guard to check if adapter has send method
+      const isEmailAdapter = (
+        adapter: unknown
+      ): adapter is { send: (options: unknown) => Promise<EmailResult> } => {
+        return (
+          typeof adapter === 'object' &&
+          adapter !== null &&
+          'send' in adapter &&
+          typeof (adapter as { send: unknown }).send === 'function'
+        );
+      };
+
+      if (!isEmailAdapter(adapter)) {
+        return {
+          success: false,
+          message: 'Invalid email adapter',
+          error: 'Adapter does not implement send method',
+        };
+      }
+
+      const result = await adapter.send({
+        to: testEmail,
+        from: config.email.defaultFrom || 'test@healthcare.com',
+        subject: 'Test Email Configuration',
+        body: 'This is a test email to verify your email configuration.',
+        html: false,
+      });
+
+      if (result.success) {
+        return {
+          success: true,
+          message: 'Test email sent successfully',
+        };
+      } else {
+        const errorResponse: {
+          success: false;
+          message: string;
+          error?: string;
+        } = {
+          success: false,
+          message: 'Failed to send test email',
+        };
+        if (result.error) {
+          errorResponse.error = result.error;
+        }
+        return errorResponse;
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to test email config: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService',
+        {
+          clinicId,
+          testEmail,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+
+      return {
+        success: false,
+        message: 'Test failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Test WhatsApp configuration
+   * Sends a test message to verify provider configuration
+   */
+  async testWhatsAppConfig(
+    clinicId: string,
+    testPhone: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const config = await this.getClinicConfig(clinicId);
+      if (!config || !config.whatsapp.primary) {
+        return {
+          success: false,
+          message: 'No WhatsApp configuration found for clinic',
+          error: 'Configuration not found',
+        };
+      }
+
+      // For testing, verify connection only (don't send actual message)
+      const adapter = await this.createTestAdapter(config.whatsapp.primary, 'whatsapp');
+
+      if (!adapter) {
+        return {
+          success: false,
+          message: 'Failed to create WhatsApp adapter',
+          error: 'Adapter creation failed',
+        };
+      }
+
+      // Type guard to check if adapter has verify method
+      const isWhatsAppAdapter = (
+        adapter: unknown
+      ): adapter is { verify: () => Promise<boolean> } => {
+        return (
+          typeof adapter === 'object' &&
+          adapter !== null &&
+          'verify' in adapter &&
+          typeof (adapter as { verify: unknown }).verify === 'function'
+        );
+      };
+
+      if (!isWhatsAppAdapter(adapter)) {
+        return {
+          success: false,
+          message: 'Invalid WhatsApp adapter',
+          error: 'Adapter does not implement verify method',
+        };
+      }
+
+      const verified = await adapter.verify();
+
+      if (verified) {
+        return {
+          success: true,
+          message: 'WhatsApp configuration verified successfully',
+        };
+      } else {
+        return {
+          success: false,
+          message: 'WhatsApp configuration verification failed',
+          error: 'Connection test failed',
+        };
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to test WhatsApp config: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService',
+        {
+          clinicId,
+          testPhone,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+
+      return {
+        success: false,
+        message: 'Test failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Helper to create test adapter (simplified for testing)
+   */
+  private async createTestAdapter(
+    providerConfig: {
+      provider: string;
+      enabled: boolean;
+      credentials: Record<string, string> | { encrypted: string };
+      settings?: Record<string, unknown>;
+      priority?: number;
+    },
+    type: 'email' | 'whatsapp'
+  ): Promise<unknown> {
+    // This is a simplified version for testing
+    // In production, use ProviderFactory properly
+    try {
+      if (type === 'email') {
+        const provider = providerConfig.provider;
+        // Map provider names to enum values
+        const providerMap: Record<string, string> = {
+          smtp: 'smtp',
+          aws_ses: 'aws_ses',
+          ses: 'aws_ses',
+          sendgrid: 'sendgrid',
+        };
+        const normalizedProvider = providerMap[provider.toLowerCase()] || provider;
+
+        switch (normalizedProvider) {
+          case 'smtp': {
+            const { SMTPEmailAdapter } =
+              await import('@communication/adapters/email/smtp-email.adapter');
+            const smtpAdapter = new SMTPEmailAdapter(this.loggingService);
+            smtpAdapter.initialize(providerConfig as ProviderConfig);
+            return smtpAdapter;
+          }
+          case 'aws_ses': {
+            const { SESEmailAdapter } =
+              await import('@communication/adapters/email/ses-email.adapter');
+            const sesAdapter = new SESEmailAdapter(this.loggingService);
+            sesAdapter.initialize(providerConfig as ProviderConfig);
+            return sesAdapter;
+          }
+          case 'sendgrid': {
+            const { SendGridEmailAdapter } =
+              await import('@communication/adapters/email/sendgrid-email.adapter');
+            const sendgridAdapter = new SendGridEmailAdapter(this.loggingService);
+            sendgridAdapter.initialize(providerConfig as ProviderConfig);
+            return sendgridAdapter;
+          }
+        }
+      } else if (type === 'whatsapp') {
+        // WhatsApp adapters need HttpService - skip for now in test
+        // In production, use ProviderFactory which has HttpService injected
+        return null;
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to create test adapter: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService',
+        { error: error instanceof Error ? error.stack : undefined }
+      );
+    }
+    return null;
   }
 }

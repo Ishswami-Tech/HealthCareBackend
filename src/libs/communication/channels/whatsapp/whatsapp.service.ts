@@ -1,10 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { ConfigService } from '@config';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
+import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
+import { CommunicationConfigService } from '@communication/config';
 
 /**
  * WhatsApp Business API service for sending messages and notifications
@@ -17,7 +19,11 @@ export class WhatsAppService {
     private readonly configService: ConfigService,
     private readonly whatsAppConfig: WhatsAppConfig,
     private readonly loggingService: LoggingService,
-    private readonly httpService: HttpService
+    private readonly httpService: HttpService,
+    @Inject(forwardRef(() => ProviderFactory))
+    private readonly providerFactory: ProviderFactory,
+    @Inject(forwardRef(() => CommunicationConfigService))
+    private readonly communicationConfigService: CommunicationConfigService
   ) {}
   /**
    * Creates an instance of WhatsAppService
@@ -258,23 +264,71 @@ export class WhatsAppService {
    */
   /**
    * Sends a custom text message via WhatsApp
+   * Supports multi-tenant communication via clinicId
    * @param phoneNumber - Recipient phone number (with country code)
    * @param message - Message text to send
+   * @param clinicId - Optional clinic ID for multi-tenant provider selection
    * @returns Promise resolving to true if message was sent successfully
    */
-  async sendCustomMessage(phoneNumber: string, message: string): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping custom message.',
-        'WhatsAppService'
-      );
-      return false;
-    }
-
+  async sendCustomMessage(
+    phoneNumber: string,
+    message: string,
+    clinicId?: string
+  ): Promise<boolean> {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+      // If clinicId is provided, use multi-tenant provider adapter
+      if (clinicId) {
+        try {
+          const adapter = await this.providerFactory.getWhatsAppProviderWithFallback(clinicId);
+          if (adapter) {
+            const result = await adapter.send({
+              to: formattedPhone,
+              message,
+            });
+
+            if (result.success) {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.INFO,
+                `Custom message sent to ${phoneNumber} via WhatsApp (clinic: ${clinicId})`,
+                'WhatsAppService'
+              );
+              return true;
+            } else {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.WARN,
+                `Failed to send WhatsApp message via clinic adapter, falling back to global: ${result.error}`,
+                'WhatsAppService',
+                { clinicId }
+              );
+              // Fall through to global provider
+            }
+          }
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to use clinic-specific WhatsApp provider, falling back to global: ${error instanceof Error ? error.message : String(error)}`,
+            'WhatsAppService',
+            { clinicId }
+          );
+          // Fall through to global provider
+        }
+      }
+
+      // Fallback to global provider (existing behavior)
+      if (!this.whatsAppConfig.enabled) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'WhatsApp service is disabled. Skipping custom message.',
+          'WhatsAppService'
+        );
+        return false;
+      }
 
       await firstValueFrom(
         this.httpService.post(

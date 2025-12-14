@@ -1,4 +1,4 @@
-import { Controller, Get, Res, Inject } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { HealthCheck, HealthCheckService, HealthCheckError } from '@nestjs/terminus';
 import { ConfigService } from '@config/config.service';
@@ -281,7 +281,7 @@ export class HealthController {
       // The error normally contains the structured health result in `causes` (HealthCheckError),
       // or in `response` (framework-wrapped exception). Return that instead of a generic payload.
       if (_error instanceof HealthCheckError) {
-        const causes = _error.causes;
+        const causes = _error.causes as Record<string, unknown> | undefined;
         if (typeof causes === 'object' && causes !== null) {
           return res.status(200).send(causes);
         }

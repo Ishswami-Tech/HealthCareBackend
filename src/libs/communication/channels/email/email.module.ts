@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EmailService } from '@communication/channels/email/email.service';
 import { EmailController } from '@communication/channels/email/email.controller';
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
@@ -9,6 +9,8 @@ import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from '@infrastructure/queue';
+import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
+import { CommunicationConfigModule } from '@communication/config/communication-config.module';
 
 /**
  * Email Module
@@ -32,6 +34,8 @@ import { QueueService } from '@infrastructure/queue';
     ConfigModule,
     LoggingModule,
     DatabaseModule, // Optional: For email delivery logging/audit trails
+    forwardRef(() => CommunicationAdaptersModule), // Provider adapters
+    forwardRef(() => CommunicationConfigModule), // Communication config service
     // QueueModule is already imported globally via AppModule.forRoot()
     // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
     // Use ConfigService (which uses dotenv) for environment variable access

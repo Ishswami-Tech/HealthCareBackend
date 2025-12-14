@@ -1,4 +1,4 @@
-import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
+import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/channels/email/email.service';

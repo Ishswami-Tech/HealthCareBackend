@@ -306,9 +306,12 @@ export class RbacGuard implements CanActivate {
             doctor: { select: { userId: true } },
           },
         });
-        return result as
-          | { userId: string; clinicId: string; patient: { userId: string } | null; doctor: { userId: string } | null }
-          | null;
+        return result as {
+          userId: string;
+          clinicId: string;
+          patient: { userId: string } | null;
+          doctor: { userId: string } | null;
+        } | null;
       });
 
       if (!appointment) {

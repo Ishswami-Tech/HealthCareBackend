@@ -11,7 +11,6 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   Inject,
-  forwardRef,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
 

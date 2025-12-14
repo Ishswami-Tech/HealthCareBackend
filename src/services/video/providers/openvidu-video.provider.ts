@@ -678,12 +678,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
         : `${this.apiUrl}/api/recordings`;
       const response: AxiosResponse<{ numberOfElements: number; content: OpenViduRecording[] }> =
         await firstValueFrom(
-        this.httpService.get<{ numberOfElements: number; content: OpenViduRecording[] }>(url, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
-      );
+          this.httpService.get<{ numberOfElements: number; content: OpenViduRecording[] }>(url, {
+            headers: {
+              Authorization: this.getAuthHeader(),
+            },
+          })
+        );
 
       return response.data.content || [];
     } catch (error) {
