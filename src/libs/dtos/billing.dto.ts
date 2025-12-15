@@ -1,5 +1,9 @@
-// Simple DTOs without decorators for now to avoid TypeScript compatibility issues
-// All enums are imported from centralized @core/types/enums.types
+/**
+ * Billing DTOs
+ * @module BillingDTOs
+ * @description Centralized billing-related Data Transfer Objects
+ * All enums are imported from centralized @core/types/enums.types
+ */
 
 import {
   BillingInterval,

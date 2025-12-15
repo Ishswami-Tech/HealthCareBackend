@@ -4,6 +4,7 @@ import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import type { RedisClient } from '@core/types/common.types';
 import { IoAdapter } from '@nestjs/platform-socket.io';
+import { createFrameworkAdapter } from '@infrastructure/framework';
 
 /**
  * Graceful Shutdown Service
@@ -81,7 +82,9 @@ export class GracefulShutdownService {
       if (customWebSocketAdapter && app) {
         this.logger.log('Closing WebSocket connections...');
         try {
-          const httpServer = app.getHttpServer() as {
+          // Use framework adapter to get HTTP server (framework-agnostic approach)
+          const frameworkAdapter = createFrameworkAdapter();
+          const httpServer = frameworkAdapter.getHttpServer(app) as {
             close: (callback?: (err?: Error) => void) => void;
           } | null;
           if (httpServer && typeof httpServer.close === 'function') {

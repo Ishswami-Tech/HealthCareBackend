@@ -1,18 +1,27 @@
 // External imports
-import { Controller, Get, Query, Res, Post, Inject, forwardRef } from '@nestjs/common';
+import { Controller, Get, Query, Res, Post, Inject, forwardRef, UseGuards } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@logging';
-import { Public } from '@core/decorators/public.decorator';
+
+// Internal imports - Core
+import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { IpWhitelistGuard } from '@core/guards/ip-whitelist.guard';
+import { Roles } from '@core/decorators/roles.decorator';
+import { Role } from '@core/types/enums.types';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
 
 @ApiTags('logging')
 @Controller('logger')
-@Public()
+@UseGuards(JwtAuthGuard, RolesGuard, IpWhitelistGuard)
+@Roles(Role.SUPER_ADMIN)
+@ApiBearerAuth()
+@ApiSecurity('bearer')
 export class LoggingController {
   constructor(
     @Inject(forwardRef(() => LoggingService))

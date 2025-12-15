@@ -8,6 +8,7 @@ import {
   HttpStatus,
   UsePipes,
   ValidationPipe,
+  Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { CommunicationService } from '@communication/communication.service';
@@ -31,8 +32,7 @@ import {
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
-} from '@dtos/index';
-import { NotificationType } from '@dtos/notification.dto';
+} from '@dtos';
 import type {
   UnifiedNotificationResponse,
   ChatStatsResponse,
@@ -67,11 +67,16 @@ export class NotificationController {
   ) {}
 
   @Post('push')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Deprecation-Date', '2024-07-01')
+  @Header('X-Sunset-Date', '2024-12-31')
+  @Header('X-Alternative-Endpoint', '/communication/push')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send push notification to a single device',
+    summary: 'Send push notification to a single device [DEPRECATED]',
     description:
-      'Send a push notification to a specific device using Firebase Cloud Messaging. Uses CommunicationService for unified delivery.',
+      '⚠️ DEPRECATED: Use POST /communication/push instead. This endpoint will be removed in 6 months. Send a push notification to a specific device using Firebase Cloud Messaging. Uses CommunicationService for unified delivery.',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -113,11 +118,14 @@ export class NotificationController {
   }
 
   @Post('push/multiple')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/push/multiple')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send push notification to multiple devices',
+    summary: 'Send push notification to multiple devices [DEPRECATED]',
     description:
-      'Send the same push notification to multiple devices at once using CommunicationService',
+      '⚠️ DEPRECATED: Use POST /communication/push/multiple instead. Send the same push notification to multiple devices at once using CommunicationService',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -155,12 +163,15 @@ export class NotificationController {
   }
 
   @Post('push/topic')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/push/topic')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send push notification to a topic',
+    summary: 'Send push notification to a topic [DEPRECATED]',
     description:
-      'Send push notification to all devices subscribed to a specific topic. Uses PushNotificationService directly for topic-based delivery.',
+      '⚠️ DEPRECATED: Use POST /communication/push/topic instead. Send push notification to all devices subscribed to a specific topic. Uses PushNotificationService directly for topic-based delivery.',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -186,10 +197,14 @@ export class NotificationController {
   }
 
   @Post('push/subscribe')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/push/subscribe')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Subscribe device to topic',
-    description: 'Subscribe a device token to a specific topic for topic-based messaging',
+    summary: 'Subscribe device to topic [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/push/subscribe instead. Subscribe a device token to a specific topic for topic-based messaging',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -210,10 +225,14 @@ export class NotificationController {
   }
 
   @Post('push/unsubscribe')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/push/unsubscribe')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Unsubscribe device from topic',
-    description: 'Unsubscribe a device token from a specific topic',
+    summary: 'Unsubscribe device from topic [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/push/unsubscribe instead. Unsubscribe a device token from a specific topic',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -234,10 +253,14 @@ export class NotificationController {
   }
 
   @Post('email')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/email')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send email notification',
-    description: 'Send an email notification using CommunicationService (AWS SES with fallback)',
+    summary: 'Send email notification [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/email instead. Send an email notification using CommunicationService (AWS SES with fallback)',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -274,11 +297,15 @@ export class NotificationController {
   }
 
   @Post('appointment-reminder')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/appointment/reminder')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send appointment reminder',
-    description: 'Send appointment reminder via email and optionally push notification',
+    summary: 'Send appointment reminder [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/appointment/reminder instead. Send appointment reminder via email and optionally push notification',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -321,11 +348,15 @@ export class NotificationController {
   }
 
   @Post('prescription-ready')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/prescription/ready')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PHARMACIST)
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send prescription ready notification',
-    description: 'Send prescription ready notification via email and optionally push notification',
+    summary: 'Send prescription ready notification [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/prescription/ready instead. Send prescription ready notification via email and optionally push notification',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -365,11 +396,14 @@ export class NotificationController {
   }
 
   @Post('unified')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/send')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Send unified notification',
+    summary: 'Send unified notification [DEPRECATED]',
     description:
-      'Send notification via multiple channels (push, email, or both) with automatic fallback',
+      '⚠️ DEPRECATED: Use POST /communication/send instead. Send notification via multiple channels (push, email, or both) with automatic fallback',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -379,11 +413,12 @@ export class NotificationController {
     @Body() unifiedDto: UnifiedNotificationDto
   ): Promise<UnifiedNotificationResponse> {
     const channels: CommunicationChannel[] = [];
-    const notificationType = unifiedDto.type;
-    if (notificationType === NotificationType.PUSH || notificationType === NotificationType.BOTH) {
+    const notificationType = unifiedDto.type as string;
+    // Use string literals for comparison to avoid enum type conflicts
+    if (notificationType === 'push' || notificationType === 'both') {
       channels.push('push');
     }
-    if (notificationType === NotificationType.EMAIL || notificationType === NotificationType.BOTH) {
+    if (notificationType === 'email' || notificationType === 'both') {
       channels.push('email');
     }
 
@@ -434,10 +469,14 @@ export class NotificationController {
   }
 
   @Post('chat-backup')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/chat/backup')
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Backup chat message',
-    description: 'Backup a chat message to Firebase Realtime Database',
+    summary: 'Backup chat message [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/chat/backup instead. Backup a chat message to Firebase Realtime Database',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -464,10 +503,14 @@ export class NotificationController {
   }
 
   @Get('chat-history/:userId')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/chat/history/:userId')
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
   @ApiOperation({
-    summary: 'Get chat message history',
-    description: 'Retrieve chat message history for a specific user and conversation',
+    summary: 'Get chat message history [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use GET /communication/chat/history/:userId instead. Retrieve chat message history for a specific user and conversation',
+    deprecated: true,
   })
   @ApiParam({
     name: 'userId',
@@ -515,11 +558,15 @@ export class NotificationController {
   }
 
   @Get('stats')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/stats')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'read')
   @ApiOperation({
-    summary: 'Get notification statistics',
-    description: 'Retrieve notification system statistics and health status',
+    summary: 'Get notification statistics [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use GET /communication/stats instead. Retrieve notification system statistics and health status',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -548,10 +595,14 @@ export class NotificationController {
   }
 
   @Get('health')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/health')
   @Roles(Role.SUPER_ADMIN)
   @ApiOperation({
-    summary: 'Check notification services health',
-    description: 'Check the health status of all notification services',
+    summary: 'Check notification services health [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use GET /communication/health instead. Check the health status of all notification services',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -576,11 +627,15 @@ export class NotificationController {
   }
 
   @Get('chat-stats')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/chat/stats')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'read')
   @ApiOperation({
-    summary: 'Get chat backup statistics',
-    description: 'Retrieve statistics about chat message backups',
+    summary: 'Get chat backup statistics [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use GET /communication/chat/stats instead. Retrieve statistics about chat message backups',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -603,11 +658,15 @@ export class NotificationController {
   }
 
   @Post('test')
+  @Header('X-Deprecated', 'true')
+  @Header('X-Alternative-Endpoint', '/communication/test')
   @Roles(Role.SUPER_ADMIN)
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
-    summary: 'Test notification system',
-    description: 'Send test notifications to verify system functionality',
+    summary: 'Test notification system [DEPRECATED]',
+    description:
+      '⚠️ DEPRECATED: Use POST /communication/test instead. Send test notifications to verify system functionality',
+    deprecated: true,
   })
   @ApiResponse({
     status: HttpStatus.OK,

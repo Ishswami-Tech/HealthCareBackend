@@ -11,8 +11,17 @@ import {
   DefaultValuePipe,
   ParseIntPipe,
   Inject,
+  UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery, ApiBody } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+  ApiBody,
+  ApiBearerAuth,
+  ApiSecurity,
+} from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -20,6 +29,11 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
+import { RolesGuard } from '@core/guards/roles.guard';
+import { IpWhitelistGuard } from '@core/guards/ip-whitelist.guard';
+import { Roles } from '@core/decorators/roles.decorator';
+import { Role } from '@core/types/enums.types';
 
 // Internal imports - Types
 import {
@@ -35,9 +49,15 @@ import type { LoggerLike } from '@core/types';
  * Controller for cache management and monitoring.
  * Provider-agnostic: works with Redis, Dragonfly, or any cache provider.
  * Provides consolidated endpoints for cache operations with improved performance.
+ *
+ * SECURITY: All endpoints require SUPER_ADMIN role for administrative access.
  */
 @ApiTags('cache')
 @Controller('cache')
+@UseGuards(JwtAuthGuard, RolesGuard, IpWhitelistGuard)
+@Roles(Role.SUPER_ADMIN)
+@ApiBearerAuth()
+@ApiSecurity('bearer')
 export class CacheController {
   constructor(
     private readonly cacheService: CacheService,

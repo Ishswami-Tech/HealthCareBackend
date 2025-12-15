@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
   AllergyRecord,
@@ -10,7 +10,9 @@ import {
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
+import { QueueService } from '@queue/src/queue.service';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
+import { LAB_REPORT_QUEUE, IMAGING_QUEUE } from '@queue/src/queue.constants';
 
 import {
   addDateRangeFilter,
@@ -39,7 +41,7 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
   HealthRecordSummaryDto,
-} from './dto/ehr.dto';
+} from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -74,7 +76,10 @@ export class EHRService {
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
-    eventService: unknown
+    eventService: unknown,
+    @Optional()
+    @Inject(forwardRef(() => QueueService))
+    private readonly queueService?: QueueService
   ) {
     // Type guard ensures type safety when using the service
     // This handles forwardRef circular dependency type resolution issues
@@ -527,6 +532,42 @@ export class EHRService {
     });
     await this.invalidateUserEHRCache(data.userId);
 
+    // Queue heavy processing (analysis, image processing) asynchronously
+    if (this.queueService) {
+      void this.queueService
+        .addJob(
+          LAB_REPORT_QUEUE,
+          'process_analysis',
+          {
+            reportId: typedReport.id,
+            clinicId: 'clinicId' in data && typeof data.clinicId === 'string' ? data.clinicId : '',
+            userId: data.userId,
+            action: 'process_analysis',
+            metadata: {
+              testName: data.testName,
+              result: data.result,
+              unit: data.unit,
+            },
+          },
+          {
+            priority: 7, // HIGH priority (QueueService.PRIORITIES.HIGH)
+            attempts: 3,
+          }
+        )
+        .catch((error: unknown) => {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.WARN,
+            'Failed to queue lab report processing',
+            'EHRService',
+            {
+              reportId: typedReport.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        });
+    }
+
     return this.transformLabReport(typedReport);
   }
 
@@ -700,6 +741,41 @@ export class EHRService {
       reportId: typedReport.id,
     });
     await this.invalidateUserEHRCache(data.userId);
+
+    // Queue imaging processing (transcoding, analysis) asynchronously
+    if (this.queueService) {
+      void this.queueService
+        .addJob(
+          IMAGING_QUEUE,
+          'process_imaging',
+          {
+            reportId: typedReport.id,
+            clinicId: 'clinicId' in data && typeof data.clinicId === 'string' ? data.clinicId : '',
+            userId: data.userId,
+            action: 'process_imaging',
+            metadata: {
+              imageType: data.imageType,
+              findings: data.findings,
+            },
+          },
+          {
+            priority: 7, // HIGH priority (QueueService.PRIORITIES.HIGH)
+            attempts: 3,
+          }
+        )
+        .catch((error: unknown) => {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.WARN,
+            'Failed to queue imaging processing',
+            'EHRService',
+            {
+              reportId: typedReport.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        });
+    }
 
     return this.transformRadiologyReport(typedReport);
   }

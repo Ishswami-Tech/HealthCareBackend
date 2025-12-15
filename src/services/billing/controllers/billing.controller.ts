@@ -27,7 +27,7 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
-} from '@services/billing/dto/billing.dto';
+} from '@dtos/billing.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -115,6 +115,12 @@ export class BillingController {
 
   @Get('subscriptions/user/:userId')
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'billing:subscriptions:user:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['billing', 'subscriptions', 'user:{userId}'],
+    enableSWR: true,
+  })
   async getUserSubscriptions(
     @Param('userId') userId: string,
     @Request() req?: AuthenticatedRequest
@@ -126,6 +132,12 @@ export class BillingController {
 
   @Get('subscriptions/:id')
   @RequireResourcePermission('subscriptions', 'read')
+  @Cache({
+    keyTemplate: 'billing:subscription:{id}',
+    ttl: 1800, // 30 minutes
+    tags: ['billing', 'subscriptions', 'subscription:{id}'],
+    enableSWR: true,
+  })
   async getSubscription(@Param('id') id: string) {
     return this.billingService.getSubscription(id);
   }
@@ -163,6 +175,12 @@ export class BillingController {
   @Get('invoices/user/:userId')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
   @RequireResourcePermission('invoices', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'billing:invoices:user:{userId}',
+    ttl: 900, // 15 minutes
+    tags: ['billing', 'invoices', 'user:{userId}'],
+    enableSWR: true,
+  })
   async getUserInvoices(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
     const requestingUserId = req?.user?.['sub'] as string | undefined;
@@ -179,6 +197,12 @@ export class BillingController {
     Role.RECEPTIONIST
   )
   @RequireResourcePermission('invoices', 'read')
+  @Cache({
+    keyTemplate: 'billing:invoice:{id}',
+    ttl: 1800, // 30 minutes
+    tags: ['billing', 'invoices', 'invoice:{id}'],
+    enableSWR: true,
+  })
   async getInvoice(@Param('id') id: string) {
     return this.billingService.getInvoice(id);
   }
@@ -209,6 +233,12 @@ export class BillingController {
   @Get('payments/user/:userId')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
   @RequireResourcePermission('payments', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'billing:payments:user:{userId}',
+    ttl: 900, // 15 minutes
+    tags: ['billing', 'payments', 'user:{userId}'],
+    enableSWR: true,
+  })
   async getUserPayments(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
     const requestingUserId = req?.user?.['sub'] as string | undefined;
@@ -225,6 +255,12 @@ export class BillingController {
     Role.RECEPTIONIST
   )
   @RequireResourcePermission('payments', 'read')
+  @Cache({
+    keyTemplate: 'billing:payment:{id}',
+    ttl: 1800, // 30 minutes
+    tags: ['billing', 'payments', 'payment:{id}'],
+    enableSWR: true,
+  })
   async getPayment(@Param('id') id: string) {
     return this.billingService.getPayment(id);
   }
@@ -282,6 +318,12 @@ export class BillingController {
   @Get('analytics/revenue')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('reports', 'read')
+  @Cache({
+    keyTemplate: 'billing:analytics:revenue:{clinicId}:{startDate}:{endDate}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['billing', 'analytics', 'revenue', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
   async getClinicRevenue(
     @Query('clinicId') clinicId: string,
     @Query('startDate') startDate?: string,
@@ -302,6 +344,12 @@ export class BillingController {
   @Get('analytics/subscriptions')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('reports', 'read')
+  @Cache({
+    keyTemplate: 'billing:analytics:subscriptions:{clinicId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['billing', 'analytics', 'subscriptions', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
   async getSubscriptionMetrics(
     @Query('clinicId') clinicId: string,
     @Request() req?: AuthenticatedRequest
@@ -313,22 +361,29 @@ export class BillingController {
 
   // ============ Subscription Appointments ============
 
-  @Get('subscriptions/:id/can-book-appointment')
+  /**
+   * Check if appointment can be booked with subscription
+   * Supports both basic and detailed responses via query parameter
+   */
+  @Get('subscriptions/:id/coverage')
   @RequireResourcePermission('subscriptions', 'read')
-  async canBookAppointment(
-    @Param('id') subscriptionId: string,
-    @Query('appointmentType') appointmentType?: string
-  ) {
-    return this.billingService.canBookAppointment(subscriptionId, appointmentType);
-  }
-
-  @Post('subscriptions/:id/check-coverage')
-  @RequireResourcePermission('subscriptions', 'read')
+  @Cache({
+    keyTemplate: 'billing:subscription:coverage:{id}:{appointmentType}',
+    ttl: 300, // 5 minutes
+    tags: ['billing', 'subscriptions', 'subscription:{id}'],
+    enableSWR: true,
+  })
   async checkAppointmentCoverage(
     @Param('id') subscriptionId: string,
-    @Body() body: { appointmentType: string }
+    @Query('appointmentType') appointmentType?: string,
+    @Query('detailed') detailed?: string
   ) {
-    return this.billingService.checkAppointmentCoverage(subscriptionId, body.appointmentType);
+    // If detailed=true, return detailed coverage info
+    if (detailed === 'true') {
+      return this.billingService.checkAppointmentCoverage(subscriptionId, appointmentType || '');
+    }
+    // Otherwise return basic coverage info
+    return this.billingService.canBookAppointment(subscriptionId, appointmentType);
   }
 
   @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
@@ -351,6 +406,12 @@ export class BillingController {
 
   @Get('subscriptions/user/:userId/active')
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'billing:subscription:active:user:{userId}:clinic:{clinicId}',
+    ttl: 1800, // 30 minutes
+    tags: ['billing', 'subscriptions', 'user:{userId}'],
+    enableSWR: true,
+  })
   async getActiveUserSubscription(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -360,6 +421,12 @@ export class BillingController {
 
   @Get('subscriptions/:id/usage-stats')
   @RequireResourcePermission('subscriptions', 'read')
+  @Cache({
+    keyTemplate: 'billing:subscription:usage:{id}',
+    ttl: 300, // 5 minutes
+    tags: ['billing', 'subscriptions', 'subscription:{id}'],
+    enableSWR: true,
+  })
   async getSubscriptionUsageStats(@Param('id') subscriptionId: string) {
     return this.billingService.getSubscriptionUsageStats(subscriptionId);
   }
@@ -487,43 +554,6 @@ export class BillingController {
       invoice: result.invoice,
       paymentIntent: result.paymentIntent,
       message: 'Payment intent created successfully. Redirect user to payment gateway.',
-    };
-  }
-
-  /**
-   * Handle payment callback (called after payment completion)
-   */
-  @Post('payments/callback')
-  @HttpCode(HttpStatus.OK)
-  @RequireResourcePermission('payments', 'update')
-  async handlePaymentCallback(
-    @Query('clinicId') clinicId: string,
-    @Query('paymentId') paymentId: string,
-    @Query('orderId') orderId: string,
-    @Query('provider') provider?: string
-  ) {
-    // Convert provider string to PaymentProvider enum
-    let paymentProvider: PaymentProvider | undefined;
-    if (provider) {
-      const normalizedProvider = provider.toLowerCase();
-      if (normalizedProvider === 'razorpay') {
-        paymentProvider = PaymentProvider.RAZORPAY;
-      } else if (normalizedProvider === 'phonepe') {
-        paymentProvider = PaymentProvider.PHONEPE;
-      }
-    }
-
-    const result = await this.billingService.handlePaymentCallback(
-      clinicId,
-      paymentId,
-      orderId,
-      paymentProvider
-    );
-    return {
-      success: true,
-      payment: result.payment,
-      invoice: result.invoice,
-      message: 'Payment processed successfully',
     };
   }
 }

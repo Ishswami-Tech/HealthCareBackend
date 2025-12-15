@@ -5,6 +5,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { PatientCache, Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
@@ -18,6 +19,14 @@ export class EHRClinicController {
   @Get('comprehensive/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:clinic:comprehensive:{userId}:{clinicId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'clinic_ehr', 'user:{userId}', 'clinic:{clinicId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getComprehensiveHealthRecordWithClinic(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -30,6 +39,13 @@ export class EHRClinicController {
   @Get(':clinicId/patients/records')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read')
+  @Cache({
+    keyTemplate:
+      'ehr:clinic:{clinicId}:patients:records:{recordType}:{hasCondition}:{hasAllergy}:{onMedication}:{dateFrom}:{dateTo}',
+    ttl: 900, // 15 minutes
+    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_records'],
+    enableSWR: true,
+  })
   async getClinicPatientsRecords(
     @Param('clinicId') clinicId: string,
     @Query('recordType') recordType?: string,
@@ -57,6 +73,12 @@ export class EHRClinicController {
   @Get(':clinicId/analytics')
   @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('reports', 'read')
+  @Cache({
+    keyTemplate: 'ehr:clinic:{clinicId}:analytics',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['ehr', 'clinic_ehr', 'analytics', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
   async getClinicEHRAnalytics(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicEHRAnalytics(clinicId);
   }
@@ -64,6 +86,12 @@ export class EHRClinicController {
   @Get(':clinicId/patients/summary')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('ehr', 'read')
+  @Cache({
+    keyTemplate: 'ehr:clinic:{clinicId}:patients:summary',
+    ttl: 900, // 15 minutes
+    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_summary'],
+    enableSWR: true,
+  })
   async getClinicPatientsSummary(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicPatientsSummary(clinicId);
   }
@@ -71,6 +99,12 @@ export class EHRClinicController {
   @Get(':clinicId/search')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read')
+  @Cache({
+    keyTemplate: 'ehr:clinic:{clinicId}:search:{q}:{types}',
+    ttl: 300, // 5 minutes (search results may change)
+    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'search'],
+    enableSWR: true,
+  })
   async searchClinicRecords(
     @Param('clinicId') clinicId: string,
     @Query('q') searchTerm: string,
@@ -83,6 +117,12 @@ export class EHRClinicController {
   @Get(':clinicId/alerts/critical')
   @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('ehr', 'read')
+  @Cache({
+    keyTemplate: 'ehr:clinic:{clinicId}:alerts:critical',
+    ttl: 60, // 1 minute (critical alerts change frequently)
+    tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'alerts'],
+    enableSWR: true,
+  })
   async getClinicCriticalAlerts(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicCriticalAlerts(clinicId);
   }

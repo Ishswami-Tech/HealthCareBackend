@@ -36,7 +36,7 @@ export class UserMethods extends DatabaseMethodsBase {
         where: { id },
         include: this.userInclude,
       });
-    }, this.queryOptionsBuilder.where({ id }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where({ id }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
   }
 
   /**
@@ -48,7 +48,7 @@ export class UserMethods extends DatabaseMethodsBase {
         where: { email },
         include: this.userInclude,
       });
-    }, this.queryOptionsBuilder.where({ email }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where({ email }).include(this.userInclude).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
   }
 
   /**
@@ -105,21 +105,8 @@ export class UserMethods extends DatabaseMethodsBase {
         return user as UserWithRelations & { password: string };
       },
       this.queryOptionsBuilder
-        .useCache(false) // Do not cache sensitive auth data
-        .priority('high') // High priority for auth operations
-        .hipaaCompliant(false) // Auth operations don't need HIPAA compliance checks (internal)
-        .build()
-    );
-  }
-
-  /**
-   * Find users with filtering
-   */
-  async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
-    return await this.executeRead<UserWithRelations[]>(async prisma => {
-      return await prisma.user.findMany({
-        where,
-        include: {
+        .where({ email })
+        .include({
           doctor: true,
           patient: true,
           receptionists: true,
@@ -132,9 +119,64 @@ export class UserMethods extends DatabaseMethodsBase {
           supportStaff: true,
           nurse: true,
           counselor: true,
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+          clinics: true,
+        })
+        .useCache(false) // Do not cache sensitive auth data
+        .priority('high') // High priority for auth operations
+        .hipaaCompliant(false) // Auth operations don't need HIPAA compliance checks (internal)
+        .rowLevelSecurity(false) // Auth bypasses RLS
+        .retries(1) // Single retry for auth
+        .build()
+    );
+  }
+
+  /**
+   * Find users with filtering
+   */
+  async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
+    return await this.executeRead<UserWithRelations[]>(
+      async prisma => {
+        return await prisma.user.findMany({
+          where,
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            nurse: true,
+            counselor: true,
+          },
+        });
+      },
+      this.queryOptionsBuilder
+        .where(where)
+        .include({
+          doctor: true,
+          patient: true,
+          receptionists: true,
+          clinicAdmins: true,
+          superAdmin: true,
+          pharmacist: true,
+          therapist: true,
+          labTechnician: true,
+          financeBilling: true,
+          supportStaff: true,
+          nurse: true,
+          counselor: true,
+        })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .build()
+    );
   }
 
   /**
@@ -175,7 +217,15 @@ export class UserMethods extends DatabaseMethodsBase {
               : '',
         },
       },
-      this.queryOptionsBuilder.useCache(false).build()
+      this.queryOptionsBuilder
+        .where({ id: 'new' })
+        .include(this.userInclude)
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
   }
 
@@ -212,7 +262,15 @@ export class UserMethods extends DatabaseMethodsBase {
         resourceId: id,
         clinicId: '',
       },
-      this.queryOptionsBuilder.useCache(false).build()
+      this.queryOptionsBuilder
+        .where({ id })
+        .include(this.userInclude)
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
   }
 
@@ -248,7 +306,15 @@ export class UserMethods extends DatabaseMethodsBase {
         resourceId: id,
         clinicId: '',
       },
-      this.queryOptionsBuilder.useCache(false).build()
+      this.queryOptionsBuilder
+        .where({ id })
+        .include(this.userInclude)
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
   }
 
@@ -260,6 +326,6 @@ export class UserMethods extends DatabaseMethodsBase {
       return await prisma.user.count({
         where,
       });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).rowLevelSecurity(true).build());
   }
 }

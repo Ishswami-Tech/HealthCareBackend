@@ -11,6 +11,7 @@ import { NotificationModule } from '@services/notification/notification.module';
 import { ListenersModule } from '@communication/listeners/listeners.module';
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache';
+import { DatabaseModule } from '@infrastructure/database';
 import { ResilienceModule } from '@core/resilience';
 import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
@@ -62,6 +63,7 @@ import { CommunicationAdaptersModule } from './adapters/adapters.module';
     CommunicationAdaptersModule, // Provider adapters (SMTP, SES, SendGrid, Meta WhatsApp, Twilio)
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
+    forwardRef(() => DatabaseModule), // Database for notification preferences and delivery tracking
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
   controllers: [CommunicationController],

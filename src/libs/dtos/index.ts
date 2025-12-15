@@ -33,7 +33,15 @@ export {
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
+  // Notification Preference DTOs
+  QuietHoursDto,
+  CategoryPreferencesDto,
+  CreateNotificationPreferenceDto,
+  UpdateNotificationPreferenceDto,
+  NotificationPreferenceResponseDto,
 } from './notification.dto';
 export * from './permission.dto';
 export * from './role.dto';
 export * from './video.dto';
+export * from './billing.dto';
+export * from './ehr.dto';

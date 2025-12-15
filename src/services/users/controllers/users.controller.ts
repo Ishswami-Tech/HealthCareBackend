@@ -203,9 +203,19 @@ export class UsersController {
 
   @Get('role/patient')
   @RequireResourcePermission('patients', 'read')
+  @PatientCache({
+    keyTemplate: 'users:role:patient',
+    ttl: 1800, // 30 minutes
+    tags: ['users', 'user_lists', 'patients'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get all patients',
-    description: 'Retrieve a list of all users with the patient role. No parameters required.',
+    description:
+      'Retrieve a list of all users with the patient role. No parameters required. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -222,9 +232,19 @@ export class UsersController {
 
   @Get('role/doctors')
   @RequireResourcePermission('users', 'read')
+  @PatientCache({
+    keyTemplate: 'users:role:doctors',
+    ttl: 1800, // 30 minutes
+    tags: ['users', 'user_lists', 'doctors'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get all doctors',
-    description: 'Retrieves a list of all users with the Doctor role. No parameters required.',
+    description:
+      'Retrieves a list of all users with the Doctor role. No parameters required. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -242,10 +262,19 @@ export class UsersController {
   @Get('role/receptionists')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('users', 'read')
+  @PatientCache({
+    keyTemplate: 'users:role:receptionists',
+    ttl: 1800, // 30 minutes
+    tags: ['users', 'user_lists', 'receptionists'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get all receptionists',
     description:
-      'Retrieves a list of all users with the Receptionist role. Only accessible by Super Admin and Clinic Admin. No parameters required.',
+      'Retrieves a list of all users with the Receptionist role. Only accessible by Super Admin and Clinic Admin. No parameters required. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -267,10 +296,19 @@ export class UsersController {
   @Get('role/clinic-admins')
   @Roles(Role.SUPER_ADMIN)
   @RequireResourcePermission('users', 'read')
+  @PatientCache({
+    keyTemplate: 'users:role:clinic-admins',
+    ttl: 1800, // 30 minutes
+    tags: ['users', 'user_lists', 'clinic_admins'],
+    priority: 'normal',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
   @ApiOperation({
     summary: 'Get all clinic admins',
     description:
-      'Retrieves a list of all users with the Clinic Admin role. Only accessible by Super Admin. No parameters required.',
+      'Retrieves a list of all users with the Clinic Admin role. Only accessible by Super Admin. No parameters required. Cached for performance.',
   })
   @ApiResponse({
     status: 200,

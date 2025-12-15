@@ -146,6 +146,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   static readonly FOLLOW_UP_QUEUE = 'follow-up-queue';
   static readonly RECURRING_APPOINTMENT_QUEUE = 'recurring-appointment-queue';
 
+  // EHR Module Queues
+  static readonly LAB_REPORT_QUEUE = 'lab-report-queue';
+  static readonly IMAGING_QUEUE = 'imaging-queue';
+  static readonly BULK_EHR_IMPORT_QUEUE = 'bulk-ehr-import-queue';
+
+  // Billing Module Queues
+  static readonly INVOICE_PDF_QUEUE = 'invoice-pdf-queue';
+  static readonly BULK_INVOICE_QUEUE = 'bulk-invoice-queue';
+  static readonly PAYMENT_RECONCILIATION_QUEUE = 'payment-reconciliation-queue';
+
+  // Video Module Queues
+  static readonly VIDEO_RECORDING_QUEUE = 'video-recording-queue';
+  static readonly VIDEO_TRANSCODING_QUEUE = 'video-transcoding-queue';
+  static readonly VIDEO_ANALYTICS_QUEUE = 'video-analytics-queue';
+
   // Queue Priorities - Access via QueueService.PRIORITIES
   // These values match QUEUE_PRIORITIES from @core/types/queue.types.ts for consistency
   static readonly PRIORITIES = {
@@ -293,6 +308,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
           REMINDER_QUEUE_CONST,
           FOLLOW_UP_QUEUE_CONST,
           RECURRING_APPOINTMENT_QUEUE_CONST,
+          // EHR Module Queues
+          'lab-report-queue',
+          'imaging-queue',
+          'bulk-ehr-import-queue',
+          // Billing Module Queues
+          'invoice-pdf-queue',
+          'bulk-invoice-queue',
+          'payment-reconciliation-queue',
+          // Video Module Queues
+          'video-recording-queue',
+          'video-transcoding-queue',
+          'video-analytics-queue',
         ];
       // FASHION domain removed - healthcare application only
       case DomainType.WORKER:

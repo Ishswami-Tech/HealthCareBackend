@@ -39,6 +39,15 @@ import {
   REMINDER_QUEUE,
   FOLLOW_UP_QUEUE,
   RECURRING_APPOINTMENT_QUEUE,
+  LAB_REPORT_QUEUE,
+  IMAGING_QUEUE,
+  BULK_EHR_IMPORT_QUEUE,
+  INVOICE_PDF_QUEUE,
+  BULK_INVOICE_QUEUE,
+  PAYMENT_RECONCILIATION_QUEUE,
+  VIDEO_RECORDING_QUEUE,
+  VIDEO_TRANSCODING_QUEUE,
+  VIDEO_ANALYTICS_QUEUE,
 } from './queue.constants';
 import { Queue, Worker, Job } from 'bullmq';
 import { DatabaseModule, DatabaseService } from '@infrastructure/database';
@@ -106,6 +115,18 @@ export class QueueModule {
       REMINDER_QUEUE,
       FOLLOW_UP_QUEUE,
       RECURRING_APPOINTMENT_QUEUE,
+      // EHR Module Queues
+      LAB_REPORT_QUEUE,
+      IMAGING_QUEUE,
+      BULK_EHR_IMPORT_QUEUE,
+      // Billing Module Queues
+      INVOICE_PDF_QUEUE,
+      BULK_INVOICE_QUEUE,
+      PAYMENT_RECONCILIATION_QUEUE,
+      // Video Module Queues
+      VIDEO_RECORDING_QUEUE,
+      VIDEO_TRANSCODING_QUEUE,
+      VIDEO_ANALYTICS_QUEUE,
     ];
 
     // Select appropriate queues based on service
@@ -320,6 +341,43 @@ export class QueueModule {
                               // Generic job processing - delegate to appropriate method based on job data
                               return await Promise.resolve(
                                 queueProcessor.processCreateJob(typedJob)
+                              );
+                            // EHR Module Job Types
+                            case 'process_analysis':
+                              return await Promise.resolve(
+                                queueProcessor.processLabReport(typedJob)
+                              );
+                            case 'process_imaging':
+                              return await Promise.resolve(queueProcessor.processImaging(typedJob));
+                            case 'bulk_import':
+                              return await Promise.resolve(
+                                queueProcessor.processBulkEHRImport(typedJob)
+                              );
+                            // Billing Module Job Types
+                            case 'generate_pdf':
+                              return await Promise.resolve(
+                                queueProcessor.processInvoicePDF(typedJob)
+                              );
+                            case 'bulk_invoice':
+                              return await Promise.resolve(
+                                queueProcessor.processBulkInvoice(typedJob)
+                              );
+                            case 'reconcile_payments':
+                              return await Promise.resolve(
+                                queueProcessor.processPaymentReconciliation(typedJob)
+                              );
+                            // Video Module Job Types
+                            case 'process_recording':
+                              return await Promise.resolve(
+                                queueProcessor.processVideoRecording(typedJob)
+                              );
+                            case 'transcode_video':
+                              return await Promise.resolve(
+                                queueProcessor.processVideoTranscoding(typedJob)
+                              );
+                            case 'process_analytics':
+                              return await Promise.resolve(
+                                queueProcessor.processVideoAnalytics(typedJob)
                               );
                             default:
                               throw new HealthcareError(
