@@ -15,6 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { EventService } from '@infrastructure/events';
 import { LoggingService } from '@logging';
 import { CacheService } from '@infrastructure/cache';
+import { DatabaseService } from '@infrastructure/database';
 import {
   LogType,
   LogLevel,
@@ -169,6 +170,8 @@ export class CommunicationService implements OnModuleInit {
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => CommunicationHealthMonitorService))
     private readonly healthMonitor?: CommunicationHealthMonitorService
   ) {}
@@ -249,16 +252,93 @@ export class CommunicationService implements OnModuleInit {
       const finalChannels = this.filterChannelsByPreferences(
         channels,
         preferences,
-        request.recipients
+        request.recipients,
+        request.category
       );
 
-      // Send through each channel
+      // Send through each channel and track delivery status
       const results: ChannelDeliveryResult[] = [];
       const sendPromises: Promise<ChannelDeliveryResult>[] = [];
+      const notificationIds: Map<string, string> = new Map(); // recipientId -> notificationId
+
+      // Create notification records for each recipient
+      for (const recipient of request.recipients) {
+        if (recipient.userId) {
+          try {
+            const notification = await this.databaseService.executeWrite(
+              async prisma => {
+                const client = this.databaseService['toTransactionClient'](prisma);
+                const notificationClient = client as unknown as {
+                  notification: {
+                    create: (args: {
+                      data: {
+                        userId: string;
+                        type: string;
+                        message: string;
+                        status: string;
+                        deliveryStatus: string;
+                        channel: string;
+                        clinicId: string | null;
+                      };
+                    }) => Promise<{ id: string }>;
+                  };
+                };
+                return await notificationClient.notification.create({
+                  data: {
+                    userId: recipient.userId!,
+                    type: this.mapChannelToNotificationType(finalChannels[0] || 'email'),
+                    message: request.body,
+                    status: 'PENDING',
+                    deliveryStatus: 'PENDING',
+                    channel: finalChannels[0] || 'email',
+                    clinicId:
+                      request.metadata &&
+                      typeof request.metadata === 'object' &&
+                      'clinicId' in request.metadata
+                        ? (request.metadata['clinicId'] as string | undefined) || null
+                        : null,
+                  },
+                });
+              },
+              {
+                userId: 'system',
+                userRole: 'system',
+                clinicId:
+                  request.metadata &&
+                  typeof request.metadata === 'object' &&
+                  'clinicId' in request.metadata
+                    ? (request.metadata['clinicId'] as string | undefined) || ''
+                    : '',
+                operation: 'createNotification',
+                resourceType: 'NOTIFICATION',
+                resourceId: 'pending',
+                timestamp: new Date(),
+              }
+            );
+            notificationIds.set(recipient.userId, (notification as { id: string }).id);
+          } catch (error) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              'Failed to create notification record',
+              'CommunicationService',
+              {
+                userId: recipient.userId,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }
+            );
+          }
+        }
+      }
 
       for (const channel of finalChannels) {
         for (const recipient of request.recipients) {
-          const sendPromise = this.sendToChannel(channel, request, recipient);
+          const sendPromise = this.sendToChannelWithTracking(
+            channel,
+            request,
+            recipient,
+            notificationIds.get(recipient.userId || '')
+          );
           sendPromises.push(sendPromise);
         }
       }
@@ -383,12 +463,24 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
+   * Type guard to safely get category channels from preferences
+   */
+  private getCategoryChannels(
+    categoryPreferences: Record<string, CommunicationChannel[]>,
+    categoryKey: string
+  ): CommunicationChannel[] | undefined {
+    const value = categoryPreferences[categoryKey];
+    return Array.isArray(value) ? value : undefined;
+  }
+
+  /**
    * Filter channels based on user preferences
    */
   private filterChannelsByPreferences(
     channels: CommunicationChannel[],
     preferences: Map<string, UserCommunicationPreferences> | undefined,
-    recipients: CommunicationRequest['recipients']
+    recipients: CommunicationRequest['recipients'],
+    category?: CommunicationCategory
   ): CommunicationChannel[] {
     if (!preferences || preferences.size === 0) {
       return channels;
@@ -403,6 +495,75 @@ export class CommunicationService implements OnModuleInit {
         if (recipient.userId) {
           const userPrefs = preferences.get(recipient.userId);
           if (userPrefs) {
+            // Check quiet hours
+            if (userPrefs.quietHours) {
+              const now = new Date();
+              const currentTime = now.toLocaleTimeString('en-US', {
+                hour12: false,
+                hour: '2-digit',
+                minute: '2-digit',
+                timeZone: userPrefs.quietHours.timezone || 'UTC',
+              });
+
+              const quietStart = userPrefs.quietHours.start || '22:00';
+              const quietEnd = userPrefs.quietHours.end || '08:00';
+
+              // Check if current time is within quiet hours
+              if (this.isInQuietHours(currentTime, quietStart, quietEnd)) {
+                // Skip non-critical notifications during quiet hours
+                shouldInclude = false;
+                break;
+              }
+            }
+
+            // Check category-specific preferences
+            if (category && userPrefs.categoryPreferences) {
+              const categoryKey = category.toLowerCase();
+              const categoryChannels = this.getCategoryChannels(
+                userPrefs.categoryPreferences,
+                categoryKey
+              );
+              if (
+                categoryChannels &&
+                categoryChannels.length > 0 &&
+                !categoryChannels.includes(channel)
+              ) {
+                shouldInclude = false;
+                break;
+              }
+            }
+
+            // Check category enablement (appointment, ehr, billing, system)
+            // Access via type assertion since these properties may not be in the interface
+            const prefs = userPrefs as UserCommunicationPreferences & {
+              appointmentEnabled?: boolean;
+              ehrEnabled?: boolean;
+              billingEnabled?: boolean;
+              systemEnabled?: boolean;
+            };
+            if (category) {
+              const categoryKey = category.toLowerCase();
+              if (categoryKey === 'appointment' && prefs.appointmentEnabled === false) {
+                shouldInclude = false;
+                break;
+              }
+              if (
+                (categoryKey === 'ehr_record' || categoryKey === 'ehr') &&
+                prefs.ehrEnabled === false
+              ) {
+                shouldInclude = false;
+                break;
+              }
+              if (categoryKey === 'billing' && prefs.billingEnabled === false) {
+                shouldInclude = false;
+                break;
+              }
+              if (categoryKey === 'system' && prefs.systemEnabled === false) {
+                shouldInclude = false;
+                break;
+              }
+            }
+
             // Check if channel is disabled for this user
             if (userPrefs.disabledChannels.includes(channel)) {
               shouldInclude = false;
@@ -426,6 +587,37 @@ export class CommunicationService implements OnModuleInit {
     }
 
     return Array.from(filteredChannels);
+  }
+
+  /**
+   * Check if current time is within quiet hours
+   */
+  private isInQuietHours(currentTime: string, start: string, end: string): boolean {
+    const [currentHour, currentMin] = currentTime.split(':').map(Number);
+    const [startHour, startMin] = start.split(':').map(Number);
+    const [endHour, endMin] = end.split(':').map(Number);
+
+    if (
+      currentHour === undefined ||
+      currentMin === undefined ||
+      startHour === undefined ||
+      startMin === undefined ||
+      endHour === undefined ||
+      endMin === undefined
+    ) {
+      return false;
+    }
+
+    const currentMinutes = currentHour * 60 + currentMin;
+    const startMinutes = startHour * 60 + startMin;
+    const endMinutes = endHour * 60 + endMin;
+
+    // Handle quiet hours that span midnight
+    if (startMinutes > endMinutes) {
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+    }
+
+    return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
   }
 
   /**
@@ -456,7 +648,7 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Get user communication preferences
+   * Get user communication preferences from database
    */
   private async getUserPreferences(
     recipients: CommunicationRequest['recipients']
@@ -466,10 +658,105 @@ export class CommunicationService implements OnModuleInit {
     for (const recipient of recipients) {
       if (recipient.userId) {
         try {
-          const cacheKey = `user:${recipient.userId}:communication:preferences`;
-          const cached = await this.cacheService.get<UserCommunicationPreferences>(cacheKey);
+          const cacheKey = `notification_preferences:${recipient.userId}`;
+          let cached = await this.cacheService.get<{
+            emailEnabled: boolean;
+            smsEnabled: boolean;
+            pushEnabled: boolean;
+            socketEnabled: boolean;
+            whatsappEnabled: boolean;
+            appointmentEnabled: boolean;
+            ehrEnabled: boolean;
+            billingEnabled: boolean;
+            systemEnabled: boolean;
+            quietHours?: { start?: string; end?: string; timezone?: string } | null;
+            categoryPreferences?: Record<string, string[]> | null;
+          }>(cacheKey);
+
+          if (!cached) {
+            // Fetch from database
+            const dbPrefs = await this.databaseService.findNotificationPreferenceByUserIdSafe(
+              recipient.userId
+            );
+
+            if (dbPrefs) {
+              cached = {
+                emailEnabled: dbPrefs.emailEnabled,
+                smsEnabled: dbPrefs.smsEnabled,
+                pushEnabled: dbPrefs.pushEnabled,
+                socketEnabled: dbPrefs.socketEnabled,
+                whatsappEnabled: dbPrefs.whatsappEnabled,
+                appointmentEnabled: dbPrefs.appointmentEnabled,
+                ehrEnabled: dbPrefs.ehrEnabled,
+                billingEnabled: dbPrefs.billingEnabled,
+                systemEnabled: dbPrefs.systemEnabled,
+                quietHours: dbPrefs.quietHoursStart
+                  ? ({
+                      start: dbPrefs.quietHoursStart,
+                      end: dbPrefs.quietHoursEnd || undefined,
+                      timezone: dbPrefs.quietHoursTimezone || 'UTC',
+                    } as { start?: string; end?: string; timezone?: string } | null)
+                  : null,
+                categoryPreferences: dbPrefs.categoryPreferences
+                  ? (dbPrefs.categoryPreferences as unknown as Record<string, string[]>)
+                  : null,
+              };
+
+              // Cache for 1 hour
+              await this.cacheService.set(cacheKey, cached, 3600);
+            } else {
+              // Use defaults
+              cached = {
+                emailEnabled: true,
+                smsEnabled: true,
+                pushEnabled: true,
+                socketEnabled: true,
+                whatsappEnabled: false,
+                appointmentEnabled: true,
+                ehrEnabled: true,
+                billingEnabled: true,
+                systemEnabled: true,
+                quietHours: null,
+                categoryPreferences: null,
+              };
+            }
+          }
+
           if (cached) {
-            preferences.set(recipient.userId, cached);
+            // Convert to UserCommunicationPreferences format
+            const enabledChannels: CommunicationChannel[] = [];
+            const disabledChannels: CommunicationChannel[] = [];
+
+            if (cached.emailEnabled) enabledChannels.push('email');
+            else disabledChannels.push('email');
+            if (cached.smsEnabled) enabledChannels.push('sms');
+            else disabledChannels.push('sms');
+            if (cached.pushEnabled) enabledChannels.push('push');
+            else disabledChannels.push('push');
+            if (cached.socketEnabled) enabledChannels.push('socket');
+            else disabledChannels.push('socket');
+            if (cached.whatsappEnabled) enabledChannels.push('whatsapp');
+            else disabledChannels.push('whatsapp');
+
+            preferences.set(recipient.userId, {
+              userId: recipient.userId,
+              enabledChannels,
+              disabledChannels,
+              categoryPreferences: cached.categoryPreferences
+                ? (cached.categoryPreferences as unknown as Record<string, CommunicationChannel[]>)
+                : undefined,
+              quietHours: cached.quietHours
+                ? {
+                    start: cached.quietHours.start || '22:00',
+                    end: cached.quietHours.end || '08:00',
+                    timezone: cached.quietHours.timezone || 'UTC',
+                  }
+                : undefined,
+              appointmentEnabled: cached.appointmentEnabled ?? true,
+              ehrEnabled: cached.ehrEnabled ?? true,
+              billingEnabled: cached.billingEnabled ?? true,
+              systemEnabled: cached.systemEnabled ?? true,
+            } as UserCommunicationPreferences);
           }
         } catch (error) {
           // Log but don't fail
@@ -488,6 +775,140 @@ export class CommunicationService implements OnModuleInit {
     }
 
     return preferences.size > 0 ? preferences : undefined;
+  }
+
+  /**
+   * Map channel to notification type
+   */
+  private mapChannelToNotificationType(
+    channel: CommunicationChannel
+  ): 'EMAIL' | 'SMS' | 'PUSH_NOTIFICATION' {
+    switch (channel) {
+      case 'email':
+        return 'EMAIL';
+      case 'sms':
+        return 'SMS';
+      case 'push':
+        return 'PUSH_NOTIFICATION';
+      default:
+        return 'PUSH_NOTIFICATION';
+    }
+  }
+
+  /**
+   * Send message to a specific channel with delivery tracking
+   */
+  private async sendToChannelWithTracking(
+    channel: CommunicationChannel,
+    request: CommunicationRequest,
+    recipient: CommunicationRequest['recipients'][0],
+    notificationId?: string
+  ): Promise<ChannelDeliveryResult> {
+    const result = await this.sendToChannel(channel, request, recipient);
+
+    // Track delivery status
+    if (notificationId && recipient.userId) {
+      try {
+        // Create delivery log
+        await this.databaseService.executeWrite(
+          async prisma => {
+            const client = this.databaseService['toTransactionClient'](prisma);
+            const notificationClient = client as unknown as {
+              notificationDeliveryLog: {
+                create: (args: {
+                  data: {
+                    notificationId: string;
+                    channel: string;
+                    status: string;
+                    sentAt: Date;
+                    deliveredAt?: Date;
+                    failedAt?: Date;
+                    failureReason?: string;
+                    providerResponse: unknown;
+                    retryCount: number;
+                  };
+                }) => Promise<unknown>;
+              };
+              notification: {
+                update: (args: {
+                  where: { id: string };
+                  data: {
+                    status: string;
+                    deliveryStatus: string;
+                    sentAt: Date;
+                    deliveredAt?: Date;
+                    failedAt?: Date;
+                    failureReason?: string;
+                    channel: string;
+                    deliveryReceipt: unknown;
+                  };
+                }) => Promise<unknown>;
+              };
+            };
+            await notificationClient.notificationDeliveryLog.create({
+              data: {
+                notificationId,
+                channel,
+                status: result.success ? 'SENT' : 'FAILED',
+                sentAt: result.timestamp,
+                ...(result.success && { deliveredAt: new Date() }),
+                ...(!result.success && {
+                  failedAt: new Date(),
+                  failureReason: result.error || 'Unknown error',
+                }),
+                providerResponse: result.metadata || null,
+                retryCount: 0,
+              },
+            });
+
+            // Update notification delivery status
+            await notificationClient.notification.update({
+              where: { id: notificationId },
+              data: {
+                status: result.success ? 'SENT' : 'FAILED',
+                deliveryStatus: result.success ? 'SENT' : 'FAILED',
+                sentAt: result.timestamp,
+                ...(result.success && { deliveredAt: new Date() }),
+                ...(!result.success && {
+                  failedAt: new Date(),
+                  failureReason: result.error || 'Unknown error',
+                }),
+                channel,
+                deliveryReceipt: result.metadata || null,
+              },
+            });
+          },
+          {
+            userId: 'system',
+            userRole: 'system',
+            clinicId:
+              request.metadata &&
+              typeof request.metadata === 'object' &&
+              'clinicId' in request.metadata
+                ? (request.metadata['clinicId'] as string | undefined) || ''
+                : '',
+            operation: 'updateNotificationDeliveryStatus',
+            resourceType: 'NOTIFICATION',
+            resourceId: notificationId,
+            timestamp: new Date(),
+          }
+        );
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          'Failed to track notification delivery status',
+          'CommunicationService',
+          {
+            notificationId,
+            channel,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }
+        );
+      }
+    }
+
+    return result;
   }
 
   /**

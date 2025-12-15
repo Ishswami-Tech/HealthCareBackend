@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@config';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
+import { IpWhitelistGuard } from './ip-whitelist.guard';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';
@@ -66,6 +67,7 @@ import { SignOptions } from 'jsonwebtoken';
     JwtAuthService,
     RolesGuard,
     ClinicGuard,
+    IpWhitelistGuard,
     Reflector,
     LoggingService,
     RateLimitService,
@@ -74,6 +76,7 @@ import { SignOptions } from 'jsonwebtoken';
     JwtAuthGuard,
     RolesGuard,
     ClinicGuard,
+    IpWhitelistGuard,
     LoggingService,
     JwtModule, // Export JwtModule so other modules can use the configured JWT service
     RateLimitModule,

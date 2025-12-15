@@ -10,6 +10,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
 @ApiTags('appointment plugins')
@@ -29,9 +30,15 @@ export class AppointmentPluginController {
 
   @Get('info')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:info',
+    ttl: 1800, // 30 minutes (plugin info changes infrequently)
+    tags: ['plugins', 'plugin_info'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get plugin information',
-    description: 'Get information about all registered plugins',
+    description: 'Get information about all registered plugins. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -61,9 +68,15 @@ export class AppointmentPluginController {
 
   @Get('domain/:domain')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:domain:{domain}',
+    ttl: 1800, // 30 minutes
+    tags: ['plugins', 'domain:{domain}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get domain plugins',
-    description: 'Get all plugins for a specific domain',
+    description: 'Get all plugins for a specific domain. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -100,9 +113,15 @@ export class AppointmentPluginController {
 
   @Get('domain/:domain/features')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:domain:{domain}:features',
+    ttl: 1800, // 30 minutes
+    tags: ['plugins', 'domain:{domain}', 'features'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get domain features',
-    description: 'Get all available features for a specific domain',
+    description: 'Get all available features for a specific domain. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -270,9 +289,15 @@ export class AppointmentPluginController {
 
   @Get('health')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:health',
+    ttl: 60, // 1 minute (health changes frequently)
+    tags: ['plugins', 'health'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get plugin system health',
-    description: 'Get health status of the plugin system',
+    description: 'Get health status of the plugin system. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -321,9 +346,15 @@ export class AppointmentPluginController {
 
   @Get('health/metrics')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:health:metrics',
+    ttl: 300, // 5 minutes (metrics change frequently)
+    tags: ['plugins', 'health', 'metrics'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get detailed plugin health metrics',
-    description: 'Get detailed health metrics for all plugins',
+    description: 'Get detailed health metrics for all plugins. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -353,9 +384,15 @@ export class AppointmentPluginController {
 
   @Get('health/domain/:domain')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:health:domain:{domain}',
+    ttl: 60, // 1 minute (health changes frequently)
+    tags: ['plugins', 'health', 'domain:{domain}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get domain plugin health',
-    description: 'Get health metrics for plugins in a specific domain',
+    description: 'Get health metrics for plugins in a specific domain. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -387,9 +424,15 @@ export class AppointmentPluginController {
 
   @Get('health/alerts')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:health:alerts',
+    ttl: 60, // 1 minute (alerts change frequently)
+    tags: ['plugins', 'health', 'alerts'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get plugin performance alerts',
-    description: 'Get performance alerts for plugins',
+    description: 'Get performance alerts for plugins. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -421,9 +464,15 @@ export class AppointmentPluginController {
   }
 
   @Get('config')
+  @Cache({
+    keyTemplate: 'plugins:config',
+    ttl: 1800, // 30 minutes (config changes infrequently)
+    tags: ['plugins', 'config'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get plugin configurations',
-    description: 'Get all plugin configurations',
+    description: 'Get all plugin configurations. Cached for performance.',
   })
   @ApiResponse({
     status: 200,
@@ -454,9 +503,15 @@ export class AppointmentPluginController {
 
   @Get('config/:pluginName')
   @RequireResourcePermission('plugins', 'read')
+  @Cache({
+    keyTemplate: 'plugins:config:{pluginName}',
+    ttl: 1800, // 30 minutes (config changes infrequently)
+    tags: ['plugins', 'config', 'plugin:{pluginName}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get plugin configuration',
-    description: 'Get configuration for a specific plugin',
+    description: 'Get configuration for a specific plugin. Cached for performance.',
   })
   @ApiResponse({
     status: 200,

@@ -149,13 +149,18 @@ export interface UserCommunicationPreferences {
   /** Disabled channels */
   disabledChannels: CommunicationChannel[];
   /** Category-specific preferences */
-  categoryPreferences?: Record<CommunicationCategory, CommunicationChannel[]>;
+  categoryPreferences?: Record<string, CommunicationChannel[]>;
   /** Quiet hours (no notifications during these times) */
   quietHours?: {
     start: string; // HH:mm format
     end: string; // HH:mm format
     timezone: string;
   };
+  /** Category enablement flags */
+  appointmentEnabled?: boolean;
+  ehrEnabled?: boolean;
+  billingEnabled?: boolean;
+  systemEnabled?: boolean;
 }
 
 /**

@@ -13,6 +13,7 @@ import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { PaymentModule } from '@payment/payment.module';
+import { QueueModule } from '@queue/src/queue.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { PaymentModule } from '@payment/payment.module';
     WhatsAppModule,
     CacheModule,
     PaymentModule,
+    QueueModule, // Queue processing for invoice PDF generation, bulk operations
   ],
   controllers: [BillingController],
   providers: [BillingService, InvoicePDFService, BillingEventsListener],
