@@ -29,7 +29,7 @@ import {
   UpdateMedicationDto,
   CreateImmunizationDto,
   UpdateImmunizationDto,
-} from '@services/ehr/dto/ehr.dto';
+} from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -160,6 +160,14 @@ export class EHRController {
   @Get('radiology-reports/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:radiology-reports:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'radiology_reports', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getRadiologyReports(@Param('userId') userId: string): Promise<RadiologyReportResponse[]> {
     return await this.ehrService.getRadiologyReports(userId);
   }
@@ -194,6 +202,14 @@ export class EHRController {
   @Get('surgical-records/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:surgical-records:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'surgical_records', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getSurgicalRecords(@Param('userId') userId: string): Promise<SurgicalRecordResponse[]> {
     return await this.ehrService.getSurgicalRecords(userId);
   }
@@ -225,6 +241,14 @@ export class EHRController {
   @Get('vitals/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:vitals:{userId}:{type}',
+    ttl: 900, // 15 minutes (vitals change frequently)
+    tags: ['ehr', 'vitals', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getVitals(@Param('userId') userId: string, @Query('type') type?: string): Promise<unknown> {
     return (await this.ehrService.getVitals(userId, type)) as unknown;
   }
@@ -256,6 +280,14 @@ export class EHRController {
   @Get('allergies/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:allergies:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'allergies', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getAllergies(@Param('userId') userId: string): Promise<unknown> {
     return (await this.ehrService.getAllergies(userId)) as unknown;
   }
@@ -287,6 +319,14 @@ export class EHRController {
   @Get('medications/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:medications:{userId}:{activeOnly}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'medications', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getMedications(
     @Param('userId') userId: string,
     @Query('activeOnly') activeOnly?: string
@@ -321,6 +361,14 @@ export class EHRController {
   @Get('immunizations/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:immunizations:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['ehr', 'immunizations', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getImmunizations(@Param('userId') userId: string): Promise<ImmunizationResponse[]> {
     return await this.ehrService.getImmunizations(userId);
   }
@@ -345,6 +393,14 @@ export class EHRController {
   @Get('analytics/health-trends/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:analytics:health-trends:{userId}:{vitalType}:{startDate}:{endDate}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['ehr', 'analytics', 'health_trends', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getHealthTrends(
     @Param('userId') userId: string,
     @Query('vitalType') vitalType: string,
@@ -362,6 +418,14 @@ export class EHRController {
   @Get('analytics/medication-adherence/:userId')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  @PatientCache({
+    keyTemplate: 'ehr:analytics:medication-adherence:{userId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['ehr', 'analytics', 'medication_adherence', 'user:{userId}'],
+    containsPHI: true,
+    compress: true,
+    enableSWR: true,
+  })
   async getMedicationAdherence(@Param('userId') userId: string) {
     return this.ehrService.getMedicationAdherence(userId);
   }

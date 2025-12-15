@@ -10,9 +10,8 @@
  * - Optimized queue processing
  */
 
-import { NestFactory } from '@nestjs/core';
 import type { INestApplication } from '@nestjs/common';
-import { Module, forwardRef, type DynamicModule } from '@nestjs/common';
+import { Module, forwardRef, type DynamicModule, Logger } from '@nestjs/common';
 import { ConfigService } from '@config';
 import { ConfigModule } from '@config';
 import { DatabaseModule } from '@infrastructure/database';
@@ -28,6 +27,8 @@ import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
 } from '@core/resilience/graceful-shutdown.service';
+import { createFrameworkAdapter, ApplicationLifecycleManager } from '@infrastructure/framework';
+import type { ApplicationConfig } from '@core/types/framework.types';
 
 @Module({
   imports: [
@@ -70,11 +71,40 @@ async function bootstrap() {
   let logService: LoggingService | null = null;
 
   try {
-    app = await NestFactory.create(WorkerModule, {
-      logger: ['error', 'warn'],
-    });
+    // Use framework adapter to create application (framework-agnostic approach)
+    const logger = new Logger('WorkerBootstrap');
+    const frameworkAdapter = createFrameworkAdapter();
+    logger.log(`Using ${frameworkAdapter.getFrameworkName()} framework adapter for worker`);
 
-    const configService = await app.resolve(ConfigService);
+    // Create application lifecycle manager
+    const lifecycleManager = new ApplicationLifecycleManager(
+      frameworkAdapter,
+      logger,
+      undefined // LoggingService not available yet
+    );
+
+    // Create application with basic configuration
+    const basicApplicationConfig: ApplicationConfig = {
+      environment: 'production', // Workers typically run in production mode
+      isHorizontalScaling: false,
+      instanceId: 'worker-1',
+      trustProxy: false,
+      bodyLimit: 10 * 1024 * 1024, // 10MB for worker
+      keepAliveTimeout: 5000,
+      connectionTimeout: 30000,
+      requestTimeout: 10000,
+      enableHttp2: false, // Workers don't need HTTP/2
+    };
+
+    app = await lifecycleManager.createApplication(WorkerModule, basicApplicationConfig);
+
+    if (!app) {
+      throw new Error('Worker application failed to initialize');
+    }
+
+    // Get service container for type-safe service retrieval
+    const serviceContainer = lifecycleManager.getServiceContainer();
+    const configService = await serviceContainer.getService<ConfigService>(ConfigService);
 
     // Initialize worker service
     await app.init();
@@ -82,7 +112,7 @@ async function bootstrap() {
     // Try to use LoggingService, fallback to console if not available
     try {
       const LoggingServiceClass = (await import('@infrastructure/logging')).LoggingService;
-      logService = await app.resolve(LoggingServiceClass);
+      logService = await serviceContainer.getService<LoggingService>(LoggingServiceClass);
       const { LogType, LogLevel } = await import('@core/types');
 
       if (logService) {
@@ -127,7 +157,10 @@ async function bootstrap() {
     // Setup process error handlers using ProcessErrorHandlersService
     if (logService && app) {
       try {
-        const processErrorHandlersService = await app.resolve(ProcessErrorHandlersService);
+        const processErrorHandlersService =
+          await serviceContainer.getService<ProcessErrorHandlersService>(
+            ProcessErrorHandlersService
+          );
         processErrorHandlersService.setupErrorHandlers();
       } catch (error) {
         // If service is not available, log and continue
@@ -147,7 +180,8 @@ async function bootstrap() {
     // Setup graceful shutdown using GracefulShutdownService
     if (app && logService) {
       try {
-        const gracefulShutdownService = await app.resolve(GracefulShutdownService);
+        const gracefulShutdownService =
+          await serviceContainer.getService<GracefulShutdownService>(GracefulShutdownService);
         gracefulShutdownService.setupShutdownHandlers(app, null, null, null);
       } catch (error) {
         // If service is not available, use fallback shutdown handler

@@ -73,6 +73,7 @@ model User {
   mentalHealthNotes       MentalHealthNote[]
   nadiParikshas           NadiPariksha[]
   notifications           Notification[]
+  notificationPreference  NotificationPreference?
   nurse                   Nurse?
   patient                 Patient?
   pharmacist              Pharmacist?
@@ -589,18 +590,73 @@ model Queue {
 }
 
 model Notification {
-  id        String             @id @default(uuid())
-  userId    String
-  type      NotificationType
-  message   String
-  read      Boolean            @default(false)
-  sentAt    DateTime?
-  status    NotificationStatus @default(PENDING)
-  clinicId  String?
-  createdAt DateTime           @default(now())
-  user      User               @relation(fields: [userId], references: [id])
+  id              String                    @id @default(uuid())
+  userId          String
+  type            NotificationType
+  message         String
+  read            Boolean                   @default(false)
+  sentAt          DateTime?
+  status          NotificationStatus        @default(PENDING)
+  clinicId        String?
+  createdAt       DateTime                  @default(now())
+  // Delivery tracking
+  deliveryStatus  DeliveryStatus            @default(PENDING)
+  deliveredAt     DateTime?
+  failedAt        DateTime?
+  failureReason   String?
+  deliveryReceipt Json? // Provider-specific delivery receipt
+  channel         String? // 'email', 'sms', 'push', 'socket', 'whatsapp'
+  user            User                      @relation(fields: [userId], references: [id])
+  deliveryLogs    NotificationDeliveryLog[]
 
   @@index([clinicId])
+  @@index([userId, deliveryStatus])
+  @@index([deliveryStatus])
+}
+
+model NotificationPreference {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  // Channel preferences
+  emailEnabled        Boolean  @default(true)
+  smsEnabled          Boolean  @default(true)
+  pushEnabled         Boolean  @default(true)
+  socketEnabled       Boolean  @default(true)
+  whatsappEnabled     Boolean  @default(false)
+  // Category-specific preferences
+  appointmentEnabled  Boolean  @default(true)
+  ehrEnabled          Boolean  @default(true)
+  billingEnabled      Boolean  @default(true)
+  systemEnabled       Boolean  @default(true)
+  // Quiet hours
+  quietHoursStart     String? // HH:mm format
+  quietHoursEnd       String? // HH:mm format
+  quietHoursTimezone  String?  @default("UTC")
+  // Category-specific channel preferences (JSON)
+  categoryPreferences Json? // { category: { channels: ['email', 'push'] } }
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model NotificationDeliveryLog {
+  id               String         @id @default(uuid())
+  notificationId   String
+  channel          String // 'email', 'sms', 'push', 'socket', 'whatsapp'
+  status           DeliveryStatus
+  sentAt           DateTime
+  deliveredAt      DateTime?
+  failedAt         DateTime?
+  failureReason    String?
+  providerResponse Json? // Provider-specific response
+  retryCount       Int            @default(0)
+  notification     Notification   @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@index([notificationId])
+  @@index([status])
+  @@index([channel, status])
 }
 
 model HealthRecord {
@@ -1597,6 +1653,15 @@ enum NotificationStatus {
   PENDING
   SENT
   FAILED
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  BOUNCED
+  REJECTED
 }
 
 enum AppointmentType {

@@ -8,9 +8,10 @@ import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 import { GuardsModule } from '@core/guards';
 import { CacheModule } from '@infrastructure/cache/cache.module';
+import { EventsModule } from '@infrastructure/events/events.module';
 
 @Module({
-  imports: [DatabaseModule, LoggingModule, GuardsModule, CacheModule],
+  imports: [DatabaseModule, LoggingModule, GuardsModule, CacheModule, EventsModule],
   providers: [ClinicService, ClinicLocationService, ClinicUserService],
   controllers: [ClinicController, ClinicLocationController],
   exports: [ClinicService, ClinicLocationService, ClinicUserService],

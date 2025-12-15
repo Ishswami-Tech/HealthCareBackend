@@ -28,12 +28,22 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
       {
         userId: 'system',
         userRole: 'system',
-        clinicId: '',
+        clinicId: id,
         operation: 'DELETE_CLINIC',
         resourceType: 'CLINIC',
         resourceId: id,
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .select({ id: true, name: true })
+        .clinicId(id)
+        .useCache(false)
+        .priority('high')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(true)
+        .retries(3)
+        .build()
     );
 
     await this.invalidateCache([`clinic:${id}`, 'clinics']);
@@ -67,7 +77,17 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
         resourceType: 'CLINIC_ADMIN',
         resourceId: 'pending',
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ userId: data.userId, clinicId: data.clinicId })
+        .select({ id: true, userId: true, clinicId: true })
+        .clinicId(data.clinicId)
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
 
     if (result?.id) {
@@ -95,21 +115,32 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
       userId: string;
       clinicId: string;
       user?: { id: string; email: string; name: string; role: string };
-    } | null>(async prisma => {
-      return await prisma.clinicAdmin.findUnique({
-        where: { id },
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              role: true,
+    } | null>(
+      async prisma => {
+        return await prisma.clinicAdmin.findUnique({
+          where: { id },
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+                role: true,
+              },
             },
           },
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .include({ user: { select: { id: true, email: true, name: true, role: true } } })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .build()
+    );
   }
 
   /**
@@ -130,21 +161,33 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
         clinicId: string;
         user?: { id: string; email: string; name: string; role: string } | undefined;
       }>
-    >(async prisma => {
-      return await prisma.clinicAdmin.findMany({
-        where,
-        include: {
-          user: {
-            select: {
-              id: true,
-              email: true,
-              name: true,
-              role: true,
+    >(
+      async prisma => {
+        return await prisma.clinicAdmin.findMany({
+          where,
+          include: {
+            user: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+                role: true,
+              },
             },
           },
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+        });
+      },
+      this.queryOptionsBuilder
+        .where(where)
+        .include({ user: { select: { id: true, email: true, name: true, role: true } } })
+        .clinicId(where.clinicId || '')
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(where.clinicId ? true : false)
+        .build()
+    );
   }
 
   /**
@@ -172,7 +215,16 @@ export class ClinicAdminMethods extends DatabaseMethodsBase {
         resourceType: 'CLINIC_ADMIN',
         resourceId: id,
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .select({ id: true, userId: true, clinicId: true })
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .retries(2)
+        .build()
     );
 
     await this.invalidateCache([

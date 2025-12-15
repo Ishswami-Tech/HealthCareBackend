@@ -3,11 +3,15 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Inject,
+  forwardRef,
+  Optional,
 } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
+import { QueueService } from '@queue/src/queue.service';
 import {
   LogLevel,
   LogType,
@@ -15,6 +19,8 @@ import {
   EventPriority,
   EnterpriseEventPayload,
 } from '@core/types';
+import { INVOICE_PDF_QUEUE } from '@queue/src/queue.constants';
+// Future use: BULK_INVOICE_QUEUE, PAYMENT_RECONCILIATION_QUEUE
 import { SubscriptionStatus, InvoiceStatus, PaymentStatus } from '@core/types/enums.types';
 import {
   CreateBillingPlanDto,
@@ -25,7 +31,7 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
-} from './dto/billing.dto';
+} from '@dtos/billing.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PaymentService } from '@payment/payment.service';
@@ -58,7 +64,10 @@ export class BillingService {
     private readonly eventService: EventService,
     private readonly invoicePDFService: InvoicePDFService,
     private readonly whatsAppService: WhatsAppService,
-    private readonly paymentService: PaymentService
+    private readonly paymentService: PaymentService,
+    @Optional()
+    @Inject(forwardRef(() => QueueService))
+    private readonly queueService?: QueueService
   ) {}
 
   // ============ Billing Plans ============
@@ -522,6 +531,46 @@ export class BillingService {
         invoiceId: invoice.id,
       });
       await this.cacheService.invalidateCacheByTag(`user_invoices:${data.userId}`);
+
+      // Queue PDF generation (heavy operation) asynchronously
+      if (this.queueService) {
+        void this.queueService
+          .addJob(
+            INVOICE_PDF_QUEUE as string,
+            'generate_pdf',
+            {
+              invoiceId: invoice.id,
+              clinicId: invoice.clinicId || '',
+              userId: invoice.userId,
+              action: 'generate_pdf',
+              metadata: {
+                invoiceNumber: invoice.invoiceNumber,
+                amount:
+                  typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
+                totalAmount:
+                  typeof invoice.totalAmount === 'number'
+                    ? invoice.totalAmount
+                    : Number(invoice.totalAmount),
+              },
+            },
+            {
+              priority: 5, // NORMAL priority (QueueService.PRIORITIES.NORMAL)
+              attempts: 3,
+            }
+          )
+          .catch((error: unknown) => {
+            void this.loggingService.log(
+              LogType.QUEUE,
+              LogLevel.WARN,
+              'Failed to queue invoice PDF generation',
+              'BillingService',
+              {
+                invoiceId: invoice.id,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            );
+          });
+      }
 
       return invoice;
     } catch (error) {

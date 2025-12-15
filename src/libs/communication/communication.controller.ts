@@ -57,6 +57,7 @@ import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
 /**
@@ -490,9 +491,17 @@ export class CommunicationController {
    */
   @Get('chat/history/:userId')
   @RequireResourcePermission('notifications', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'communication:chat:history:{userId}:{conversationPartnerId}:{limit}:{startAfter}',
+    ttl: 300,
+    // 5 minutes (chat history changes frequently)
+    tags: ['communication', 'chat', 'user:{userId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get chat message history',
-    description: 'Retrieve chat message history for a specific user and conversation',
+    description:
+      'Retrieve chat message history for a specific user and conversation. Cached for performance.',
   })
   @ApiParam({
     name: 'userId',
@@ -544,9 +553,17 @@ export class CommunicationController {
   @Get('stats')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'read')
+  @Cache({
+    keyTemplate: 'communication:stats',
+    ttl: 300,
+    // 5 minutes (stats change frequently)
+    tags: ['communication', 'stats'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get communication statistics',
-    description: 'Retrieve communication system statistics and health status',
+    description:
+      'Retrieve communication system statistics and health status. Cached for performance.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -576,9 +593,15 @@ export class CommunicationController {
 
   @Get('health')
   @Roles(Role.SUPER_ADMIN)
+  @Cache({
+    keyTemplate: 'communication:health',
+    ttl: 60, // 1 minute (health checks should be recent)
+    tags: ['communication', 'health'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Check communication services health',
-    description: 'Check the health status of all communication services',
+    description: 'Check the health status of all communication services. Cached for performance.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -605,9 +628,15 @@ export class CommunicationController {
   @Get('chat/stats')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'read')
+  @Cache({
+    keyTemplate: 'communication:chat:stats',
+    ttl: 300, // 5 minutes (stats change frequently)
+    tags: ['communication', 'chat', 'stats'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get chat backup statistics',
-    description: 'Retrieve statistics about chat message backups',
+    description: 'Retrieve statistics about chat message backups. Cached for performance.',
   })
   @ApiResponse({
     status: HttpStatus.OK,

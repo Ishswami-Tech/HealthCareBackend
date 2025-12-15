@@ -4654,10 +4654,16 @@ export class AppointmentsController {
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:analytics:wait-times:{from}:{to}:{locationId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['appointments', 'analytics', 'wait_times'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get wait time analytics',
     description:
-      'Retrieves analytics on patient wait times including averages, percentiles, and breakdowns by location, doctor, and hour.',
+      'Retrieves analytics on patient wait times including averages, percentiles, and breakdowns by location, doctor, and hour. Cached for performance.',
   })
   @ApiQuery({
     name: 'from',
@@ -4773,10 +4779,16 @@ export class AppointmentsController {
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:analytics:check-in-patterns:{from}:{to}:{locationId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['appointments', 'analytics', 'check_in_patterns'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get check-in pattern analytics',
     description:
-      'Retrieves analytics on check-in patterns including timing distribution, peak hours, and location breakdowns.',
+      'Retrieves analytics on check-in patterns including timing distribution, peak hours, and location breakdowns. Cached for performance.',
   })
   @ApiQuery({
     name: 'from',
@@ -4875,10 +4887,16 @@ export class AppointmentsController {
   @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
+  @Cache({
+    keyTemplate: 'appointments:analytics:no-show-correlation:{from}:{to}:{locationId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['appointments', 'analytics', 'no_show_correlation'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get no-show correlation analytics',
     description:
-      'Analyzes correlation between check-in status and no-show rates to identify patterns.',
+      'Analyzes correlation between check-in status and no-show rates to identify patterns. Cached for performance.',
   })
   @ApiQuery({
     name: 'from',

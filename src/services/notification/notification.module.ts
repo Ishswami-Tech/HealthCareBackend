@@ -2,7 +2,12 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LoggingModule } from '@infrastructure/logging';
+import { DatabaseModule } from '@infrastructure/database';
+import { CacheModule } from '@infrastructure/cache';
+import { EventsModule } from '@infrastructure/events';
 import { NotificationController } from './notification.controller';
+import { NotificationPreferenceController } from './notification-preference.controller';
+import { NotificationPreferenceService } from './notification-preference.service';
 import { CommunicationModule } from '@communication/communication.module';
 import { PushModule } from '@communication/channels/push';
 import { EmailModule } from '@communication/channels/email';
@@ -35,17 +40,16 @@ import { ChatModule } from '@communication/channels/chat';
     ConfigModule,
     EventEmitterModule,
     LoggingModule,
+    DatabaseModule,
+    CacheModule,
+    EventsModule,
     EmailModule,
     PushModule,
     ChatModule, // Chat backup service
     forwardRef(() => CommunicationModule), // Unified communication service
   ],
-  controllers: [NotificationController],
-  providers: [
-    // All services are provided by imported modules
-  ],
-  exports: [
-    // No exports - use CommunicationModule directly
-  ],
+  controllers: [NotificationController, NotificationPreferenceController],
+  providers: [NotificationPreferenceService],
+  exports: [NotificationPreferenceService],
 })
 export class NotificationModule {}

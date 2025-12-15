@@ -29,9 +29,25 @@ import { LogType, LogLevel } from '@core/types';
 // Import types from centralized location
 import type { ClientSession, QueueFilters } from '@core/types/queue.types';
 
+// Get CORS origin from environment (fallback to restricted list for security)
+const getCorsOrigin = (): string | string[] => {
+  const corsOrigin = process.env['CORS_ORIGIN'] || '';
+  if (corsOrigin) {
+    // Split comma-separated origins
+    return corsOrigin.split(',').map((o: string) => o.trim());
+  }
+  // Default to localhost origins only (more secure than '*')
+  return [
+    'http://localhost:3000',
+    'http://localhost:8088',
+    'http://localhost:5050',
+    'http://localhost:8082',
+  ];
+};
+
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: getCorsOrigin(),
     credentials: true,
   },
   namespace: '/queue-status',

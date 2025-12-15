@@ -19,15 +19,26 @@ export class UserRoleMethods extends DatabaseMethodsBase {
     roleId: string,
     clinicId?: string
   ): Promise<UserRoleEntity | null> {
-    return await this.executeRead<UserRoleEntity | null>(async prisma => {
-      return await prisma.userRole.findFirst({
-        where: {
-          userId,
-          roleId,
-          ...(clinicId && { clinicId }),
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+    return await this.executeRead<UserRoleEntity | null>(
+      async prisma => {
+        return await prisma.userRole.findFirst({
+          where: {
+            userId,
+            roleId,
+            ...(clinicId && { clinicId }),
+          },
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ userId, roleId, ...(clinicId && { clinicId }) })
+        .clinicId(clinicId || '')
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(clinicId ? true : false)
+        .build()
+    );
   }
 
   /**
@@ -58,7 +69,20 @@ export class UserRoleMethods extends DatabaseMethodsBase {
         resourceType: 'USER_ROLE',
         resourceId: 'pending',
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({
+          userId: data.userId,
+          roleId: data.roleId,
+          ...(data.clinicId && { clinicId: data.clinicId }),
+        })
+        .clinicId(data.clinicId || '')
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(data.clinicId ? true : false)
+        .retries(2)
+        .build()
     );
 
     if (result?.id) {
@@ -80,16 +104,27 @@ export class UserRoleMethods extends DatabaseMethodsBase {
     roleId: string,
     clinicId?: string
   ): Promise<UserRoleEntity | null> {
-    return await this.executeRead<UserRoleEntity | null>(async prisma => {
-      return await prisma.userRole.findFirst({
-        where: {
-          userId,
-          roleId,
-          isActive: true,
-          ...(clinicId && { clinicId }),
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+    return await this.executeRead<UserRoleEntity | null>(
+      async prisma => {
+        return await prisma.userRole.findFirst({
+          where: {
+            userId,
+            roleId,
+            isActive: true,
+            ...(clinicId && { clinicId }),
+          },
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ userId, roleId, isActive: true, ...(clinicId && { clinicId }) })
+        .clinicId(clinicId || '')
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(clinicId ? true : false)
+        .build()
+    );
   }
 
   /**
@@ -120,7 +155,15 @@ export class UserRoleMethods extends DatabaseMethodsBase {
         resourceType: 'USER_ROLE',
         resourceId: id,
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .retries(2)
+        .build()
     );
 
     await this.invalidateCache([`userRole:${id}`, 'userRoles']);
@@ -133,22 +176,34 @@ export class UserRoleMethods extends DatabaseMethodsBase {
    * Includes role relation for RBAC service compatibility
    */
   async findUserRolesSafe(userId: string, clinicId?: string): Promise<UserRoleEntity[]> {
-    return await this.executeRead<UserRoleEntity[]>(async prisma => {
-      return await prisma.userRole.findMany({
-        where: {
-          userId,
-          ...(clinicId && { clinicId }),
-          isActive: true, // Only return active role assignments
-        },
-        include: {
-          role: {
-            select: {
-              name: true, // Include role name for RBAC service
+    return await this.executeRead<UserRoleEntity[]>(
+      async prisma => {
+        return await prisma.userRole.findMany({
+          where: {
+            userId,
+            ...(clinicId && { clinicId }),
+            isActive: true, // Only return active role assignments
+          },
+          include: {
+            role: {
+              select: {
+                name: true, // Include role name for RBAC service
+              },
             },
           },
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ userId, isActive: true, ...(clinicId && { clinicId }) })
+        .include({ role: { select: { name: true } } })
+        .clinicId(clinicId || '')
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(clinicId ? true : false)
+        .build()
+    );
   }
 
   /**
@@ -159,23 +214,34 @@ export class UserRoleMethods extends DatabaseMethodsBase {
   ): Promise<Array<RolePermissionEntity & { permission: { resource: string; action: string } }>> {
     return await this.executeRead<
       Array<RolePermissionEntity & { permission: { resource: string; action: string } }>
-    >(async prisma => {
-      const results = await prisma.rolePermission.findMany({
-        where: {
-          roleId: { in: roleIds },
-        },
-        include: {
-          permission: {
-            select: {
-              resource: true,
-              action: true,
+    >(
+      async prisma => {
+        const results = await prisma.rolePermission.findMany({
+          where: {
+            roleId: { in: roleIds },
+          },
+          include: {
+            permission: {
+              select: {
+                resource: true,
+                action: true,
+              },
             },
           },
-        },
-      });
-      return results as Array<
-        RolePermissionEntity & { permission: { resource: string; action: string } }
-      >;
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).build());
+        });
+        return results as Array<
+          RolePermissionEntity & { permission: { resource: string; action: string } }
+        >;
+      },
+      this.queryOptionsBuilder
+        .where({ roleId: { in: roleIds } })
+        .include({ permission: { select: { resource: true, action: true } } })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .build()
+    );
   }
 }

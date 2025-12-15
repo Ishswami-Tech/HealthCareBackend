@@ -10,6 +10,9 @@ import {
   Min,
   Max,
   IsUrl,
+  IsBoolean,
+  IsObject,
+  Matches,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -41,10 +44,46 @@ export enum ClinicType {
   SURGICAL = 'SURGERY',
 }
 
+// Clinic Location DTOs (defined before CreateClinicDto to avoid forward reference)
+export class CreateClinicLocationDto {
+  name!: string;
+  address!: string;
+  city!: string;
+  state!: string;
+  country!: string;
+  zipCode!: string;
+  phone!: string;
+  email!: string;
+  timezone!: string;
+  isActive?: boolean;
+  latitude?: number;
+  longitude?: number;
+  workingHours?: Record<string, { start: string; end: string } | null>;
+  settings?: Record<string, unknown>;
+}
+
+export class UpdateClinicLocationDto {
+  name?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  zipCode?: string;
+  phone?: string;
+  email?: string;
+  timezone?: string;
+  isActive?: boolean;
+  latitude?: number;
+  longitude?: number;
+  workingHours?: Record<string, { start: string; end: string } | null>;
+  settings?: Record<string, unknown>;
+}
+
 /**
  * Data Transfer Object for creating new clinics
  * @class CreateClinicDto
  * @description Contains all required fields for clinic creation with validation
+ * Supports both basic clinic creation and extended clinic creation with subdomain/app_name
  * @example
  * ```typescript
  * const clinic = new CreateClinicDto();
@@ -182,6 +221,116 @@ export class CreateClinicDto {
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
   appDomain?: string;
+
+  // Extended fields for multi-tenant clinic creation
+  @ApiPropertyOptional({
+    description: 'The subdomain for the clinic app',
+    example: 'aadesh',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'Subdomain can only contain lowercase letters, numbers, and hyphens',
+  })
+  subdomain?: string;
+
+  @ApiPropertyOptional({
+    description: 'The app name for the clinic (unique identifier)',
+    example: 'aadesh-ayurvedalay',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9-]+$/, {
+    message: 'App name can only contain lowercase letters, numbers, and hyphens',
+  })
+  app_name?: string;
+
+  @ApiPropertyOptional({
+    description: 'The database connection string for the clinic',
+    example: 'postgresql://user:pass@localhost:5432/clinic_db',
+  })
+  @IsOptional()
+  @IsString()
+  db_connection_string?: string;
+
+  @ApiPropertyOptional({
+    description: 'The main location of the clinic',
+    type: CreateClinicLocationDto,
+  })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => CreateClinicLocationDto)
+  mainLocation?: CreateClinicLocationDto;
+
+  @ApiPropertyOptional({
+    description:
+      'Identifier of the Clinic Admin (required if Super Admin is creating the clinic). Can be email or ID.',
+    example: 'admin@example.com',
+  })
+  @IsOptional()
+  @IsString()
+  clinicAdminIdentifier?: string;
+
+  @ApiPropertyOptional({
+    description: 'The database name for the clinic',
+    example: 'clinic_aadesh_db',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9_]+$/, {
+    message: 'Database name can only contain lowercase letters, numbers, and underscores',
+  })
+  databaseName?: string;
+
+  @ApiPropertyOptional({
+    description: 'The logo URL of the clinic',
+    example: 'https://ayurvedalay.com/logos/aadesh.png',
+  })
+  @IsOptional()
+  @IsString()
+  @IsUrl()
+  logo?: string;
+
+  @ApiPropertyOptional({
+    description: 'The timezone of the clinic',
+    example: 'Asia/Kolkata',
+  })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
+  @ApiPropertyOptional({
+    description: 'The currency used by the clinic',
+    example: 'INR',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    description: 'The language used by the clinic',
+    example: 'en',
+  })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether the clinic is active',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Clinic settings as JSON object',
+    example: { theme: 'dark', notifications: true },
+  })
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
 }
 
 /**
@@ -547,4 +696,97 @@ export class ClinicListResponseDto {
   })
   @IsNumber({}, { message: 'Limit must be a number' })
   limit!: number;
+}
+
+// Additional Clinic DTOs (from services/clinic/dto/)
+export class AssignClinicAdminDto {
+  @ApiProperty({
+    description: 'The ID of the user to assign as clinic admin',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @IsUUID()
+  userId!: string;
+
+  @ApiProperty({ description: 'Clinic ID to assign the admin to' })
+  @IsString()
+  @IsNotEmpty()
+  @IsUUID()
+  clinicId!: string;
+
+  @ApiProperty({
+    description: 'Whether this user is the owner',
+    required: false,
+  })
+  isOwner?: boolean;
+}
+
+export class RegisterPatientDto {
+  @ApiProperty({
+    description: 'The app name of the clinic to register the patient to',
+    example: 'cityhealthclinic',
+  })
+  @IsString()
+  @IsNotEmpty()
+  appName!: string;
+}
+
+// Extended Clinic Response DTO (from services/clinic/dto/clinic-response.dto.ts)
+export class ClinicResponseDtoExtended {
+  @ApiProperty({ description: 'Clinic ID' })
+  id!: string;
+
+  @ApiProperty({ description: 'Clinic name' })
+  name!: string;
+
+  @ApiProperty({ description: 'Clinic address' })
+  address!: string;
+
+  @ApiProperty({ description: 'Clinic phone number' })
+  phone!: string;
+
+  @ApiProperty({ description: 'Clinic email' })
+  email!: string;
+
+  @ApiProperty({ description: 'Clinic subdomain' })
+  subdomain!: string;
+
+  @ApiProperty({ description: 'Clinic app name' })
+  app_name!: string;
+
+  @ApiProperty({ description: 'Clinic logo URL', required: false })
+  logo?: string;
+
+  @ApiProperty({ description: 'Clinic website', required: false })
+  website?: string;
+
+  @ApiProperty({ description: 'Clinic description', required: false })
+  description?: string;
+
+  @ApiProperty({ description: 'Clinic timezone' })
+  timezone!: string;
+
+  @ApiProperty({ description: 'Clinic currency' })
+  currency!: string;
+
+  @ApiProperty({ description: 'Clinic language' })
+  language!: string;
+
+  @ApiProperty({ description: 'Whether clinic is active' })
+  isActive!: boolean;
+
+  @ApiProperty({ description: 'Clinic admins', type: [Object] })
+  admins!: unknown[];
+
+  @ApiProperty({ description: 'Created at timestamp' })
+  createdAt!: Date;
+
+  @ApiProperty({ description: 'Updated at timestamp' })
+  updatedAt!: Date;
+}
+
+export class AppNameInlineDto {
+  @ApiProperty({ description: 'App name (subdomain)', example: 'myclinic' })
+  appName!: string;
 }

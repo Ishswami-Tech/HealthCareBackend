@@ -20,24 +20,39 @@ export class AppointmentMethods extends DatabaseMethodsBase {
    * Find appointment by ID
    */
   async findAppointmentByIdSafe(id: string): Promise<AppointmentWithRelations | null> {
-    return await this.executeRead<AppointmentWithRelations | null>(async prisma => {
-      return await prisma.appointment.findUnique({
-        where: { id },
-        include: {
-          patient: {
-            include: {
-              user: true,
+    return await this.executeRead<AppointmentWithRelations | null>(
+      async prisma => {
+        return await prisma.appointment.findUnique({
+          where: { id },
+          include: {
+            patient: {
+              include: {
+                user: true,
+              },
             },
-          },
-          doctor: {
-            include: {
-              user: true,
+            doctor: {
+              include: {
+                user: true,
+              },
             },
+            clinic: true,
           },
+        });
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .include({
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
           clinic: true,
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+        })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .build()
+    );
   }
 
   /**
@@ -52,28 +67,44 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
     }
   ): Promise<AppointmentWithRelations[]> {
-    return await this.executeRead<AppointmentWithRelations[]>(async prisma => {
-      return await prisma.appointment.findMany({
-        where,
-        ...(options?.skip !== undefined && { skip: options.skip }),
-        ...(options?.take !== undefined && { take: options.take }),
-        ...(options?.orderBy && { orderBy: options.orderBy }),
-        include: {
-          patient: {
-            include: {
-              user: true,
+    return await this.executeRead<AppointmentWithRelations[]>(
+      async prisma => {
+        return await prisma.appointment.findMany({
+          where,
+          ...(options?.skip !== undefined && { skip: options.skip }),
+          ...(options?.take !== undefined && { take: options.take }),
+          ...(options?.orderBy && { orderBy: options.orderBy }),
+          include: {
+            patient: {
+              include: {
+                user: true,
+              },
             },
-          },
-          doctor: {
-            include: {
-              user: true,
+            doctor: {
+              include: {
+                user: true,
+              },
             },
+            clinic: true,
+            location: true,
           },
+        });
+      },
+      this.queryOptionsBuilder
+        .where(where)
+        .include({
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
           clinic: true,
           location: true,
-        },
-      });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+        })
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .build()
+    );
   }
 
   /**
@@ -82,7 +113,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
   async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
     return await this.executeRead<number>(async prisma => {
       return await prisma.appointment.count({ where });
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    }, this.queryOptionsBuilder.where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).rowLevelSecurity(true).build());
   }
 
   /**
@@ -153,7 +184,22 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         resourceType: 'APPOINTMENT',
         resourceId: 'pending',
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ clinicId })
+        .include({
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
+          clinic: true,
+          location: true,
+        })
+        .clinicId(clinicId)
+        .useCache(false)
+        .priority('high')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
 
     if (result?.id) {
@@ -202,7 +248,21 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         resourceType: 'APPOINTMENT',
         resourceId: id,
         timestamp: new Date(),
-      }
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .include({
+          patient: { include: { user: true } },
+          doctor: { include: { user: true } },
+          clinic: true,
+        })
+        .clinicId((data as { clinicId?: string }).clinicId || '')
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .retries(2)
+        .build()
     );
 
     const clinicId = (data as { clinicId?: string }).clinicId;
@@ -223,10 +283,21 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     _clinicId: string,
     _date: Date
   ): Promise<AppointmentTimeSlot[]> {
-    return await this.executeRead<AppointmentTimeSlot[]>(_prisma => {
-      // This is a placeholder - actual implementation would query available time slots
-      // For now, return empty array
-      return Promise.resolve([]);
-    }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
+    return await this.executeRead<AppointmentTimeSlot[]>(
+      _prisma => {
+        // This is a placeholder - actual implementation would query available time slots
+        // For now, return empty array
+        return Promise.resolve([]);
+      },
+      this.queryOptionsBuilder
+        .where({ doctorId: _doctorId, clinicId: _clinicId })
+        .clinicId(_clinicId)
+        .useCache(true)
+        .cacheStrategy('short')
+        .priority('normal')
+        .hipaaCompliant(true)
+        .rowLevelSecurity(true)
+        .build()
+    );
   }
 }

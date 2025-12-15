@@ -829,8 +829,8 @@ async function bootstrap() {
 
     // Configure filters and interceptors separately (not in configure method)
     if (loggingService) {
-      // Get ConfigService from app context for HttpExceptionFilter
-      const configService = app.get(ConfigService);
+      // Use ConfigService already retrieved via ServiceContainer (line 686)
+      // No need to call app.get() - use the existing configService variable
       middlewareManager.configureFilters(app, [
         {
           filter: HttpExceptionFilter,

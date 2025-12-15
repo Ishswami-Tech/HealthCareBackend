@@ -1,1189 +1,335 @@
-# Enterprise Cache Module Documentation
+# Cache Service
 
-A high-performance, robust, and scalable caching implementation with Stale-While-Revalidate support for NestJS applications, designed to handle 10+ million users with enterprise-grade features. The module follows SOLID, DRY, and KISS principles with a provider-agnostic architecture supporting Redis and Dragonfly.
+**Purpose:** Multi-provider cache service with multi-layer caching (Memory + Redis/Dragonfly)
+**Location:** `src/libs/infrastructure/cache`
+**Status:** ✅ Production-ready
 
-## Table of Contents
+---
 
-1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Features](#features)
-4. [Setup](#setup)
-5. [Basic Usage](#basic-usage)
-6. [Advanced Features](#advanced-features)
-7. [Healthcare-Specific Features](#healthcare-specific-features)
-8. [Enterprise Features](#enterprise-features)
-9. [API Reference](#api-reference)
-10. [Monitoring](#monitoring)
-11. [Best Practices](#best-practices)
-12. [Troubleshooting](#troubleshooting)
-13. [Examples](#examples)
-14. [Testing](#testing)
-15. [Migration Guide](#migration-guide)
+## Quick Start
 
-## Overview
+### Basic Usage
 
-This caching system provides automatic caching of API responses with configurable TTL, SWR (Stale-While-Revalidate) support, and enterprise-grade features for healthcare applications. It's designed to handle high-scale operations with 10+ million users while maintaining HIPAA compliance and data security.
+```typescript
+import { CacheService } from '@cache';
 
-### Key Features
+@Injectable()
+export class MyService {
+  constructor(private readonly cacheService: CacheService) {}
 
-- **SWR (Stale-While-Revalidate)** - Returns stale data immediately while updating in the background
-- **Provider-Agnostic** - Supports Redis and Dragonfly (26x faster than Redis)
-- **Consolidated API** - Single service method that handles all caching operations
-- **Tag-based Invalidation** - Group related cache entries for easier invalidation
-- **Pattern-based Invalidation** - Clear cache by key patterns
-- **Adaptive Caching** - Adjusts behavior based on system load
-- **Memory Optimization** - Optional compression for large cache entries
-- **Prioritization** - Supports critical, high, normal, and low priority cache operations
-- **Batch Processing** - Efficient handling of bulk operations
-- **Distributed Locking** - Prevents cache stampedes and race conditions
-- **Auto-balancing** - Scales back operations during high load
-- **Circuit Breaking** - Prevents cascading failures during outages
-- **Healthcare Compliance** - HIPAA-compliant caching with PHI protection
-- **Enterprise Scalability** - Connection pooling, sharding, load balancing
-- **Performance Monitoring** - Real-time metrics and health monitoring
-- **Audit Logging** - Comprehensive audit trails for compliance
+  async getUser(userId: string) {
+    // Cache-aside pattern with automatic population
+    return await this.cacheService.cache(
+      `user:${userId}`,           // Cache key
+      async () => {                // Fetch function if cache miss
+        return await this.db.user.findUnique({ where: { id: userId } });
+      },
+      { ttl: 3600 }               // 1 hour TTL
+    );
+  }
+
+  // Manual cache operations
+  async example() {
+    // Set cache
+    await this.cacheService.set('key', 'value', 3600);
+
+    // Get cache
+    const value = await this.cacheService.get<string>('key');
+
+    // Delete cache
+    await this.cacheService.delete('key');
+
+    // Invalidate by tags
+    await this.cacheService.invalidateCacheByTag(['user', 'clinic-123']);
+  }
+}
+```
+
+---
+
+## Key Features
+
+- ✅ **Multi-Layer Caching** - L1 (in-memory) + L2 (Redis/Dragonfly)
+- ✅ **Multi-Provider Support** - Redis, Dragonfly, Memory
+- ✅ **SWR Pattern** - Stale-While-Revalidate for high availability
+- ✅ **PHI-Compliant Caching** - Patient data isolation and encryption
+- ✅ **Tag-Based Invalidation** - Invalidate related cache entries
+- ✅ **Cache Versioning** - Automatic version management
+- ✅ **Health Monitoring** - Cache health checks
+- ✅ **Performance Metrics** - Hit/miss rates, latency tracking
+
+---
 
 ## Architecture
 
-The cache module follows SOLID principles with a clean, maintainable architecture and supports **true multi-layer caching** with three distinct layers:
-
-### Multi-Layer Cache Architecture
-
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Application                          │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│              L1: In-Memory Cache                        │
-│  • Fastest access (process-local)                       │
-│  • Limited size (10,000 entries, ~50MB)                │
-│  • Short TTL (30 seconds default)                       │
-│  • LRU eviction                                         │
-└────────────────────┬────────────────────────────────────┘
-                     │ (miss)
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│          L2: Distributed Cache (Redis/Dragonfly)        │
-│  • Shared across instances                              │
-│  • Larger capacity                                      │
-│  • Longer TTL (5 min - 1 hour)                         │
-│  • SWR support, circuit breakers                       │
-└────────────────────┬────────────────────────────────────┘
-                     │ (miss)
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│              L3: Database (PostgreSQL)                  │
-│  • Persistent storage                                   │
-│  • Source of truth                                      │
-└─────────────────────────────────────────────────────────┘
+CacheModule
+├── cache.service.ts           # Main service
+├── cache.module.ts
+├── providers/
+│   ├── redis.provider.ts
+│   ├── dragonfly.provider.ts
+│   └── memory.provider.ts
+├── decorators/
+│   ├── cache.decorator.ts
+│   ├── patient-cache.decorator.ts
+│   └── invalidate-cache.decorator.ts
+└── controllers/
+    └── cache.controller.ts    # Admin endpoints
 ```
 
-**Multi-Layer Components:**
-1. **InMemoryCacheService** (L1) - Fast in-process memory cache with LRU eviction
-2. **CacheService** (L2 - Enhanced) - Distributed cache with automatic L1 integration
-3. **MultiLayerCacheService** (Orchestrator) - Optional explicit multi-layer control
-4. **Database** (L3) - Persistent storage via fetchFn
+**Consolidated Documentation:**
+📖 [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#cache-system) - Architecture, design decisions
 
-**Performance Benefits:**
-- **L1 Hit**: ~0.1ms (in-memory access) - 10-100x faster
-- **L2 Hit**: ~1-5ms (Redis/Dragonfly network) - 2-5x faster
-- **L3 Hit**: ~10-100ms (database query) - Source of truth
-- **Overall**: 20-30% reduction in database load
+---
 
-### SOLID Architecture
+## Usage Examples
 
-### 1. Interfaces (Dependency Inversion Principle)
+### Example 1: Cache-Aside Pattern
 
-- `ICacheProvider` - Abstraction for cache storage operations
-- `ICacheStrategy` - Strategy pattern for different cache behaviors
-- `ICacheRepository` - High-level cache operations
-- `ICacheKeyFactory` - Factory for generating cache keys
-
-### 2. Services (Single Responsibility Principle)
-
-- `CacheService` - Main entry point (facade)
-- `CircuitBreakerService` - Circuit breaker pattern
-- `CacheMetricsService` - Performance metrics tracking
-- `FeatureFlagsService` - Feature flag management
-- `CacheVersioningService` - Cache versioning for schema changes
-- `CacheErrorHandler` - Comprehensive error handling
-
-### 3. Strategies (Open/Closed Principle)
-
-- `SWRCacheStrategy` - Stale-While-Revalidate caching
-- `StandardCacheStrategy` - Standard caching
-- `EmergencyCacheStrategy` - Emergency data caching
-- `PHICacheStrategy` - Protected Health Information caching
-- `CacheStrategyManager` - Strategy selection and execution
-
-### 4. Factories (DRY Principle)
-
-- `CacheKeyFactory` - Centralized key generation
-
-### 5. Builders
-
-- `CacheOptionsBuilder` - Builder pattern for cache options
-
-### 6. Middleware (Chain of Responsibility)
-
-- `ValidationCacheMiddleware` - Validates cache operations
-- `MetricsCacheMiddleware` - Tracks metrics
-- `CacheMiddlewareChain` - Manages middleware chain
-
-### 7. Repositories
-
-- `CacheRepository` - Repository pattern implementation
-
-### 8. Providers (Adapters)
-
-- `RedisCacheProvider` - Redis adapter implementing ICacheProvider
-- `DragonflyCacheProvider` - Dragonfly adapter implementing ICacheProvider
-
-### File Structure
-
-```
-cache/
-├── layers/                 # Multi-layer cache (L1)
-│   ├── in-memory-cache.service.ts      # L1: In-memory cache
-│   ├── multi-layer-cache.service.ts    # Multi-layer orchestrator
-│   └── index.ts
-├── providers/              # Adapters (DIP)
-│   ├── cache-provider.factory.ts
-│   ├── redis-cache.provider.ts
-│   └── dragonfly-cache.provider.ts
-├── services/               # Split services (SRP)
-│   ├── cache-metrics.service.ts
-│   ├── cache-versioning.service.ts
-│   ├── feature-flags.service.ts
-│   ├── cache-health-monitor.service.ts
-│   └── cache-warming.service.ts
-├── strategies/             # Strategy pattern (OCP)
-│   ├── base-cache.strategy.ts
-│   ├── swr-cache.strategy.ts
-│   ├── standard-cache.strategy.ts
-│   ├── emergency-cache.strategy.ts
-│   ├── phi-cache.strategy.ts
-│   └── cache-strategy.manager.ts
-├── factories/              # Factory pattern (DRY)
-│   └── cache-key.factory.ts
-├── builders/               # Builder pattern
-│   └── cache-options.builder.ts
-├── middleware/             # Chain of Responsibility
-│   ├── cache-middleware.interface.ts
-│   ├── base-cache.middleware.ts
-│   ├── validation-cache.middleware.ts
-│   ├── metrics-cache.middleware.ts
-│   └── cache-middleware.chain.ts
-├── repositories/           # Repository pattern
-│   └── cache.repository.ts
-├── redis/                  # Redis implementation
-│   ├── redis.service.ts
-│   └── redis.module.ts
-├── dragonfly/              # Dragonfly implementation
-│   ├── dragonfly.service.ts
-│   └── dragonfly.module.ts
-├── controllers/            # API endpoints
-│   └── cache.controller.ts
-├── cache.service.ts        # Main service (facade with L1 integration)
-└── cache.module.ts         # Module configuration
+```typescript
+async getPatient(patientId: string, clinicId: string) {
+  return await this.cacheService.cache(
+    `patient:${clinicId}:${patientId}`,  // Clinic-isolated key
+    async () => {
+      return await this.db.patient.findUnique({
+        where: { id: patientId, clinicId },
+      });
+    },
+    {
+      ttl: 1800,                // 30 minutes
+      tags: ['patient', `clinic:${clinicId}`],
+    }
+  );
+}
 ```
 
-### Architecture Benefits
+### Example 2: Tag-Based Invalidation
 
-1. **SOLID Principles** ✅
-   - **Single Responsibility** - Each service has one clear purpose
-   - **Open/Closed** - New strategies can be added without modifying existing code
-   - **Liskov Substitution** - All strategies implement ICacheStrategy
-   - **Interface Segregation** - Small, focused interfaces
-   - **Dependency Inversion** - Depend on abstractions (interfaces)
+```typescript
+async updatePatient(patientId: string, clinicId: string, data: any) {
+  const patient = await this.db.patient.update({
+    where: { id: patientId },
+    data,
+  });
 
-2. **DRY Principle** ✅
-   - Centralized key generation (CacheKeyFactory)
-   - Shared TTL calculation logic
-   - Common error handling patterns
-   - Reusable middleware components
+  // Invalidate all patient and clinic caches
+  await this.cacheService.invalidateCacheByTag([
+    'patient',
+    `clinic:${clinicId}`,
+    `patient:${patientId}`,
+  ]);
 
-3. **KISS Principle** ✅
-   - Simple, focused services
-   - Clear separation of concerns
-   - Easy to understand and maintain
-
-## Features
-
-### Core Caching Features
-- Automatic caching using decorators
-- Configurable TTL (Time To Live)
-- Custom key generation
-- Cache invalidation
-- Monitoring and statistics
-- Error handling
-
-### Enterprise Features
-- **Connection Pooling** - Optimized Redis/Dragonfly connections for high throughput
-- **Sharding** - Distribute cache across multiple instances
-- **Load Balancing** - Intelligent request distribution
-- **Circuit Breakers** - Prevent cascading failures
-- **Adaptive Caching** - Dynamic TTL adjustment based on access patterns
-- **Predictive Caching** - Pre-warm frequently accessed data
-- **Performance Monitoring** - Real-time metrics and alerts
-- **Audit Logging** - Comprehensive operation tracking
-- **Compression** - Reduce memory usage for large data
-- **Encryption** - Secure sensitive data in cache
-
-### Healthcare-Specific Features
-- **PHI Protection** - Special handling for Protected Health Information
-- **Compliance Levels** - Standard, sensitive, and restricted data handling
-- **Emergency Data** - Critical data with minimal TTL
-- **Patient-Specific Caching** - Isolated cache for patient data
-- **Doctor-Specific Caching** - Optimized for medical professional workflows
-- **Clinic-Specific Caching** - Multi-tenant cache isolation
-- **Medical Record Caching** - Specialized for healthcare data structures
-- **Prescription Caching** - Pharmacy integration support
-- **Appointment Caching** - Real-time scheduling data
-- **Lab Results Caching** - Medical test result optimization
-
-## Setup
-
-### 1. Dependencies
-
-```bash
-npm install @nestjs/common @nestjs/config @nestjs/event-emitter ioredis
+  return patient;
+}
 ```
 
-### 2. Environment Variables
+### Example 3: Using Decorators
 
-Create a `.env` file with the following:
+```typescript
+import { Cache, PatientCache, InvalidateCache } from '@cache/decorators';
+
+@Controller('patients')
+export class PatientsController {
+  @Get(':id')
+  @PatientCache()  // Automatic PHI-compliant caching
+  async getPatient(@Param('id') id: string) {
+    return await this.patientService.findOne(id);
+  }
+
+  @Put(':id')
+  @InvalidateCache(['patient', 'clinic'])  // Auto invalidation
+  async updatePatient(@Param('id') id: string, @Body() data: any) {
+    return await this.patientService.update(id, data);
+  }
+}
+```
+
+---
+
+## Configuration
+
+### Environment Variables
 
 ```env
-# Cache Provider Selection
-CACHE_PROVIDER=dragonfly  # Options: dragonfly (default), redis
+# Cache Provider (redis, dragonfly, memory)
+CACHE_PROVIDER=dragonfly
 
-# Redis Configuration
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=yourpassword
-REDIS_DB=0
+# Redis/Dragonfly Configuration
+CACHE_HOST=localhost
+CACHE_PORT=6379
+CACHE_PASSWORD=your-password
+CACHE_DB=0
 
-# Dragonfly Configuration
-DRAGONFLY_HOST=localhost
-DRAGONFLY_PORT=6379
-DRAGONFLY_PASSWORD=yourpassword
+# Cache Settings
+CACHE_TTL_DEFAULT=3600           # 1 hour
+CACHE_MAX_MEMORY=1GB
+CACHE_EVICTION_POLICY=allkeys-lru
 
-# Cache Configuration
-CACHE_PATIENT_RECORDS_TTL=3600
-CACHE_APPOINTMENTS_TTL=1800
-CACHE_DOCTOR_PROFILES_TTL=7200
-CACHE_CLINIC_DATA_TTL=14400
-CACHE_MEDICAL_HISTORY_TTL=7200
-CACHE_PRESCRIPTIONS_TTL=1800
-CACHE_EMERGENCY_DATA_TTL=300
-CACHE_ENABLE_COMPRESSION=true
-CACHE_ENABLE_METRICS=true
-CACHE_DEFAULT_TTL=3600
-CACHE_MAX_SIZE_MB=1024
-CACHE_ENABLE_BATCH=true
-CACHE_COMPRESSION_THRESHOLD=1024
-
-# L1 Cache Configuration (Multi-Layer)
-L1_CACHE_ENABLED=true                    # Enable L1 cache (default: true)
-L1_CACHE_MAX_SIZE=10000                 # Max entries (default: 10000)
-L1_CACHE_DEFAULT_TTL=30                 # Default TTL in seconds (default: 30)
-L1_CACHE_MAX_MEMORY_MB=50               # Max memory in MB (default: 50)
-L1_CACHE_ENABLE_METRICS=true           # Enable metrics (default: true)
-
-# Enterprise Configuration
-CACHE_CONNECTION_POOL_SIZE=100
-CACHE_MAX_CONNECTIONS=1000
-CACHE_CONNECTION_TIMEOUT=5000
-CACHE_COMMAND_TIMEOUT=3000
-CACHE_RETRY_ATTEMPTS=3
-CACHE_RETRY_DELAY=1000
-CACHE_CIRCUIT_BREAKER_THRESHOLD=10
-CACHE_CIRCUIT_BREAKER_TIMEOUT=30000
-CACHE_ADAPTIVE_ENABLED=true
-CACHE_LOAD_BALANCING_ENABLED=true
-CACHE_SHARDING_ENABLED=true
-CACHE_REPLICATION_ENABLED=true
-CACHE_MEMORY_OPTIMIZATION_ENABLED=true
-CACHE_PERFORMANCE_MONITORING_ENABLED=true
-CACHE_AUTO_SCALING_ENABLED=true
-CACHE_WARMING_ENABLED=true
-CACHE_PREDICTIVE_ENABLED=true
-CACHE_COMPRESSION_LEVEL=6
-CACHE_ENCRYPTION_ENABLED=true
-CACHE_AUDIT_LOGGING_ENABLED=true
-
-# Sharding Configuration (optional)
-CACHE_SHARDS=[{"host":"redis1.example.com","port":6379,"weight":1},{"host":"redis2.example.com","port":6379,"weight":1}]
+# Multi-Layer Cache
+CACHE_L1_ENABLED=true           # In-memory cache
+CACHE_L1_MAX_SIZE=100MB
+CACHE_L1_TTL=300                # 5 minutes
 ```
 
-### 3. Module Configuration
+[Full environment variables guide](../../../docs/ENVIRONMENT_VARIABLES.md)
 
-The `CacheModule` is already configured as a `@Global()` module and automatically imports both `RedisModule` and `DragonflyModule`. The provider is selected based on the `CACHE_PROVIDER` environment variable.
+---
 
-## Basic Usage
+## Cache Patterns
 
-### 1. Simple Caching
-
-Cache the entire method response with default TTL (3600s):
+### 1. Cache-Aside (Lazy Loading)
 
 ```typescript
-import { Cache } from '@core/decorators';
-
-@Controller('users')
-export class UsersController {
-  
-  @Get()
-  @Cache()
-  async getAllUsers() {
-    return this.usersRepository.find();
-  }
-}
+// Most common pattern
+const data = await cacheService.cache(key, fetchFn, { ttl });
 ```
 
-### 2. Caching with TTL
+### 2. Write-Through
 
 ```typescript
-@Cache({ ttl: 1800 }) // 30 minutes
-async getUserById(id: string) {
-  return this.usersRepository.findUnique({ where: { id } });
-}
-
-@Cache({ ttl: 3600 }) // 1 hour
-async getUser(id: string) {
-  return this.usersRepository.findOne(id);
-}
+// Write to DB and cache simultaneously
+const data = await db.create(data);
+await cacheService.set(key, data, ttl);
 ```
 
-### 3. Service-Level Caching
+### 3. Write-Behind
 
 ```typescript
-import { Injectable } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
-
-@Injectable()
-export class ProductsService {
-  constructor(private readonly cacheService: CacheService) {}
-  
-  async getProductDetails(id: string, options = {}) {
-    const cacheKey = `products:${id}:details`;
-    
-    return this.cacheService.cache(
-      cacheKey,
-      async () => this.fetchProductFromDatabase(id), 
-      {
-        ttl: 600,                // 10 minutes TTL
-        staleTime: 120,          // 2 minutes stale time
-        compress: true,          // Compress data if large
-        priority: options.priority || 'high',
-        tags: ['products', `product:${id}`] // Tags for invalidation
-      }
-    );
-  }
-}
+// Write to cache immediately, async DB update
+await cacheService.set(key, data, ttl);
+queue.add('db-update', { key, data });  // Async
 ```
 
-### 4. Using Options Builder
+### 4. Refresh-Ahead (SWR)
 
 ```typescript
-import { CacheOptionsBuilder } from '@infrastructure/cache';
-
-const options = CacheOptionsBuilder
-  .forPatient()
-  .ttl(1800)
-  .tags(['patient_data', 'phi_data'])
-  .build();
-
-await cacheService.cache(key, fetchFn, options);
-```
-
-### 5. Using Key Factory
-
-```typescript
-const keyFactory = cacheService.getKeyFactory();
-const key = keyFactory.patient('patient-123', 'clinic-456', 'records');
-```
-
-## Advanced Features
-
-### 1. Multi-Layer Caching (L1 → L2 → L3)
-
-The cache system automatically uses multi-layer caching for optimal performance:
-
-#### Option 1: Automatic Multi-Layer (Recommended)
-
-```typescript
-import { CacheService } from '@infrastructure/cache';
-
-@Injectable()
-export class UserService {
-  constructor(private readonly cacheService: CacheService) {}
-
-  async getUser(id: string) {
-    // Automatically uses L1 → L2 → L3
-    // L1: In-memory (fastest, ~0.1ms)
-    // L2: Redis/Dragonfly (shared, ~1-5ms)
-    // L3: Database (source of truth, ~10-100ms)
-    return this.cacheService.cache(
-      `user:${id}`,
-      () => this.userRepository.findById(id),
-      { ttl: 3600 }
-    );
-  }
-}
-```
-
-#### Option 2: Explicit Multi-Layer Control
-
-```typescript
-import { MultiLayerCacheService } from '@infrastructure/cache';
-
-@Injectable()
-export class UserService {
-  constructor(private readonly multiLayerCache: MultiLayerCacheService) {}
-
-  async getUser(id: string) {
-    // Explicit multi-layer control
-    return this.multiLayerCache.cache(
-      `user:${id}`,
-      () => this.userRepository.findById(id),
-      { ttl: 3600 }
-    );
-  }
-}
-```
-
-#### Multi-Layer Invalidation
-
-```typescript
-// Invalidate across all layers (L1, L2)
-await cacheService.delete('user:123');
-await cacheService.invalidateCacheByPattern('user:*');
-await cacheService.invalidateCacheByTag('users');
-```
-
-**Layer-Specific Behavior:**
-- **L1**: Cleared entirely on pattern/tag invalidation (small size, fast rebuild)
-- **L2**: Pattern/tag-based invalidation supported
-- **L3**: Never invalidated (source of truth)
-
-#### Multi-Layer Statistics
-
-```typescript
-// Using MultiLayerCacheService
-const stats = multiLayerCache.getStats();
-console.log({
-  l1: {
-    size: stats.l1?.size,
-    hitRate: stats.l1?.hitRate,
-    memoryMB: stats.l1?.estimatedMemoryMB,
-  },
-  l2: {
-    hitRate: stats.l2.cacheHitRate,
-    totalRequests: stats.l2.totalRequests,
-  },
+// Return stale data while revalidating in background
+const data = await cacheService.cache(key, fetchFn, {
+  ttl: 3600,
+  staleWhileRevalidate: true,  // Return stale, refresh async
 });
-
-// Using CacheService (includes L1 metrics if enabled)
-const metrics = cacheService.getCacheMetrics();
 ```
 
-### 2. SWR (Stale-While-Revalidate) Caching
+---
+
+## PHI-Compliant Caching
+
+For patient health information (PHI), use `@PatientCache` decorator:
 
 ```typescript
-@Cache({
-  ttl: 300,             // 5 minutes cache TTL
-  keyTemplate: 'users:{id}',
-  staleTime: 60,        // Data becomes stale after 60 seconds
-  tags: ['users']       // Tag for grouped invalidation
-})
-async getUser(@Param('id') id: string) {
-  // Expensive database operation
-  return this.usersService.findById(id);
+@Get('medical-records/:id')
+@PatientCache({ ttl: 1800 })  // 30 minutes, encrypted
+async getMedicalRecord(@Param('id') id: string) {
+  return await this.ehrService.findRecord(id);
 }
 ```
 
-### 3. Batch Operations
+**Features:**
+- Automatic encryption of cached data
+- Patient ID isolation in cache keys
+- Audit logging of cache access
+- Automatic expiration for compliance
+
+---
+
+## Cache Invalidation Strategies
+
+### 1. Time-Based (TTL)
 
 ```typescript
-// Batch get operations
-const keys = ['user:1', 'user:2', 'user:3'];
-const results = await this.cacheService.batchGet(keys);
-
-// Batch set operations
-const keyValuePairs = [
-  { key: 'user:1', value: user1Data, ttl: 3600 },
-  { key: 'user:2', value: user2Data, ttl: 3600 },
-  { key: 'user:3', value: user3Data, ttl: 3600 }
-];
-await this.cacheService.batchSet(keyValuePairs);
-
-// Batch delete operations
-const deletedCount = await this.cacheService.batchDelete(keys);
+await cacheService.set('key', value, 3600);  // Auto-expire after 1 hour
 ```
 
-## Healthcare-Specific Features
-
-### 1. Patient Record Caching
+### 2. Tag-Based
 
 ```typescript
-async getPatientRecords(patientId: string, clinicId: string) {
-  return this.cacheService.cachePatientRecords(
-    patientId,
-    clinicId,
-    async () => this.patientRepository.getRecords(patientId, clinicId),
-    {
-      includeHistory: true,
-      includePrescriptions: true,
-      includeVitals: true
-    }
-  );
+await cacheService.invalidateCacheByTag(['user', 'clinic-123']);
+```
+
+### 3. Pattern-Based
+
+```typescript
+await cacheService.deletePattern('user:*');  // Delete all user: keys
+```
+
+### 4. Event-Driven
+
+```typescript
+@OnEvent('user.updated')
+async handleUserUpdated(payload: any) {
+  await cacheService.invalidateCacheByTag([`user:${payload.userId}`]);
 }
 ```
 
-### 2. Medical History Caching
+---
+
+## Health Monitoring
 
 ```typescript
-async getMedicalHistory(patientId: string, clinicId: string) {
-  return this.cacheService.cacheMedicalHistory(
-    patientId,
-    clinicId,
-    async () => this.medicalRepository.getHistory(patientId, clinicId),
-    {
-      timeRange: { start: new Date('2023-01-01'), end: new Date() },
-      includeTests: true,
-      includeImages: true
-    }
-  );
-}
+const health = await cacheService.getHealthStatus();
+// Returns: {
+//   status: 'healthy' | 'degraded' | 'down',
+//   provider: 'redis' | 'dragonfly' | 'memory',
+//   hitRate: 0.85,
+//   missRate: 0.15,
+//   l1Size: '50MB',
+//   l2Size: '500MB',
+//   latency: { p50: 1ms, p95: 5ms, p99: 10ms }
+// }
 ```
 
-### 3. Emergency Data Caching
-
-```typescript
-async getEmergencyContacts(patientId: string) {
-  return this.cacheService.cacheEmergencyData(
-    patientId,
-    async () => this.emergencyRepository.getContacts(patientId)
-  );
-}
-```
-
-### 4. Cache Invalidation for Healthcare Data
-
-```typescript
-// Invalidate patient-related cache when patient data changes
-async updatePatient(patientId: string, data: any) {
-  const result = await this.patientRepository.update(patientId, data);
-  
-  // Invalidate all patient-related cache
-  await this.cacheService.invalidatePatientCache(patientId, data.clinicId);
-  
-  return result;
-}
-
-// Clear all PHI data for compliance
-async clearPHIData() {
-  const clearedCount = await this.cacheService.clearPHICache();
-  this.logger.log(`Cleared ${clearedCount} PHI cache entries for compliance`);
-  return { clearedCount };
-}
-```
-
-## Enterprise Features
-
-### 1. Connection Pooling and Sharding
-
-The system automatically handles connection pooling and sharding. Configuration is done through environment variables.
-
-### 2. Performance Monitoring
-
-```typescript
-// Get comprehensive cache metrics
-async getCacheMetrics() {
-  const metrics = await this.cacheService.getCacheMetrics();
-  return {
-    totalRequests: metrics.totalRequests,
-    successfulRequests: metrics.successfulRequests,
-    failedRequests: metrics.failedRequests,
-    averageResponseTime: metrics.averageResponseTime,
-    cacheHitRate: metrics.cacheHitRate,
-    memoryUsage: metrics.memoryUsage,
-    connectionPoolUtilization: metrics.connectionPoolUtilization,
-    throughput: metrics.throughput,
-    errorRate: metrics.errorRate
-  };
-}
-```
-
-### 3. Circuit Breaker and Retry Logic
-
-The system automatically handles circuit breaking and retries. Configuration is done through environment variables.
-
-### 4. Cache Warming
-
-```typescript
-// Warm cache with frequently accessed data
-async warmCache(clinicId: string) {
-  await this.cacheService.warmClinicCache(clinicId);
-  await this.cacheService.warmHealthcareCache(clinicId);
-  return { success: true, message: 'Cache warming completed' };
-}
-```
-
-## API Reference
-
-### Cache Controller Endpoints
-
-- `GET /cache` - Get consolidated cache information including metrics and stats
-- `DELETE /cache?pattern=users:*` - Clear cache entries matching pattern
-- `POST /cache/config` - Update cache configuration settings
-- `GET /cache/benchmark` - Run performance tests on the cache system
-- `GET /cache/health` - Get cache health status
-- `GET /cache/metrics` - Get detailed performance metrics
-- `POST /cache/warm` - Warm cache with frequently accessed data
-- `DELETE /cache/phi` - Clear all PHI data for compliance
-
-### Cache Decorator Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| ttl | number | 3600 | Cache time-to-live in seconds |
-| keyTemplate | string | Class+Method | Cache key template with placeholders |
-| useSwr | boolean | true | Whether to use SWR caching |
-| staleTime | number | ttl/2 | When data becomes stale and needs refresh |
-| forceRefresh | boolean | false | Whether to bypass cache and force fetch |
-| tags | string[] | [] | Tags for grouped invalidation |
-| compress | boolean | false | Whether to compress large data |
-| priority | 'critical'\|'high'\|'normal'\|'low' | 'high' | Processing priority |
-| containsPHI | boolean | false | Contains Protected Health Information |
-| complianceLevel | 'standard'\|'sensitive'\|'restricted' | 'standard' | Compliance level |
-| emergencyData | boolean | false | Emergency data flag |
-| patientSpecific | boolean | false | Patient-specific data |
-| doctorSpecific | boolean | false | Doctor-specific data |
-| clinicSpecific | boolean | false | Clinic-specific data |
-
-### Unified Cache Method Options
-
-```typescript
-// All cache operations use a single method with consistent options
-cacheService.cache(
-  'cache-key',
-  () => fetchData(),    // Data fetching function
-  {
-    ttl: 3600,          // Cache time-to-live (seconds)
-    staleTime: 300,     // When data becomes stale
-    forceRefresh: false,// Force fresh data fetch
-    enableSwr: true,    // Enable Stale-While-Revalidate
-    compress: false,    // Compress large cache entries
-    priority: 'high',   // Processing priority
-    tags: ['tag1', 'tag2'], // Tags for grouped invalidation
-    containsPHI: false, // Contains Protected Health Information
-    complianceLevel: 'standard', // Compliance level
-    emergencyData: false, // Emergency data flag
-    patientSpecific: false, // Patient-specific data
-    doctorSpecific: false, // Doctor-specific data
-    clinicSpecific: false  // Clinic-specific data
-  }
-);
-```
-
-### Cache Invalidation
-
-```typescript
-// Invalidate a specific cache key
-await cacheService.invalidateCache('users:123');
-
-// Invalidate by pattern (e.g., all users)
-await cacheService.invalidateCacheByPattern('users:*');
-
-// Invalidate by tag (all cache entries tagged with 'users')
-await cacheService.invalidateCacheByTag('users');
-
-// Healthcare-specific invalidation
-await cacheService.invalidatePatientCache('patient123', 'clinic456');
-await cacheService.invalidateDoctorCache('doctor789', 'clinic456');
-await cacheService.invalidateAppointmentCache('appointment101', 'patient123', 'doctor789', 'clinic456');
-await cacheService.invalidateClinicCache('clinic456');
-
-// Clear all PHI data
-await cacheService.clearPHICache();
-```
-
-## Monitoring
-
-### 1. Cache Statistics
-
-```typescript
-interface CacheStats {
-  hits: number;
-  misses: number;
-  hitRate: number;
-  timestamp: string;
-}
-```
-
-### 2. Healthcare Cache Metrics
-
-```typescript
-interface HealthcareCacheMetrics {
-  patientCacheHits: number;
-  appointmentCacheHits: number;
-  doctorCacheHits: number;
-  emergencyCacheHits: number;
-  totalHits: number;
-  totalMisses: number;
-  hitRate: number;
-}
-```
-
-### 3. Performance Metrics
-
-```typescript
-interface PerformanceMetrics {
-  totalRequests: number;
-  successfulRequests: number;
-  failedRequests: number;
-  averageResponseTime: number;
-  p95ResponseTime: number;
-  p99ResponseTime: number;
-  cacheHitRate: number;
-  memoryUsage: number;
-  connectionPoolUtilization: number;
-  throughput: number;
-  errorRate: number;
-  timestamp: Date;
-}
-```
-
-### 4. Health Status
-
-```typescript
-interface CacheHealth {
-  status: 'healthy' | 'warning' | 'critical';
-  memoryUsage: number;
-  hitRate: number;
-  connectionStatus: boolean;
-  lastHealthCheck: Date;
-}
-```
-
-## Best Practices
-
-### 1. Multi-Layer Cache Best Practices
-
-1. **Use L1 for frequently accessed data**
-   - User sessions
-   - Hot patient records
-   - Frequently queried appointments
-   - Data accessed multiple times per request
-
-2. **Use L2 for shared data**
-   - Clinic configurations
-   - Doctor schedules
-   - Shared medical records
-   - Data shared across instances
-
-3. **L1 TTL should be shorter than L2**
-   - L1: 30 seconds (default) - Fast refresh for hot data
-   - L2: 5 minutes to 1 hour - Longer retention for shared data
-
-4. **Monitor L1 memory usage**
-   - Default: 50MB limit
-   - Adjust based on available memory
-   - LRU eviction prevents memory issues
-   - Monitor hit rate (should be > 50% for hot data)
-
-5. **Layer-Specific Features**
-   - **L1 (In-Memory)**: Fastest access, process-local, automatic LRU eviction
-   - **L2 (Distributed)**: Shared across instances, SWR support, circuit breakers
-   - **L3 (Database)**: Persistent storage, source of truth
-
-### 2. TTL Guidelines
-
-- **Real-time data:** 0 seconds (no cache)
-- **Emergency data:** 300 seconds (5 minutes)
-- **Frequently changing data:** 300-900 seconds (5-15 minutes)
-- **Semi-static data:** 1800-3600 seconds (30-60 minutes)
-- **Static data:** 86400 seconds (24 hours)
-- **Patient records:** 3600 seconds (1 hour)
-- **Appointments:** 1800 seconds (30 minutes)
-- **Doctor profiles:** 7200 seconds (2 hours)
-- **Clinic data:** 14400 seconds (4 hours)
-- **Medical history:** 7200 seconds (2 hours)
-- **Prescriptions:** 1800 seconds (30 minutes)
-
-### 3. Key Naming Conventions
-
-```typescript
-// Entity-based
-users:${id}
-products:${category}:${id}
-patient:${patientId}:clinic:${clinicId}:records
-
-// Action-based
-search:${query}:${page}
-filter:${category}:${price}
-appointment:${appointmentId}:details
-
-// Healthcare-specific
-patient:${patientId}:profile
-doctor:${doctorId}:schedule:${date}
-clinic:${clinicId}:doctors
-medical:${patientId}:clinic:${clinicId}:history
-prescriptions:${patientId}:clinic:${clinicId}
-```
-
-### 4. Tag Usage
-
-```typescript
-// Use descriptive tags for easy invalidation
-tags: ['users', 'user_profiles', 'clinic_data']
-tags: ['patient_records', 'phi_data', 'clinic:123']
-tags: ['appointments', 'doctor:456', 'clinic:123']
-tags: ['medical_history', 'patient:789', 'phi_data']
-```
-
-### 5. Error Handling
-
-```typescript
-try {
-  const cached = await this.cacheService.get(key);
-  if (cached) return JSON.parse(cached);
-  
-  const data = await this.repository.find();
-  await this.cacheService.set(key, JSON.stringify(data));
-  return data;
-} catch (error) {
-  this.logger.error('Cache error:', error);
-  // Fallback to database
-  return this.repository.find();
-}
-```
-
-### 6. Healthcare Compliance
-
-```typescript
-// Always mark PHI data
-@Cache({
-  containsPHI: true,
-  complianceLevel: 'sensitive',
-  tags: ['phi_data', 'patient_records']
-})
-
-// Use appropriate TTL for sensitive data
-@Cache({
-  ttl: 1800, // Shorter TTL for sensitive data
-  containsPHI: true,
-  compress: true // Compress to reduce memory footprint
-})
-
-// Invalidate PHI data when patient requests data deletion
-async deletePatientData(patientId: string) {
-  await this.patientRepository.delete(patientId);
-  await this.cacheService.invalidatePatientCache(patientId);
-  await this.cacheService.clearPHICache(); // Clear all PHI if needed
-}
-```
-
-## Troubleshooting
-
-### Multi-Layer Cache Issues
-
-1. **L1 Cache Not Working:**
-   - Check `L1_CACHE_ENABLED=true` in environment
-   - Verify `InMemoryCacheService` is injected
-   - Check logs for initialization errors
-   - Verify L1 cache is being populated (check stats)
-
-2. **Memory Issues:**
-   - Reduce `L1_CACHE_MAX_SIZE` (default: 10000)
-   - Reduce `L1_CACHE_MAX_MEMORY_MB` (default: 50)
-   - Monitor L1 stats: `multiLayerCache.getStats()`
-   - Check LRU eviction is working
-
-3. **Performance Issues:**
-   - Monitor L1 hit rate (should be > 50% for hot data)
-   - Adjust L1 TTL based on access patterns
-   - Use L1 for data accessed multiple times per request
-   - Check L2 hit rate (should be > 70% overall)
-
-### Common Issues
-
-1. **Cache Not Working:**
-   - Check Redis/Dragonfly connection
-   - Verify TTL values
-   - Check key generation
-   - Ensure decorators are properly applied
-
-2. **Memory Issues:**
-   - Monitor Redis/Dragonfly memory usage
-   - Implement proper TTL
-   - Use selective caching
-   - Enable compression for large data
-
-3. **Stale Data:**
-   - Implement cache invalidation
-   - Use appropriate TTL
-   - Add cache clearing endpoints
-   - Check SWR configuration
-
-4. **Performance Issues:**
-   - Monitor cache hit rates
-   - Check connection pool utilization
-   - Review circuit breaker status
-   - Optimize TTL values
-
-5. **Healthcare Compliance Issues:**
-   - Ensure PHI data is properly marked
-   - Use appropriate compliance levels
-   - Implement proper data retention policies
-   - Regular PHI data cleanup
-
-### Debugging Tools
-
-1. **Redis/Dragonfly CLI Commands**
-```bash
-redis-cli monitor         # Monitor cache operations
-redis-cli keys "*"        # Check all keys
-redis-cli ttl "key"       # Check TTL
-redis-cli memory usage    # Check memory usage
-redis-cli info memory     # Detailed memory info
-```
-
-2. **API Endpoints**
-```bash
-# Get cache stats
-curl http://localhost:8088/cache
-
-# Get cache health
-curl http://localhost:8088/cache/health
-
-# Get detailed metrics
-curl http://localhost:8088/cache/metrics
-
-# Clear cache by pattern
-curl -X DELETE "http://localhost:8088/cache?pattern=users:*"
-
-# Clear all PHI data
-curl -X DELETE http://localhost:8088/cache/phi
-
-# Warm cache
-curl -X POST http://localhost:8088/cache/warm
-```
-
-3. **Logging**
-```typescript
-// Enable debug logging
-this.logger.debug('Cache operation:', { key, ttl, tags });
-this.logger.warn('Cache miss for key:', key);
-this.logger.error('Cache error:', error);
-```
-
-## Examples
-
-### Complete Service Example
-
-```typescript
-@Injectable()
-export class UserService {
-  constructor(
-    private repository: UserRepository,
-    private cacheService: CacheService
-  ) {}
-
-  @Cache({ 
-    keyTemplate: 'users:all:{role}',
-    ttl: 1800,
-    tags: ['users', 'user_lists'],
-    priority: 'normal',
-    enableSWR: true,
-    containsPHI: true,
-    compress: true
-  })
-  async findAll(role?: string) {
-    return this.repository.find({ role });
-  }
-
-  @Cache({ 
-    keyTemplate: 'users:one:{id}',
-    ttl: 3600,
-    tags: ['users', 'user_details'],
-    priority: 'high',
-    enableSWR: true,
-    containsPHI: true,
-    compress: true
-  })
-  async findOne(id: string) {
-    return this.repository.findOne(id);
-  }
-
-  async delete(id: string) {
-    const result = await this.repository.delete(id);
-    // Invalidate all user-related cache
-    await this.cacheService.invalidateCacheByPattern(`user:${id}:*`);
-    await this.cacheService.invalidateCacheByTag(`user:${id}`);
-    return result;
-  }
-}
-```
-
-### Healthcare Service Example
-
-```typescript
-@Injectable()
-export class PatientService {
-  constructor(
-    private patientRepository: PatientRepository,
-    private cacheService: CacheService
-  ) {}
-
-  async getPatientProfile(patientId: string) {
-    return this.cacheService.cachePatientRecords(
-      patientId,
-      'default',
-      async () => this.patientRepository.getProfile(patientId),
-      {
-        includeHistory: false,
-        includePrescriptions: false,
-        includeVitals: false
-      }
-    );
-  }
-
-  async getPatientMedicalHistory(patientId: string, clinicId: string) {
-    return this.cacheService.cacheMedicalHistory(
-      patientId,
-      clinicId,
-      async () => this.patientRepository.getMedicalHistory(patientId, clinicId),
-      {
-        timeRange: { start: new Date('2023-01-01'), end: new Date() },
-        includeTests: true,
-        includeImages: false
-      }
-    );
-  }
-
-  async updatePatientRecord(patientId: string, clinicId: string, data: any) {
-    const result = await this.patientRepository.updateRecord(patientId, clinicId, data);
-    
-    // Invalidate all patient-related cache
-    await this.cacheService.invalidatePatientCache(patientId, clinicId);
-    
-    return result;
-  }
-
-  async getEmergencyContacts(patientId: string) {
-    return this.cacheService.cacheEmergencyData(
-      patientId,
-      async () => this.patientRepository.getEmergencyContacts(patientId)
-    );
-  }
-}
-```
+---
 
 ## Testing
 
-### Unit Test Example
+```bash
+# Run cache service tests
+pnpm test infrastructure/cache
 
-```typescript
-describe('CacheService', () => {
-  let service: CacheService;
-  let cacheProvider: ICacheProvider;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        CacheService,
-        {
-          provide: 'ICacheProvider',
-          useValue: {
-            get: jest.fn(),
-            set: jest.fn(),
-            del: jest.fn(),
-            invalidateCacheByPattern: jest.fn(),
-            invalidateCacheByTag: jest.fn(),
-          },
-        },
-      ],
-    }).compile();
-
-    service = module.get<CacheService>(CacheService);
-    cacheProvider = module.get<ICacheProvider>('ICacheProvider');
-  });
-
-  it('should cache and return data', async () => {
-    const data = { test: 'data' };
-    const fetchFn = jest.fn().mockResolvedValue(data);
-    
-    jest.spyOn(cacheProvider, 'get').mockResolvedValue(null);
-    jest.spyOn(cacheProvider, 'set').mockResolvedValue(undefined);
-    
-    const result = await service.cache('test-key', fetchFn, { ttl: 3600 });
-    
-    expect(result).toEqual(data);
-    expect(fetchFn).toHaveBeenCalled();
-  });
-});
+# Test with different providers
+CACHE_PROVIDER=memory pnpm test infrastructure/cache
+CACHE_PROVIDER=redis pnpm test infrastructure/cache
 ```
 
-## Migration Guide
+---
 
-If you're migrating from direct `RedisService` usage or an older cache implementation:
+## Dependencies
 
-1. **Replace direct provider usage** - Use `CacheService` instead of `RedisService` or `DragonflyService` directly. **All services should use `CacheService` as the single entry point for cache operations.**
-2. **Use CacheKeyFactory** - Replace manual key generation with `CacheKeyFactory` for consistent naming
-3. **Use CacheOptionsBuilder** - Replace manual option construction with `CacheOptionsBuilder` for complex options
-4. **Use healthcare-specific methods** - Replace generic cache calls with healthcare-specific methods for patient/doctor/clinic data
-5. **Update decorators** - Use the new `@Cache()` decorator from `@core/decorators` instead of old cache decorators
+### Required
+- IoRedis (for Redis/Dragonfly)
+- CacheManager (for multi-layer caching)
 
-### Migration Example
+### Optional
+- EventService (for cache invalidation events)
+- LoggingService (for cache metrics)
 
-**Before:**
-```typescript
-const key = `user:${userId}`;
-const cached = await cacheService.get(key);
-if (cached) return JSON.parse(cached);
-const data = await this.repository.find(userId);
-await cacheService.set(key, data, 3600);
-return data;
-```
+---
 
-**After:**
-```typescript
-return this.cacheService.cache(
-  `user:${userId}`,
-  () => this.repository.find(userId),
-  { ttl: 3600 }
-);
-```
+## Related Documentation
 
-## Summary
+- [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#cache-system)
+- [Performance Optimization](../../../docs/architecture/10M_USER_SCALE_OPTIMIZATIONS.md)
+- [System Architecture](../../../docs/architecture/SYSTEM_ARCHITECTURE.md)
 
-This comprehensive caching system provides:
+---
 
-- ✅ **True Multi-Layer Caching**: L1 → L2 → L3 architecture (10-100x faster for hot data)
-- ✅ **Enterprise-grade performance** for 10+ million users
-- ✅ **Healthcare compliance** with HIPAA and PHI protection
-- ✅ **Advanced features** like SWR, circuit breakers, and adaptive caching
-- ✅ **Comprehensive monitoring** and debugging tools
-- ✅ **Flexible configuration** for different use cases
-- ✅ **Robust error handling** and fallback mechanisms
-- ✅ **Easy integration** with NestJS applications
-- ✅ **SOLID architecture** for maintainability and extensibility
-- ✅ **Provider-agnostic design** supporting Redis and Dragonfly
-- ✅ **Automatic Integration**: CacheService includes L1 support
-- ✅ **Backward Compatible**: Existing code works without changes
-- ✅ **Memory Safe**: LRU eviction and memory limits
-- ✅ **Production Ready**: Tested for 10M+ users
+## Troubleshooting
 
-**Performance Benefits:**
-- **L1 Hit**: ~0.1ms (in-memory access) - 10-100x faster
-- **L2 Hit**: ~1-5ms (Redis/Dragonfly network) - 2-5x faster
-- **L3 Hit**: ~10-100ms (database query) - Source of truth
-- **Overall**: 20-30% reduction in database load
+**Issue 1: Low Cache Hit Rate**
+- **Solution:** Increase TTL, check key naming consistency, review cache warming strategy
 
-The system is designed to scale horizontally, handle high loads gracefully, and maintain data consistency while providing excellent performance for healthcare applications.
+**Issue 2: Memory Pressure**
+- **Solution:** Reduce `CACHE_L1_MAX_SIZE`, enable LRU eviction, increase L2 capacity
 
+**Issue 3: Stale Data**
+- **Solution:** Review TTL values, implement proper cache invalidation, use event-driven invalidation
+
+**Issue 4: Connection Errors**
+- **Solution:** Check `CACHE_HOST` and `CACHE_PORT`, verify Redis/Dragonfly is running
+
+---
+
+## Contributing
+
+See main [README.md](../../../../README.md) for contribution guidelines.

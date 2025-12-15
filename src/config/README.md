@@ -1,34 +1,12 @@
-# Configuration Module - Centralized Configuration Service
+# Config Module
 
-## Overview
+**Purpose:** Type-safe configuration management with environment validation
+**Location:** `src/config`
+**Status:** ✅ Production-ready
 
-This module provides a **single source of truth** for all application configuration. All environment variables are loaded through dotenv and accessed via the centralized `ConfigService`.
+---
 
-## Environment File Loading
-
-Environment variables are loaded in the following priority order (later files override earlier ones):
-
-1. **`.env.local`** (highest priority - local overrides, not committed to git)
-2. **`.env.{NODE_ENV}`** (environment-specific, e.g., `.env.development`, `.env.production`)
-3. **`.env`** (base configuration, lowest priority)
-
-### Example
-
-```bash
-# .env
-DATABASE_URL=postgresql://localhost:5432/mydb
-PORT=3000
-
-# .env.development
-PORT=8088  # Overrides .env
-
-# .env.local
-DATABASE_URL=postgresql://localhost:5432/localdb  # Overrides both .env and .env.development
-```
-
-## Usage
-
-### Import ConfigService
+## Quick Start
 
 ```typescript
 import { ConfigService } from '@config';
@@ -36,238 +14,608 @@ import { ConfigService } from '@config';
 @Injectable()
 export class MyService {
   constructor(private readonly config: ConfigService) {}
+
+  someMethod() {
+    // Type-safe config access
+    const appConfig = this.config.getAppConfig();
+    const port = appConfig.port; // TypeScript knows this is a number
+
+    // Database config
+    const dbConfig = this.config.getDatabaseConfig();
+    console.log(dbConfig.url);
+
+    // Environment checks
+    if (this.config.isDevelopment()) {
+      // Dev-specific logic
+    }
+
+    // Direct environment variable access
+    const customVar = this.config.getEnv('CUSTOM_VAR', 'default');
+  }
 }
 ```
 
-### Typed Configuration (Preferred)
+---
 
-Use typed getter methods for type-safe configuration:
+## Key Features
+
+- ✅ **Type-Safe Configuration** - Full TypeScript type safety with autocomplete
+- ✅ **Environment File Priority** - .env.local > .env.{NODE_ENV} > .env
+- ✅ **Environment Validation** - Required variables validated on boot
+- ✅ **Multi-Provider Support** - Redis/Dragonfly caching, OpenVidu/Jitsi video
+- ✅ **Global Module** - Available everywhere via @Global decorator
+- ✅ **Zero Runtime Overhead** - Singleton pattern, loaded once at startup
+- ✅ **PaymentConfigService** - Multi-tenant payment configuration
+- ✅ **CommunicationConfigService** - Multi-tenant communication configuration
+
+---
+
+## Environment File Priority
+
+Environment variables are loaded in this order (later files override earlier):
+
+1. **.env** (base configuration, lowest priority)
+2. **.env.{NODE_ENV}** (environment-specific, e.g., .env.development)
+3. **.env.local** (local overrides, highest priority, gitignored)
+
+```bash
+# Project structure
+.env                 # Base configuration (committed)
+.env.development     # Development config (committed)
+.env.production      # Production config (committed)
+.env.staging         # Staging config (committed)
+.env.test            # Test config (committed)
+.env.local           # Local overrides (gitignored)
+```
+
+**Example:**
+```env
+# .env (base)
+DATABASE_URL=postgresql://localhost/healthcare
+
+# .env.production (production-specific)
+DATABASE_URL=postgresql://prod-server/healthcare
+LOG_LEVEL=warn
+
+# .env.local (local override)
+DATABASE_URL=postgresql://localhost/my-local-db
+# Overrides both base and environment-specific values
+```
+
+---
+
+## Type-Safe Configuration
+
+All configuration is fully typed with TypeScript:
 
 ```typescript
 // Application configuration
 const appConfig = this.config.getAppConfig();
-const port = appConfig.port; // TypeScript knows this is a number
-const isDev = this.config.isDevelopment();
+interface AppConfig {
+  name: string;
+  version: string;
+  port: number;
+  apiUrl: string;
+  environment: 'development' | 'production' | 'test' | 'staging';
+  isDev: boolean;
+}
 
 // Database configuration
 const dbConfig = this.config.getDatabaseConfig();
-const dbUrl = dbConfig.url;
-
-// Cache configuration
-const cacheConfig = this.config.getCacheConfig();
-const cacheProvider = this.config.getCacheProvider(); // 'redis' | 'dragonfly' | 'memory'
-const cacheHost = this.config.getCacheHost(); // Docker-aware (returns 'redis' in Docker, 'localhost' locally)
-const cachePort = this.config.getCachePort();
+interface DatabaseConfig {
+  url: string;
+  maxConnections: number;
+  connectionTimeout: number;
+  queryTimeout: number;
+  ssl: boolean;
+}
 
 // Redis configuration
 const redisConfig = this.config.getRedisConfig();
-const redisHost = redisConfig.host; // Docker-aware default
+interface RedisConfig {
+  host: string;
+  port: number;
+  password?: string;
+  db: number;
+  tls: boolean;
+}
 
 // JWT configuration
 const jwtConfig = this.config.getJwtConfig();
-const jwtSecret = jwtConfig.secret;
+interface JwtConfig {
+  secret: string;
+  expiresIn: string;
+  refreshExpiresIn: string;
+}
 
-// Rate limit configuration
+// Cache configuration
+const cacheConfig = this.config.getCacheConfig();
+interface CacheConfig {
+  enabled: boolean;
+  provider: 'redis' | 'dragonfly' | 'memory';
+  ttl: number;
+  redis?: { host: string; port: number; password?: string };
+  dragonfly?: { host: string; port: number; password?: string };
+}
+```
+
+---
+
+## Configuration Methods
+
+### Application Config
+
+```typescript
+// Get app configuration
+const appConfig = this.config.getAppConfig();
+console.log(appConfig.port); // 8088
+console.log(appConfig.environment); // 'development'
+
+// Environment checks
+if (this.config.isDevelopment()) {
+  console.log('Running in development mode');
+}
+
+if (this.config.isProduction()) {
+  console.log('Running in production mode');
+}
+
+const env = this.config.getEnvironment(); // 'development' | 'production' | 'staging' | 'test'
+```
+
+### Database Config
+
+```typescript
+const dbConfig = this.config.getDatabaseConfig();
+console.log(dbConfig.url);
+console.log(dbConfig.maxConnections); // 500
+console.log(dbConfig.queryTimeout); // 30000ms
+```
+
+### Cache Config
+
+```typescript
+// Check cache status
+if (this.config.isCacheEnabled()) {
+  const provider = this.config.getCacheProvider(); // 'redis' | 'dragonfly' | 'memory'
+  console.log(`Cache provider: ${provider}`);
+}
+
+// Get provider-specific config
+const host = this.config.getCacheHost(); // Returns Dragonfly or Redis host
+const port = this.config.getCachePort(); // Returns Dragonfly or Redis port
+const password = this.config.getCachePassword(); // Returns Dragonfly or Redis password
+
+// Get Dragonfly config
+const dragonflyHost = this.config.getDragonflyHost();
+const dragonflyPort = this.config.getDragonflyPort();
+
+// Get Redis config
+const redisHost = this.config.getRedisHost();
+const redisPort = this.config.getRedisPort();
+```
+
+### Video Config
+
+```typescript
+// Check video status
+if (this.config.isVideoEnabled()) {
+  const provider = this.config.getVideoProvider(); // 'openvidu' | 'jitsi'
+  console.log(`Video provider: ${provider}`);
+}
+
+// Get video configuration
+const videoConfig = this.config.getVideoConfig();
+console.log(videoConfig.provider); // 'openvidu' | 'jitsi'
+console.log(videoConfig.openvidu?.url);
+console.log(videoConfig.jitsi?.url);
+```
+
+### Rate Limit Config
+
+```typescript
+// Basic rate limit config
 const rateLimitConfig = this.config.getRateLimitConfig();
-const enhancedRateLimit = this.config.getEnhancedRateLimitConfig();
+console.log(rateLimitConfig.max); // 100
+console.log(rateLimitConfig.ttl); // 60
 
-// Logging configuration
-const loggingConfig = this.config.getLoggingConfig();
-const logLevel = loggingConfig.level;
-
-// Email configuration
-const emailConfig = this.config.getEmailConfig();
-const emailHost = emailConfig.host;
-
-// CORS configuration
-const corsConfig = this.config.getCorsConfig();
-const allowedOrigins = corsConfig.origin;
-
-// Security configuration
-const securityConfig = this.config.getSecurityConfig();
-const rateLimitEnabled = securityConfig.rateLimit;
-
-// WhatsApp configuration
-const whatsappConfig = this.config.getWhatsappConfig();
-const whatsappEnabled = whatsappConfig.enabled;
+// Enhanced rate limit config (with rules)
+const enhancedConfig = this.config.getEnhancedRateLimitConfig();
+console.log(enhancedConfig.rules['api'].limit); // 100
+console.log(enhancedConfig.rules['auth'].limit); // 10
 ```
 
 ### Direct Environment Variable Access
 
-For environment variables not in typed configuration, use helper methods:
-
 ```typescript
-// Get string value
-const customVar = this.config.getEnv('CUSTOM_VAR', 'default');
+// Get environment variable (string)
+const customVar = this.config.getEnv('CUSTOM_VAR', 'default-value');
 
-// Get number value
-const customPort = this.config.getEnvNumber('CUSTOM_PORT', 3000);
+// Get as number
+const timeout = this.config.getEnvNumber('TIMEOUT', 5000);
 
-// Get boolean value
-const customEnabled = this.config.getEnvBoolean('CUSTOM_ENABLED', false);
+// Get as boolean
+const enableFeature = this.config.getEnvBoolean('ENABLE_FEATURE', false);
 
 // Check if variable exists
-if (this.config.hasEnv('CUSTOM_VAR')) {
-  // Variable exists
+if (this.config.hasEnv('OPTIONAL_VAR')) {
+  console.log('Optional variable is set');
 }
 ```
 
-### Generic Getter (Advanced)
+---
 
-For accessing nested configuration or using dot notation:
+## Environment Validation
 
-```typescript
-// Access nested config
-const redisHost = this.config.get<string>('redis.host');
-
-// With default value
-const redisPort = this.config.get<number>('redis.port', 6379);
-```
-
-## Available Configuration Methods
-
-### Application
-- `getAppConfig()` - Application configuration (port, environment, URLs)
-- `isDevelopment()` - Check if in development mode
-- `isProduction()` - Check if in production mode
-- `getEnvironment()` - Get current environment
-
-### Database
-- `getDatabaseConfig()` - Database configuration
-
-### Cache
-- `getCacheConfig()` - Full cache configuration
-- `isCacheEnabled()` - Check if cache is enabled
-- `getCacheProvider()` - Get cache provider ('redis' | 'dragonfly' | 'memory')
-- `getCacheHost()` - Get cache host (provider-agnostic, Docker-aware)
-- `getCachePort()` - Get cache port (provider-agnostic)
-- `getCachePassword()` - Get cache password (provider-agnostic)
-- `getDragonflyHost()` - Get Dragonfly host
-- `getDragonflyPort()` - Get Dragonfly port
-- `getDragonflyPassword()` - Get Dragonfly password
-- `getRedisHost()` - Get Redis host (Docker-aware)
-- `getRedisPort()` - Get Redis port
-- `getRedisPassword()` - Get Redis password
-
-### Other
-- `getRedisConfig()` - Redis configuration
-- `getJwtConfig()` - JWT configuration
-- `getPrismaConfig()` - Prisma configuration
-- `getRateLimitConfig()` - Basic rate limit configuration
-- `getEnhancedRateLimitConfig()` - Enhanced rate limit with rules
-- `getLoggingConfig()` - Logging configuration
-- `getEmailConfig()` - Email configuration
-- `getCorsConfig()` - CORS configuration
-- `getSecurityConfig()` - Security configuration
-- `getWhatsappConfig()` - WhatsApp configuration
-- `getUrlsConfig()` - Service URLs configuration
-- `getConfig()` - Complete configuration object
-
-### Environment Variable Helpers
-- `getEnv(key, defaultValue?)` - Get environment variable as string
-- `getEnvNumber(key, defaultValue)` - Get environment variable as number
-- `getEnvBoolean(key, defaultValue)` - Get environment variable as boolean
-- `hasEnv(key)` - Check if environment variable exists
-
-## Docker Support
-
-The configuration automatically detects Docker environment and uses appropriate defaults:
-
-- **In Docker**: Redis/Dragonfly host defaults to service name (`redis` or `dragonfly`)
-- **Local Development**: Redis/Dragonfly host defaults to `localhost`
-
-This is handled automatically - no manual configuration needed.
-
-## Environment Variables
-
-All environment variables are defined in `src/config/constants.ts` as `ENV_VARS`. Use these constants instead of hardcoded strings:
+Configuration is validated on boot:
 
 ```typescript
-import { ENV_VARS } from '@config';
+// Required variables for production/staging
+const requiredProduction = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'REDIS_HOST',
+  'CACHE_PROVIDER',
+  // ... more required vars
+];
 
-// ✅ CORRECT
-const dbUrl = this.config.getEnv(ENV_VARS.DATABASE_URL);
-
-// ❌ FORBIDDEN
-const dbUrl = this.config.getEnv('DATABASE_URL');
+// Validation runs automatically in main.ts
+// Throws error if required variables are missing in production/staging
 ```
 
-## Best Practices
+**Validation Levels:**
+- **Production/Staging:** Strict - throws error if required vars missing
+- **Development:** Warnings only for missing recommended vars
+- **Test:** No validation (allows minimal config)
 
-1. **Always use ConfigService** - Never access `process.env` directly
-2. **Use typed getters** - Prefer `getAppConfig()`, `getRedisConfig()`, etc. over `getEnv()`
-3. **Use ENV_VARS constants** - Use constants from `@config/constants` instead of hardcoded strings
-4. **Provide defaults** - Always provide default values when using `getEnv()`
-5. **Type safety** - Use TypeScript types from `@core/types` for configuration objects
+---
 
-## Migration Guide
+## Multi-Tenant Configuration
 
-### Before (Direct process.env)
+### Payment Configuration
 
 ```typescript
-// ❌ OLD WAY
-const port = process.env['PORT'] || '8088';
-const redisHost = process.env['REDIS_HOST'] || 'localhost';
-const isDev = process.env['NODE_ENV'] === 'development';
+import { PaymentConfigService } from '@config';
+
+// Get clinic payment configuration
+const config = await this.paymentConfigService.getClinicConfig(clinicId);
+
+// Payment provider config
+console.log(config.payment.primary.provider); // 'razorpay' | 'phonepe'
+console.log(config.payment.primary.apiKey);
+console.log(config.payment.fallback); // Fallback providers
+
+// Set clinic payment configuration
+await this.paymentConfigService.setClinicConfig(clinicId, {
+  payment: {
+    primary: {
+      provider: 'razorpay',
+      apiKey: 'rzp_live_xxx',
+      apiSecret: 'encrypted_secret',
+      enabled: true,
+    },
+  },
+});
 ```
 
-### After (ConfigService)
+### Communication Configuration
 
 ```typescript
-// ✅ NEW WAY
-const appConfig = this.config.getAppConfig();
-const port = appConfig.port; // Already a number, no parsing needed
-const redisHost = this.config.getRedisHost(); // Docker-aware
-const isDev = this.config.isDevelopment();
+import { CommunicationConfigService } from '@communication/config';
+
+// Get clinic communication configuration
+const config = await this.communicationConfigService.getClinicConfig(clinicId);
+
+// Email provider config
+console.log(config.email.provider); // 'ses' | 'smtp' | 'sendgrid'
+console.log(config.email.fromAddress);
+
+// WhatsApp provider config
+console.log(config.whatsapp.provider); // 'meta' | 'twilio'
+console.log(config.whatsapp.businessPhoneId);
 ```
+
+---
 
 ## Configuration Files
 
-### Core Files
-- `config.module.ts` - Module definition with dotenv loading
-- `config.service.ts` - Enhanced ConfigService with typed getters
-- `constants.ts` - Environment variable constants and defaults
-- `index.ts` - Module exports
+Configuration is organized by environment:
 
-### Environment Configurations
-- `environment/development.config.ts` - Development environment config
-- `environment/production.config.ts` - Production environment config
-- `environment/staging.config.ts` - Staging environment config
-- `environment/test.config.ts` - Test environment config
-- `environment/validation.ts` - Environment variable validation utilities
-- `environment/utils.ts` - Shared parsing utilities (parseInteger, parseBoolean, etc.)
+```
+src/config/
+├── config.module.ts           # Global config module
+├── config.service.ts          # Enhanced type-safe service
+├── payment-config.service.ts  # Multi-tenant payment config
+├── constants.ts               # Environment variable constants
+├── cache.config.ts            # Cache provider configuration
+├── rate-limit.config.ts       # Rate limiting rules
+├── video.config.ts            # Video provider configuration
+├── jwt.config.ts              # JWT configuration
+├── swagger.config.ts          # Swagger/OpenAPI config
+├── validation-pipe.config.ts  # Input validation config
+└── environment/
+    ├── development.config.ts  # Development config
+    ├── production.config.ts   # Production config
+    ├── staging.config.ts      # Staging config
+    ├── test.config.ts         # Test config
+    ├── validation.ts          # Environment validation
+    └── utils.ts               # Config utilities
+```
 
-### Feature-Specific Configurations
-- `cache.config.ts` - Cache configuration factory (Redis/Dragonfly)
-- `jwt.config.ts` - JWT module configuration
-- `rate-limit.config.ts` - Rate limiting configuration
-- `swagger.config.ts` - Swagger/OpenAPI documentation configuration
-- `validation-pipe.config.ts` - Validation pipe configuration
+---
+
+## Usage Examples
+
+### Basic Configuration Access
+
+```typescript
+import { ConfigService } from '@config';
+
+@Injectable()
+export class DatabaseService {
+  constructor(private readonly config: ConfigService) {
+    const dbConfig = this.config.getDatabaseConfig();
+    this.connect(dbConfig.url);
+  }
+}
+```
+
+### Environment-Specific Logic
+
+```typescript
+import { ConfigService } from '@config';
+
+@Injectable()
+export class LoggingService {
+  constructor(private readonly config: ConfigService) {}
+
+  log(message: string) {
+    if (this.config.isDevelopment()) {
+      console.log(`[DEV] ${message}`);
+    } else if (this.config.isProduction()) {
+      // Send to external logging service
+      this.externalLogger.log(message);
+    }
+  }
+}
+```
+
+### Multi-Provider Support
+
+```typescript
+import { ConfigService } from '@config';
+
+@Injectable()
+export class CacheService {
+  constructor(private readonly config: ConfigService) {
+    const provider = this.config.getCacheProvider();
+
+    if (provider === 'dragonfly') {
+      this.initDragonfly();
+    } else if (provider === 'redis') {
+      this.initRedis();
+    } else {
+      this.initMemory();
+    }
+  }
+
+  private initDragonfly() {
+    const host = this.config.getDragonflyHost();
+    const port = this.config.getDragonflyPort();
+    const password = this.config.getDragonflyPassword();
+    // Connect to Dragonfly
+  }
+}
+```
+
+### Feature Flags
+
+```typescript
+import { ConfigService } from '@config';
+
+@Injectable()
+export class FeatureService {
+  constructor(private readonly config: ConfigService) {}
+
+  async checkFeature(feature: string): Promise<boolean> {
+    const enabledFeatures = this.config.getEnv('ENABLED_FEATURES', '');
+    return enabledFeatures.split(',').includes(feature);
+  }
+}
+```
+
+---
+
+## Environment Variables
+
+See `.env.example` for complete list. Key variables:
+
+```env
+# Application
+NODE_ENV=development          # development | production | staging | test
+PORT=8088
+API_URL=http://localhost:8088
+
+# Database
+DATABASE_URL=postgresql://user:pass@localhost:5432/healthcare
+DATABASE_MAX_CONNECTIONS=500
+DATABASE_QUERY_TIMEOUT=30000
+
+# Cache (Redis/Dragonfly)
+CACHE_PROVIDER=dragonfly      # redis | dragonfly | memory
+DRAGONFLY_HOST=localhost
+DRAGONFLY_PORT=6379
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# Video (OpenVidu/Jitsi)
+VIDEO_PROVIDER=openvidu       # openvidu | jitsi
+OPENVIDU_URL=https://openvidu.example.com
+OPENVIDU_SECRET=secret
+JITSI_URL=https://meet.jit.si
+
+# JWT
+JWT_SECRET=your-secret-here
+JWT_EXPIRES_IN=1h
+JWT_REFRESH_EXPIRES_IN=7d
+
+# Rate Limiting
+RATE_LIMIT_MAX=100
+RATE_LIMIT_WINDOW=1 minute
+
+# CORS
+CORS_ORIGIN=http://localhost:3000,https://app.example.com
+
+# Email
+EMAIL_PROVIDER=ses            # ses | smtp | sendgrid
+EMAIL_FROM=noreply@example.com
+
+# WhatsApp
+WHATSAPP_PROVIDER=meta        # meta | twilio
+```
+
+---
 
 ## Troubleshooting
 
-### Environment variables not loading
-
-1. Check file priority - `.env.local` overrides `.env.development` which overrides `.env`
-2. Verify file exists in project root
-3. Check `NODE_ENV` is set correctly
-4. Restart the application after changing `.env` files
-
-### Docker connection issues
-
-The configuration automatically detects Docker and uses service names. Ensure:
-- `DOCKER_ENV=true` is set in docker-compose.yml
-- Service names match (`redis`, `dragonfly`, `postgres`)
-- Services are on the same Docker network
-
-### Type errors
-
-Ensure you're using typed getter methods:
+**Issue: Configuration value is undefined**
 ```typescript
-// ✅ Type-safe
-const port: number = this.config.getAppConfig().port;
+// 1. Check environment file priority
+// Make sure variable is in correct .env file
 
-// ❌ May have type issues
-const port = this.config.getEnv('PORT'); // Returns string | undefined
+// 2. Use default values
+const value = this.config.getEnv('MY_VAR', 'default-value');
+
+// 3. Check if variable exists
+if (!this.config.hasEnv('MY_VAR')) {
+  throw new Error('MY_VAR is required');
+}
+
+// 4. Use typed getter methods instead of generic get
+const appConfig = this.config.getAppConfig(); // Prefer this
+const port = this.config.get<number>('app.port'); // Over this
 ```
 
+**Issue: Type errors in configuration**
+```typescript
+// 1. Use typed getter methods
+const dbConfig = this.config.getDatabaseConfig();
+// TypeScript knows the exact type
+
+// 2. Avoid generic get for complex types
+// BAD: const config = this.config.get<AppConfig>('app');
+// GOOD: const config = this.config.getAppConfig();
+```
+
+**Issue: Environment validation fails**
+```typescript
+// 1. Check required variables for your environment
+// Production/staging require all critical variables
+
+// 2. Add variable to .env file
+DATABASE_URL=postgresql://localhost/healthcare
+
+// 3. Restart application after .env changes
+```
+
+**Issue: Multi-provider config not working**
+```typescript
+// 1. Check provider setting
+const provider = this.config.getCacheProvider();
+console.log(`Using provider: ${provider}`);
+
+// 2. Ensure provider-specific variables are set
+// For Dragonfly: DRAGONFLY_HOST, DRAGONFLY_PORT
+// For Redis: REDIS_HOST, REDIS_PORT
+
+// 3. Use provider-agnostic getters
+const host = this.config.getCacheHost(); // Works for both
+```
+
+---
+
+## Best Practices
+
+1. **Always use typed getter methods**
+   ```typescript
+   // GOOD
+   const appConfig = this.config.getAppConfig();
+
+   // BAD
+   const port = this.config.get<number>('app.port');
+   ```
+
+2. **Provide defaults for optional variables**
+   ```typescript
+   const timeout = this.config.getEnvNumber('TIMEOUT', 5000);
+   ```
+
+3. **Use environment checks for conditional logic**
+   ```typescript
+   if (this.config.isDevelopment()) {
+     // Development-only code
+   }
+   ```
+
+4. **Validate critical configuration on boot**
+   ```typescript
+   if (!this.config.hasEnv('JWT_SECRET')) {
+     throw new Error('JWT_SECRET is required');
+   }
+   ```
+
+5. **Use .env.local for local overrides**
+   - Never commit .env.local (add to .gitignore)
+   - Use for local development overrides
+   - Highest priority, overrides all other files
+
+---
+
+## Architecture
+
+```
+ConfigModule (@Global)
+├── ConfigService (type-safe wrapper)
+│   ├── getAppConfig()
+│   ├── getDatabaseConfig()
+│   ├── getRedisConfig()
+│   ├── getCacheConfig()
+│   ├── getVideoConfig()
+│   └── ... more typed getters
+├── PaymentConfigService (multi-tenant)
+│   ├── getClinicConfig()
+│   └── setClinicConfig()
+└── Configuration Files
+    ├── environment/
+    │   ├── development.config.ts
+    │   ├── production.config.ts
+    │   ├── staging.config.ts
+    │   └── test.config.ts
+    ├── cache.config.ts
+    ├── video.config.ts
+    ├── rate-limit.config.ts
+    └── ... more config files
+```
+
+**Flow:**
+1. loadEnvironmentVariables() loads .env files (priority order)
+2. getConfigFactory() selects environment config
+3. validateConfigEarly() validates required variables
+4. ConfigModule imports all config factories
+5. ConfigService provides type-safe access
+6. PaymentConfigService/CommunicationConfigService provide multi-tenant config
+
+---
+
+## Related Documentation
+
+- [System Architecture](../docs/architecture/SYSTEM_ARCHITECTURE.md)
+- [Environment Setup](../QUICK_START_LOCAL.md)
+- [Payment Configuration](../libs/payment/README.md)
+- [Communication Configuration](../libs/communication/README.md)
+
+---
+
+## Contributing
+
+See main [README.md](../README.md) for contribution guidelines.

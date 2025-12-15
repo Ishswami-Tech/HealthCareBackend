@@ -2,7 +2,15 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
-import { LogType, LogLevel } from '@core/types';
+import { EventService } from '@infrastructure/events';
+import {
+  LogType,
+  LogLevel,
+  type IEventService,
+  isEventService,
+  EventCategory,
+  EventPriority,
+} from '@core/types';
 import type {
   ClinicCreateInput,
   ClinicUpdateInput,
@@ -10,7 +18,7 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
-import type { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
+import type { AssignClinicAdminDto } from '@dtos/clinic.dto';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -18,13 +26,31 @@ import type {
 
 @Injectable()
 export class ClinicService {
+  private readonly eventService: IEventService;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService?: CacheService
-  ) {}
+    private readonly cacheService?: CacheService,
+    @Inject(forwardRef(() => EventService))
+    eventService?: unknown
+  ) {
+    // Type guard ensures type safety when using the service
+    if (eventService && isEventService(eventService)) {
+      this.eventService = eventService;
+    } else {
+      // EventService is optional - clinic operations can work without it
+      this.eventService = {
+        emit: () => Promise.resolve(),
+        emitAsync: () => Promise.resolve(),
+        emitEnterprise: () => Promise.resolve(),
+        on: () => () => {},
+        onAny: () => () => {},
+      } as unknown as IEventService;
+    }
+  }
 
   async createClinic(data: ClinicCreateInput): Promise<ClinicResponseDto> {
     try {
@@ -87,6 +113,24 @@ export class ClinicService {
         'ClinicService',
         { clinicId: clinic.id }
       );
+
+      // Emit clinic lifecycle event
+      void this.eventService.emitEnterprise('clinic.created', {
+        eventId: `clinic-created-${clinic.id}`,
+        eventType: 'clinic.created',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'ClinicService',
+        version: '1.0.0',
+        clinicId: clinic.id,
+        userId: data.createdBy || 'system',
+        metadata: {
+          name: clinic.name,
+          subdomain: (clinic as { subdomain?: string }).subdomain,
+          appName: (clinic as { app_name?: string }).app_name,
+        },
+      });
 
       return clinic as ClinicResponseDto;
     } catch (error) {
@@ -186,6 +230,25 @@ export class ClinicService {
         'ClinicService',
         { clinicId: clinic.id }
       );
+
+      // Emit clinic lifecycle event
+      void this.eventService.emitEnterprise('clinic.updated', {
+        eventId: `clinic-updated-${clinic.id}`,
+        eventType: 'clinic.updated',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'ClinicService',
+        version: '1.0.0',
+        clinicId: clinic.id,
+        userId: 'system',
+        metadata: {
+          name: clinic.name,
+          subdomain: (clinic as { subdomain?: string }).subdomain,
+          appName: (clinic as { app_name?: string }).app_name,
+          updateFields: Object.keys(data),
+        },
+      });
 
       return clinic as ClinicResponseDto;
     } catch (error) {
@@ -418,6 +481,18 @@ export class ClinicService {
         'ClinicService',
         { clinicId: id }
       );
+
+      // Emit clinic lifecycle event
+      void this.eventService.emitEnterprise('clinic.deleted', {
+        eventId: `clinic-deleted-${id}`,
+        eventType: 'clinic.deleted',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'ClinicService',
+        version: '1.0.0',
+        clinicId: id,
+      });
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,

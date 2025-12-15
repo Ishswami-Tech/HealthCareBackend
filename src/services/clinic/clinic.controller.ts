@@ -37,11 +37,14 @@ import {
   ApiProduces,
   ApiQuery,
 } from '@nestjs/swagger';
-import { CreateClinicDto } from './dto/create-clinic.dto';
-import { AssignClinicAdminDto } from './dto/assign-clinic-admin.dto';
-import { RegisterPatientDto } from './dto/register-patient.dto';
-import { UpdateClinicDto } from './dto/update-clinic.dto';
-import { ClinicListResponseDto, AppNameInlineDto } from './dto/clinic-response.dto';
+import {
+  CreateClinicDto,
+  AssignClinicAdminDto,
+  RegisterPatientDto,
+  UpdateClinicDto,
+  ClinicListResponseDto,
+  AppNameInlineDto,
+} from '@dtos/clinic.dto';
 import { Public } from '@core/decorators/public.decorator';
 import { Cache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
@@ -167,6 +170,8 @@ export class ClinicController {
 
       const result = (await this.clinicService.createClinic({
         ...createClinicDto,
+        subdomain: createClinicDto.subdomain || '',
+        app_name: createClinicDto.app_name || createClinicDto.subdomain || '',
         createdBy: userId,
         timezone: createClinicDto.timezone || 'UTC',
         currency: createClinicDto.currency || 'USD',
@@ -595,10 +600,16 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'clinic:{id}:doctors',
+    ttl: 1800, // 30 minutes
+    tags: ['clinics', 'clinic:{id}', 'doctors'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get all doctors for a clinic',
     description:
-      'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors.',
+      'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors. Cached for performance.',
   })
   @ApiParam({
     name: 'id',
@@ -648,10 +659,16 @@ export class ClinicController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'clinic:{id}:patients',
+    ttl: 1800, // 30 minutes
+    tags: ['clinics', 'clinic:{id}', 'patients'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get all patients for a clinic',
     description:
-      'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients.',
+      'Retrieves all patients associated with a specific clinic. Super Admin and Clinic Admin can see all patients. Cached for performance.',
   })
   @ApiParam({
     name: 'id',

@@ -50,7 +50,7 @@ interface CommunicationRule {
 @Injectable()
 export class NotificationEventListener implements OnModuleInit {
   private readonly communicationRules: CommunicationRule[] = [
-    // EHR Events
+    // EHR Events - Generic Pattern
     {
       eventPattern:
         /^ehr\.(medical_history|lab_report|radiology_report|surgical_record|vital|allergy|medication|immunization)\.created$/,
@@ -76,6 +76,136 @@ export class NotificationEventListener implements OnModuleInit {
           recipients.push({
             userId: payload.clinicId,
             socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // EHR Critical Alerts - Vital Signs Out of Range
+    {
+      eventPattern: /^ehr\.vital\.created$/,
+      category: CommunicationCategory.EHR_RECORD,
+      channels: ['socket', 'push', 'email'],
+      priority: CommunicationPriority.CRITICAL,
+      template: 'vital_critical_alert',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Check if vital signs are out of range (metadata should contain this info)
+        const isCritical = payload.metadata?.['isCritical'] as boolean | undefined;
+        if (isCritical) {
+          if (payload.userId) {
+            recipients.push({
+              userId: payload.userId,
+              socketRoom: `user:${payload.userId}`,
+            });
+          }
+          if (payload.clinicId) {
+            // Alert clinic staff for critical vitals
+            recipients.push({
+              socketRoom: `clinic:${payload.clinicId}:doctors`,
+            });
+          }
+        }
+        return recipients;
+      },
+      shouldNotify: payload => {
+        // Only notify if vital signs are critical
+        return (payload.metadata?.['isCritical'] as boolean | undefined) === true;
+      },
+    },
+    // EHR Critical Alerts - Critical Allergy Added
+    {
+      eventPattern: /^ehr\.allergy\.created$/,
+      category: CommunicationCategory.EHR_RECORD,
+      channels: ['socket', 'push', 'email'],
+      priority: CommunicationPriority.CRITICAL,
+      template: 'allergy_critical_alert',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Check if allergy is critical/severe
+        const severity = payload.metadata?.['severity'] as string | undefined;
+        const isCritical = severity === 'severe' || severity === 'critical';
+        if (isCritical) {
+          if (payload.userId) {
+            recipients.push({
+              userId: payload.userId,
+              socketRoom: `user:${payload.userId}`,
+            });
+          }
+          if (payload.clinicId) {
+            // Alert clinic staff for critical allergies
+            recipients.push({
+              socketRoom: `clinic:${payload.clinicId}:doctors`,
+            });
+          }
+        }
+        return recipients;
+      },
+      shouldNotify: payload => {
+        // Only notify if allergy is critical/severe
+        const severity = payload.metadata?.['severity'] as string | undefined;
+        return severity === 'severe' || severity === 'critical';
+      },
+    },
+    // EHR Surgical Record Created - Specific Notification
+    {
+      eventPattern: /^ehr\.surgical_record\.created$/,
+      category: CommunicationCategory.EHR_RECORD,
+      channels: ['socket', 'push', 'email'],
+      priority: CommunicationPriority.HIGH,
+      template: 'surgical_record_created',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        if (payload.userId) {
+          recipients.push({
+            userId: payload.userId,
+            socketRoom: `user:${payload.userId}`,
+          });
+        }
+        if (payload.clinicId) {
+          // Notify clinic staff about surgical records
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}:doctors`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // EHR Immunization Record Created - Specific Notification
+    {
+      eventPattern: /^ehr\.immunization\.created$/,
+      category: CommunicationCategory.EHR_RECORD,
+      channels: ['socket', 'push', 'email'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'immunization_record_created',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        if (payload.userId) {
+          recipients.push({
+            userId: payload.userId,
+            socketRoom: `user:${payload.userId}`,
           });
         }
         return recipients;

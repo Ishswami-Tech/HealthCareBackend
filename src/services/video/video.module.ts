@@ -22,6 +22,7 @@ import { ErrorsModule } from '@core/errors/errors.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { HealthModule } from '@services/health/health.module';
+import { QueueModule } from '@queue/src/queue.module';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
@@ -52,6 +53,7 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
     RbacModule,
     ErrorsModule, // Error handling
     RateLimitModule, // Rate limiting
+    QueueModule, // Queue processing for recording processing, transcoding, analytics
   ],
   controllers: [
     VideoController,

@@ -1848,6 +1848,292 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.billingMethods.updateBillingPlanSafe(id, data);
   }
 
+  // ============ Notification Preferences ============
+
+  async findNotificationPreferenceByUserIdSafe(userId: string) {
+    return this.executeRead(async prisma => {
+      const client = this.toTransactionClient(prisma);
+      const notificationPreferenceClient = client as unknown as {
+        notificationPreference: {
+          findUnique: (args: { where: { userId: string } }) => Promise<unknown>;
+        };
+      };
+      return (await notificationPreferenceClient.notificationPreference.findUnique({
+        where: { userId },
+      })) as {
+        id: string;
+        userId: string;
+        emailEnabled: boolean;
+        smsEnabled: boolean;
+        pushEnabled: boolean;
+        socketEnabled: boolean;
+        whatsappEnabled: boolean;
+        appointmentEnabled: boolean;
+        ehrEnabled: boolean;
+        billingEnabled: boolean;
+        systemEnabled: boolean;
+        quietHoursStart: string | null;
+        quietHoursEnd: string | null;
+        quietHoursTimezone: string | null;
+        categoryPreferences: Record<string, unknown> | null;
+        createdAt: Date;
+        updatedAt: Date;
+      } | null;
+    }, this.queryOptionsBuilder.where({ userId }).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(false).rowLevelSecurity(false).build());
+  }
+
+  async createNotificationPreferenceSafe(data: {
+    userId: string;
+    emailEnabled: boolean;
+    smsEnabled: boolean;
+    pushEnabled: boolean;
+    socketEnabled: boolean;
+    whatsappEnabled: boolean;
+    appointmentEnabled: boolean;
+    ehrEnabled: boolean;
+    billingEnabled: boolean;
+    systemEnabled: boolean;
+    quietHoursStart: string | null;
+    quietHoursEnd: string | null;
+    quietHoursTimezone: string | null;
+    categoryPreferences: Record<string, unknown> | null;
+  }) {
+    return this.executeWrite(
+      async prisma => {
+        const client = this.toTransactionClient(prisma);
+        const notificationPreferenceClient = client as unknown as {
+          notificationPreference: {
+            create: (args: {
+              data: {
+                userId: string;
+                emailEnabled: boolean;
+                smsEnabled: boolean;
+                pushEnabled: boolean;
+                socketEnabled: boolean;
+                whatsappEnabled: boolean;
+                appointmentEnabled: boolean;
+                ehrEnabled: boolean;
+                billingEnabled: boolean;
+                systemEnabled: boolean;
+                quietHoursStart: string | null;
+                quietHoursEnd: string | null;
+                quietHoursTimezone: string | null;
+                categoryPreferences: Record<string, unknown> | null;
+              };
+            }) => Promise<unknown>;
+          };
+        };
+        return (await notificationPreferenceClient.notificationPreference.create({
+          data: {
+            userId: data.userId,
+            emailEnabled: data.emailEnabled,
+            smsEnabled: data.smsEnabled,
+            pushEnabled: data.pushEnabled,
+            socketEnabled: data.socketEnabled,
+            whatsappEnabled: data.whatsappEnabled,
+            appointmentEnabled: data.appointmentEnabled,
+            ehrEnabled: data.ehrEnabled,
+            billingEnabled: data.billingEnabled,
+            systemEnabled: data.systemEnabled,
+            quietHoursStart: data.quietHoursStart,
+            quietHoursEnd: data.quietHoursEnd,
+            quietHoursTimezone: data.quietHoursTimezone,
+            categoryPreferences: data.categoryPreferences,
+          },
+        })) as {
+          id: string;
+          userId: string;
+          emailEnabled: boolean;
+          smsEnabled: boolean;
+          pushEnabled: boolean;
+          socketEnabled: boolean;
+          whatsappEnabled: boolean;
+          appointmentEnabled: boolean;
+          ehrEnabled: boolean;
+          billingEnabled: boolean;
+          systemEnabled: boolean;
+          quietHoursStart: string | null;
+          quietHoursEnd: string | null;
+          quietHoursTimezone: string | null;
+          categoryPreferences: Record<string, unknown> | null;
+          createdAt: Date;
+          updatedAt: Date;
+        };
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'createNotificationPreference',
+        resourceType: 'NOTIFICATION_PREFERENCE',
+        resourceId: 'pending',
+        timestamp: new Date(),
+      },
+      this.queryOptionsBuilder
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .retries(2)
+        .build()
+    );
+  }
+
+  async updateNotificationPreferenceSafe(
+    id: string,
+    data: {
+      emailEnabled?: boolean;
+      smsEnabled?: boolean;
+      pushEnabled?: boolean;
+      socketEnabled?: boolean;
+      whatsappEnabled?: boolean;
+      appointmentEnabled?: boolean;
+      ehrEnabled?: boolean;
+      billingEnabled?: boolean;
+      systemEnabled?: boolean;
+      quietHoursStart?: string | null;
+      quietHoursEnd?: string | null;
+      quietHoursTimezone?: string | null;
+      categoryPreferences?: Record<string, unknown> | null;
+    }
+  ) {
+    return this.executeWrite(
+      async prisma => {
+        const client = this.toTransactionClient(prisma);
+        const notificationPreferenceClient = client as unknown as {
+          notificationPreference: {
+            update: (args: {
+              where: { id: string };
+              data: {
+                emailEnabled?: boolean;
+                smsEnabled?: boolean;
+                pushEnabled?: boolean;
+                socketEnabled?: boolean;
+                whatsappEnabled?: boolean;
+                appointmentEnabled?: boolean;
+                ehrEnabled?: boolean;
+                billingEnabled?: boolean;
+                systemEnabled?: boolean;
+                quietHoursStart?: string | null;
+                quietHoursEnd?: string | null;
+                quietHoursTimezone?: string | null;
+                categoryPreferences?: Record<string, unknown> | null;
+              };
+            }) => Promise<unknown>;
+          };
+        };
+        return (await notificationPreferenceClient.notificationPreference.update({
+          where: { id },
+          data: {
+            ...(data.emailEnabled !== undefined && { emailEnabled: data.emailEnabled }),
+            ...(data.smsEnabled !== undefined && { smsEnabled: data.smsEnabled }),
+            ...(data.pushEnabled !== undefined && { pushEnabled: data.pushEnabled }),
+            ...(data.socketEnabled !== undefined && { socketEnabled: data.socketEnabled }),
+            ...(data.whatsappEnabled !== undefined && { whatsappEnabled: data.whatsappEnabled }),
+            ...(data.appointmentEnabled !== undefined && {
+              appointmentEnabled: data.appointmentEnabled,
+            }),
+            ...(data.ehrEnabled !== undefined && { ehrEnabled: data.ehrEnabled }),
+            ...(data.billingEnabled !== undefined && { billingEnabled: data.billingEnabled }),
+            ...(data.systemEnabled !== undefined && { systemEnabled: data.systemEnabled }),
+            ...(data.quietHoursStart !== undefined && { quietHoursStart: data.quietHoursStart }),
+            ...(data.quietHoursEnd !== undefined && { quietHoursEnd: data.quietHoursEnd }),
+            ...(data.quietHoursTimezone !== undefined && {
+              quietHoursTimezone: data.quietHoursTimezone,
+            }),
+            ...(data.categoryPreferences !== undefined && {
+              categoryPreferences: data.categoryPreferences,
+            }),
+          },
+        })) as {
+          id: string;
+          userId: string;
+          emailEnabled: boolean;
+          smsEnabled: boolean;
+          pushEnabled: boolean;
+          socketEnabled: boolean;
+          whatsappEnabled: boolean;
+          appointmentEnabled: boolean;
+          ehrEnabled: boolean;
+          billingEnabled: boolean;
+          systemEnabled: boolean;
+          quietHoursStart: string | null;
+          quietHoursEnd: string | null;
+          quietHoursTimezone: string | null;
+          categoryPreferences: Record<string, unknown> | null;
+          createdAt: Date;
+          updatedAt: Date;
+        };
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'updateNotificationPreference',
+        resourceType: 'NOTIFICATION_PREFERENCE',
+        resourceId: id,
+        timestamp: new Date(),
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .retries(2)
+        .build()
+    );
+  }
+
+  async deleteNotificationPreferenceSafe(id: string) {
+    return this.executeWrite(
+      async prisma => {
+        const client = this.toTransactionClient(prisma);
+        const notificationPreferenceClient = client as unknown as {
+          notificationPreference: {
+            delete: (args: { where: { id: string } }) => Promise<unknown>;
+          };
+        };
+        return (await notificationPreferenceClient.notificationPreference.delete({
+          where: { id },
+        })) as {
+          id: string;
+          userId: string;
+          emailEnabled: boolean;
+          smsEnabled: boolean;
+          pushEnabled: boolean;
+          socketEnabled: boolean;
+          whatsappEnabled: boolean;
+          appointmentEnabled: boolean;
+          ehrEnabled: boolean;
+          billingEnabled: boolean;
+          systemEnabled: boolean;
+          quietHoursStart: string | null;
+          quietHoursEnd: string | null;
+          quietHoursTimezone: string | null;
+          categoryPreferences: Record<string, unknown> | null;
+        };
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'deleteNotificationPreference',
+        resourceType: 'NOTIFICATION_PREFERENCE',
+        resourceId: id,
+        timestamp: new Date(),
+      },
+      this.queryOptionsBuilder
+        .where({ id })
+        .useCache(false)
+        .priority('normal')
+        .hipaaCompliant(false)
+        .rowLevelSecurity(false)
+        .retries(2)
+        .build()
+    );
+  }
+
   async deleteBillingPlanSafe(id: string): Promise<BillingPlanWithRelations> {
     return this.billingMethods.deleteBillingPlanSafe(id);
   }

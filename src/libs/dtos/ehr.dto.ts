@@ -1,4 +1,22 @@
+/**
+ * EHR DTOs
+ * @module EHRDTOs
+ * @description Centralized Electronic Health Record Data Transfer Objects
+ */
+
 import { IsString, IsOptional, IsDateString } from 'class-validator';
+import type {
+  MedicalHistoryResponse,
+  LabReportResponse,
+  RadiologyReportResponse,
+  SurgicalRecordResponse,
+  VitalResponse,
+  AllergyResponse,
+  MedicationResponse,
+  ImmunizationResponse,
+  FamilyHistoryResponse,
+  LifestyleAssessmentResponse,
+} from '@core/types/ehr.types';
 
 // Medical History DTOs
 export class CreateMedicalHistoryDto {
@@ -357,19 +375,6 @@ export class UpdateImmunizationDto {
   @IsString()
   notes?: string;
 }
-
-import type {
-  MedicalHistoryResponse,
-  LabReportResponse,
-  RadiologyReportResponse,
-  SurgicalRecordResponse,
-  VitalResponse,
-  AllergyResponse,
-  MedicationResponse,
-  ImmunizationResponse,
-  FamilyHistoryResponse,
-  LifestyleAssessmentResponse,
-} from '@core/types/ehr.types';
 
 // Comprehensive Health Record DTOs
 export class HealthRecordSummaryDto {

@@ -26,6 +26,7 @@ import {
 import { ConfigService } from '@config';
 import { CacheService } from '@infrastructure/cache';
 import { DatabaseService } from '@infrastructure/database';
+import { QueueService } from '@queue/src/queue.service';
 import type {
   IVideoProvider,
   VideoTokenResponse,
@@ -35,6 +36,8 @@ import { VideoProviderFactory } from '@services/video/providers/video-provider.f
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import { VIDEO_RECORDING_QUEUE } from '@queue/src/queue.constants';
+// Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
@@ -119,7 +122,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
-    private readonly eventService: EventService
+    private readonly eventService: EventService,
+    @Inject(forwardRef(() => QueueService))
+    private readonly queueService?: QueueService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -1875,6 +1880,46 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           duration: recording.duration,
         },
       });
+
+      // Queue recording processing (transcoding, thumbnails, metadata extraction) asynchronously
+      if (this.queueService && recording.url) {
+        void this.queueService
+          .addJob(
+            VIDEO_RECORDING_QUEUE as string,
+            'process_recording',
+            {
+              appointmentId,
+              recordingId: recording.id,
+              recordingUrl: recording.url,
+              duration:
+                typeof recording.duration === 'number'
+                  ? recording.duration
+                  : Number(recording.duration),
+              action: 'process_recording',
+              metadata: {
+                format: 'mp4',
+                provider: 'openvidu',
+              },
+            },
+            {
+              priority: 5, // NORMAL priority (QueueService.PRIORITIES.NORMAL)
+              attempts: 2,
+            }
+          )
+          .catch((error: unknown) => {
+            void this.loggingService.log(
+              LogType.QUEUE,
+              LogLevel.WARN,
+              'Failed to queue video recording processing',
+              'VideoService',
+              {
+                appointmentId,
+                recordingId: recording.id,
+                error: error instanceof Error ? error.message : String(error),
+              }
+            );
+          });
+      }
 
       return {
         recordingId: recording.id,

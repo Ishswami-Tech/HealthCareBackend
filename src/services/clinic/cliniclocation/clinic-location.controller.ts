@@ -26,8 +26,7 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
-import { CreateClinicLocationDto } from '@services/clinic/dto/create-clinic-location.dto';
-import { UpdateClinicLocationDto } from '@services/clinic/dto/update-clinic-location.dto';
+import { CreateClinicLocationDto, UpdateClinicLocationDto } from '@dtos/clinic.dto';
 import { Cache as CacheDecorator, InvalidateClinicCache } from '@core/decorators';
 import type {
   ClinicLocationUpdateInput,

@@ -28,6 +28,21 @@ export const PAYMENT_QUEUE = 'payment-queue';
 export const EMERGENCY_QUEUE = 'emergency-queue';
 export const VIP_QUEUE = 'vip-queue';
 
+// EHR Module Queues
+export const LAB_REPORT_QUEUE = 'lab-report-queue';
+export const IMAGING_QUEUE = 'imaging-queue';
+export const BULK_EHR_IMPORT_QUEUE = 'bulk-ehr-import-queue';
+
+// Billing Module Queues
+export const INVOICE_PDF_QUEUE = 'invoice-pdf-queue';
+export const BULK_INVOICE_QUEUE = 'bulk-invoice-queue';
+export const PAYMENT_RECONCILIATION_QUEUE = 'payment-reconciliation-queue';
+
+// Video Module Queues
+export const VIDEO_RECORDING_QUEUE = 'video-recording-queue';
+export const VIDEO_TRANSCODING_QUEUE = 'video-transcoding-queue';
+export const VIDEO_ANALYTICS_QUEUE = 'video-analytics-queue';
+
 // Queue priorities and configuration
 export const QUEUE_PRIORITIES = {
   CRITICAL: 10,

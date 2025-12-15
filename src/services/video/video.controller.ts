@@ -44,6 +44,7 @@ import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { Cache } from '@core/decorators';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { EventCategory, EventPriority } from '@core/types';
 import { Role } from '@core/types/enums.types';
@@ -728,9 +729,15 @@ export class VideoController {
   @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('video', 'read', { requireOwnership: true })
+  @Cache({
+    keyTemplate: 'video:consultation:status:{appointmentId}',
+    ttl: 60, // 1 minute (status changes frequently during active sessions)
+    tags: ['video', 'consultation', 'appointment:{appointmentId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get video consultation status',
-    description: 'Get the current status of a video consultation session.',
+    description: 'Get the current status of a video consultation session. Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -910,9 +917,15 @@ export class VideoController {
   @Roles(Role.PATIENT, Role.DOCTOR, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('video', 'read')
+  @Cache({
+    keyTemplate: 'video:history:{userId}:{clinicId}',
+    ttl: 900, // 15 minutes
+    tags: ['video', 'history', 'user:{userId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get video call history',
-    description: 'Get video call history for a user.',
+    description: 'Get video call history for a user. Cached for performance.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -1319,9 +1332,16 @@ export class VideoController {
   @Get('recording/:appointmentId')
   @HttpCode(HttpStatus.OK)
   @RequireResourcePermission('video', 'read')
+  @Cache({
+    keyTemplate: 'video:recording:{appointmentId}',
+    ttl: 300, // 5 minutes (recordings may be added)
+    tags: ['video', 'recording', 'appointment:{appointmentId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get recordings for a session',
-    description: 'Get all recordings for a video consultation session (OpenVidu Pro feature).',
+    description:
+      'Get all recordings for a video consultation session (OpenVidu Pro feature). Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -1407,9 +1427,16 @@ export class VideoController {
   @Get('participants/:appointmentId')
   @HttpCode(HttpStatus.OK)
   @RequireResourcePermission('video', 'read')
+  @Cache({
+    keyTemplate: 'video:participants:{appointmentId}',
+    ttl: 30, // 30 seconds (participants change frequently during active sessions)
+    tags: ['video', 'participants', 'appointment:{appointmentId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get participants',
-    description: 'Get all participants in a video consultation session (OpenVidu Pro feature).',
+    description:
+      'Get all participants in a video consultation session (OpenVidu Pro feature). Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -1468,9 +1495,16 @@ export class VideoController {
   @Get('analytics/:appointmentId')
   @HttpCode(HttpStatus.OK)
   @RequireResourcePermission('video', 'read')
+  @Cache({
+    keyTemplate: 'video:analytics:{appointmentId}',
+    ttl: 300, // 5 minutes (analytics change frequently)
+    tags: ['video', 'analytics', 'appointment:{appointmentId}'],
+    enableSWR: true,
+  })
   @ApiOperation({
     summary: 'Get session analytics',
-    description: 'Get detailed analytics for a video consultation session (OpenVidu Pro feature).',
+    description:
+      'Get detailed analytics for a video consultation session (OpenVidu Pro feature). Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',

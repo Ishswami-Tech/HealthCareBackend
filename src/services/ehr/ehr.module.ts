@@ -10,6 +10,7 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
+import { QueueModule } from '@queue/src/queue.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     LoggingModule,
     ErrorsModule,
     CacheModule,
+    QueueModule, // Queue processing for lab reports, imaging, bulk imports
   ],
   controllers: [EHRController, EHRClinicController],
   providers: [EHRService],

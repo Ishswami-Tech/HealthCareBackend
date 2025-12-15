@@ -447,3 +447,226 @@ export class NotificationStatsResponseDto {
     firebaseDatabase?: boolean;
   };
 }
+
+// ============================================================================
+// Notification Preference DTOs
+// ============================================================================
+
+export class QuietHoursDto {
+  @ApiPropertyOptional({ description: 'Start time in HH:mm format', example: '22:00' })
+  @IsOptional()
+  @IsString()
+  start?: string;
+
+  @ApiPropertyOptional({ description: 'End time in HH:mm format', example: '08:00' })
+  @IsOptional()
+  @IsString()
+  end?: string;
+
+  @ApiPropertyOptional({ description: 'Timezone', example: 'UTC', default: 'UTC' })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+}
+
+export class CategoryPreferencesDto {
+  @ApiPropertyOptional({
+    description: 'Channels for appointment notifications',
+    example: ['email', 'push'],
+  })
+  @IsOptional()
+  appointment?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Channels for EHR notifications',
+    example: ['socket', 'push'],
+  })
+  @IsOptional()
+  ehr?: string[];
+
+  @ApiPropertyOptional({ description: 'Channels for billing notifications', example: ['email'] })
+  @IsOptional()
+  billing?: string[];
+
+  @ApiPropertyOptional({ description: 'Channels for system notifications', example: ['push'] })
+  @IsOptional()
+  system?: string[];
+}
+
+export class CreateNotificationPreferenceDto {
+  @ApiProperty({ description: 'User ID' })
+  @IsString()
+  userId!: string;
+
+  @ApiPropertyOptional({ description: 'Email notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  emailEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'SMS notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  smsEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Push notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  pushEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Socket notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  socketEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'WhatsApp notifications enabled', default: false })
+  @IsOptional()
+  @IsBoolean()
+  whatsappEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Appointment notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  appointmentEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'EHR notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  ehrEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Billing notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  billingEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'System notifications enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  systemEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Quiet hours configuration', type: QuietHoursDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QuietHoursDto)
+  quietHours?: QuietHoursDto;
+
+  @ApiPropertyOptional({
+    description: 'Category-specific channel preferences',
+    type: CategoryPreferencesDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CategoryPreferencesDto)
+  categoryPreferences?: CategoryPreferencesDto;
+}
+
+export class UpdateNotificationPreferenceDto {
+  @ApiPropertyOptional({ description: 'Email notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  emailEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'SMS notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  smsEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Push notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  pushEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Socket notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  socketEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'WhatsApp notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  whatsappEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Appointment notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  appointmentEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'EHR notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  ehrEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Billing notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  billingEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'System notifications enabled' })
+  @IsOptional()
+  @IsBoolean()
+  systemEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Quiet hours configuration', type: QuietHoursDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => QuietHoursDto)
+  quietHours?: QuietHoursDto;
+
+  @ApiPropertyOptional({
+    description: 'Category-specific channel preferences',
+    type: CategoryPreferencesDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CategoryPreferencesDto)
+  categoryPreferences?: CategoryPreferencesDto;
+}
+
+export class NotificationPreferenceResponseDto {
+  @ApiProperty({ description: 'Preference ID' })
+  id!: string;
+
+  @ApiProperty({ description: 'User ID' })
+  userId!: string;
+
+  @ApiProperty({ description: 'Email notifications enabled' })
+  emailEnabled!: boolean;
+
+  @ApiProperty({ description: 'SMS notifications enabled' })
+  smsEnabled!: boolean;
+
+  @ApiProperty({ description: 'Push notifications enabled' })
+  pushEnabled!: boolean;
+
+  @ApiProperty({ description: 'Socket notifications enabled' })
+  socketEnabled!: boolean;
+
+  @ApiProperty({ description: 'WhatsApp notifications enabled' })
+  whatsappEnabled!: boolean;
+
+  @ApiProperty({ description: 'Appointment notifications enabled' })
+  appointmentEnabled!: boolean;
+
+  @ApiProperty({ description: 'EHR notifications enabled' })
+  ehrEnabled!: boolean;
+
+  @ApiProperty({ description: 'Billing notifications enabled' })
+  billingEnabled!: boolean;
+
+  @ApiProperty({ description: 'System notifications enabled' })
+  systemEnabled!: boolean;
+
+  @ApiPropertyOptional({ description: 'Quiet hours configuration', type: QuietHoursDto })
+  quietHours?: QuietHoursDto;
+
+  @ApiPropertyOptional({
+    description: 'Category-specific channel preferences',
+    type: CategoryPreferencesDto,
+  })
+  categoryPreferences?: CategoryPreferencesDto;
+
+  @ApiProperty({ description: 'Created at' })
+  createdAt!: Date;
+
+  @ApiProperty({ description: 'Updated at' })
+  updatedAt!: Date;
+}
