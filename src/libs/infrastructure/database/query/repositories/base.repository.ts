@@ -1470,10 +1470,56 @@ export abstract class BaseRepository<
 
     // Add healthcare-specific options
     if (options.rowLevelSecurity && options.clinicId) {
-      queryOptions['where'] = {
-        ...(queryOptions['where'] || {}),
-        clinicId: options.clinicId,
-      };
+      const existingWhere = (queryOptions['where'] || {}) as Record<string, unknown>;
+      
+      // Doctor model: Transform any existing clinicId to clinics relation
+      if (
+        this.entityName.toLowerCase() === 'doctor' &&
+        existingWhere &&
+        typeof existingWhere === 'object' &&
+        !Array.isArray(existingWhere) &&
+        'clinicId' in existingWhere &&
+        !('clinics' in existingWhere)
+      ) {
+        const clinicIdValue = existingWhere['clinicId'];
+        delete existingWhere['clinicId'];
+        queryOptions['where'] = {
+          ...existingWhere,
+          clinics: {
+            some: {
+              clinicId: clinicIdValue,
+            },
+          },
+        };
+      } else if (
+        this.entityName.toLowerCase() === 'doctor' &&
+        existingWhere &&
+        typeof existingWhere === 'object' &&
+        !Array.isArray(existingWhere) &&
+        !('clinics' in existingWhere)
+      ) {
+        // Doctor model uses clinics relation, not direct clinicId
+        queryOptions['where'] = {
+          ...existingWhere,
+          clinics: {
+            some: {
+              clinicId: options.clinicId,
+            },
+          },
+        };
+      } else if (
+        existingWhere &&
+        typeof existingWhere === 'object' &&
+        !Array.isArray(existingWhere) &&
+        !('clinicId' in existingWhere) &&
+        !('clinics' in existingWhere)
+      ) {
+        // Other models use direct clinicId
+        queryOptions['where'] = {
+          ...existingWhere,
+          clinicId: options.clinicId,
+        };
+      }
     }
 
     return queryOptions;
@@ -1483,11 +1529,41 @@ export abstract class BaseRepository<
    * Build where clause with healthcare-specific features
    */
   protected buildWhereClause(options?: QueryOptions): unknown {
-    const where: Record<string, unknown> = { ...options?.where };
+    const where: Record<string, unknown> = options?.where
+      ? ({ ...options.where } as Record<string, unknown>)
+      : {};
+
+    // Doctor model: Transform any existing clinicId to clinics relation
+    if (
+      this.entityName.toLowerCase() === 'doctor' &&
+      where &&
+      typeof where === 'object' &&
+      !Array.isArray(where) &&
+      'clinicId' in where &&
+      !('clinics' in where)
+    ) {
+      const clinicIdValue = where['clinicId'];
+      delete where['clinicId'];
+      where['clinics'] = {
+        some: {
+          clinicId: clinicIdValue,
+        },
+      };
+    }
 
     // Add clinic isolation if specified
     if (options?.clinicId && options?.rowLevelSecurity !== false) {
-      where['clinicId'] = options.clinicId;
+      // Doctor model uses clinics relation, not direct clinicId
+      if (this.entityName.toLowerCase() === 'doctor' && !('clinics' in where)) {
+        where['clinics'] = {
+          some: {
+            clinicId: options.clinicId,
+          },
+        };
+      } else if (!('clinicId' in where) && !('clinics' in where)) {
+        // Other models use direct clinicId
+        where['clinicId'] = options.clinicId;
+      }
     }
 
     // Add data masking for sensitive fields

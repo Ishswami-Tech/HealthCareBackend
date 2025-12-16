@@ -265,6 +265,33 @@ export class CommunicationService implements OnModuleInit {
       for (const recipient of request.recipients) {
         if (recipient.userId) {
           try {
+            // Validate user exists before creating notification to avoid foreign key constraint violations
+            const userId = recipient.userId;
+            if (!userId) {
+              continue;
+            }
+
+            const userExists = await this.databaseService.executeHealthcareRead<boolean>(
+              async prisma => {
+                const user = await prisma.user.findUnique({
+                  where: { id: userId },
+                  select: { id: true },
+                });
+                return !!user;
+              }
+            );
+
+            if (!userExists) {
+              void this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.WARN,
+                `Skipping notification creation - user not found: ${recipient.userId}`,
+                'CommunicationService',
+                { userId: recipient.userId }
+              );
+              continue;
+            }
+
             const notification = await this.databaseService.executeWrite(
               async prisma => {
                 const client = this.databaseService['toTransactionClient'](prisma);

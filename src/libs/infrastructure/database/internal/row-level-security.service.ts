@@ -17,6 +17,7 @@ export interface RLSContext {
   clinicId?: string;
   userId?: string;
   role?: string;
+  modelName?: string; // Model name for model-specific RLS filters
 }
 
 /**
@@ -50,7 +51,20 @@ export class RowLevelSecurityService {
     }
 
     // Add clinicId filter if context has clinicId
-    if (context.clinicId && !('clinicId' in where)) {
+    if (context.clinicId && !('clinicId' in where) && !('clinics' in where)) {
+      // Doctor model uses clinics relation, not direct clinicId
+      if (context.modelName === 'doctor' || context.modelName === 'Doctor') {
+        return {
+          ...where,
+          clinics: {
+            some: {
+              clinicId: context.clinicId,
+            },
+          },
+        } as T;
+      }
+
+      // Other models use direct clinicId
       return {
         ...where,
         clinicId: context.clinicId,

@@ -91,8 +91,18 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
         }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('short').priority('normal').build()),
 
         // Total doctors count (cached, long TTL)
+        // Doctor model doesn't have direct clinicId - use clinics relation filter
         this.executeRead(
-          async prisma => prisma.doctor.count({ where: { clinicId } }),
+          async prisma =>
+            prisma.doctor.count({
+              where: {
+                clinics: {
+                  some: {
+                    clinicId,
+                  },
+                },
+              },
+            }),
           this.queryOptionsBuilder
             .clinicId(clinicId)
             .useCache(true)
