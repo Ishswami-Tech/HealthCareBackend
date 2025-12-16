@@ -12,7 +12,7 @@
 
 import type { INestApplication } from '@nestjs/common';
 import { Module, forwardRef, type DynamicModule, Logger } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { ConfigModule } from '@config';
 import { DatabaseModule } from '@infrastructure/database';
 import { CacheModule } from '@infrastructure/cache';

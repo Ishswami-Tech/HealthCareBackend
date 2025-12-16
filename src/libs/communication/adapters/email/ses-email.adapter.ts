@@ -10,7 +10,8 @@
 
 import { Injectable } from '@nestjs/common';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { BaseEmailAdapter } from '../base/base-email-adapter';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';

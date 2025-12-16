@@ -7,9 +7,11 @@
  * @description IP-based access control for sensitive administrative endpoints
  */
 
-import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { LoggingService } from '@logging';
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
+// Import directly from file to avoid SWC TDZ circular dependency issues with barrel exports
+import { ConfigService } from '@config/config.service';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { FastifyRequest } from 'fastify';
 
@@ -40,6 +42,7 @@ export class IpWhitelistGuard implements CanActivate {
 
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     const whitelistConfig = this.configService.get<string>('ADMIN_IP_WHITELIST', '');

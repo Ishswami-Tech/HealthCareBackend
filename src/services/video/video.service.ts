@@ -23,9 +23,10 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache';
-import { DatabaseService } from '@infrastructure/database';
+// Use direct import to avoid TDZ issues with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@queue/src/queue.service';
 import type {
   IVideoProvider,
@@ -117,7 +118,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     private readonly providerFactory: VideoProviderFactory,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
-    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,

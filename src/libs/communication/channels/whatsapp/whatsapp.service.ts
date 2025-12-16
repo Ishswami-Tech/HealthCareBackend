@@ -1,9 +1,10 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
 import { CommunicationConfigService } from '@communication/config';
@@ -18,6 +19,7 @@ export class WhatsAppService {
   constructor(
     private readonly configService: ConfigService,
     private readonly whatsAppConfig: WhatsAppConfig,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     private readonly httpService: HttpService,
     @Inject(forwardRef(() => ProviderFactory))

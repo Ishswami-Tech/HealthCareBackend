@@ -1,7 +1,8 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config/config.service';
 import * as admin from 'firebase-admin';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 export interface ChatMessage {
@@ -87,6 +88,7 @@ export class ChatBackupService implements OnModuleInit {
 
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 

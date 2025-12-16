@@ -11,7 +11,7 @@
 // External imports
 import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';

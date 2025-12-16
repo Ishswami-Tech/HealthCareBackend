@@ -1,10 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { TerminusModule } from '@nestjs/terminus';
 import { ConfigModule } from '@config';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct import to avoid circular dependency with barrel exports
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { SocketModule } from '@communication/channels/socket';
 import { EmailModule } from '@communication/channels/email';
@@ -25,7 +26,7 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
     ConfigModule, // Explicitly import ConfigModule to ensure ConfigService is available
     HttpModule, // HTTP client for health checks
     TerminusModule, // Health checks framework
-    DatabaseModule,
+    forwardRef(() => DatabaseModule), // Use forwardRef to break circular dependency
     CacheModule,
     QueueModule,
     LoggingModule,

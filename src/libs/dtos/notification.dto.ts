@@ -551,7 +551,7 @@ export class CreateNotificationPreferenceDto {
 
   @ApiPropertyOptional({
     description: 'Category-specific channel preferences',
-    type: CategoryPreferencesDto,
+    type: () => CategoryPreferencesDto, // Use lazy resolver to avoid Swagger circular dependency
   })
   @IsOptional()
   @ValidateNested()
@@ -613,7 +613,7 @@ export class UpdateNotificationPreferenceDto {
 
   @ApiPropertyOptional({
     description: 'Category-specific channel preferences',
-    type: CategoryPreferencesDto,
+    type: () => CategoryPreferencesDto, // Use lazy resolver to avoid Swagger circular dependency
   })
   @IsOptional()
   @ValidateNested()

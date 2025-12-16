@@ -8,9 +8,10 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { CacheService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
+import { ConfigService } from '@config/config.service';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 export interface RateLimitConfig {

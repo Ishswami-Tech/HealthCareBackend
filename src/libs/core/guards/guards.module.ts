@@ -1,6 +1,8 @@
 import { Module, forwardRef, Global } from '@nestjs/common';
 import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@config';
+// Use direct import to avoid TDZ issues with barrel exports
+import { ConfigModule } from '@config/config.module';
+import { ConfigService } from '@config/config.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
@@ -8,10 +10,11 @@ import { IpWhitelistGuard } from './ip-whitelist.guard';
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct import to avoid TDZ issues with barrel exports
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { Reflector } from '@nestjs/core';
-import { LoggingModule, LoggingService } from '@infrastructure/logging';
+import { LoggingModule } from '@infrastructure/logging';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { SignOptions } from 'jsonwebtoken';
@@ -39,9 +42,9 @@ import { SignOptions } from 'jsonwebtoken';
  */
 @Module({
   imports: [
-    ConfigModule, // For ConfigService
+    forwardRef(() => ConfigModule), // Use forwardRef to break circular dependency
     JwtModule.registerAsync({
-      imports: [ConfigModule],
+      imports: [forwardRef(() => ConfigModule)], // Use forwardRef to break circular dependency
       useFactory: (configService: ConfigService): JwtModuleOptions => {
         // Use ConfigService (which uses dotenv) for environment variable access
         const jwtConfig = configService.getJwtConfig();
@@ -58,7 +61,7 @@ import { SignOptions } from 'jsonwebtoken';
     RedisModule,
     RateLimitModule,
     forwardRef(() => DatabaseModule),
-    LoggingModule,
+    forwardRef(() => LoggingModule), // Use forwardRef to break potential circular dependency
     RbacModule,
     CacheModule,
   ],
@@ -69,7 +72,7 @@ import { SignOptions } from 'jsonwebtoken';
     ClinicGuard,
     IpWhitelistGuard,
     Reflector,
-    LoggingService,
+    // LoggingService is provided globally by LoggingModule (@Global()) - don't provide it here
     RateLimitService,
   ],
   exports: [
@@ -77,7 +80,7 @@ import { SignOptions } from 'jsonwebtoken';
     RolesGuard,
     ClinicGuard,
     IpWhitelistGuard,
-    LoggingService,
+    // LoggingService is provided globally by LoggingModule (@Global()) - no need to export
     JwtModule, // Export JwtModule so other modules can use the configured JWT service
     RateLimitModule,
     RateLimitService,

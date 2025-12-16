@@ -1,7 +1,8 @@
-import { Injectable, Optional } from '@nestjs/common';
-import { LoggingService } from '@logging';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 
 /**
  * Device token data interface
@@ -56,6 +57,7 @@ export class DeviceTokenService {
   private readonly tokenStore = new Map<string, DeviceTokenData>();
 
   constructor(
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Optional() private readonly databaseService?: DatabaseService
   ) {}

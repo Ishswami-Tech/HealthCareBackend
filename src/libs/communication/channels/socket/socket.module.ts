@@ -1,8 +1,10 @@
 import { Global, Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { JwtModule } from '@nestjs/jwt';
-import { LoggingModule } from '@logging';
-import { ConfigModule, ConfigService } from '@config';
+// LoggingModule is @Global() - LoggingService is available without explicit import
+// Use direct import to avoid circular dependency with barrel exports
+import { ConfigModule } from '@config/config.module';
+import { ConfigService } from '@config/config.service';
 import { EventsModule } from '@infrastructure/events';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { AppGateway } from '@communication/channels/socket/app.gateway';
@@ -13,10 +15,9 @@ import { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth
 @Module({
   imports: [
     EventEmitterModule,
-    LoggingModule,
     forwardRef(() => EventsModule), // Central event system for EventSocketBroadcaster
     JwtModule.registerAsync({
-      imports: [ConfigModule],
+      imports: [forwardRef(() => ConfigModule)], // Use forwardRef to break circular dependency
       useFactory: (configService: ConfigService) => {
         // Use ConfigService (which uses dotenv) for environment variable access
         const jwtConfig = configService.getJwtConfig();
