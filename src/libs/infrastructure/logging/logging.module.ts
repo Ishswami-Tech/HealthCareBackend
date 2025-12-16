@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 // ConfigModule is @Global() - no need to import it explicitly
 // ResilienceModule is not needed here - LoggingService doesn't directly depend on it
@@ -6,11 +6,15 @@ import { HttpModule } from '@nestjs/axios';
 import { LoggingService } from './logging.service';
 import { LoggingController } from './logging.controller';
 import { LoggingHealthMonitorService } from './logging-health-monitor.service';
+// GuardsModule is needed because LoggingController uses JwtAuthGuard
+// Use forwardRef to break circular dependency (GuardsModule imports LoggingModule)
+import { GuardsModule } from '@core/guards/guards.module';
 
 @Global()
 @Module({
   imports: [
     HttpModule, // HTTP client for health checks
+    forwardRef(() => GuardsModule), // Use forwardRef to break circular dependency
     // ConfigModule is @Global() - available for injection without explicit import
     // Removed ResilienceModule import - it was causing circular dependency issues
     // ResilienceModule can be imported where CircuitBreakerService is actually needed

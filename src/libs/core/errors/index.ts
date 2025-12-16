@@ -36,8 +36,10 @@ export { ErrorsModule } from './errors.module';
 // Re-export for convenience
 export { HealthcareErrorsService as Errors } from './healthcare-errors.service';
 
-// Cache error handler
-export { CacheErrorHandler, CacheErrorType } from './cache-error.handler';
+// Cache error handler - NOT exported from barrel to avoid circular dependency
+// Import directly: import { CacheErrorHandler } from '@core/errors/cache-error.handler';
+// CacheErrorHandler depends on LoggingService, which imports HealthcareError from this barrel
+// Exporting it here creates a circular dependency chain
 
 // Database error handler
 export { DatabaseErrorHandler, DatabaseErrorType } from './database-error.handler';

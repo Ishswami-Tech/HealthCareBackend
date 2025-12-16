@@ -1,5 +1,5 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import {
   EmailTemplate,
   EmailOptions,
@@ -15,7 +15,8 @@ import {
 } from '@core/types';
 import * as nodemailer from 'nodemailer';
 import { MailtrapClient } from 'mailtrap';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -72,6 +73,7 @@ export class EmailService implements OnModuleInit {
    */
   constructor(
     @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => ProviderFactory))
     private readonly providerFactory: ProviderFactory,

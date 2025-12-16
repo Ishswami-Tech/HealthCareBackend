@@ -10,9 +10,10 @@
 
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { EventService } from '@infrastructure/events';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { EventService } from '@infrastructure/events/event.service';
 import { CommunicationService } from '@communication/communication.service';
-import { LoggingService } from '@logging';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import {
   LogType,
   LogLevel,

@@ -19,7 +19,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/swagger';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { OpenViduWebhookService } from './openvidu-webhook.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, type OpenViduWebhookPayload } from '@core/types';

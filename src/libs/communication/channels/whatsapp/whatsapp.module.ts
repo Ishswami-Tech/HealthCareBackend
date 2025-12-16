@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
-import { ConfigModule } from '@config';
+// Use direct import to avoid circular dependency with barrel exports
+import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -24,7 +25,7 @@ import { CommunicationConfigModule } from '@communication/config/communication-c
  */
 @Module({
   imports: [
-    ConfigModule,
+    forwardRef(() => ConfigModule),
     HttpModule, // HTTP client for WhatsApp API calls
     LoggingModule,
     DatabaseModule, // Optional: For message delivery logging/audit trails

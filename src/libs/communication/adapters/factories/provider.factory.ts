@@ -21,7 +21,8 @@ import {
   WhatsAppProvider,
   SMSProvider,
 } from '@communication/config';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 // Email adapters
@@ -46,6 +47,7 @@ export class ProviderFactory {
 
   constructor(
     private readonly configService: CommunicationConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => HttpService))
     private readonly httpService: HttpService

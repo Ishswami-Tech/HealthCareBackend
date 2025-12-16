@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { Module, forwardRef } from '@nestjs/common';
+// Use direct import to avoid circular dependency with barrel exports
+import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { PushNotificationService } from '@communication/channels/push/push.service';
@@ -22,7 +23,7 @@ import { SNSBackupService } from '@communication/channels/push/sns-backup.servic
  */
 @Module({
   imports: [
-    ConfigModule,
+    forwardRef(() => ConfigModule),
     LoggingModule,
     DatabaseModule, // Optional: For device token persistence
   ],

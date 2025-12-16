@@ -1,5 +1,5 @@
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';

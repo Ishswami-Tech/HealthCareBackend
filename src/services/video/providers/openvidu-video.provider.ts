@@ -9,10 +9,11 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import type { AxiosResponse } from 'axios';
-import { CacheService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
-import { DatabaseService } from '@infrastructure/database';
-import { ConfigService } from '@config';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -41,7 +42,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
   private readonly domain: string;
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     private readonly configService: ConfigService,
     private readonly httpService: HttpService,

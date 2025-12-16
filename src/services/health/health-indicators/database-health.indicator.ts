@@ -6,7 +6,10 @@
 
 import { Injectable, Optional } from '@nestjs/common';
 import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
-import { DatabaseService, DatabaseHealthStatus } from '@infrastructure/database';
+// Use direct import to avoid TDZ issues with barrel exports
+// Import service directly and type from core types
+import { DatabaseService } from '@infrastructure/database/database.service';
+import type { DatabaseHealthStatus } from '@core/types';
 
 @Injectable()
 export class DatabaseHealthIndicator extends HealthIndicator {

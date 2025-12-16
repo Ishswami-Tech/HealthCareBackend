@@ -8,7 +8,8 @@
  * @description Base class for email adapters following DRY principles
  */
 
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type {
   EmailProviderAdapter,

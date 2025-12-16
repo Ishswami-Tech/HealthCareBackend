@@ -1,7 +1,8 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import * as admin from 'firebase-admin';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
@@ -69,6 +70,7 @@ export class PushNotificationService implements OnModuleInit {
    */
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => SNSBackupService))
     snsBackupService?: SNSBackupService,

@@ -6,7 +6,7 @@ import {
   HttpStatus,
   Inject,
 } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

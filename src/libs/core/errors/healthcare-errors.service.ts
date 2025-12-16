@@ -2,7 +2,8 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { HttpStatus } from '@nestjs/common';
 import { ErrorCode } from './error-codes.enum';
 import { HealthcareError, ErrorMetadata } from './healthcare-error.class';
-import { LoggingService } from '@infrastructure/logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 /**

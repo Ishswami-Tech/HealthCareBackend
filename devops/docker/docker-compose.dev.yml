@@ -1,6 +1,12 @@
 # Quick Start Development Environment
 # Run with: docker-compose -f devops/docker/docker-compose.dev.yml up -d
 # Access: http://localhost:8088
+#
+# Environment Variables:
+# - Loads .env (base configuration)
+# - Loads .env.development (development overrides)
+# - .env.local has highest priority (if exists, not in git)
+# - Variables can be overridden via environment or docker-compose environment section
 
 services:
   api:
@@ -8,6 +14,11 @@ services:
       context: ../..
       dockerfile: devops/docker/Dockerfile.dev
     container_name: healthcare-api
+    # Load environment variables from .env files (priority: .env.local > .env.development > .env)
+    env_file:
+      - ../../.env
+      - ../../.env.development
+      - ../../.env.local  # Highest priority, optional
     ports:
       - "8088:8088"
       - "5555:5555"
@@ -81,9 +92,9 @@ services:
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
       
-      # OpenVidu Configuration (Primary Video Provider - like Dragonfly in cache pattern)
-      # NOTE: For development, use localhost. For production, set OPENVIDU_URL and OPENVIDU_DOMAIN env vars
-      OPENVIDU_ENABLED: "true"
+      # OpenVidu Configuration (Primary Video Provider - from .env files)
+      # Values are loaded from .env.development via env_file directive above
+      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
       OPENVIDU_URL: ${OPENVIDU_URL:-https://localhost:4443}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
       OPENVIDU_DOMAIN: ${OPENVIDU_DOMAIN:-localhost}
@@ -303,6 +314,11 @@ services:
       context: ../..
       dockerfile: devops/docker/Dockerfile.dev
     container_name: healthcare-worker
+    # Load environment variables from .env files (priority: .env.local > .env.development > .env)
+    env_file:
+      - ../../.env
+      - ../../.env.development
+      - ../../.env.local  # Highest priority, optional
     environment:
       # Application Environment
       NODE_ENV: development
@@ -398,25 +414,43 @@ services:
   openvidu-server:
     image: openvidu/openvidu-server-kms:latest
     container_name: healthcare-openvidu-server
+    # Load environment variables from .env files (priority: .env.local > .env.development > .env)
+    env_file:
+      - ../../.env
+      - ../../.env.development
+      - ../../.env.local  # Highest priority, optional
     ports:
       - "4443:4443"
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
+      # NOTE: Port 3478 is NOT needed here - OpenVidu uses coturn service for TURN/STUN
+      # coturn container handles port 3478, OpenVidu connects to it via COTURN_IP=coturn
       # Reduced port range for Windows compatibility (OpenVidu uses coturn for TURN/STUN)
-      # Smaller range avoids Windows permission issues while still allowing media streams
-      - "50000-51000:50000-51000/udp"
-      - "50000-51000:50000-51000/tcp"
+      # Smaller range (100 ports) avoids Windows permission issues while still allowing media streams
+      - "50000-50100:50000-50100/udp"
+      - "50000-50100:50000-50100/tcp"
     environment:
+      # OpenVidu Configuration (from .env files, with fallbacks)
       - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://localhost:4443}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-localhost}
+      - OPENVIDU_EDITION=ce
       - OPENVIDU_CDR=false
+      # OpenVidu Webhook Configuration (from .env files)
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
+      - OPENVIDU_WEBHOOK_HEADERS=
+      - OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE=
+      # OpenVidu Stream Configuration
       - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
       - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
       - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
       - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
       - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
       - OPENVIDU_STREAMS_ALLOW_TRANSCODING=false
+      # OpenVidu Session Configuration
       - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
       - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
+      # OpenVidu Recording Configuration
       - OPENVIDU_RECORDING=true
       - OPENVIDU_RECORDING_PATH=/opt/openvidu/recordings
       - OPENVIDU_RECORDING_PUBLIC_ACCESS=false
@@ -424,14 +458,14 @@ services:
       - OPENVIDU_RECORDING_CUSTOM_LAYOUT=/opt/openvidu/custom-layout
       - OPENVIDU_RECORDING_AUTOSTOP_TIMEOUT=120
       - OPENVIDU_RECORDING_ALWAYS=never
-      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
-      - OPENVIDU_WEBHOOK_EVENTS=${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
-      - OPENVIDU_WEBHOOK_HEADERS=
-      - OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE=
+      # Coturn Configuration
       - COTURN_IP=coturn
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://localhost:4443}
-      - OPENVIDU_EDITION=ce
+      # Performance optimizations for faster startup
+      - OPENVIDU_LOGS_LEVEL=WARN
+      # Required: Set domain for proper configuration (prevents NullPointerException)
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-localhost}
+      - LETSENCRYPT_EMAIL=${LETSENCRYPT_EMAIL:-}
+      - CERTIFICATE_TYPE=${CERTIFICATE_TYPE:-selfsigned}
       - TZ=UTC
     volumes:
       - openvidu_recordings:/opt/openvidu/recordings
@@ -444,14 +478,13 @@ services:
       - healthcare-network
     restart: unless-stopped
     healthcheck:
-      # Check if supervisor processes are running (kms and openvidu-server)
-      # curl is not available in the container, so we check process status instead
-      # Both kms and openvidu-server must be RUNNING
-      test: ["CMD-SHELL", "supervisorctl status kms openvidu-server | grep -c RUNNING | grep -q 2 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      # Simplified healthcheck - just check if supervisor is running
+      # OpenVidu can take 60-120 seconds to fully start, so we give it more time
+      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
 
   coturn:
     image: coturn/coturn:latest

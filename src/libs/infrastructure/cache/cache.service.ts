@@ -30,7 +30,8 @@ import { CacheMetricsService } from '@infrastructure/cache/services/cache-metric
 import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flags.service';
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
-import { CacheErrorHandler } from '@core/errors';
+// Import directly from file to avoid SWC TDZ circular dependency issues with barrel exports
+import { CacheErrorHandler } from '@core/errors/cache-error.handler';
 import { CacheOptionsBuilder } from '@infrastructure/cache/builders/cache-options.builder';
 import { CacheProviderFactory } from '@infrastructure/cache/providers/cache-provider.factory';
 

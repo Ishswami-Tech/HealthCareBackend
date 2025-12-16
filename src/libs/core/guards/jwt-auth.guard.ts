@@ -6,13 +6,16 @@ import {
   HttpException,
   HttpStatus,
   Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ConfigService } from '@config';
+// Import directly from file to avoid SWC TDZ circular dependency issues with barrel exports
+import { ConfigService } from '@config/config.service';
 import { JwtService } from '@nestjs/jwt';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
-import { LoggingService } from '@infrastructure/logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogLevel, LogType } from '@core/types';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
@@ -139,6 +142,7 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwtService: JwtService,
     private readonly jwtAuthService: JwtAuthService,
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(ConfigService) private readonly configService: ConfigService
   ) {}

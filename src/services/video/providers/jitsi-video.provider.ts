@@ -6,10 +6,12 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
-import { DatabaseService } from '@infrastructure/database';
-import { ConfigService } from '@config';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+// Use direct import to avoid TDZ issues with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -30,7 +32,9 @@ export class JitsiVideoProvider implements IVideoProvider {
   private readonly MEETING_CACHE_TTL = 3600; // 1 hour
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => DatabaseService))
