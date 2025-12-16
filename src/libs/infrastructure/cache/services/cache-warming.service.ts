@@ -304,6 +304,7 @@ export class CacheWarmingService implements OnModuleInit {
       const doctorsKey = keyFactory.clinic(clinicId, 'doctors');
 
       // Fetch and cache doctors list
+      // Doctor model doesn't have direct clinicId - use clinics relation filter
       const doctors = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
@@ -313,8 +314,12 @@ export class CacheWarmingService implements OnModuleInit {
           }
         ).doctor.findMany({
           where: {
-            clinicId,
-            isActive: true,
+            clinics: {
+              some: {
+                clinicId,
+              },
+            },
+            isAvailable: true, // Use isAvailable instead of isActive for Doctor model
           },
           select: {
             id: true,
