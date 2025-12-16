@@ -11,7 +11,8 @@
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { BaseWhatsAppAdapter } from '../base/base-whatsapp-adapter';
 import type { WhatsAppOptions, WhatsAppResult } from '@communication/adapters/interfaces';

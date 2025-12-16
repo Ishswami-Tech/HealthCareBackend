@@ -4,13 +4,26 @@ import { EmailController } from '@communication/channels/email/email.controller'
 import { EmailTemplatesService } from '@communication/channels/email/email-templates.service';
 import { EmailQueueService } from '@communication/channels/email/email-queue.service';
 import { SESEmailService } from '@communication/channels/email/ses-email.service';
-import { ConfigModule, isCacheEnabled } from '@config';
-import { LoggingModule } from '@logging';
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct import to avoid circular dependency with barrel exports
+import { ConfigModule } from '@config/config.module';
+// LoggingModule is @Global() - LoggingService is available without explicit import
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from '@infrastructure/queue';
 import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
+
+/**
+ * Safely check if cache is enabled
+ * Uses environment variable directly to avoid module loading issues
+ */
+function isCacheEnabledSafe(): boolean {
+  try {
+    const cacheEnabled = process.env['CACHE_ENABLED'];
+    return cacheEnabled?.toLowerCase() === 'true';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Email Module
@@ -30,16 +43,16 @@ import { CommunicationConfigModule } from '@communication/config/communication-c
  */
 @Module({
   imports: [
-    // ConfigModule is @Global() - email config is already loaded in config.module.ts
-    ConfigModule,
-    LoggingModule,
-    DatabaseModule, // Optional: For email delivery logging/audit trails
+    // Use forwardRef to break circular dependency with ConfigModule
+    forwardRef(() => ConfigModule),
+    // LoggingModule is @Global() - LoggingService is available without explicit import
+    // DatabaseModule is @Global() - DatabaseService is available without explicit import
     forwardRef(() => CommunicationAdaptersModule), // Provider adapters
     forwardRef(() => CommunicationConfigModule), // Communication config service
     // QueueModule is already imported globally via AppModule.forRoot()
     // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
-    // Use ConfigService (which uses dotenv) for environment variable access
-    ...(isCacheEnabled()
+    // Use direct environment variable check to avoid module loading issues
+    ...(isCacheEnabledSafe()
       ? [
           BullModule.registerQueue({
             name: QueueService.EMAIL_QUEUE,

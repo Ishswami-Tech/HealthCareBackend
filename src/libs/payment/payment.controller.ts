@@ -7,11 +7,12 @@
  * @description Payment webhook and callback endpoints
  */
 
-import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus, Inject, forwardRef } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
 import { BillingService } from '@services/billing/billing.service';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
 
 @ApiTags('payments')
@@ -19,7 +20,9 @@ import { LogType, LogLevel, PaymentProvider } from '@core/types';
 export class PaymentController {
   constructor(
     private readonly paymentService: PaymentService,
+    @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 

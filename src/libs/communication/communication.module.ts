@@ -9,9 +9,10 @@ import { SocketModule } from '@communication/channels/socket/socket.module';
 import { ChatModule } from '@communication/channels/chat/chat.module';
 import { NotificationModule } from '@services/notification/notification.module';
 import { ListenersModule } from '@communication/listeners/listeners.module';
-import { EventsModule } from '@infrastructure/events';
-import { CacheModule } from '@infrastructure/cache';
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { EventsModule } from '@infrastructure/events/events.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { ResilienceModule } from '@core/resilience';
 import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';

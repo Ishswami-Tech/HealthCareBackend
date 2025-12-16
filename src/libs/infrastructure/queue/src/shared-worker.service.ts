@@ -8,7 +8,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 
 import { Worker, Job } from 'bullmq';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache';
 
 // Internal imports - Infrastructure

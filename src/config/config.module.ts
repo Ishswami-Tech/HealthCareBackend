@@ -1,4 +1,4 @@
-import { Module, Global } from '@nestjs/common';
+import { Module, Global, forwardRef } from '@nestjs/common';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
@@ -14,7 +14,7 @@ import { healthcareConfig } from '@infrastructure/database/config/healthcare.con
 import { ConfigService } from './config.service';
 import { PaymentConfigService } from './payment-config.service';
 import { ENV_VARS } from './constants';
-import { CommunicationConfigModule } from '@communication/config/communication-config.module';
+// CommunicationConfigModule is imported lazily by PaymentConfigService using forwardRef to avoid circular dependency
 import {
   validateEnvironmentConfig,
   getEnvironmentValidationErrorMessage,
@@ -121,7 +121,8 @@ validateConfigEarly();
 @Global()
 @Module({
   imports: [
-    CommunicationConfigModule, // For CredentialEncryptionService used by PaymentConfigService
+    // CommunicationConfigModule is imported lazily by PaymentConfigService using forwardRef to avoid circular dependency
+    // ConfigModule -> CommunicationConfigModule -> ConfigModule cycle is broken by lazy injection
     NestConfigModule.forRoot({
       load: [
         getConfigFactory(), // Get appropriate config based on NODE_ENV

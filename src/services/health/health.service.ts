@@ -6,8 +6,11 @@ import {
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { DatabaseService, DatabaseHealthStatus } from '@infrastructure/database';
+import { ConfigService } from '@config/config.service';
+// Use direct import to avoid TDZ issues with barrel exports
+// Import service directly and type from core types
+import { DatabaseService } from '@infrastructure/database/database.service';
+import type { DatabaseHealthStatus } from '@core/types';
 import { CacheService } from '@infrastructure/cache';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import type { CacheHealthMonitorStatus } from '@core/types';
@@ -30,7 +33,8 @@ import { LogType, LogLevel } from '@core/types';
 import { SocketService } from '@communication/channels/socket';
 import { EmailService } from '@communication/channels/email';
 import { PushNotificationService } from '@communication/channels/push/push.service';
-import { HealthcareErrorsService } from '@core/errors';
+// Use direct import to avoid TDZ issues with barrel exports
+import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import {
@@ -105,7 +109,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(forwardRef(() => QueueHealthMonitorService))
     private readonly queueHealthMonitor?: QueueHealthMonitorService,
-    @Optional() private readonly errors?: HealthcareErrorsService
+    @Optional()
+    @Inject(forwardRef(() => HealthcareErrorsService))
+    private readonly errors?: HealthcareErrorsService
   ) {}
 
   /**

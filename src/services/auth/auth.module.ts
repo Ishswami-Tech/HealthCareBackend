@@ -49,9 +49,9 @@ import { SignOptions } from 'jsonwebtoken';
     EventsModule,
     RbacModule,
     SessionModule,
+    LoggingModule, // Must be imported before GuardsModule (GuardsModule depends on LoggingService)
     GuardsModule,
     EmailModule,
-    LoggingModule,
   ],
   controllers: [AuthController],
   providers: [

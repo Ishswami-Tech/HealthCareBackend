@@ -44,6 +44,8 @@
  */
 
 export { ConfigModule } from './config.module';
+// ConfigService export - use direct import in early-boot code to avoid circular dependencies
+// Direct import: import { ConfigService } from '@config/config.service';
 export { ConfigService } from './config.service';
 export { PaymentConfigService } from './payment-config.service';
 export * from './constants';

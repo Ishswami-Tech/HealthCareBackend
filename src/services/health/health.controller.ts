@@ -1,5 +1,5 @@
 import { Controller, Get, Res } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiExcludeController } from '@nestjs/swagger';
 import { HealthCheck, HealthCheckService, HealthCheckError } from '@nestjs/terminus';
 import { ConfigService } from '@config/config.service';
 import { HealthService } from './health.service';
@@ -14,7 +14,9 @@ import { LoggingHealthIndicator } from './health-indicators/logging-health.indic
 import { CommunicationHealthIndicator } from './health-indicators/communication-health.indicator';
 import { VideoHealthIndicator } from './health-indicators/video-health.indicator';
 
-@ApiTags('health')
+// Exclude health controller from Swagger to avoid circular dependency with SystemMetrics
+// Health endpoints are simple monitoring endpoints that don't need Swagger documentation
+@ApiExcludeController()
 @Controller('health')
 export class HealthController {
   constructor(
@@ -48,221 +50,7 @@ export class HealthController {
   @HealthCheck()
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
-  @ApiOperation({
-    summary: 'Get real-time health status of core services using Terminus',
-    description:
-      "Real-time health check with fresh status using @nestjs/terminus. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool (won't exhaust main pool). Perfect for load balancers and monitoring.",
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Basic health check successful',
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', enum: ['healthy', 'degraded', 'unhealthy'] },
-        timestamp: { type: 'string', format: 'date-time' },
-        environment: { type: 'string' },
-        version: { type: 'string' },
-        services: {
-          type: 'object',
-          properties: {
-            api: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-              },
-            },
-            database: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-              },
-            },
-            cache: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-              },
-            },
-            queue: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-                details: { type: 'string' },
-                queueHealth: {
-                  type: 'object',
-                  properties: {
-                    healthy: { type: 'boolean' },
-                    connection: {
-                      type: 'object',
-                      properties: {
-                        connected: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        provider: { type: 'string' },
-                      },
-                    },
-                    metrics: {
-                      type: 'object',
-                      properties: {
-                        totalJobs: { type: 'number' },
-                        activeJobs: { type: 'number' },
-                        waitingJobs: { type: 'number' },
-                        failedJobs: { type: 'number' },
-                        completedJobs: { type: 'number' },
-                        errorRate: { type: 'number' },
-                      },
-                    },
-                    performance: {
-                      type: 'object',
-                      properties: {
-                        averageProcessingTime: { type: 'number' },
-                        throughputPerMinute: { type: 'number' },
-                      },
-                    },
-                    queues: {
-                      type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          name: { type: 'string' },
-                          waiting: { type: 'number' },
-                          active: { type: 'number' },
-                          completed: { type: 'number' },
-                          failed: { type: 'number' },
-                          delayed: { type: 'number' },
-                        },
-                      },
-                    },
-                    issues: { type: 'array', items: { type: 'string' } },
-                  },
-                },
-              },
-            },
-            logger: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-                details: { type: 'string' },
-                loggingHealth: {
-                  type: 'object',
-                  properties: {
-                    healthy: { type: 'boolean' },
-                    service: {
-                      type: 'object',
-                      properties: {
-                        available: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        serviceName: { type: 'string' },
-                      },
-                    },
-                    endpoint: {
-                      type: 'object',
-                      properties: {
-                        accessible: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        url: { type: 'string' },
-                        port: { type: 'number' },
-                        statusCode: { type: 'number' },
-                      },
-                    },
-                    metrics: {
-                      type: 'object',
-                      properties: {
-                        totalLogs: { type: 'number' },
-                        errorRate: { type: 'number' },
-                        averageResponseTime: { type: 'number' },
-                      },
-                    },
-                    performance: {
-                      type: 'object',
-                      properties: {
-                        throughput: { type: 'number' },
-                        bufferSize: { type: 'number' },
-                        flushInterval: { type: 'number' },
-                      },
-                    },
-                    issues: { type: 'array', items: { type: 'string' } },
-                  },
-                },
-              },
-            },
-            communication: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', enum: ['healthy', 'unhealthy'] },
-                responseTime: { type: 'number' },
-                lastChecked: { type: 'string', format: 'date-time' },
-                details: { type: 'string' },
-                communicationHealth: {
-                  type: 'object',
-                  properties: {
-                    healthy: { type: 'boolean' },
-                    socket: {
-                      type: 'object',
-                      properties: {
-                        connected: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        connectedClients: { type: 'number' },
-                      },
-                    },
-                    email: {
-                      type: 'object',
-                      properties: {
-                        connected: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        provider: { type: 'string' },
-                      },
-                    },
-                    whatsapp: {
-                      type: 'object',
-                      properties: {
-                        connected: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        enabled: { type: 'boolean' },
-                      },
-                    },
-                    push: {
-                      type: 'object',
-                      properties: {
-                        connected: { type: 'boolean' },
-                        latency: { type: 'number' },
-                        provider: { type: 'string' },
-                      },
-                    },
-                    metrics: {
-                      type: 'object',
-                      properties: {
-                        socketConnections: { type: 'number' },
-                        emailQueueSize: { type: 'number' },
-                      },
-                    },
-                    performance: {
-                      type: 'object',
-                      properties: {
-                        socketThroughput: { type: 'number' },
-                        emailThroughput: { type: 'number' },
-                      },
-                    },
-                    issues: { type: 'array', items: { type: 'string' } },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  })
+  // Swagger decorators removed - health controller is excluded from Swagger to avoid circular dependency
   async getHealth(@Res() res: FastifyReply) {
     try {
       // Use Terminus health checks
@@ -373,53 +161,7 @@ export class HealthController {
   @Get('detailed')
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
-  @ApiOperation({
-    summary: 'Get detailed real-time health status with comprehensive metrics',
-    description:
-      'Comprehensive real-time health check with detailed metrics, system information, and extended service status. Always performs fresh checks for accurate status. Uses robust database health check with dedicated connection pool.',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Detailed health check successful',
-    schema: {
-      allOf: [
-        { $ref: '#/components/schemas/HealthCheckResponse' },
-        {
-          type: 'object',
-          properties: {
-            processInfo: {
-              type: 'object',
-              properties: {
-                pid: { type: 'number' },
-                ppid: { type: 'number' },
-                platform: { type: 'string' },
-                versions: {
-                  type: 'object',
-                  additionalProperties: { type: 'string' },
-                },
-              },
-            },
-            memory: {
-              type: 'object',
-              properties: {
-                heapUsed: { type: 'number' },
-                heapTotal: { type: 'number' },
-                external: { type: 'number' },
-                arrayBuffers: { type: 'number' },
-              },
-            },
-            cpu: {
-              type: 'object',
-              properties: {
-                user: { type: 'number' },
-                system: { type: 'number' },
-              },
-            },
-          },
-        },
-      ],
-    },
-  })
+  // Swagger decorators removed - health controller is excluded from Swagger to avoid circular dependency
   async getDetailedHealth(@Res() res: FastifyReply): Promise<void> {
     try {
       const health = await this.healthService.getDetailedHealth();

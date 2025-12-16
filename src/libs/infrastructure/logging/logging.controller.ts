@@ -431,14 +431,14 @@ export class LoggingController {
 
   @Get('logs/data')
   async getLogs(
-    @Query('type') type?: LogType,
+    @Query('type') type?: string, // Changed from LogType to string to avoid Swagger circular dependency
     @Query('level') level?: string,
     @Query('startTime') startTime?: string,
     @Query('endTime') endTime?: string
   ): Promise<unknown[]> {
     try {
       const logs = await this.loggingService.getLogs(
-        type,
+        type as LogType | undefined, // Cast to LogType for service call
         startTime ? new Date(startTime) : undefined,
         endTime ? new Date(endTime) : undefined,
         (level as LogLevel) || undefined

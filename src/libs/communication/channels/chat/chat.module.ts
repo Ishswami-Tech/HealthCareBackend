@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { Module, forwardRef } from '@nestjs/common';
+// Use direct import to avoid circular dependency with barrel exports
+import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
 import { ChatBackupService } from './chat-backup.service';
 
@@ -18,7 +19,7 @@ import { ChatBackupService } from './chat-backup.service';
  * @module ChatModule
  */
 @Module({
-  imports: [ConfigModule, LoggingModule],
+  imports: [forwardRef(() => ConfigModule), LoggingModule],
   providers: [ChatBackupService],
   exports: [ChatBackupService],
 })

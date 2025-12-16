@@ -20,7 +20,8 @@ import developmentConfig from './config/environment/development.config';
 import productionConfig from './config/environment/production.config';
 import stagingConfig from './config/environment/staging.config';
 import testConfig from './config/environment/test.config';
-import { ConfigService, isCacheEnabled } from '@config';
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled } from '@config/cache.config';
 import {
   getEnv,
   getEnvWithDefault,
@@ -955,7 +956,15 @@ async function bootstrap() {
       }
 
       logger.log('Creating Swagger document...');
-      const document = SwaggerModule.createDocument(app, swaggerConfig);
+      // Configure Swagger to handle circular dependencies
+      // Disable deepScanRoutes to avoid scanning all types which can cause circular dependency issues
+      // Using lazy resolvers for circular dependencies
+      const document = SwaggerModule.createDocument(app, swaggerConfig, {
+        extraModels: [],
+        operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
+        deepScanRoutes: false, // Disable deep scanning to avoid circular dependency issues
+        ignoreGlobalPrefix: false,
+      });
       logger.log('Swagger document created successfully');
 
       // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()

@@ -12,7 +12,7 @@
 
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
 
 // Internal imports - Infrastructure

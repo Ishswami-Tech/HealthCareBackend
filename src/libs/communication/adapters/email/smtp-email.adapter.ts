@@ -8,10 +8,11 @@
  * @description SMTP email adapter for multi-tenant communication
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { BaseEmailAdapter } from '../base/base-email-adapter';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
@@ -45,7 +46,10 @@ export class SMTPEmailAdapter extends BaseEmailAdapter {
   private transporter: Transporter | null = null;
   private config: ProviderConfig | null = null;
 
-  constructor(loggingService: LoggingService) {
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    loggingService: LoggingService
+  ) {
     super(loggingService);
   }
 

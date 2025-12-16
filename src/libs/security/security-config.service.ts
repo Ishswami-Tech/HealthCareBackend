@@ -1,5 +1,5 @@
 import { Injectable, Logger, INestApplication } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import type { AuthenticatedRequest, RateLimitContext } from '@core/types';
 import { IFrameworkAdapter, IFastifyFrameworkAdapter } from '@infrastructure/framework';
 

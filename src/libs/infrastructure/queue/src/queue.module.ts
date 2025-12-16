@@ -1,6 +1,9 @@
 import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullModule, getQueueToken } from '@nestjs/bullmq';
-import { ConfigModule, ConfigService, isCacheEnabled } from '@config';
+// Use direct import to avoid TDZ issues with barrel exports
+import { ConfigModule } from '@config/config.module';
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled } from '@config/cache.config';
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
 import { getEnvWithDefault } from '../../../../config/environment/utils';
@@ -50,7 +53,9 @@ import {
   VIDEO_ANALYTICS_QUEUE,
 } from './queue.constants';
 import { Queue, Worker, Job } from 'bullmq';
-import { DatabaseModule, DatabaseService } from '@infrastructure/database';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { DatabaseModule } from '@infrastructure/database/database.module';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import type { JobData } from '@core/types/queue.types';
 
 @Module({})
@@ -215,7 +220,7 @@ export class QueueModule {
           inject: [ConfigService],
         }),
         // Enhanced queue registration with domain-specific settings
-        ...queueNames.map((queueName, index) =>
+        ...queueNames.map((queueName: string, index: number) =>
           BullModule.registerQueue({
             name: queueName,
             defaultJobOptions: {
@@ -269,7 +274,7 @@ export class QueueModule {
             });
             return serverAdapter;
           },
-          inject: queueNames.map(queueName => getQueueToken(queueName)),
+          inject: queueNames.map((queueName: string) => getQueueToken(queueName)),
         },
         // Enhanced worker configuration for 1M users
         ...(serviceName === 'worker'
@@ -431,7 +436,7 @@ export class QueueModule {
             const validQueues = queues.filter(queue => queue && typeof queue === 'object');
             return validQueues;
           },
-          inject: queueNames.map(queueName => getQueueToken(queueName)),
+          inject: queueNames.map((queueName: string) => getQueueToken(queueName)),
         },
         // Always provide BULLMQ_WORKERS (empty array if not worker service)
         ...(serviceName !== 'worker'

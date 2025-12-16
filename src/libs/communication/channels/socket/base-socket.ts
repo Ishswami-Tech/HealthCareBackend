@@ -15,7 +15,9 @@ import {
   SocketAuthMiddleware,
   type AuthenticatedUser,
 } from '@communication/channels/socket/socket-auth.middleware';
-import { LoggingService, safeLog, safeLogError } from '@logging';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';

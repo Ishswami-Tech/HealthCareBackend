@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get } from '@nestjs/common';
 import { EmailService } from '@communication/channels/email/email.service';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailTemplate, EmailContext } from '@core/types';
 

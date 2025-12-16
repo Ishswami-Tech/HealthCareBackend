@@ -8,12 +8,13 @@
  * @description Multi-tenant payment configuration service
  */
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from './config.service';
-import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
-import { LoggingService } from '@logging';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { ClinicPaymentConfig } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
@@ -31,8 +32,11 @@ export class PaymentConfigService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
-    private readonly credentialEncryption: CredentialEncryptionService,
-    private readonly loggingService: LoggingService
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => CredentialEncryptionService))
+    private readonly credentialEncryption?: CredentialEncryptionService
   ) {}
 
   onModuleInit(): void {
@@ -268,6 +272,10 @@ export class PaymentConfigService implements OnModuleInit {
    * Encrypt credentials in configuration
    */
   private async encryptConfig(config: ClinicPaymentConfig): Promise<ClinicPaymentConfig> {
+    if (!this.credentialEncryption) {
+      throw new Error('CredentialEncryptionService is not available. CommunicationConfigModule must be imported.');
+    }
+
     const encrypted = { ...config };
 
     // Encrypt payment credentials
@@ -298,6 +306,12 @@ export class PaymentConfigService implements OnModuleInit {
    * Decrypt credentials in configuration
    */
   private async decryptConfig(config: ClinicPaymentConfig): Promise<ClinicPaymentConfig> {
+    if (!this.credentialEncryption) {
+      // If encryption service is not available, return config as-is (credentials may already be decrypted)
+      // This allows the service to work even if CommunicationConfigModule is not imported
+      return config;
+    }
+
     const decrypted = { ...config };
 
     // Decrypt payment credentials

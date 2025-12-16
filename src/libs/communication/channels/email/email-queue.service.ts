@@ -1,7 +1,8 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue, Job } from 'bullmq';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { QueueService } from '@infrastructure/queue';
 import { LogType, LogLevel } from '@core/types';
 
@@ -52,6 +53,7 @@ export class EmailQueueService {
     @InjectQueue(QueueService.EMAIL_QUEUE as string)
     private readonly emailQueue: Queue<EmailQueueData> | null,
     private readonly queueService: QueueService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 

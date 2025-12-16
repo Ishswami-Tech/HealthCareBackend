@@ -4,12 +4,13 @@ import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
 import { RbacGuard } from './rbac.guard';
 import { RbacDecorators } from './rbac.decorators';
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
-import { LoggingModule } from '@infrastructure/logging';
+// LoggingModule is @Global() - LoggingService is available without explicit import
 
 @Module({
-  imports: [DatabaseModule, forwardRef(() => CacheModule), LoggingModule],
+  imports: [DatabaseModule, forwardRef(() => CacheModule)],
   providers: [RbacService, RoleService, PermissionService, RbacGuard, RbacDecorators],
   exports: [
     RbacService,

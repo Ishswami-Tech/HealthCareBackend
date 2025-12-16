@@ -11,7 +11,8 @@ import { Observable } from 'rxjs';
 import { RbacService } from './rbac.service';
 import type { RbacContext, RbacRequirement } from '@core/types/rbac.types';
 import { RBAC_METADATA_KEY } from './rbac.decorators';
-import { LoggingService } from '@infrastructure/logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { RequestWithAuth } from '@core/types/guard.types';
 import { DatabaseService } from '@infrastructure/database';

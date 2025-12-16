@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common';
-import { LoggingService } from '@logging';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import {
   generateAppointmentReminderTemplate,
@@ -110,7 +111,10 @@ export interface AccountVerificationTemplateData extends EmailTemplateData {
  */
 @Injectable()
 export class EmailTemplatesService {
-  constructor(private readonly loggingService: LoggingService) {}
+  constructor(
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService: LoggingService
+  ) {}
 
   /**
    * Generates appointment reminder email template

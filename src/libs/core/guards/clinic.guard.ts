@@ -7,8 +7,9 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { DatabaseService } from '@infrastructure/database';
-import { LoggingService } from '@infrastructure/logging';
+// Use direct imports to avoid TDZ issues with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
 import type { ClinicRequest, ClinicValidationResult } from '@core/types/guard.types';

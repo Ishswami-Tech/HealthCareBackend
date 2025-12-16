@@ -7,7 +7,7 @@
  */
 
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import type { IVideoProvider } from '@core/types/video.types';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

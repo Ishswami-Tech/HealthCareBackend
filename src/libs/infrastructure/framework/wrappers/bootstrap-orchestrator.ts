@@ -20,7 +20,7 @@ import { LogType, LogLevel } from '@core/types';
 import { ApplicationLifecycleManager } from './application-lifecycle.manager';
 import { ServerConfigurator } from './server-configurator';
 import { ServiceContainer } from './service-container';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { SecurityConfigService } from '@security/security-config.service';
 import {
   GracefulShutdownService,

@@ -8,7 +8,9 @@ import {
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ConfigModule, ConfigService, isCacheEnabled } from '@config';
+import { ConfigModule } from '@config';
+import { ConfigService } from '@config/config.service';
+import { isCacheEnabled } from '@config/cache.config';
 import { LoggingModule } from '@infrastructure/logging';
 import { BullBoardService } from './bull-board.service';
 import {

@@ -8,10 +8,11 @@
  * @description Secure credential management for multi-tenant communication
  */
 
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@config';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 
 /**
@@ -35,6 +36,7 @@ export class CredentialEncryptionService {
 
   constructor(
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
     // Get encryption key from environment or generate one (for development)

@@ -8,12 +8,14 @@
  * @description Multi-tenant communication configuration service
  */
 
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { ConfigService } from '@config';
-import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@config/config.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
+// Use direct import to avoid TDZ issues with barrel exports
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { CredentialEncryptionService } from './credential-encryption.service';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { EmailResult } from '@communication/adapters/interfaces/email-provider.adapter';
 
@@ -108,6 +110,7 @@ export class CommunicationConfigService implements OnModuleInit {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly credentialEncryption: CredentialEncryptionService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 

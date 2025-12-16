@@ -13,18 +13,27 @@ This document consolidates all infrastructure module documentation from `src/` d
 
 ## 📚 Table of Contents
 
-1. [Configuration Module](#configuration-module)
-2. [Database Infrastructure](#database-infrastructure)
-3. [Cache System](#cache-system)
-4. [Framework Abstraction](#framework-abstraction)
-5. [Error Handling](#error-handling)
-6. [WhatsApp Integration](#whatsapp-integration)
+### Core Infrastructure Services
+1. [Configuration Module](#1-configuration-module)
+2. [Database Infrastructure](#2-database-infrastructure)
+3. [Cache System](#3-cache-system)
+4. [Logging Service](#4-logging-service)
+5. [Event System](#5-event-system)
+6. [Queue System](#6-queue-system)
+7. [Framework Abstraction](#7-framework-abstraction)
+8. [Storage Service](#8-storage-service)
+9. [Search Service](#9-search-service)
+
+### Additional Documentation
+10. [Error Handling](#10-error-handling)
+11. [Communication Module](#11-communication-module)
 
 ---
 
 ## 1. Configuration Module
 
 **Location**: `src/config/`
+**Individual README**: [Config Module README](./config/README.md)
 
 ### Overview
 
@@ -90,6 +99,7 @@ export class MyService {
 ## 2. Database Infrastructure
 
 **Location**: `src/libs/infrastructure/database/`
+**Individual README**: [Database Service README](./libs/infrastructure/database/README.md)
 
 ### Overview
 
@@ -167,6 +177,7 @@ export class UserService {
 ## 3. Cache System
 
 **Location**: `src/libs/infrastructure/cache/`
+**Individual README**: [Cache Service README](./libs/infrastructure/cache/README.md)
 
 ### Overview
 
@@ -248,9 +259,132 @@ L1: In-Memory Cache (~0.1ms) → L2: Redis/Dragonfly (~1-5ms) → L3: Database (
 
 ---
 
-## 4. Framework Abstraction
+## 4. Logging Service
+
+**Location**: `src/libs/infrastructure/logging/`
+**Individual README**: [Logging Service README](./libs/infrastructure/logging/README.md)
+
+### Overview
+
+HIPAA-compliant structured logging service with PHI masking, 30-day retention, and 10 log types for healthcare applications.
+
+### Key Features
+
+- ✅ **10 Log Types** - SYSTEM, AUDIT, SECURITY, DATABASE, CACHE, API, ERROR, PERFORMANCE, EMAIL, NOTIFICATION
+- ✅ **PHI Masking** - Automatic masking of Protected Health Information
+- ✅ **Structured Logging** - JSON-formatted logs with metadata
+- ✅ **30-Day Retention** - Automatic log rotation and archival
+- ✅ **HIPAA Compliance** - Audit trails for all access to PHI
+
+### Quick Start
+
+```typescript
+import { LoggingService, LogType, LogLevel } from '@logging';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly logger: LoggingService) {}
+
+  async operation() {
+    await this.logger.log(
+      LogType.AUDIT,
+      LogLevel.INFO,
+      'Operation executed',
+      'MyService',
+      { userId: 'user123', action: 'READ' }
+    );
+  }
+}
+```
+
+---
+
+## 5. Event System
+
+**Location**: `src/libs/infrastructure/events/`
+**Individual README**: [Event Service README](./libs/infrastructure/events/README.md)
+
+### Overview
+
+Central event hub for event-driven architecture with rate limiting, circuit breaker, and event buffering.
+
+### Key Features
+
+- ✅ **Central Event Hub** - Single source of truth for all events
+- ✅ **Rate Limiting** - 1000 events/second with burst capacity
+- ✅ **Circuit Breaker** - Prevents cascading failures
+- ✅ **Event Buffering** - 50,000 events max with overflow protection
+- ✅ **PHI Validation** - Automatic PHI masking in events
+
+### Quick Start
+
+```typescript
+import { EventService } from '@infrastructure/events';
+import { EventCategory, EventPriority } from '@types';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly eventService: EventService) {}
+
+  async operation() {
+    await this.eventService.emitEnterprise('user.created', {
+      eventId: `user-created-${userId}`,
+      eventType: 'user.created',
+      category: EventCategory.USER_ACTIVITY,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'MyService',
+      version: '1.0.0',
+      payload: { user },
+    });
+  }
+}
+```
+
+---
+
+## 6. Queue System
+
+**Location**: `src/libs/infrastructure/queue/`
+**Individual README**: [Queue Service README](./libs/infrastructure/queue/README.md)
+
+### Overview
+
+BullMQ-based queue system with 19 specialized queues for async task processing.
+
+### Key Features
+
+- ✅ **19 Specialized Queues** - Email, notification, reminder, appointment, payment, etc.
+- ✅ **Job Retry** - Configurable retry with exponential backoff
+- ✅ **Priority Jobs** - High/normal/low priority support
+- ✅ **Delayed Jobs** - Schedule jobs for future execution
+- ✅ **Repeatable Jobs** - Cron-based recurring jobs
+
+### Quick Start
+
+```typescript
+import { QueueService } from '@queue';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly queueService: QueueService) {}
+
+  async sendEmail(to: string, subject: string) {
+    await this.queueService.addJob('email', {
+      to,
+      subject,
+      template: 'welcome',
+    });
+  }
+}
+```
+
+---
+
+## 7. Framework Abstraction
 
 **Location**: `src/libs/infrastructure/framework/`
+**Individual README**: [Framework Service README](./libs/infrastructure/framework/README.md)
 
 ### Overview
 
@@ -315,9 +449,84 @@ async function bootstrap() {
 
 ---
 
-## 5. Error Handling
+## 8. Storage Service
+
+**Location**: `src/libs/infrastructure/storage/`
+**Individual README**: [Storage Service README](./libs/infrastructure/storage/README.md)
+
+### Overview
+
+S3-compatible object storage service with pre-signed URLs, multi-bucket support, and CDN integration.
+
+### Key Features
+
+- ✅ **S3 Integration** - AWS S3 object storage
+- ✅ **Pre-Signed URLs** - Secure temporary access to files
+- ✅ **Multi-Bucket Support** - Separate buckets per clinic/tenant
+- ✅ **CDN Integration** - CloudFront for faster delivery
+- ✅ **File Validation** - Size and type validation
+
+### Quick Start
+
+```typescript
+import { StorageService } from '@infrastructure/storage';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly storage: StorageService) {}
+
+  async uploadFile(file: Buffer, filename: string) {
+    const key = await this.storage.upload('my-bucket', filename, file);
+    const url = await this.storage.getPresignedUrl('my-bucket', key, 3600);
+    return url;
+  }
+}
+```
+
+---
+
+## 9. Search Service
+
+**Location**: `src/libs/infrastructure/search/`
+**Individual README**: [Search Service README](./libs/infrastructure/search/README.md)
+
+### Overview
+
+Elasticsearch-based full-text search with fuzzy matching and database fallback.
+
+### Key Features
+
+- ✅ **Elasticsearch Integration** - Full-text search with relevance scoring
+- ✅ **Fuzzy Matching** - Typo-tolerant search
+- ✅ **Database Fallback** - Automatic fallback if Elasticsearch unavailable
+- ✅ **Index Management** - Automatic index creation and updates
+- ✅ **Multi-Tenant** - Clinic-isolated search indices
+
+### Quick Start
+
+```typescript
+import { SearchService } from '@infrastructure/search';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly search: SearchService) {}
+
+  async searchPatients(query: string) {
+    const results = await this.search.search('patients', query, {
+      fuzzy: true,
+      limit: 10,
+    });
+    return results;
+  }
+}
+```
+
+---
+
+## 10. Error Handling
 
 **Location**: `src/libs/core/errors/`
+**Individual README**: [Core Library README](./libs/core/README.md#error-handling)
 
 ### Overview
 
@@ -392,64 +601,55 @@ export class UserService {
 
 ---
 
-## 6. WhatsApp Integration
+## 11. Communication Module
 
-**Location**: `src/libs/communication/channels/whatsapp/`
+**Location**: `src/libs/communication/`
+**Individual README**: [Communication Module README](./libs/communication/README.md)
+**WhatsApp Channel**: `src/libs/communication/channels/whatsapp/`
 
 ### Overview
 
-WhatsApp Business API integration for sending OTPs, appointment reminders, and prescription notifications.
+Multi-channel communication orchestration with smart routing, supporting Email, WhatsApp, Push, Socket, and SMS channels.
 
-### Prerequisites
+### Key Features
 
-1. Meta Developer account
-2. WhatsApp Business account
-3. Verified phone number
-4. Approved message templates
+- ✅ **5 Communication Channels** - Email, WhatsApp, Push, Socket, SMS
+- ✅ **Smart Channel Selection** - Category-based routing (10 categories)
+- ✅ **Multi-Tenant Support** - Provider routing via clinicId
+- ✅ **User Preferences** - Channel preferences, quiet hours, category control
+- ✅ **Rate Limiting** - Configurable per category
+- ✅ **Delivery Tracking** - Database tracking with delivery logs
 
-### Configuration
-
-```env
-# WhatsApp Configuration
-WHATSAPP_ENABLED=true
-WHATSAPP_API_URL=https://graph.facebook.com/v17.0
-WHATSAPP_API_KEY=your-whatsapp-api-key
-WHATSAPP_PHONE_NUMBER_ID=your-whatsapp-phone-number-id
-WHATSAPP_BUSINESS_ACCOUNT_ID=your-whatsapp-business-account-id
-WHATSAPP_OTP_TEMPLATE_ID=your_otp_template_name
-WHATSAPP_APPOINTMENT_TEMPLATE_ID=your_appointment_template_name
-WHATSAPP_PRESCRIPTION_TEMPLATE_ID=your_prescription_template_name
-```
-
-### Usage
+### Quick Start
 
 ```typescript
-// Sending OTP
-POST /auth/request-otp
-{
-  "email": "user@example.com",
-  "deliveryMethod": "whatsapp"
+import { CommunicationService } from '@communication';
+import { CommunicationCategory, CommunicationPriority } from '@types';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly communicationService: CommunicationService) {}
+
+  async sendNotification(userId: string, email: string) {
+    return await this.communicationService.send({
+      category: CommunicationCategory.APPOINTMENT,
+      priority: CommunicationPriority.HIGH,
+      title: 'Appointment Reminder',
+      body: 'Your appointment is scheduled for tomorrow',
+      recipients: [{ userId, email }],
+      channels: ['email', 'push', 'socket'], // Optional - auto-selected
+    });
+  }
 }
-
-// Sending Appointment Reminder
-await whatsAppService.sendAppointmentReminder(
-  phoneNumber,
-  patientName,
-  doctorName,
-  appointmentDate,
-  appointmentTime,
-  location
-);
-
-// Sending Prescription Notification
-await whatsAppService.sendPrescriptionNotification(
-  phoneNumber,
-  patientName,
-  doctorName,
-  medicationDetails,
-  prescriptionUrl
-);
 ```
+
+### Supported Channels
+
+1. **Email** - SMTP, SES, SendGrid adapters
+2. **WhatsApp** - Meta Business API, Twilio adapters
+3. **Push** - Firebase Cloud Messaging (FCM)
+4. **Socket** - Real-time via Socket.IO
+5. **SMS** - Planned (not yet implemented)
 
 ---
 
@@ -511,4 +711,5 @@ throw this.errors.userNotFound(userId, 'Service.method');
 
 **Last Updated**: 2024  
 **Status**: ✅ **CONSOLIDATED - ALL INFRASTRUCTURE DOCUMENTATION**
+
 

@@ -14,7 +14,8 @@ import { SocketService, type SocketEventData } from '@communication/channels/soc
 import * as crypto from 'crypto';
 import { EventService } from '@infrastructure/events';
 import { LoggingService } from '@infrastructure/logging';
-import { DatabaseService } from '@infrastructure/database';
+// Use direct import to avoid TDZ issues with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
 import {
   LogType,
   LogLevel,

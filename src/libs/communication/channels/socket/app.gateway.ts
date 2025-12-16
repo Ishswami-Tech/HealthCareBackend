@@ -3,7 +3,8 @@ import { WebSocketGateway } from '@nestjs/websockets';
 import { BaseSocket } from '@communication/channels/socket/base-socket';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth.middleware';
-import { LoggingService } from '@logging';
+// Use direct import to avoid TDZ issues with barrel exports
+import { LoggingService } from '@infrastructure/logging/logging.service';
 
 // Get CORS origin from environment (fallback to restricted list for security)
 const getCorsOrigin = (): string | string[] => {

@@ -2,7 +2,7 @@ import { Controller, Get, Res, Inject, forwardRef } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from '@core/decorators/public.decorator';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './services/health/health.service';
 import { LoggingService } from '@infrastructure/logging';
