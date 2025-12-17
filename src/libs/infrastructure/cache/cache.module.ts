@@ -36,6 +36,7 @@ import { FeatureFlagsService } from '@infrastructure/cache/services/feature-flag
 import { CacheVersioningService } from '@infrastructure/cache/services/cache-versioning.service';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import { CacheWarmingService } from '@infrastructure/cache/services/cache-warming.service';
+import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 // CacheErrorHandler is now provided by global ErrorsModule
 
 // Multi-Layer Cache Services (L1)
@@ -133,6 +134,7 @@ export class CacheModule {
       FeatureFlagsService,
       CacheVersioningService,
       CacheHealthMonitorService,
+      LocationCacheService, // Shared location cache for 10M+ scale
       // CacheErrorHandler is provided by global ErrorsModule (imported in app.module.ts)
 
       // Factories
@@ -174,6 +176,7 @@ export class CacheModule {
       | typeof CacheKeyFactory
       | typeof CacheHealthMonitorService
       | typeof CacheWarmingService
+      | typeof LocationCacheService
       | 'CACHE_SERVICE'
     > = [
       // Only export CacheService as single entry point (L2: Distributed cache)
@@ -186,6 +189,8 @@ export class CacheModule {
       CacheKeyFactory,
       // Export health monitor for HealthService
       CacheHealthMonitorService,
+      // Export location cache service for location services
+      LocationCacheService,
     ];
 
     // Only export CacheWarmingService in non-worker services

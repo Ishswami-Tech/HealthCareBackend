@@ -305,6 +305,14 @@ export class CreateUserDto extends SimpleCreateUserDto {
   clinicId?: string;
 
   @ApiPropertyOptional({
+    example: 'location-uuid-123',
+    description: 'Associated clinic location ID (required for staff roles)',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+
+  @ApiPropertyOptional({
     example: 'studio-uuid-123',
     description: 'Associated studio ID',
   })
@@ -697,4 +705,13 @@ export class UpdateUserRoleDto {
   @IsOptional()
   @IsUUID(4, { message: 'Clinic ID must be a valid UUID' })
   clinicId?: string;
+
+  @ApiPropertyOptional({
+    example: 'location-id-123',
+    description:
+      'Clinic location ID for location-specific staff roles (required for all staff except patient)',
+  })
+  @IsOptional()
+  @IsUUID(4, { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
 }

@@ -41,12 +41,43 @@ const clinicAdminAuthTests = {
   },
 
   async testChangePassword(ctx) {
+    const originalPassword = ctx.credentials.password;
+    const tempPassword = 'NewPassword123!';
+
+    // Change password
     const result = await ctx.makeRequest('POST', '/auth/change-password', {
-      currentPassword: ctx.credentials.password,
-      newPassword: 'NewPassword123!',
+      currentPassword: originalPassword,
+      newPassword: tempPassword,
+      confirmPassword: tempPassword, // Required by ChangePasswordDto
     });
     const passed = result.ok || result.status === 400 || result.status === 401;
     ctx.recordTest('Change Password', passed);
+
+    // IMPORTANT: Revert password back to original to avoid breaking subsequent tests
+    if (result.ok) {
+      // Re-login with new password first
+      const reLoginResult = await ctx.makeRequest('POST', '/auth/login', {
+        email: ctx.credentials.email,
+        password: tempPassword,
+      });
+
+      if (reLoginResult.ok && reLoginResult.data?.data?.accessToken) {
+        ctx.accessToken = reLoginResult.data.data.accessToken;
+        ctx.refreshToken = reLoginResult.data.data.refreshToken;
+
+        // Change password back to original
+        await ctx
+          .makeRequest('POST', '/auth/change-password', {
+            currentPassword: tempPassword,
+            newPassword: originalPassword,
+            confirmPassword: originalPassword,
+          })
+          .catch(() => {
+            // Ignore errors when reverting - test already passed
+          });
+      }
+    }
+
     return passed;
   },
 
@@ -102,6 +133,3 @@ runClinicAdminAuthTests().catch(error => {
   console.error('Test suite failed:', error);
   process.exit(1);
 });
-
-
-

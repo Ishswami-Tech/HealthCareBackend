@@ -16,7 +16,7 @@ const receptionistNotificationTests = {
   },
 
   async testSendEmailNotification(ctx) {
-    const result = await ctx.makeRequest('POST', '/notification/email', {
+    const result = await ctx.makeRequest('POST', '/notifications/email', {
       to: ctx.credentials.email,
       subject: 'Test Email',
       body: 'Test email body',
@@ -36,7 +36,7 @@ const receptionistNotificationTests = {
       ctx.recordTest('Send Appointment Reminder', false, true);
       return false;
     }
-    const result = await ctx.makeRequest('POST', '/notification/appointment-reminder', {
+    const result = await ctx.makeRequest('POST', '/notifications/appointment-reminder', {
       appointmentId: ctx.appointmentId,
       reminderType: 'upcoming',
     });

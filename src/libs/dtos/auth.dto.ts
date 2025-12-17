@@ -138,18 +138,23 @@ export class RegisterDto {
     example: '+1234567890',
     pattern: '^\\+?[1-9]\\d{1,14}$',
   })
+  @ApiProperty({
+    description: 'User phone number',
+    example: '+1234567890',
+    pattern: '^\\+?[1-9]\\d{1,14}$',
+  })
   @IsString({ message: 'Phone number must be a string' })
   @IsNotEmpty({ message: 'Phone number is required' })
   phone!: string;
 
   @ApiProperty({
-    description: 'Clinic ID for multi-tenant context',
+    description: 'Clinic ID for multi-tenant context (REQUIRED)',
     example: 'clinic-uuid-123',
-    required: false,
+    required: true,
   })
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
-  @IsOptional()
-  clinicId?: string;
+  @IsNotEmpty({ message: 'Clinic ID is required for registration' })
+  clinicId!: string;
 
   @ApiProperty({
     description: 'Studio ID for multi-tenant context',

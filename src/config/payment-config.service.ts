@@ -273,7 +273,9 @@ export class PaymentConfigService implements OnModuleInit {
    */
   private async encryptConfig(config: ClinicPaymentConfig): Promise<ClinicPaymentConfig> {
     if (!this.credentialEncryption) {
-      throw new Error('CredentialEncryptionService is not available. CommunicationConfigModule must be imported.');
+      throw new Error(
+        'CredentialEncryptionService is not available. CommunicationConfigModule must be imported.'
+      );
     }
 
     const encrypted = { ...config };

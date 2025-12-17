@@ -536,6 +536,12 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'medical-records:read',
+        // Billing permissions - patients can view and manage their own billing data
+        'billing:read',
+        'subscriptions:read',
+        'invoices:read',
+        'payments:read',
+        'payments:create',
       ],
       PHARMACIST: [
         'prescriptions:read',
@@ -584,6 +590,22 @@ export class RbacService {
         'patients:read',
         'counseling:*',
         'medical-records:read',
+        'profile:read',
+        'profile:update',
+      ],
+      LOCATION_HEAD: [
+        'locations:read',
+        'locations:update',
+        'appointments:read',
+        'appointments:update',
+        'queue:read',
+        'queue:manage',
+        'staff:read',
+        'staff:assign',
+        'reports:read',
+        'prescriptions:read',
+        'inventory:read',
+        'inventory:update',
         'profile:read',
         'profile:update',
       ],
@@ -887,6 +909,12 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'medical-records:read',
+        // Billing permissions - patients can view and manage their own billing data
+        'billing:read',
+        'subscriptions:read',
+        'invoices:read',
+        'payments:read',
+        'payments:create',
       ],
     };
 

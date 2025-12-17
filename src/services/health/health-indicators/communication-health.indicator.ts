@@ -28,19 +28,20 @@ export class CommunicationHealthIndicator extends HealthIndicator {
       // Use timeout to prevent hanging health checks
       const healthStatus = await Promise.race([
         this.communicationHealthMonitor.getHealthStatus(),
-        new Promise<CommunicationHealthMonitorStatus>(resolve =>
-          setTimeout(() => {
-            resolve({
-              healthy: true, // Default to healthy on timeout to avoid false negatives
-              socket: { connected: false },
-              email: { connected: false },
-              whatsapp: { connected: false },
-              push: { connected: false },
-              metrics: { socketConnections: 0, emailQueueSize: 0 },
-              performance: {},
-              issues: ['Health check timeout - assuming healthy'],
-            });
-          }, 3000) // 3 second timeout
+        new Promise<CommunicationHealthMonitorStatus>(
+          resolve =>
+            setTimeout(() => {
+              resolve({
+                healthy: true, // Default to healthy on timeout to avoid false negatives
+                socket: { connected: false },
+                email: { connected: false },
+                whatsapp: { connected: false },
+                push: { connected: false },
+                metrics: { socketConnections: 0, emailQueueSize: 0 },
+                performance: {},
+                issues: ['Health check timeout - assuming healthy'],
+              });
+            }, 3000) // 3 second timeout
         ),
       ]);
 
@@ -57,8 +58,7 @@ export class CommunicationHealthIndicator extends HealthIndicator {
       const isTimeout = healthStatus.issues.some(issue => issue.includes('timeout'));
 
       // Check if at least one essential service is working (Socket or Email)
-      const hasEssentialService =
-        healthStatus.socket.connected || healthStatus.email.connected;
+      const hasEssentialService = healthStatus.socket.connected || healthStatus.email.connected;
 
       // Don't fail health check if:
       // 1. Circuit breaker is open (expected behavior - protecting system)
@@ -100,7 +100,8 @@ export class CommunicationHealthIndicator extends HealthIndicator {
       const result = this.getStatus(key, true, {
         degraded: true,
         error: error instanceof Error ? error.message : 'Unknown error',
-        message: 'Communication health check encountered an error but service may still be functional',
+        message:
+          'Communication health check encountered an error but service may still be functional',
       });
       return result; // Don't throw - allow health check to continue
     }

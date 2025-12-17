@@ -29,8 +29,9 @@ const doctorEhrTests = {
     const result = await ctx.makeRequest('POST', '/ehr/medical-history', {
       userId: ctx.patientId,
       clinicId: ctx.clinicId,
-      diagnosis: 'Test diagnosis',
+      condition: 'Test diagnosis',
       notes: 'Test medical history entry',
+      date: new Date().toISOString(),
     });
     const passed = result.ok || result.status === 400 || result.status === 403;
     ctx.recordTest('Create Medical History', passed);
@@ -110,9 +111,11 @@ const doctorEhrTests = {
     }
     const result = await ctx.makeRequest('POST', '/ehr/allergies', {
       userId: ctx.patientId,
-      clinicId: ctx.clinicId,
+      // clinicId is not part of CreateAllergyDto - removed to fix validation
       allergen: 'Peanuts',
       severity: 'moderate',
+      reaction: 'Skin rash and difficulty breathing',
+      diagnosedDate: new Date().toISOString(),
     });
     const passed = result.ok || result.status === 400 || result.status === 403;
     ctx.recordTest('Create Allergy', passed);
@@ -207,6 +210,3 @@ runDoctorEhrTests().catch(error => {
   console.error('Test suite failed:', error);
   process.exit(1);
 });
-
-
-

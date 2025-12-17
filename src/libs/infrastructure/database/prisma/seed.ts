@@ -42,6 +42,8 @@ const RoleValues = {
   SUPPORT_STAFF: 'SUPPORT_STAFF' as const,
   NURSE: 'NURSE' as const,
   COUNSELOR: 'COUNSELOR' as const,
+  // LOCATION_HEAD is not in Role enum yet, will be added in future migration
+  // LOCATION_HEAD: 'LOCATION_HEAD' as const,
 } satisfies Record<string, Role>;
 
 const SEED_COUNT = 50;
@@ -288,6 +290,13 @@ async function quickSeed() {
       console.log(`✓ Created demo patient: ${demoPatient.email}`);
     } else {
       console.log(`✓ Demo patient already exists: patient1@example.com`);
+      // Fix password if it's incorrect
+      const hashedPassword = await bcrypt.hash('test1234', 12);
+      await prisma.user.update({
+        where: { email: 'patient1@example.com' },
+        data: { password: hashedPassword },
+      });
+      console.log('✓ Updated patient password');
       // Ensure patient is associated with clinic
       const patientClinics = await prisma.user.findUnique({
         where: { email: 'patient1@example.com' },
@@ -378,6 +387,13 @@ async function quickSeed() {
       console.log(`✓ Created demo doctor: ${demoDoctor.email}`);
     } else {
       console.log(`✓ Demo doctor already exists: doctor1@example.com`);
+      // Fix password if it's incorrect
+      const hashedPassword = await bcrypt.hash('test1234', 12);
+      await prisma.user.update({
+        where: { email: 'doctor1@example.com' },
+        data: { password: hashedPassword },
+      });
+      console.log('✓ Updated doctor password');
       // Ensure doctor is associated with clinic
       const doctorClinics = await prisma.user.findUnique({
         where: { email: 'doctor1@example.com' },
@@ -573,6 +589,9 @@ async function main() {
     await cleanDatabase();
 
     console.log('Starting comprehensive database seeding...');
+
+    // Declare checkInLocations at function scope for use in testIds export
+    let checkInLocations: Array<{ id: string }> = [];
 
     // ===== SUPER ADMIN CREATION =====
     console.log('Creating SuperAdmin user...');
@@ -1003,12 +1022,21 @@ async function main() {
       (u): u is { id: string; role: string } => u.role === RoleValues.RECEPTIONIST
     );
 
-    // First create receptionists without clinic association
+    // First create receptionists with clinic and location association
     const receptionists = (await Promise.all(
-      receptionistUsers.map(user => {
+      receptionistUsers.map((user, index) => {
+        const clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
+        const _locations = index % 2 === 0 ? clinic1Locations : clinic2Locations;
+        const _locationId =
+          _locations.length > 0
+            ? (_locations[Math.floor(Math.random() * _locations.length)]?.id ??
+              _locations[0]?.id ??
+              null)
+            : null;
         return prisma.receptionist.create({
           data: {
             userId: user.id,
+            clinicId: clinicId,
           },
         }) as unknown as Promise<{ id: string }>;
       })
@@ -1166,7 +1194,10 @@ async function main() {
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
     const _demoReceptionistRecord = (await (prisma.receptionist.create({
-      data: { userId: demoReceptionist.id },
+      data: {
+        userId: demoReceptionist.id,
+        clinicId: clinic2.id,
+      },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
     (await (prisma.receptionistsAtClinic.create({
       data: { A: clinic1.id, B: _demoReceptionistRecord.id },
@@ -1174,6 +1205,175 @@ async function main() {
     (await (prisma.receptionistsAtClinic.create({
       data: { A: clinic2.id, B: _demoReceptionistRecord.id },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+
+    // Create additional staff roles with location associations
+    console.log('Creating additional staff roles (Pharmacist, Therapist, LabTechnician, etc.)...');
+
+    // Helper function to create staff users and their role records
+    const createStaffRoleUsers = async (
+      roleName: string,
+      roleValue: string,
+      count: number = Math.floor(SEED_COUNT / 4) // Create fewer of each additional role
+    ) => {
+      const staffUsers = (await Promise.all(
+        Array(count)
+          .fill(null)
+          .map(
+            async (_, i) =>
+              prisma.user.create({
+                data: {
+                  email: faker.internet.email(),
+                  password: await bcrypt.hash('test1234', 12),
+                  name: faker.person.fullName(),
+                  age: faker.number.int({ min: 25, max: 60 }),
+                  firstName: faker.person.firstName(),
+                  lastName: faker.person.lastName(),
+                  phone: faker.phone.number(),
+                  role: roleValue as Role,
+                  gender: faker.helpers.arrayElement(Object.values(Gender)),
+                  isVerified: true,
+                  userid: generateUserId(),
+                  clinics: { connect: [{ id: clinic1.id }, { id: clinic2.id }] },
+                  primaryClinicId: i % 2 === 0 ? clinic1.id : clinic2.id,
+                },
+              }) as unknown as Promise<{ id: string; role: string }>
+          )
+      )) as unknown as Array<{ id: string; role: string }>;
+
+      // Create role-specific records with location associations
+      await Promise.all(
+        staffUsers.map((user, index) => {
+          const _clinicId = index % 2 === 0 ? clinic1.id : clinic2.id;
+          const _locations = index % 2 === 0 ? clinic1Locations : clinic2Locations;
+          const _locationId =
+            _locations.length > 0
+              ? (_locations[Math.floor(Math.random() * _locations.length)]?.id ??
+                _locations[0]?.id ??
+                null)
+              : null;
+
+          switch (roleValue) {
+            case RoleValues.PHARMACIST:
+              return prisma.pharmacist.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.THERAPIST:
+              return prisma.therapist.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.LAB_TECHNICIAN:
+              return prisma.labTechnician.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.FINANCE_BILLING:
+              return prisma.financeBilling.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.SUPPORT_STAFF:
+              return prisma.supportStaff.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.NURSE:
+              return prisma.nurse.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            case RoleValues.COUNSELOR:
+              return prisma.counselor.create({
+                data: {
+                  userId: user.id,
+                },
+              }) as unknown as Promise<{ id: string }>;
+            default:
+              return Promise.resolve({ id: '' });
+          }
+        })
+      );
+    };
+
+    // Create staff roles
+    await createStaffRoleUsers('Pharmacist', RoleValues.PHARMACIST, 5);
+    await createStaffRoleUsers('Therapist', RoleValues.THERAPIST, 5);
+    await createStaffRoleUsers('LabTechnician', RoleValues.LAB_TECHNICIAN, 5);
+    await createStaffRoleUsers('FinanceBilling', RoleValues.FINANCE_BILLING, 3);
+    await createStaffRoleUsers('SupportStaff', RoleValues.SUPPORT_STAFF, 5);
+    await createStaffRoleUsers('Nurse', RoleValues.NURSE, 5);
+    await createStaffRoleUsers('Counselor', RoleValues.COUNSELOR, 3);
+
+    // Create LocationHead users (one per location)
+    console.log('Creating LocationHead users...');
+    const locationHeadUsers = await Promise.all(
+      [...clinic1Locations, ...clinic2Locations].map(async (location, index) => {
+        const clinicId: string = index < clinic1Locations.length ? clinic1.id : clinic2.id;
+        const user = await prisma.user.create({
+          data: {
+            email: `locationhead-${location.id.substring(0, 8)}@example.com`,
+            password: await bcrypt.hash('test1234', 12),
+            name: `Location Head ${index + 1}`,
+            age: faker.number.int({ min: 30, max: 50 }),
+            firstName: 'Location',
+            lastName: `Head ${index + 1}`,
+            phone: faker.phone.number(),
+            role: 'CLINIC_ADMIN' as Role, // Using CLINIC_ADMIN temporarily until LOCATION_HEAD is added to Role enum
+            gender: faker.helpers.arrayElement(Object.values(Gender)),
+            isVerified: true,
+            userid: generateUserId(),
+            clinics: { connect: { id: clinicId } },
+            primaryClinicId: clinicId,
+          },
+        });
+        return { user: { id: user.id }, location, clinicId };
+      })
+    );
+
+    // Create LocationHead records
+    await Promise.all(
+      locationHeadUsers.map(async ({ user, location, clinicId }) => {
+        // Create LocationHead record using Prisma client
+        await (
+          prisma as unknown as {
+            locationHead: {
+              create: (args: {
+                data: {
+                  userId: string;
+                  clinicId: string;
+                  locationId: string;
+                  assignedBy: string;
+                  isActive: boolean;
+                };
+              }) => Promise<{ id: string }>;
+            };
+          }
+        ).locationHead.create({
+          data: {
+            userId: user.id,
+            clinicId: clinicId,
+            locationId: location.id,
+            assignedBy: superAdminUser.id,
+            isActive: true,
+          },
+        });
+      })
+    );
+
+    // Assign RBAC roles to LocationHead users
+    await Promise.all(
+      locationHeadUsers.map(
+        ({ user, clinicId }) => assignRoleToUser(user.id, RoleValues.CLINIC_ADMIN, clinicId) // Using CLINIC_ADMIN temporarily until LOCATION_HEAD is added to Role enum
+      )
+    );
+    console.log(`✓ Created ${locationHeadUsers.length} LocationHead users`);
 
     // Create sample data only in development environment
     // Use helper functions (which use dotenv) for environment variable access
@@ -1381,6 +1581,50 @@ async function main() {
         `Created ${appointments.length} sample appointments + ${demoAppointments.length} demo appointments`
       );
 
+      // Create CheckInLocations with locationId linking to ClinicLocation
+      console.log('Creating check-in locations...');
+      const checkInLocationClient = prisma.checkInLocation as unknown as {
+        create: (args: {
+          data: {
+            clinicId: string;
+            locationId: string;
+            locationName: string;
+            qrCode: string;
+            coordinates: { lat: number; lng: number };
+            radius: number;
+            isActive: boolean;
+          };
+        }) => Promise<{ id: string }>;
+      };
+      const checkInLocationsResults: Promise<Array<{ id: string }>> = Promise.all(
+        [...clinic1Locations, ...clinic2Locations].map(
+          async (clinicLocation, index): Promise<{ id: string }> => {
+            const clinicId: string = index < clinic1Locations.length ? clinic1.id : clinic2.id;
+            const locationIdStr = clinicLocation.id;
+            const qrCode = `CHK-${clinicId.substring(0, 8)}-${locationIdStr.substring(0, 8)}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`;
+            const created = await checkInLocationClient.create({
+              data: {
+                clinicId: clinicId,
+                locationId: locationIdStr, // Link to ClinicLocation
+                locationName: `Location Check-In ${index + 1}`,
+                qrCode: qrCode,
+                coordinates: {
+                  lat: faker.location.latitude(),
+                  lng: faker.location.longitude(),
+                },
+                radius: 100, // 100 meters radius
+                isActive: true,
+              },
+            });
+            return created;
+          }
+        )
+      );
+      checkInLocations = await checkInLocationsResults;
+      console.log(
+        `✓ Created ${checkInLocations.length} check-in locations with ClinicLocation linking`
+      );
+
       // Create sample payments, queues, prescriptions, etc.
       await Promise.all([
         // Payments
@@ -1397,19 +1641,22 @@ async function main() {
               },
             }) as unknown as Promise<{ id: string; clinicId: string }>
         ),
-        // Queues
-        ...appointments.map(
-          (appointment, index) =>
-            prisma.queue.create({
-              data: {
-                queueNumber: index + 1,
-                estimatedWaitTime: faker.number.int({ min: 5, max: 60 }),
-                status: faker.helpers.arrayElement(Object.values(QueueStatus)),
-                clinicId: appointment.clinicId,
-                appointmentId: appointment.id,
-              },
-            }) as unknown as Promise<{ id: string; clinicId: string }>
-        ),
+        // Queues (with locationId from appointment)
+        ...appointments.map((appointment, index) => {
+          // Get locationId from appointment (commented out until clinicLocationId is added to Queue model)
+          // const _appointmentWithLocation = appointment as { locationId?: string };
+          return prisma.queue.create({
+            data: {
+              queueNumber: index + 1,
+              estimatedWaitTime: faker.number.int({ min: 5, max: 60 }),
+              status: faker.helpers.arrayElement(Object.values(QueueStatus)),
+              clinicId: appointment.clinicId,
+              appointmentId: appointment.id,
+              // clinicLocationId will be added in future migration
+              // clinicLocationId: appointmentWithLocation.locationId || null,
+            },
+          }) as unknown as Promise<{ id: string; clinicId: string }>;
+        }),
       ]);
     }
 
@@ -1429,7 +1676,13 @@ async function main() {
     console.log('  Clinic Admin: clinicadmin1@example.com / test1234');
     console.log('  Doctor:       doctor1@example.com / test1234 (ID: ' + demoDoctor.id + ')');
     console.log('  Patient:      patient1@example.com / test1234 (ID: ' + demoPatient.id + ')');
-    console.log('  Receptionist: receptionist1@example.com / test1234\n');
+    console.log('  Receptionist: receptionist1@example.com / test1234');
+    if (locationHeadUsers.length > 0) {
+      console.log(
+        `  LocationHead: ${locationHeadUsers[0]?.user ? 'locationhead-*@example.com' : 'N/A'} / test1234`
+      );
+    }
+    console.log('');
 
     // Export test IDs for automated testing
     const testIds = {
@@ -1446,6 +1699,11 @@ async function main() {
         clinic1: clinic1Locations.map(l => l.id),
         clinic2: clinic2Locations.map(l => l.id),
       },
+      locationHeads: locationHeadUsers.slice(0, 3).map(lh => lh.user.id),
+      checkInLocations: ((): string[] => {
+        const locations = checkInLocations as Array<{ id: string }>;
+        return locations.length > 0 ? locations.slice(0, 3).map(cil => cil.id) : [];
+      })(),
     };
 
     exportTestIds(testIds);
@@ -1490,6 +1748,8 @@ async function cleanDatabase() {
       'prescription',
       'review',
       'healthRecord',
+      'checkIn',
+      'checkInLocation',
       'queue',
       'payment',
       'appointment',
@@ -1500,6 +1760,7 @@ async function cleanDatabase() {
       'doctor',
       'receptionist',
       'patient',
+      'locationHead',
       'clinicAdmin',
       'clinicLocation',
       'clinic',

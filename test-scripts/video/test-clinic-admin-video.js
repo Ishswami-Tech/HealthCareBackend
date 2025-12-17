@@ -108,3 +108,10 @@ runClinicAdminVideoTests().catch(error => {
 
 
 
+
+
+
+
+
+
+

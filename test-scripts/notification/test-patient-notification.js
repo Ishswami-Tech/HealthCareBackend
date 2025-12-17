@@ -17,7 +17,7 @@ const patientNotificationTests = {
   },
 
   async testSubscribeToTopic(ctx) {
-    const result = await ctx.makeRequest('POST', '/notification/push/subscribe', {
+    const result = await ctx.makeRequest('POST', '/notifications/push/subscribe', {
       deviceToken: 'test-device-token',
       topic: 'appointments',
     });
@@ -32,7 +32,7 @@ const patientNotificationTests = {
   },
 
   async testUnsubscribeFromTopic(ctx) {
-    const result = await ctx.makeRequest('POST', '/notification/push/unsubscribe', {
+    const result = await ctx.makeRequest('POST', '/notifications/push/unsubscribe', {
       deviceToken: 'test-device-token',
       topic: 'appointments',
     });
@@ -47,7 +47,7 @@ const patientNotificationTests = {
   },
 
   async testSendEmailNotification(ctx) {
-    const result = await ctx.makeRequest('POST', '/notification/email', {
+    const result = await ctx.makeRequest('POST', '/notifications/email', {
       to: ctx.credentials.email,
       subject: 'Test Email',
       body: 'Test email body',
@@ -67,7 +67,7 @@ const patientNotificationTests = {
       ctx.recordTest('Get Chat History', false, true);
       return false;
     }
-    const result = await ctx.makeRequest('GET', `/notification/chat-history/${ctx.userId}`);
+    const result = await ctx.makeRequest('GET', `/notifications/chat-history/${ctx.userId}`);
     const passed =
       result.ok || result.status === 403 || result.status === 404 || result.status === 500; // 403 = permission, 404/500 = no data or backend issue
     ctx.recordTest('Get Chat History', passed);

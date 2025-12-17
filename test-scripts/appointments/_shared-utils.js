@@ -164,7 +164,17 @@ class TestContext {
       this.refreshToken = result.data.data.refreshToken;
       this.userId = result.data.data.user?.id;
       this.clinicId = result.data.data.user?.clinicId || result.data.data.user?.primaryClinicId;
-      logSuccess(`Logged in as ${this.roleName} (User ID: ${this.userId})`);
+      // Try to get locationId from user's role-specific data (e.g., receptionist, clinicAdmin)
+      if (result.data.data.user?.receptionists?.[0]?.locationId) {
+        this.locationId = result.data.data.user.receptionists[0].locationId;
+      } else if (result.data.data.user?.clinicAdmins?.[0]?.locationId) {
+        this.locationId = result.data.data.user.clinicAdmins[0].locationId;
+      } else if (result.data.data.user?.locationId) {
+        this.locationId = result.data.data.user.locationId;
+      }
+      logSuccess(
+        `Logged in as ${this.roleName} (User ID: ${this.userId}, Clinic: ${this.clinicId}, Location: ${this.locationId || 'N/A'})`
+      );
       return true;
     } else {
       logError(`Login failed: ${result.status} - ${JSON.stringify(result.data)}`);
@@ -239,6 +249,5 @@ module.exports = {
   wait,
   TestContext,
 };
-
 
 

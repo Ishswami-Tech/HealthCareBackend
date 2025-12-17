@@ -1471,7 +1471,7 @@ export abstract class BaseRepository<
     // Add healthcare-specific options
     if (options.rowLevelSecurity && options.clinicId) {
       const existingWhere = (queryOptions['where'] || {}) as Record<string, unknown>;
-      
+
       // Doctor model: Transform any existing clinicId to clinics relation
       if (
         this.entityName.toLowerCase() === 'doctor' &&

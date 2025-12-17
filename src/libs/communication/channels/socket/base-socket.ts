@@ -105,11 +105,26 @@ export class BaseSocket
     if (!this.isInitialized || !this.loggingService) {
       // Wait a bit for onModuleInit to complete
       // This handles the case where WebSocket initialization happens before OnModuleInit
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Retry up to 3 times with increasing delays
+      let retries = 0;
+      const maxRetries = 3;
+      const baseDelay = 100;
 
-      // If still not initialized after delay, log warning but continue
+      while (retries < maxRetries && (!this.isInitialized || !this.loggingService)) {
+        await new Promise(resolve => setTimeout(resolve, baseDelay * (retries + 1)));
+        retries++;
+      }
+
+      // If still not initialized after retries, continue without logging (expected in some cases)
       if (!this.isInitialized || !this.loggingService) {
-        console.warn('[BaseSocket] LoggingService not available, initializing without logging');
+        // This is expected behavior when LoggingService initializes after WebSocket gateway
+        // Reduce to debug level since it's not an error - the service will work without logging
+        // Note: Using console.warn instead of console.debug as per linting rules
+        if (process.env['NODE_ENV'] === 'development') {
+          console.warn(
+            '[BaseSocket] LoggingService not available yet, initializing without logging (will retry later)'
+          );
+        }
         // Continue initialization without logging
         this.server = server;
         if (this.socketService) {

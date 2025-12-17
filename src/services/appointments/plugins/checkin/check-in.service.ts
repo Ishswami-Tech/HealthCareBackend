@@ -24,6 +24,10 @@ import type {
   CheckedInAppointmentsResponse,
   LocationQueueResponse,
 } from '@core/types/appointment.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 type Appointment = AppointmentBase;
 type Patient = PatientBase;
 
@@ -390,9 +394,23 @@ export class CheckInService {
 
     try {
       // Validate appointment is checked in
-      // Check if already checked in (placeholder - would check database)
-      // const checkIn = await this.getExistingCheckIn(appointmentId);
-      const checkIn = null;
+      const checkIn = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkIn: {
+              findFirst: <T>(args: T) => Promise<{ id: string } | null>;
+            };
+          }
+        ).checkIn.findFirst({
+          where: {
+            appointmentId,
+          },
+          select: {
+            id: true,
+          },
+        } as never);
+      });
+
       if (!checkIn) {
         throw new BadRequestException(
           'Appointment must be checked in before starting consultation'
@@ -527,9 +545,9 @@ export class CheckInService {
     }
   }
 
-  async getLocationQueue(clinicId: string): Promise<LocationQueueResponse> {
+  async getLocationQueue(locationId: string, clinicId?: string): Promise<LocationQueueResponse> {
     const startTime = Date.now();
-    const cacheKey = `queue:location:${clinicId}`;
+    const cacheKey = `queue:location:${locationId}`;
 
     try {
       // Try to get from cache first
@@ -538,11 +556,11 @@ export class CheckInService {
         return JSON.parse(cached as string) as LocationQueueResponse;
       }
 
-      // Get location queue from database (placeholder implementation)
-      const queue = await this.fetchLocationQueue(clinicId);
+      // Get location queue from database
+      const queue = await this.fetchLocationQueue(locationId, clinicId);
 
       const result: LocationQueueResponse = {
-        locationId: clinicId, // Using clinicId as locationId for now
+        locationId: locationId,
         queue: queue as AppointmentQueuePosition[],
         total: queue.length,
         retrievedAt: new Date().toISOString(),
@@ -557,7 +575,8 @@ export class CheckInService {
         'Location queue retrieved successfully',
         'CheckInService',
         {
-          clinicId,
+          locationId,
+          clinicId: clinicId || 'unknown',
           queueLength: queue.length,
           responseTime: Date.now() - startTime,
         }
@@ -571,7 +590,8 @@ export class CheckInService {
         `Failed to get location queue: ${_error instanceof Error ? _error.message : String(_error)}`,
         'CheckInService',
         {
-          clinicId,
+          locationId,
+          clinicId: clinicId || 'unknown',
           _error: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -753,18 +773,113 @@ export class CheckInService {
     );
   }
 
-  private fetchLocationQueue(_clinicId: string): Promise<unknown[]> {
-    // This would integrate with the actual queue service
-    // For now, return mock data
-    return Promise.resolve([
-      {
-        appointmentId: 'app-1',
-        patientName: 'John Doe',
-        doctorName: 'Dr. Smith',
-        position: 1,
-        estimatedWaitTime: 10,
-      },
-    ]);
+  private async fetchLocationQueue(locationId: string, clinicId?: string): Promise<unknown[]> {
+    // Fetch queue entries for the specific location from database
+    try {
+      const queueEntries = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          appointmentId: string;
+          position: number;
+          status: string;
+          appointment?: {
+            id: string;
+            patient?: { user?: { name: string } };
+            doctor?: { user?: { name: string } };
+          };
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          queue: {
+            findMany: <T>(args: T) => Promise<
+              Array<{
+                id: string;
+                appointmentId: string;
+                queueNumber: number;
+                status: string;
+                appointment?: {
+                  id: string;
+                  patient?: { user?: { name: string } };
+                  doctor?: { user?: { name: string } };
+                };
+              }>
+            >;
+          };
+        };
+        // Query Queue model filtered by locationId
+        const queues = await typedClient.queue.findMany({
+          where: {
+            locationId: locationId,
+            ...(clinicId && { clinicId: clinicId }),
+            status: { in: ['WAITING', 'IN_PROGRESS'] },
+          } as PrismaDelegateArgs,
+          include: {
+            appointment: {
+              include: {
+                patient: {
+                  include: {
+                    user: {
+                      select: { name: true } as PrismaDelegateArgs,
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+                doctor: {
+                  include: {
+                    user: {
+                      select: { name: true } as PrismaDelegateArgs,
+                    } as PrismaDelegateArgs,
+                  } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs,
+          orderBy: {
+            queueNumber: 'asc',
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        return queues.map(q => ({
+          id: q.id,
+          appointmentId: q.appointmentId,
+          position: q.queueNumber,
+          status: q.status,
+          appointment: q.appointment,
+        })) as Array<{
+          id: string;
+          appointmentId: string;
+          position: number;
+          status: string;
+          appointment?: {
+            id: string;
+            patient?: { user?: { name: string } };
+            doctor?: { user?: { name: string } };
+          };
+        }>;
+      });
+
+      return queueEntries.map(entry => ({
+        appointmentId: entry.appointmentId,
+        patientName: entry.appointment?.patient?.user?.name || 'Unknown',
+        doctorName: entry.appointment?.doctor?.user?.name || 'Unknown',
+        position: entry.position,
+        status: entry.status,
+        estimatedWaitTime: entry.position * 10, // Simple calculation: 10 min per position
+      }));
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to fetch location queue: ${error instanceof Error ? error.message : String(error)}`,
+        'CheckInService.fetchLocationQueue',
+        {
+          locationId,
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      // Return empty array on error
+      return [];
+    }
   }
 
   // =============================================

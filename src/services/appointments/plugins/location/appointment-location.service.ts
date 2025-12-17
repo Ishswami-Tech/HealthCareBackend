@@ -1,8 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache';
+import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
+import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
 
 import type {
   AppointmentLocation,
@@ -16,22 +18,71 @@ export type Location = AppointmentLocation;
 
 @Injectable()
 export class AppointmentLocationService {
-  private readonly LOCATION_CACHE_TTL = 3600; // 1 hour
   private readonly DOCTORS_CACHE_TTL = 1800; // 30 minutes
   private readonly STATS_CACHE_TTL = 300; // 5 minutes
 
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    @Optional()
+    @Inject(forwardRef(() => LocationCacheService))
+    private readonly locationCacheService?: LocationCacheService,
+    @Optional()
+    @Inject(forwardRef(() => ClinicLocationService))
+    private readonly clinicLocationService?: ClinicLocationService
   ) {}
 
-  async getAllLocations(domain: string): Promise<unknown> {
+  async getAllLocations(domain: string, clinicId?: string): Promise<unknown> {
     const startTime = Date.now();
-    const cacheKey = `locations:${domain}`;
 
     try {
-      // Try to get from cache first
+      // If clinicId provided, use LocationCacheService for shared cache
+      if (clinicId && this.locationCacheService) {
+        const cached = await this.locationCacheService.getLocationsByClinic(clinicId, false);
+        if (cached) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Locations retrieved from shared cache',
+            'AppointmentLocationService',
+            { domain, clinicId, responseTime: Date.now() - startTime }
+          );
+          return {
+            locations: cached,
+            total: cached.length,
+            domain,
+            retrievedAt: new Date().toISOString(),
+          };
+        }
+
+        // Cache miss - fetch from ClinicLocationService
+        if (this.clinicLocationService) {
+          const locations = await this.clinicLocationService.getLocations(clinicId, false);
+          const result = {
+            locations,
+            total: locations.length,
+            domain,
+            retrievedAt: new Date().toISOString(),
+          };
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Locations retrieved from database',
+            'AppointmentLocationService',
+            {
+              domain,
+              clinicId,
+              count: locations.length,
+              responseTime: Date.now() - startTime,
+            }
+          );
+          return result;
+        }
+      }
+
+      // Fallback to original implementation if no clinicId or services not available
+      const cacheKey = `locations:${domain}`;
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
         void this.loggingService.log(
@@ -55,7 +106,7 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.LOCATION_CACHE_TTL);
+      await this.cacheService.set(cacheKey, JSON.stringify(result), 3600);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -78,6 +129,7 @@ export class AppointmentLocationService {
         'AppointmentLocationService',
         {
           domain,
+          clinicId,
           _error: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -87,10 +139,56 @@ export class AppointmentLocationService {
 
   async getLocationById(locationId: string, domain: string): Promise<unknown> {
     const startTime = Date.now();
-    const cacheKey = `location:${locationId}:${domain}`;
 
     try {
-      // Try to get from cache first
+      // Use LocationCacheService for shared cache (single source of truth)
+      if (this.locationCacheService) {
+        const cached = await this.locationCacheService.getLocation(locationId, false);
+        if (cached) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Location retrieved from shared cache',
+            'AppointmentLocationService',
+            { locationId, domain, responseTime: Date.now() - startTime }
+          );
+          return {
+            location: cached,
+            domain,
+            retrievedAt: new Date().toISOString(),
+          };
+        }
+
+        // Cache miss - fetch from ClinicLocationService
+        if (this.clinicLocationService) {
+          const location = await this.clinicLocationService.getClinicLocationById(
+            locationId,
+            false
+          );
+          if (!location) {
+            throw new NotFoundException(`Location not found: ${locationId}`);
+          }
+
+          const result = {
+            location,
+            domain,
+            retrievedAt: new Date().toISOString(),
+          };
+
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Location retrieved from database',
+            'AppointmentLocationService',
+            { locationId, domain, responseTime: Date.now() - startTime }
+          );
+
+          return result;
+        }
+      }
+
+      // Fallback to original implementation if services not available
+      const cacheKey = `location:${locationId}:${domain}`;
       const cached = await this.cacheService.get(cacheKey);
       if (cached) {
         return JSON.parse(cached as string);
@@ -110,7 +208,7 @@ export class AppointmentLocationService {
       };
 
       // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.LOCATION_CACHE_TTL);
+      await this.cacheService.set(cacheKey, JSON.stringify(result), 3600);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -241,11 +339,20 @@ export class AppointmentLocationService {
     }
   }
 
-  async invalidateLocationsCache(domain: string): Promise<unknown> {
+  async invalidateLocationsCache(
+    domain: string,
+    clinicId?: string,
+    locationId?: string
+  ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
-      // Invalidate all location-related caches for the domain
+      // Invalidate shared location cache if locationId provided
+      if (locationId && this.locationCacheService) {
+        await this.locationCacheService.invalidateLocation(locationId, clinicId);
+      }
+
+      // Invalidate domain-specific caches
       const patterns = [
         `locations:${domain}`,
         `location:*:${domain}`,
@@ -260,7 +367,7 @@ export class AppointmentLocationService {
         LogLevel.INFO,
         'Location cache invalidated successfully',
         'AppointmentLocationService',
-        { domain, responseTime: Date.now() - startTime }
+        { domain, clinicId, locationId, responseTime: Date.now() - startTime }
       );
 
       return { success: true, message: 'Location cache invalidated' };
@@ -272,6 +379,8 @@ export class AppointmentLocationService {
         'AppointmentLocationService',
         {
           domain,
+          clinicId,
+          locationId,
           _error: _error instanceof Error ? _error.stack : undefined,
         }
       );

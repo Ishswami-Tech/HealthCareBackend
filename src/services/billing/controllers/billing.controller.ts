@@ -49,7 +49,7 @@ export class BillingController {
   // ============ Billing Plans ============
 
   @Get('plans')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR, Role.PATIENT)
   @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plans:{clinicId}',

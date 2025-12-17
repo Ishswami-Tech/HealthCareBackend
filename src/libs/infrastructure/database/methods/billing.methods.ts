@@ -43,7 +43,6 @@ export class BillingMethods extends DatabaseMethodsBase {
         include: {
           subscription: true,
           payments: true,
-          billingPlan: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -59,7 +58,6 @@ export class BillingMethods extends DatabaseMethodsBase {
         include: {
           subscription: true,
           payments: true,
-          billingPlan: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -76,7 +74,6 @@ export class BillingMethods extends DatabaseMethodsBase {
           include: {
             subscription: true,
             payments: true,
-            billingPlan: true,
           },
         });
       },
@@ -110,7 +107,6 @@ export class BillingMethods extends DatabaseMethodsBase {
           include: {
             subscription: true,
             payments: true,
-            billingPlan: true,
           },
         });
       },
@@ -140,8 +136,10 @@ export class BillingMethods extends DatabaseMethodsBase {
       return await prisma.subscription.findUnique({
         where: { id },
         include: {
-          billingPlan: true,
+          plan: true,
           invoices: true,
+          payments: true,
+          appointments: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -155,8 +153,10 @@ export class BillingMethods extends DatabaseMethodsBase {
       return await prisma.subscription.findMany({
         where,
         include: {
-          billingPlan: true,
+          plan: true,
           invoices: true,
+          payments: true,
+          appointments: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -171,8 +171,10 @@ export class BillingMethods extends DatabaseMethodsBase {
         return await prisma.subscription.create({
           data: data as never,
           include: {
-            billingPlan: true,
+            plan: true,
             invoices: true,
+            payments: true,
+            appointments: true,
           },
         });
       },
@@ -207,8 +209,10 @@ export class BillingMethods extends DatabaseMethodsBase {
           where: { id },
           data: data as never,
           include: {
-            billingPlan: true,
+            plan: true,
             invoices: true,
+            payments: true,
+            appointments: true,
           },
         });
       },
@@ -239,7 +243,6 @@ export class BillingMethods extends DatabaseMethodsBase {
         where: { id },
         include: {
           subscriptions: true,
-          invoices: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -254,7 +257,6 @@ export class BillingMethods extends DatabaseMethodsBase {
         where,
         include: {
           subscriptions: true,
-          invoices: true,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).build());
@@ -270,7 +272,6 @@ export class BillingMethods extends DatabaseMethodsBase {
           data: data as never,
           include: {
             subscriptions: true,
-            invoices: true,
           },
         });
       },
@@ -306,7 +307,6 @@ export class BillingMethods extends DatabaseMethodsBase {
           data: data as never,
           include: {
             subscriptions: true,
-            invoices: true,
           },
         });
       },
@@ -336,7 +336,6 @@ export class BillingMethods extends DatabaseMethodsBase {
           where: { id },
           include: {
             subscriptions: true,
-            invoices: true,
           },
         });
       },

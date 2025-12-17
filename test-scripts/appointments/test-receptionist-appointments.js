@@ -97,7 +97,9 @@ const receptionistTests = {
     const result = await ctx.makeRequest('POST', `/appointments/${ctx.appointmentId}/check-in`, {
       locationId: ctx.locationId || undefined,
     });
-    const passed = result.ok || result.status === 400;
+    // Only pass if check-in actually succeeded (not validation errors)
+    const passed = result.ok;
+    ctx.checkInSucceeded = passed; // Track check-in success for subsequent tests
     ctx.recordTest('Check In Appointment', passed);
     return passed;
   },
@@ -136,6 +138,11 @@ const receptionistTests = {
   async testStartConsultation(ctx) {
     if (!ctx.appointmentId || !ctx.doctorId) {
       ctx.recordTest('Start Consultation', false, true);
+      return false;
+    }
+    // Consultation requires check-in to succeed first
+    if (ctx.checkInSucceeded === false) {
+      ctx.recordTest('Start Consultation', false, true); // Skip if check-in failed
       return false;
     }
     const result = await ctx.makeRequest('POST', `/appointments/${ctx.appointmentId}/start`, {
@@ -198,6 +205,12 @@ const receptionistTests = {
       ctx.recordTest('Get Video Status', false, true);
       return false;
     }
+    // Check if appointment is VIDEO_CALL type before testing video endpoints
+    const appointmentResult = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}`);
+    if (appointmentResult.ok && appointmentResult.data?.data?.type !== 'VIDEO_CALL') {
+      ctx.recordTest('Get Video Status', false, true); // Skip for non-video appointments
+      return false;
+    }
     const result = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}/video/status`);
     const passed = result.ok || result.status === 400 || result.status === 404;
     ctx.recordTest('Get Video Status', passed);
@@ -209,10 +222,8 @@ const receptionistTests = {
       ctx.recordTest('Scan QR Code', false, true);
       return false;
     }
-    const mockQRCode = JSON.stringify({
-      locationId: ctx.locationId,
-      type: 'LOCATION_CHECK_IN',
-    });
+    // Generate a mock QR code in the expected format: CHK-{clinicId}-{hash}-{timestamp}-{random}
+    const mockQRCode = `CHK-TEST1234-ABC12345-${Date.now()}-test`;
     const result = await ctx.makeRequest('POST', '/appointments/check-in/scan-qr', {
       qrCode: mockQRCode,
       appointmentId: ctx.appointmentId || undefined,
@@ -302,6 +313,3 @@ runReceptionistTests().catch(error => {
   console.error('Test suite failed:', error);
   process.exit(1);
 });
-
-
-

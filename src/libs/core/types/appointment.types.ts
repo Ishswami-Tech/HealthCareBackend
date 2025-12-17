@@ -308,6 +308,7 @@ export interface AppointmentMetricsData {
 export interface CheckInLocation {
   id: string;
   clinicId: string;
+  locationId?: string | null; // Link to ClinicLocation
   locationName: string;
   coordinates: Record<string, number>;
   radius: number;
@@ -1080,7 +1081,14 @@ export interface NotificationData {
   patientId: string;
   doctorId: string;
   clinicId: string;
-  type: 'reminder' | 'confirmation' | 'cancellation' | 'reschedule' | 'follow_up';
+  type:
+    | 'reminder'
+    | 'confirmation'
+    | 'cancellation'
+    | 'reschedule'
+    | 'follow_up'
+    | 'created'
+    | 'updated';
   scheduledFor?: Date;
   priority: 'low' | 'normal' | 'high' | 'urgent';
   channels: ('email' | 'sms' | 'whatsapp' | 'push' | 'socket')[];
@@ -1095,6 +1103,7 @@ export interface NotificationData {
     notes?: string;
     rescheduleUrl?: string;
     cancelUrl?: string;
+    changes?: Record<string, unknown>;
   };
 }
 

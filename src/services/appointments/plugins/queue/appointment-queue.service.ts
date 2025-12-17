@@ -42,10 +42,11 @@ export class AppointmentQueueService {
   async getDoctorQueue(
     doctorId: string,
     date: string,
-    domain: string
+    domain: string,
+    locationId?: string
   ): Promise<DoctorQueueResponse> {
     const startTime = Date.now();
-    const cacheKey = `queue:doctor:${doctorId}:${date}:${domain}`;
+    const cacheKey = `queue:doctor:${doctorId}:${date}:${domain}${locationId ? `:${locationId}` : ''}`;
 
     try {
       // Try to get from cache first
@@ -56,7 +57,7 @@ export class AppointmentQueueService {
           LogLevel.INFO,
           'Doctor queue retrieved from cache',
           'AppointmentQueueService',
-          { doctorId, date, domain, responseTime: Date.now() - startTime }
+          { doctorId, date, domain, locationId, responseTime: Date.now() - startTime }
         );
         return cached;
       }
@@ -65,7 +66,16 @@ export class AppointmentQueueService {
       const queueKey = `queue:${domain}:${doctorId}:${date}`;
       const queueEntries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      const queue: QueueEntryData[] = queueEntries.map((entry, index) => {
+      // Filter by locationId if provided
+      let filteredEntries = queueEntries;
+      if (locationId) {
+        filteredEntries = queueEntries.filter(entry => {
+          const entryData = JSON.parse(entry) as QueueEntryData;
+          return entryData.locationId === locationId;
+        });
+      }
+
+      const queue: QueueEntryData[] = filteredEntries.map((entry, index) => {
         const entryData = JSON.parse(entry) as QueueEntryData;
         return {
           ...entryData,
@@ -96,6 +106,7 @@ export class AppointmentQueueService {
           doctorId,
           date,
           domain,
+          locationId: locationId || 'all',
           queueLength: queue.length,
           responseTime: Date.now() - startTime,
         }
