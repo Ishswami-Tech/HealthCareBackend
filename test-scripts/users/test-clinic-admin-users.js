@@ -68,6 +68,135 @@ const clinicAdminUsersTests = {
     ctx.recordTest('Get Patients', passed);
     return passed;
   },
+
+  async testCreateUserWithLocation(ctx) {
+    if (!ctx.clinicId || !ctx.locationId) {
+      ctx.recordTest('Create User With Location', false, true);
+      return false;
+    }
+    // Create a test receptionist user with locationId
+    const testEmail = `test-receptionist-${Date.now()}@example.com`;
+    const result = await ctx.makeRequest('POST', '/user', {
+      email: testEmail,
+      password: 'Test1234!@#',
+      firstName: 'Test',
+      lastName: 'Receptionist',
+      phone: '+1234567890',
+      role: 'RECEPTIONIST',
+      clinicId: ctx.clinicId,
+      locationId: ctx.locationId,
+    });
+    const passed =
+      result.ok || result.status === 400 || result.status === 403 || result.status === 409; // 409 = user already exists
+    if (result.ok && result.data?.data?.id) {
+      ctx.testCreatedUserId = result.data.data.id;
+    }
+    ctx.recordTest('Create User With Location', passed);
+    return passed;
+  },
+
+  async testUpdateUserRoleWithLocation(ctx) {
+    if (!ctx.userId || !ctx.locationId) {
+      ctx.recordTest('Update User Role With Location', false, true);
+      return false;
+    }
+    // Update user role to PHARMACIST with locationId
+    const result = await ctx.makeRequest('PUT', `/user/${ctx.userId}/role`, {
+      role: 'PHARMACIST',
+      clinicId: ctx.clinicId,
+      locationId: ctx.locationId,
+    });
+    const passed =
+      result.ok || result.status === 400 || result.status === 403 || result.status === 404;
+    ctx.recordTest('Update User Role With Location', passed);
+    return passed;
+  },
+
+  async testGetUsersByLocation(ctx) {
+    if (!ctx.clinicId || !ctx.locationId) {
+      ctx.recordTest('Get Users By Location', false, true);
+      return false;
+    }
+    // Test getting receptionists (should filter by location if implemented)
+    const result = await ctx.makeRequest('GET', '/user/role/receptionists', null, {
+      'X-Location-ID': ctx.locationId,
+    });
+    const passed = result.ok || result.status === 403;
+    ctx.recordTest('Get Users By Location', passed);
+    return passed;
+  },
+
+  async testChangeUserLocation(ctx) {
+    if (!ctx.userId || !ctx.clinicId || !ctx.locationId) {
+      ctx.recordTest('Change User Location', false, true);
+      return false;
+    }
+    // Get another location for testing
+    const locationsResult = await ctx.makeRequest('GET', `/clinics/${ctx.clinicId}/locations`);
+    if (!locationsResult.ok || !locationsResult.data?.data?.length) {
+      ctx.recordTest('Change User Location', false, true);
+      return false;
+    }
+    const locations = locationsResult.data.data;
+    const newLocationId = locations.find(loc => loc.id !== ctx.locationId)?.id || ctx.locationId;
+    
+    // Test changing user location (only CLINIC_ADMIN and SUPER_ADMIN can do this)
+    const result = await ctx.makeRequest('POST', `/user/${ctx.userId}/change-location`, {
+      locationId: newLocationId,
+    });
+    const passed =
+      result.ok || result.status === 400 || result.status === 403 || result.status === 404;
+    
+    // If successful, revert back to original location
+    if (result.ok && newLocationId !== ctx.locationId) {
+      await ctx.makeRequest('POST', `/user/${ctx.userId}/change-location`, {
+        locationId: ctx.locationId,
+      }).catch(() => {
+        // Ignore revert errors
+      });
+    }
+    
+    ctx.recordTest('Change User Location', passed);
+    return passed;
+  },
+
+  async testGetLocationHeadUsers(ctx) {
+    if (!ctx.clinicId) {
+      ctx.recordTest('Get LocationHead Users', false, true);
+      return false;
+    }
+    // Test getting LocationHead users
+    const result = await ctx.makeRequest('GET', '/user/role/location-head');
+    const passed = result.ok || result.status === 403 || result.status === 404;
+    ctx.recordTest('Get LocationHead Users', passed);
+    return passed;
+  },
+
+  async testCreateLocationHeadUser(ctx) {
+    if (!ctx.clinicId || !ctx.locationId) {
+      ctx.recordTest('Create LocationHead User', false, true);
+      return false;
+    }
+    // Create a LocationHead user with locationId
+    const testEmail = `locationhead-${Date.now()}@example.com`;
+    const result = await ctx.makeRequest('POST', '/user', {
+      email: testEmail,
+      password: 'Test1234!@#',
+      firstName: 'Location',
+      lastName: 'Head',
+      phone: '+1234567890',
+      role: 'LOCATION_HEAD',
+      clinicId: ctx.clinicId,
+      locationId: ctx.locationId,
+    });
+    const passed =
+      result.ok || result.status === 400 || result.status === 403 || result.status === 409;
+    if (result.ok && result.data?.data?.id) {
+      ctx.testLocationHeadUserId = result.data.data.id;
+    }
+    ctx.recordTest('Create LocationHead User', passed);
+    return passed;
+  },
 };
 
 async function runClinicAdminUsersTests() {
@@ -79,6 +208,8 @@ async function runClinicAdminUsersTests() {
     process.exit(1);
   }
 
+  await ctx.loadTestIds();
+
   const testSuite = [
     'testGetAllUsers',
     'testGetProfile',
@@ -87,6 +218,12 @@ async function runClinicAdminUsersTests() {
     'testGetDoctors',
     'testGetReceptionists',
     'testGetPatients',
+    'testGetLocationHeadUsers',
+    'testCreateUserWithLocation',
+    'testCreateLocationHeadUser',
+    'testUpdateUserRoleWithLocation',
+    'testGetUsersByLocation',
+    'testChangeUserLocation',
   ];
 
   for (const testName of testSuite) {

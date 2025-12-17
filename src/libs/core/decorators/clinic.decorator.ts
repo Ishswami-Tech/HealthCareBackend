@@ -134,7 +134,11 @@ export const ClinicId = createParamDecorator((data: unknown, ctx: ExecutionConte
   }
 
   throw new BadRequestException(
-    'Clinic ID is required. Provide it via X-Clinic-ID header, request body, or query parameter.'
+    'Clinic ID is COMPULSORY for all requests. Provide it via:\n' +
+      '  - X-Clinic-ID header (recommended)\n' +
+      '  - clinicId query parameter\n' +
+      '  - clinicId in request body\n' +
+      '  - clinicId in JWT token payload'
   );
 });
 

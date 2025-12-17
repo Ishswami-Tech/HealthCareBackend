@@ -1,8 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Optional,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
+import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
+import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import type { ClinicLocationResponseDto } from '@core/types/clinic.types';
 import type {
   CheckInLocation,
   CheckIn,
@@ -12,6 +22,10 @@ import type {
   VerifyCheckInDto,
   CheckInValidation,
 } from '@core/types/appointment.types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 
 @Injectable()
 export class CheckInLocationService {
@@ -21,7 +35,13 @@ export class CheckInLocationService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => LocationCacheService))
+    private readonly locationCacheService?: LocationCacheService,
+    @Optional()
+    @Inject(forwardRef(() => ClinicLocationService))
+    private readonly clinicLocationService?: ClinicLocationService
   ) {}
 
   /**
@@ -67,6 +87,11 @@ export class CheckInLocationService {
       // Invalidate cache using proper method
       await this.cacheService.invalidateCacheByTag(`clinic:${data.clinicId}`);
 
+      // Also invalidate shared location cache if locationId is linked
+      if (location.locationId && this.locationCacheService) {
+        await this.locationCacheService.invalidateLocation(location.locationId, data.clinicId);
+      }
+
       await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
@@ -98,6 +123,9 @@ export class CheckInLocationService {
 
   /**
    * Get all check-in locations for a clinic
+   * Note: CheckInLocation is a different model from ClinicLocation
+   * This method returns CheckInLocation records, but can use LocationCacheService
+   * for related ClinicLocation data if locationId is linked
    */
   async getClinicLocations(clinicId: string, isActive?: boolean): Promise<CheckInLocation[]> {
     const startTime = Date.now();
@@ -106,8 +134,19 @@ export class CheckInLocationService {
     try {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string) as CheckInLocation[];
+      if (cached && cached !== '') {
+        try {
+          return JSON.parse(cached as string) as CheckInLocation[];
+        } catch (parseError) {
+          // Invalid cached data, continue to fetch from database
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to parse cached clinic locations: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            'CheckInLocationService',
+            { cacheKey }
+          );
+        }
       }
 
       // Use executeHealthcareRead for optimized query with caching
@@ -135,6 +174,20 @@ export class CheckInLocationService {
 
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(locations), this.LOCATION_CACHE_TTL);
+
+      // If any CheckInLocation has locationId linking to ClinicLocation, warm the shared cache
+      if (this.locationCacheService && this.clinicLocationService) {
+        const locationIds = locations
+          .map(loc => loc.locationId)
+          .filter((id): id is string => Boolean(id));
+
+        if (locationIds.length > 0) {
+          // Warm shared cache for linked ClinicLocations
+          await this.locationCacheService.warmLocations(locationIds, async (locationId: string) => {
+            return await this.clinicLocationService!.getClinicLocationById(locationId, false);
+          });
+        }
+      }
 
       await this.loggingService.log(
         LogType.SYSTEM,
@@ -174,8 +227,19 @@ export class CheckInLocationService {
     try {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string) as CheckInLocation;
+      if (cached && cached !== '') {
+        try {
+          return JSON.parse(cached as string) as CheckInLocation;
+        } catch (parseError) {
+          // Invalid cached data, continue to fetch from database
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to parse cached location: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            'CheckInLocationService',
+            { cacheKey, locationId }
+          );
+        }
       }
 
       // Use executeHealthcareRead for optimized query
@@ -197,6 +261,25 @@ export class CheckInLocationService {
 
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(location), this.LOCATION_CACHE_TTL);
+
+      // If CheckInLocation has locationId linking to ClinicLocation, warm the shared cache
+      if (location.locationId && this.locationCacheService && this.clinicLocationService) {
+        // Try to get from shared cache first
+        const clinicLocation = await this.locationCacheService.getLocation(
+          location.locationId,
+          false
+        );
+        if (!clinicLocation) {
+          // Cache miss - fetch and populate shared cache
+          const fetched = await this.clinicLocationService.getClinicLocationById(
+            location.locationId,
+            false
+          );
+          if (fetched) {
+            await this.locationCacheService.setLocation(location.locationId, fetched, false);
+          }
+        }
+      }
 
       await this.loggingService.log(
         LogType.SYSTEM,
@@ -235,8 +318,19 @@ export class CheckInLocationService {
     try {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string) as CheckInLocation;
+      if (cached && cached !== '') {
+        try {
+          return JSON.parse(cached as string) as CheckInLocation;
+        } catch (parseError) {
+          // Invalid cached data, continue to fetch from database
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to parse cached location by QR: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+            'CheckInLocationService',
+            { cacheKey, qrCode }
+          );
+        }
       }
 
       // Use executeHealthcareRead for optimized query
@@ -262,6 +356,25 @@ export class CheckInLocationService {
 
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(location), this.LOCATION_CACHE_TTL);
+
+      // If CheckInLocation has locationId linking to ClinicLocation, warm the shared cache
+      if (location.locationId && this.locationCacheService && this.clinicLocationService) {
+        // Try to get from shared cache first
+        const clinicLocation = await this.locationCacheService.getLocation(
+          location.locationId,
+          false
+        );
+        if (!clinicLocation) {
+          // Cache miss - fetch and populate shared cache
+          const fetched = await this.clinicLocationService.getClinicLocationById(
+            location.locationId,
+            false
+          );
+          if (fetched) {
+            await this.locationCacheService.setLocation(location.locationId, fetched, false);
+          }
+        }
+      }
 
       await this.loggingService.log(
         LogType.SYSTEM,
@@ -334,6 +447,11 @@ export class CheckInLocationService {
       await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
       if (location.qrCode) {
         await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
+      }
+
+      // Also invalidate shared location cache if locationId is linked
+      if (location.locationId && this.locationCacheService) {
+        await this.locationCacheService.invalidateLocation(location.locationId, location.clinicId);
       }
 
       await this.loggingService.log(
@@ -418,6 +536,11 @@ export class CheckInLocationService {
         await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
       }
 
+      // Also invalidate shared location cache if locationId is linked
+      if (location.locationId && this.locationCacheService) {
+        await this.locationCacheService.invalidateLocation(location.locationId, location.clinicId);
+      }
+
       await this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
@@ -455,7 +578,7 @@ export class CheckInLocationService {
 
     try {
       // Validate appointment exists using executeHealthcareRead
-      const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const appointmentData = await this.databaseService.executeHealthcareRead(async client => {
         const appointmentDelegate = client['appointment'] as unknown as {
           findUnique: (args: { where: { id: string } }) => Promise<unknown>;
         };
@@ -464,7 +587,7 @@ export class CheckInLocationService {
         });
       });
 
-      if (!appointment) {
+      if (!appointmentData) {
         throw new NotFoundException(`Appointment with ID ${data.appointmentId} not found`);
       }
 
@@ -506,6 +629,37 @@ export class CheckInLocationService {
 
       if (!location.isActive) {
         throw new BadRequestException('Check-in location is not active');
+      }
+
+      // If CheckInLocation has locationId linking to ClinicLocation, validate using LocationCacheService
+      if (location.locationId) {
+        let clinicLocation: ClinicLocationResponseDto | null = null;
+
+        // Try LocationCacheService first (shared cache)
+        if (this.locationCacheService) {
+          clinicLocation = await this.locationCacheService.getLocation(location.locationId, false);
+        }
+
+        // Cache miss - fetch from ClinicLocationService
+        if (!clinicLocation && this.clinicLocationService) {
+          clinicLocation = await this.clinicLocationService.getClinicLocationById(
+            location.locationId,
+            false
+          );
+        }
+
+        // Validate appointment location matches check-in location
+        const appointmentWithLocation = appointmentData as { locationId?: string };
+        if (appointmentWithLocation.locationId && clinicLocation && location.locationId) {
+          if (
+            appointmentWithLocation.locationId !== clinicLocation.id &&
+            appointmentWithLocation.locationId !== location.locationId
+          ) {
+            throw new BadRequestException(
+              `Appointment is at location ${appointmentWithLocation.locationId}, but check-in is at location ${location.locationId}. Please visit the correct location.`
+            );
+          }
+        }
       }
 
       // Validate location if coordinates provided
@@ -569,6 +723,35 @@ export class CheckInLocationService {
         }
       );
 
+      // Get appointment to retrieve doctorId and calculate queue number
+      const appointmentRecord = await this.databaseService.findAppointmentByIdSafe(
+        data.appointmentId
+      );
+      if (!appointmentRecord) {
+        throw new NotFoundException(`Appointment ${data.appointmentId} not found`);
+      }
+
+      // Check if queue already exists (before creating/updating)
+      let existingQueue: { id: string } | null = null;
+      try {
+        existingQueue = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              queue: {
+                findUnique: <T>(args: T) => Promise<{ id: string } | null>;
+              };
+            };
+            return await typedClient.queue.findUnique({
+              where: { appointmentId: data.appointmentId } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        );
+      } catch {
+        // Queue doesn't exist yet, will create new one
+        existingQueue = null;
+      }
+
       // Update appointment status using executeHealthcareWrite
       await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -591,6 +774,67 @@ export class CheckInLocationService {
           resourceId: data.appointmentId,
           userRole: 'patient',
           details: { status: 'CHECKED_IN' },
+        }
+      );
+
+      // Create or update Queue record with locationId
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            queue: {
+              findMany: <T>(args: T) => Promise<Array<{ queueNumber?: number }>>;
+              update: <T>(args: T) => Promise<unknown>;
+              create: <T>(args: T) => Promise<unknown>;
+            };
+          };
+
+          // Count existing queues for this location to calculate queue number
+          const locationQueues = await typedClient.queue.findMany({
+            where: {
+              locationId: data.locationId,
+              status: { in: ['WAITING', 'IN_PROGRESS'] },
+            } as PrismaDelegateArgs,
+            orderBy: { queueNumber: 'desc' } as PrismaDelegateArgs,
+            take: 1,
+          } as PrismaDelegateArgs);
+
+          const queueNumber =
+            locationQueues.length > 0
+              ? ((locationQueues[0] as { queueNumber?: number })?.queueNumber ?? 0) + 1
+              : 1;
+
+          if (existingQueue) {
+            // Update existing queue
+            return await typedClient.queue.update({
+              where: { appointmentId: data.appointmentId } as PrismaDelegateArgs,
+              data: {
+                locationId: data.locationId,
+                status: 'WAITING',
+                queueNumber: queueNumber,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          } else {
+            // Create new queue record
+            return await typedClient.queue.create({
+              data: {
+                appointmentId: data.appointmentId,
+                clinicId: location.clinicId,
+                locationId: data.locationId,
+                queueNumber: queueNumber,
+                status: 'WAITING',
+                estimatedWaitTime: queueNumber * 10, // 10 minutes per position
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        },
+        {
+          userId: data.patientId,
+          clinicId: location?.clinicId || '',
+          resourceType: 'QUEUE',
+          operation: existingQueue ? 'UPDATE' : 'CREATE',
+          resourceId: data.appointmentId,
+          userRole: 'patient',
+          details: { appointmentId: data.appointmentId, locationId: data.locationId },
         }
       );
 
@@ -683,6 +927,17 @@ export class CheckInLocationService {
       if (checkInWithAppointment.appointment?.id) {
         await this.cacheService.invalidateCacheByTag(
           `appointment:${checkInWithAppointment.appointment.id}`
+        );
+      }
+
+      // Also invalidate shared location cache if locationId is linked
+      const checkInWithLocation = checkIn as CheckIn & {
+        location?: { locationId?: string; clinicId?: string };
+      };
+      if (checkInWithLocation.location?.locationId && this.locationCacheService) {
+        await this.locationCacheService.invalidateLocation(
+          checkInWithLocation.location.locationId,
+          checkInWithLocation.location.clinicId
         );
       }
 

@@ -16,6 +16,7 @@ export interface AuthenticatedUser {
   readonly sub?: string;
   readonly role?: string;
   readonly clinicId?: string;
+  readonly locationId?: string;
   readonly [key: string]: unknown;
 }
 
@@ -42,6 +43,8 @@ export interface JwtGuardUser {
 export interface ClinicRequestHeaders {
   readonly 'x-clinic-id'?: string;
   readonly 'clinic-id'?: string;
+  readonly 'x-location-id'?: string;
+  readonly 'location-id'?: string;
   readonly [key: string]: string | undefined;
 }
 
@@ -70,6 +73,8 @@ export interface JwtRequestHeaders {
 export interface ClinicQueryParams {
   readonly clinicId?: string;
   readonly clinic_id?: string;
+  readonly locationId?: string;
+  readonly location_id?: string;
   readonly [key: string]: unknown;
 }
 
@@ -81,6 +86,8 @@ export interface ClinicQueryParams {
 export interface ClinicRouteParams {
   readonly clinicId?: string;
   readonly clinic_id?: string;
+  readonly locationId?: string;
+  readonly location_id?: string;
   readonly [key: string]: unknown;
 }
 
@@ -118,6 +125,7 @@ export interface ClinicRequest {
   readonly params?: ClinicRouteParams;
   readonly body?: ClinicRequestBody;
   clinicId?: string;
+  locationId?: string;
   clinicContext?: ClinicRequestContext;
 }
 

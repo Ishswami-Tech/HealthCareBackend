@@ -832,12 +832,15 @@ export class LocationQRCodeResponseDto {
 /**
  * Data Transfer Object for processing check-in
  * @class ProcessCheckInDto
+ * @description appointmentId comes from URL path, so it's optional in body
  */
 export class ProcessCheckInDto {
-  @ApiProperty({ description: 'Appointment ID to check in' })
+  @ApiPropertyOptional({
+    description: 'Appointment ID to check in (optional, comes from URL path)',
+  })
+  @IsOptional()
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'Appointment ID is required' })
-  appointmentId!: string;
+  appointmentId?: string;
 
   @ApiPropertyOptional({ description: 'QR code for verification', required: false })
   @IsOptional()

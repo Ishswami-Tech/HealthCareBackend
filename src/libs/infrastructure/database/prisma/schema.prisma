@@ -68,6 +68,7 @@ model User {
   labReports              LabReport[]
   labTechnician           LabTechnician?
   lifestyleAssessments    LifestyleAssessment[]
+  locationHead            LocationHead?
   medicalHistories        MedicalHistory[]
   medications             Medication[]
   mentalHealthNotes       MentalHealthNote[]
@@ -101,12 +102,15 @@ model Receptionist {
   id                    String                  @id @default(uuid())
   userId                String                  @unique
   clinicId              String?
+  locationId            String?
   createdAt             DateTime                @default(now())
   clinic                Clinic?                 @relation(fields: [clinicId], references: [id])
+  location              ClinicLocation?         @relation(fields: [locationId], references: [id])
   user                  User                    @relation(fields: [userId], references: [id])
   ReceptionistsAtClinic ReceptionistsAtClinic[]
 
   @@index([clinicId])
+  @@index([locationId])
 }
 
 model Clinic {
@@ -145,6 +149,13 @@ model Clinic {
   eligibilityCriteria   EligibilityCriteria[]
   rbacRoles             RbacRole[]
   receptionists         Receptionist[]
+  pharmacists           Pharmacist[]
+  therapists            Therapist[]
+  labTechnicians        LabTechnician[]
+  financeBilling        FinanceBilling[]
+  supportStaff          SupportStaff[]
+  nurses                Nurse[]
+  counselors            Counselor[]
   recurringSeries       RecurringAppointmentSeries[]
   followUpPlans         FollowUpPlan[]
   resources             Resource[]
@@ -161,6 +172,7 @@ model Clinic {
   videoConsultations    VideoConsultation[]
   users                 User[]                       @relation("UserClinics")
   checkIns              CheckIn[]
+  locationHeads         LocationHead[]
 
   @@index([app_name])
   @@index([isActive])
@@ -168,28 +180,42 @@ model Clinic {
 }
 
 model ClinicLocation {
-  id           String         @id @default(uuid())
-  locationId   String         @unique
-  name         String
-  address      String
-  city         String
-  state        String
-  country      String
-  zipCode      String?
-  phone        String?
-  email        String?
-  isActive     Boolean        @default(true)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  clinicId     String
-  latitude     Float?
-  longitude    Float?
-  timezone     String?        @default("UTC")
-  workingHours Json?
-  settings     Json?
-  appointments Appointment[]
-  doctorClinic DoctorClinic[]
-  clinic       Clinic         @relation(fields: [clinicId], references: [id])
+  id               String            @id @default(uuid())
+  locationId       String            @unique
+  name             String
+  address          String
+  city             String
+  state            String
+  country          String
+  zipCode          String?
+  phone            String?
+  email            String?
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  clinicId         String
+  latitude         Float?
+  longitude        Float?
+  timezone         String?           @default("UTC")
+  workingHours     Json?
+  settings         Json?
+  appointments     Appointment[]
+  doctorClinic     DoctorClinic[]
+  clinicAdmins     ClinicAdmin[]
+  receptionists    Receptionist[]
+  pharmacists      Pharmacist[]
+  therapists       Therapist[]
+  labTechnicians   LabTechnician[]
+  financeBilling   FinanceBilling[]
+  supportStaff     SupportStaff[]
+  nurses           Nurse[]
+  counselors       Counselor[]
+  locationHeads    LocationHead[]
+  prescriptions    Prescription[]
+  queues           Queue[]
+  checkInLocations CheckInLocation[]
+  clinic           Clinic            @relation(fields: [clinicId], references: [id])
+  medicines        Medicine[]
 
   @@index([clinicId])
   @@map("clinic_locations")
@@ -203,64 +229,136 @@ model SuperAdmin {
 }
 
 model ClinicAdmin {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  clinicId  String
-  createdAt DateTime @default(now())
-  isOwner   Boolean  @default(false)
-  clinic    Clinic   @relation(fields: [clinicId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String
+  locationId String?
+  createdAt  DateTime        @default(now())
+  isOwner    Boolean         @default(false)
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
 
   @@index([clinicId])
+  @@index([locationId])
 }
 
 model Pharmacist {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model Therapist {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model LabTechnician {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model FinanceBilling {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model SupportStaff {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model Nurse {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
 }
 
 model Counselor {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String?
+  locationId String?
+  createdAt  DateTime        @default(now())
+  clinic     Clinic?         @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([locationId])
+}
+
+model LocationHead {
+  id         String          @id @default(uuid())
+  userId     String          @unique
+  clinicId   String
+  locationId String?
+  assignedAt DateTime        @default(now())
+  assignedBy String
+  isActive   Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  clinic     Clinic          @relation(fields: [clinicId], references: [id])
+  location   ClinicLocation? @relation(fields: [locationId], references: [id])
+  user       User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clinicId, locationId])
+  @@index([clinicId])
+  @@index([locationId])
+  @@index([isActive])
 }
 
 model Doctor {
@@ -408,17 +506,20 @@ model Therapy {
 }
 
 model Prescription {
-  id        String             @id @default(uuid())
-  patientId String
-  doctorId  String
-  date      DateTime           @default(now())
-  notes     String?
-  clinicId  String
-  doctor    Doctor             @relation(fields: [doctorId], references: [id])
-  patient   Patient            @relation(fields: [patientId], references: [id])
-  items     PrescriptionItem[]
+  id         String             @id @default(uuid())
+  patientId  String
+  doctorId   String
+  date       DateTime           @default(now())
+  notes      String?
+  clinicId   String
+  locationId String?
+  doctor     Doctor             @relation(fields: [doctorId], references: [id])
+  patient    Patient            @relation(fields: [patientId], references: [id])
+  location   ClinicLocation?    @relation(fields: [locationId], references: [id])
+  items      PrescriptionItem[]
 
   @@index([clinicId])
+  @@index([locationId])
 }
 
 model PrescriptionItem {
@@ -444,9 +545,12 @@ model Medicine {
   manufacturer      String?
   type              MedicineType
   clinicId          String
+  locationId        String? // Medicine inventory per location
   prescriptionItems PrescriptionItem[]
+  location          ClinicLocation?    @relation(fields: [locationId], references: [id])
 
   @@index([clinicId])
+  @@index([locationId])
 }
 
 model DoctorClinic {
@@ -577,14 +681,16 @@ model Invoice {
 }
 
 model Queue {
-  id                String      @id @default(uuid())
-  appointmentId     String      @unique
+  id                String          @id @default(uuid())
+  appointmentId     String          @unique
   queueNumber       Int
   estimatedWaitTime Int?
-  status            QueueStatus @default(WAITING)
+  status            QueueStatus     @default(WAITING)
   clinicId          String
-  updatedAt         DateTime    @updatedAt
-  appointment       Appointment @relation(fields: [appointmentId], references: [id])
+  updatedAt         DateTime        @updatedAt
+  appointment       Appointment     @relation(fields: [appointmentId], references: [id])
+  clinicLocation    ClinicLocation? @relation(fields: [clinicLocationId], references: [id])
+  clinicLocationId  String?
 
   @@index([clinicId])
 }
@@ -1536,19 +1642,22 @@ model QueueEntry {
 }
 
 model CheckInLocation {
-  id           String    @id @default(uuid())
-  clinicId     String
-  locationName String
-  qrCode       String    @unique
-  coordinates  Json
-  radius       Float
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  checkIns     CheckIn[]
-  clinic       Clinic    @relation(fields: [clinicId], references: [id])
+  id             String          @id @default(uuid())
+  clinicId       String
+  locationId     String?         @unique // Link to ClinicLocation
+  locationName   String
+  qrCode         String          @unique
+  coordinates    Json
+  radius         Float
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  checkIns       CheckIn[]
+  clinic         Clinic          @relation(fields: [clinicId], references: [id])
+  clinicLocation ClinicLocation? @relation(fields: [locationId], references: [id])
 
   @@index([clinicId])
+  @@index([locationId])
   @@index([qrCode])
 }
 

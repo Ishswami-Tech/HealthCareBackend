@@ -158,24 +158,50 @@ export class BillingService {
     return where;
   }
 
-  async getBillingPlans(clinicId?: string, role?: string, userId?: string) {
-    // Apply role-based filtering
-    const whereClause =
-      role && userId
-        ? this.buildBillingWhereClause(role, userId, clinicId)
-        : clinicId
-          ? { clinicId }
-          : {};
+  async getBillingPlans(clinicId?: string, role?: string, _userId?: string) {
+    // Build where clause for BillingPlan (doesn't have userId field)
+    // BillingPlan only has clinicId, so we filter by clinic or show all active plans
+    // IMPORTANT: Never include userId in BillingPlan queries - BillingPlan doesn't have userId field
+    const whereClause: Record<string, unknown> = { isActive: true };
+
+    // Apply role-based filtering for BillingPlan
+    if (role === 'SUPER_ADMIN') {
+      // Super admin can see all (no additional filter beyond isActive)
+      if (clinicId) {
+        whereClause['clinicId'] = clinicId;
+      }
+    } else if (role === 'CLINIC_ADMIN' || role === 'FINANCE_BILLING' || role === 'RECEPTIONIST') {
+      // Clinic staff can see their clinic's plans
+      if (clinicId) {
+        whereClause['clinicId'] = clinicId;
+      }
+    } else if (role === 'PATIENT' || role === 'DOCTOR') {
+      // Patients and doctors can see:
+      // 1. Public plans (clinicId is null)
+      // 2. Plans for their clinic (if clinicId is provided)
+      if (clinicId) {
+        whereClause['clinicId'] = clinicId;
+      } else {
+        // Show public plans (clinicId is null) or all if no clinic context
+        // For now, show all active plans - clinic filtering happens at subscription level
+      }
+    } else if (clinicId) {
+      // Default: filter by clinic if provided
+      whereClause['clinicId'] = clinicId;
+    }
+
+    // Explicitly remove userId if it somehow got added (defensive programming)
+    // BillingPlan model doesn't have userId field
+    if ('userId' in whereClause) {
+      delete whereClause['userId'];
+    }
 
     const cacheKey = `billing_plans:${clinicId || 'all'}:${role || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        return await this.databaseService.findBillingPlansSafe({
-          ...whereClause,
-          isActive: true,
-        });
+        return await this.databaseService.findBillingPlansSafe(whereClause);
       },
       {
         ttl: 1800,

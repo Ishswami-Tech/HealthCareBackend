@@ -662,11 +662,30 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
+      // Get appointment to extract doctorId
+      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      if (!appointment) {
+        throw this.errors.appointmentNotFound(
+          appointmentId,
+          'AppointmentsService.completeAppointment'
+        );
+      }
+
+      // Use appointment's doctorId, fallback to userId if not available
+      const doctorId = appointment.doctorId || userId;
+
       // Hot path: Direct plugin injection for performance
+      // Use doctorId from DTO if provided, otherwise use appointment's doctorId
+      const finalDoctorId = completeDto.doctorId || doctorId;
+
+      // Create a copy of completeDto without doctorId to avoid duplication
+      const { doctorId: _, ...restDto } = completeDto;
+
       const completionData = await this.clinicConfirmationPlugin.process({
-        operation: 'complete_appointment',
+        operation: 'markAppointmentCompleted',
         appointmentId,
-        ...completeDto,
+        doctorId: finalDoctorId,
+        ...restDto,
       });
 
       const result = { success: true, data: completionData };
@@ -924,8 +943,9 @@ export class AppointmentsService {
     try {
       // Hot path: Direct plugin injection for performance
       const consultationData = await this.clinicCheckInPlugin.process({
-        operation: 'start_consultation',
+        operation: 'startConsultation',
         appointmentId,
+        clinicId,
         ...startDto,
       });
 

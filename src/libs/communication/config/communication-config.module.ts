@@ -18,7 +18,11 @@ import { CredentialEncryptionService } from './credential-encryption.service';
 import { CommunicationConfigService } from './communication-config.service';
 
 @Module({
-  imports: [forwardRef(() => ConfigModule), forwardRef(() => DatabaseModule), forwardRef(() => LoggingModule)],
+  imports: [
+    forwardRef(() => ConfigModule),
+    forwardRef(() => DatabaseModule),
+    forwardRef(() => LoggingModule),
+  ],
   providers: [CredentialEncryptionService, CommunicationConfigService],
   exports: [CredentialEncryptionService, CommunicationConfigService],
 })

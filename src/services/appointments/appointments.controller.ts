@@ -1462,15 +1462,20 @@ export class AppointmentsController {
       );
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
+      const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
+      // Reduce log level for expected validation errors (non-video appointments)
+      const isExpectedValidationError =
+        errorMessage.includes('not a video consultation') ||
+        errorMessage.includes('not a video appointment');
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        isExpectedValidationError ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to create video room for appointment ${appointmentId}`,
         'AppointmentsController',
         {
           appointmentId,
           clinicId: errorClinicId,
-          error: _error instanceof Error ? _error.message : 'Unknown error',
+          error: errorMessage,
         }
       );
       throw _error;
@@ -1597,16 +1602,21 @@ export class AppointmentsController {
       return tokenDto;
     } catch (_error) {
       const errorClinicId = req.clinicContext?.clinicId || '';
+      const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
+      // Reduce log level for expected validation errors (non-video appointments)
+      const isExpectedValidationError =
+        errorMessage.includes('not a video consultation') ||
+        errorMessage.includes('not a video appointment');
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        isExpectedValidationError ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to generate join token for appointment ${appointmentId}`,
         'AppointmentsController',
         {
           appointmentId,
           clinicId: errorClinicId,
           userId: req.user?.sub,
-          error: _error instanceof Error ? _error.message : 'Unknown error',
+          error: errorMessage,
         }
       );
       throw _error;
@@ -1953,14 +1963,19 @@ export class AppointmentsController {
 
       return sessionDto;
     } catch (_error) {
+      const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
+      // Reduce log level for expected validation errors (non-video appointments)
+      const isExpectedValidationError =
+        errorMessage.includes('not a video consultation') ||
+        errorMessage.includes('not a video appointment');
       await this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
+        isExpectedValidationError ? LogLevel.WARN : LogLevel.ERROR,
         `Failed to get consultation status for appointment ${appointmentId}`,
         'AppointmentsController',
         {
           appointmentId,
-          error: _error instanceof Error ? _error.message : 'Unknown error',
+          error: errorMessage,
         }
       );
       throw _error;

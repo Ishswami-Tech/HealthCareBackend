@@ -39,7 +39,8 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
         return await this.queueService.getDoctorQueue(
           pluginData.doctorId!,
           pluginData.date!,
-          'clinic'
+          'clinic',
+          pluginData.locationId
         );
 
       case 'getPatientQueuePosition':

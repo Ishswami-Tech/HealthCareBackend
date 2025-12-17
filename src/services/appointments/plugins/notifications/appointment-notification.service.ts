@@ -6,7 +6,11 @@ import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PushNotificationService } from '@communication/channels/push/push.service';
-import { SocketService } from '@communication/channels/socket/socket.service';
+import {
+  SocketService,
+  type SocketEventData,
+  type SocketEventPrimitive,
+} from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailTemplate } from '@core/types';
 import type {
@@ -380,21 +384,56 @@ export class AppointmentNotificationService {
   ): Promise<void> {
     const { appointmentId, patientId, clinicId, type, templateData } = notificationData;
 
+    // Convert templateData to SocketEventData format (exclude changes field as it may contain non-primitives)
+    // SocketEventData only accepts primitives: string | number | boolean | null
+    const socketData: Record<string, string | number | boolean | null> = {
+      patientName: templateData.patientName,
+      doctorName: templateData.doctorName,
+      appointmentDate: templateData.appointmentDate,
+      appointmentTime: templateData.appointmentTime,
+      location: templateData.location,
+      clinicName: templateData.clinicName,
+    };
+
+    const appointmentType = templateData['appointmentType'];
+    if (appointmentType) {
+      socketData['appointmentType'] = appointmentType;
+    }
+    const notes = templateData['notes'];
+    if (notes) {
+      socketData['notes'] = notes;
+    }
+    const rescheduleUrl = templateData['rescheduleUrl'];
+    if (rescheduleUrl) {
+      socketData['rescheduleUrl'] = rescheduleUrl;
+    }
+    const cancelUrl = templateData['cancelUrl'];
+    if (cancelUrl) {
+      socketData['cancelUrl'] = cancelUrl;
+    }
+    // Note: changes field is excluded from socket data as it may contain non-primitive values
+    // Changes are only used in email/notification templates, not socket events
+
     // Send to patient's personal room
-    void this.socketService.sendToUser(patientId, 'appointment_notification', {
+    // socketData contains only primitives, so it's compatible with SocketEventData
+    // The 'data' field contains a Record<string, SocketEventPrimitive> which is valid
+    // Type assertion needed because TypeScript needs explicit confirmation of nested Record structure
+    const eventData: SocketEventData = {
       appointmentId,
       type,
-      data: templateData,
+      data: socketData as Record<string, SocketEventPrimitive>,
       timestamp: new Date().toISOString(),
-    });
+    };
+    void this.socketService.sendToUser(patientId, 'appointment_notification', eventData);
 
     // Send to clinic room for staff
-    void this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', {
+    const clinicEventData: SocketEventData = {
       appointmentId,
       patientId,
       type,
       timestamp: new Date().toISOString(),
-    });
+    };
+    void this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', clinicEventData);
 
     await this.loggingService.log(
       LogType.NOTIFICATION,

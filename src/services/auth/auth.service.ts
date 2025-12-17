@@ -188,6 +188,28 @@ export class AuthService {
    */
   async register(registerDto: RegisterDto): Promise<AuthResponse> {
     try {
+      // Validate clinicId is provided (required)
+      if (!registerDto.clinicId) {
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID is required for registration',
+          'AuthService.register'
+        );
+      }
+
+      // Validate clinic exists and is active
+      const clinic = await this.databaseService.findClinicByIdSafe(registerDto.clinicId);
+      if (!clinic) {
+        throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
+      }
+      if (!('isActive' in clinic) || !clinic.isActive) {
+        throw this.errors.validationError(
+          'clinicId',
+          `Clinic with ID ${registerDto.clinicId} is not active`,
+          'AuthService.register'
+        );
+      }
+
       // Check if user already exists
       const existingUser = await this.databaseService.findUserByEmailSafe(registerDto.email);
 
@@ -222,13 +244,55 @@ export class AuthService {
         ...(registerDto.gender && { gender: registerDto.gender }),
         ...(registerDto.address && { address: registerDto.address }),
         ...(registerDto.role && { role: registerDto.role }),
-        ...(registerDto.clinicId && { primaryClinicId: registerDto.clinicId }),
+        primaryClinicId: registerDto.clinicId, // Always set primaryClinicId (required)
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
         isVerified: false,
       };
 
       // Use createUserSafe from DatabaseService
       const user = await this.databaseService.createUserSafe(userCreateInput);
+
+      // For PATIENT role, create Patient record linked to clinic
+      if ((registerDto.role || 'PATIENT') === 'PATIENT') {
+        try {
+          // Create patient record directly
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const typedClient = client as unknown as {
+                patient: {
+                  create: (args: {
+                    data: { userId: string; clinicId: string };
+                  }) => Promise<{ id: string }>;
+                };
+              };
+              await typedClient.patient.create({
+                data: {
+                  userId: user.id,
+                  clinicId: registerDto.clinicId,
+                },
+              });
+            },
+            {
+              userId: user.id,
+              clinicId: registerDto.clinicId,
+              resourceType: 'PATIENT',
+              operation: 'CREATE',
+              resourceId: user.id,
+              userRole: registerDto.role || 'PATIENT',
+              details: { registration: true },
+            }
+          );
+        } catch (patientError) {
+          // Log error but don't fail registration
+          await this.logging.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            `Failed to create patient record during registration: ${(patientError as Error).message}`,
+            'AuthService.register',
+            { userId: user.id, clinicId: registerDto.clinicId }
+          );
+        }
+      }
 
       // Create session first (stored in Redis via SessionManagementService)
       // Fastify session will be set in controller if request object is available
@@ -237,7 +301,7 @@ export class AuthService {
         userAgent: 'Registration',
         ipAddress: '127.0.0.1',
         metadata: { registration: true },
-        ...(registerDto.clinicId && { clinicId: registerDto.clinicId }),
+        clinicId: registerDto.clinicId,
       });
 
       // Generate tokens with session ID - handle null phone
@@ -722,6 +786,15 @@ export class AuthService {
         );
       }
 
+      // Validate new password matches confirmation
+      if (changePasswordDto.newPassword !== changePasswordDto.confirmPassword) {
+        throw this.errors.validationError(
+          'confirmPassword',
+          'New password and confirmation password do not match',
+          'AuthService.changePassword'
+        );
+      }
+
       // Hash new password
       const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
 
@@ -876,12 +949,17 @@ export class AuthService {
       });
 
       // Generate tokens with session ID - handle null phone
+      // Include clinicId from login or user's primary clinic
       const userForTokens: UserProfile = {
         id: user.id,
         email: user.email,
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        // Include clinicId: from verifyDto, or user's primaryClinicId
+        ...(clinicId || user.primaryClinicId
+          ? { clinicId: clinicId || user.primaryClinicId || '' }
+          : {}),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(userForTokens, session.sessionId);
@@ -947,13 +1025,19 @@ export class AuthService {
     userAgent?: string,
     ipAddress?: string
   ): Promise<AuthTokens> {
+    // Extract clinicId: prefer explicit clinicId, fallback to primaryClinicId
+    const clinicId =
+      ('clinicId' in user && user.clinicId) ||
+      ('primaryClinicId' in user && user.primaryClinicId) ||
+      undefined;
+
     const payload: TokenPayload = {
       sub: user.id,
       email: user.email,
       role: user.role || '',
       domain: 'healthcare',
       sessionId: sessionId,
-      ...('primaryClinicId' in user && user.primaryClinicId && { clinicId: user.primaryClinicId }),
+      ...(clinicId && { clinicId }),
     };
 
     // Use enhanced JWT service for advanced features
@@ -1020,6 +1104,7 @@ export class AuthService {
       });
 
       // Generate tokens
+      // Include clinicId from OAuth or user's primary clinic
       const userForTokens: UserProfile = {
         id: fullUser.id,
         email: fullUser.email,
@@ -1029,6 +1114,10 @@ export class AuthService {
           fullUser.email,
         role: fullUser.role,
         ...(fullUser.phone && { phone: fullUser.phone }),
+        // Include clinicId: from OAuth clinicId, or user's primaryClinicId
+        ...(finalClinicId || fullUser.primaryClinicId
+          ? { clinicId: (finalClinicId || fullUser.primaryClinicId) as string }
+          : {}),
         ...(fullUser.primaryClinicId && { primaryClinicId: fullUser.primaryClinicId }),
       };
 
