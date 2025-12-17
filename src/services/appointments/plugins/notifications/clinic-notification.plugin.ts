@@ -90,6 +90,18 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       case 'sendAppointmentReschedule':
         return await this.sendAppointmentReschedule(data);
 
+      case 'send_appointment_created':
+      case 'sendAppointmentCreated':
+        return await this.sendAppointmentCreated(data);
+
+      case 'send_appointment_updated':
+      case 'sendAppointmentUpdated':
+        return await this.sendAppointmentUpdated(data);
+
+      case 'send_appointment_cancelled':
+      case 'sendAppointmentCancelled':
+        return await this.sendAppointmentCancellation(data);
+
       default:
         this.logPluginError('Unknown notification operation', {
           operation: pluginData.operation,
@@ -108,6 +120,12 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       sendAppointmentConfirmation: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
       sendAppointmentCancellation: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
       sendAppointmentReschedule: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      send_appointment_created: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      sendAppointmentCreated: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      send_appointment_updated: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      sendAppointmentUpdated: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      send_appointment_cancelled: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+      sendAppointmentCancelled: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
     };
 
     const operation = pluginData.operation;
@@ -238,6 +256,81 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
         rescheduleUrl: pluginData.rescheduleUrl || '',
+      },
+    };
+
+    return await this.notificationService.sendNotification(notificationData);
+  }
+
+  /**
+   * Send appointment created notification
+   */
+  private async sendAppointmentCreated(data: unknown): Promise<unknown> {
+    const pluginData = data as NotificationPluginData;
+    if (
+      !pluginData.appointmentId ||
+      !pluginData.patientId ||
+      !pluginData.doctorId ||
+      !pluginData.clinicId
+    ) {
+      throw new Error('Missing required fields for sendAppointmentCreated');
+    }
+    const notificationData: NotificationData = {
+      appointmentId: pluginData.appointmentId,
+      patientId: pluginData.patientId,
+      doctorId: pluginData.doctorId,
+      clinicId: pluginData.clinicId,
+      type: 'created',
+      priority: pluginData.priority || 'normal',
+      channels: pluginData.channels || ['email', 'whatsapp', 'push', 'socket'],
+      templateData: {
+        patientName: pluginData.patientName || 'Patient',
+        doctorName: pluginData.doctorName || 'Doctor',
+        appointmentDate: (pluginData.appointmentDate ||
+          new Date().toISOString().split('T')[0]) as string,
+        appointmentTime: pluginData.appointmentTime || '10:00',
+        location: pluginData.location || 'Clinic',
+        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        appointmentType: pluginData.appointmentType || '',
+        notes: pluginData.notes || '',
+      },
+    };
+
+    return await this.notificationService.sendNotification(notificationData);
+  }
+
+  /**
+   * Send appointment updated notification
+   */
+  private async sendAppointmentUpdated(data: unknown): Promise<unknown> {
+    const pluginData = data as NotificationPluginData & { changes?: unknown };
+    if (
+      !pluginData.appointmentId ||
+      !pluginData.patientId ||
+      !pluginData.doctorId ||
+      !pluginData.clinicId
+    ) {
+      throw new Error('Missing required fields for sendAppointmentUpdated');
+    }
+    const notificationData: NotificationData = {
+      appointmentId: pluginData.appointmentId,
+      patientId: pluginData.patientId,
+      doctorId: pluginData.doctorId,
+      clinicId: pluginData.clinicId,
+      type: 'updated',
+      priority: pluginData.priority || 'normal',
+      channels: pluginData.channels || ['email', 'whatsapp', 'push', 'socket'],
+      templateData: {
+        patientName: pluginData.patientName || 'Patient',
+        doctorName: pluginData.doctorName || 'Doctor',
+        appointmentDate: (pluginData.appointmentDate ||
+          new Date().toISOString().split('T')[0]) as string,
+        appointmentTime: pluginData.appointmentTime || '10:00',
+        location: pluginData.location || 'Clinic',
+        clinicName: pluginData.clinicName || 'Healthcare Clinic',
+        appointmentType: pluginData.appointmentType || '',
+        notes: pluginData.notes || '',
+        changes: (pluginData.changes || {}) as Record<string, unknown>,
       },
     };
 

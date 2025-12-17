@@ -8,3 +8,4 @@ export * from './feature-flags.service';
 export * from './cache-versioning.service';
 export * from './cache-health-monitor.service';
 export * from './cache-warming.service';
+export * from './location-cache.service';

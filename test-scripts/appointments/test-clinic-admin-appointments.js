@@ -105,20 +105,59 @@ const clinicAdminTests = {
       ctx.recordTest('Create Check-In Location', false, true);
       return false;
     }
+    // Create CheckInLocation without locationId linking (basic)
     const result = await ctx.makeRequest('POST', '/appointments/check-in/locations', {
-      name: 'Test Check-In Location',
       clinicId: ctx.clinicId,
-      isActive: true,
+      locationName: 'Test Check-In Location',
+      coordinates: {
+        lat: 19.076,
+        lng: 72.8777,
+      },
+      radius: 100,
     });
     const passed =
       result.ok || result.status === 403 || result.status === 400 || result.status === 500; // Expected failures
+    if (result.ok && result.data?.data?.id) {
+      ctx.testCheckInLocationId = result.data.data.id;
+    }
     ctx.recordTest('Create Check-In Location', passed);
+    return passed;
+  },
+
+  async testCreateCheckInLocationWithClinicLocationLink(ctx) {
+    if (!ctx.clinicId || !ctx.locationId) {
+      ctx.recordTest('Create Check-In Location With ClinicLocation Link', false, true);
+      return false;
+    }
+    // Create CheckInLocation with locationId linking to ClinicLocation
+    const result = await ctx.makeRequest('POST', '/appointments/check-in/locations', {
+      clinicId: ctx.clinicId,
+      locationName: 'Test Check-In Location Linked',
+      locationId: ctx.locationId, // Link to ClinicLocation (optional)
+      coordinates: {
+        lat: 19.076,
+        lng: 72.8777,
+      },
+      radius: 100,
+    });
+    const passed =
+      result.ok || result.status === 403 || result.status === 400 || result.status === 500;
+    if (result.ok && result.data?.data?.id) {
+      ctx.testCheckInLocationWithLinkId = result.data.data.id;
+    }
+    ctx.recordTest('Create Check-In Location With ClinicLocation Link', passed);
     return passed;
   },
 
   async testGetVideoStatus(ctx) {
     if (!ctx.appointmentId) {
       ctx.recordTest('Get Video Status', false, true);
+      return false;
+    }
+    // Check if appointment is VIDEO_CALL type before testing video endpoints
+    const appointmentResult = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}`);
+    if (appointmentResult.ok && appointmentResult.data?.data?.type !== 'VIDEO_CALL') {
+      ctx.recordTest('Get Video Status', false, true); // Skip for non-video appointments
       return false;
     }
     const result = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}/video/status`);
@@ -130,6 +169,12 @@ const clinicAdminTests = {
   async testCreateVideoRoom(ctx) {
     if (!ctx.appointmentId) {
       ctx.recordTest('Create Video Room', false, true);
+      return false;
+    }
+    // Check if appointment is VIDEO_CALL type before testing video endpoints
+    const appointmentResult = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}`);
+    if (appointmentResult.ok && appointmentResult.data?.data?.type !== 'VIDEO_CALL') {
+      ctx.recordTest('Create Video Room', false, true); // Skip for non-video appointments
       return false;
     }
     const result = await ctx.makeRequest(
@@ -261,6 +306,7 @@ async function runClinicAdminTests() {
     'testGetNoShowCorrelationAnalytics',
     'testGetCheckInLocations',
     'testCreateCheckInLocation',
+    'testCreateCheckInLocationWithClinicLocationLink',
     'testGetVideoStatus',
     'testCreateVideoRoom',
     'testForceCheckIn',

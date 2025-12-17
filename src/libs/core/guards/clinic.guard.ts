@@ -7,6 +7,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -79,34 +80,41 @@ export class ClinicGuard implements CanActivate {
       }
     );
 
-    // Check if this route is accessing clinic-specific resources
-    const isClinicRoute = this.isClinicRoute(context);
+    // Check if this is a public endpoint (no clinicId required)
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    // If not a clinic route, allow access
-    if (!isClinicRoute) {
+    // Public endpoints don't require clinicId
+    if (isPublic) {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.DEBUG,
-        `Not a clinic route, allowing access`,
+        `Public endpoint, skipping clinic validation`,
         'ClinicGuard',
         { path: request.url }
       );
       return true;
     }
 
-    // For clinic routes, extract clinic ID from request
+    // For ALL authenticated requests (non-public), clinicId is COMPULSORY
     const clinicId = this.extractClinicId(request);
 
     if (!clinicId) {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
-        `Clinic ID required for clinic route`,
+        `Clinic ID is required for all authenticated requests`,
         'ClinicGuard',
-        { path: request.url }
+        { path: request.url, method: request.method }
       );
       throw new ForbiddenException(
-        'Clinic ID is required. Please provide clinic ID in header, query, or JWT token.'
+        'Clinic ID is COMPULSORY for all requests. Please provide clinic ID via:\n' +
+          '  - X-Clinic-ID header (recommended)\n' +
+          '  - clinicId query parameter\n' +
+          '  - clinicId in request body\n' +
+          '  - clinicId in JWT token payload'
       );
     }
 
@@ -132,8 +140,14 @@ export class ClinicGuard implements CanActivate {
       throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
     }
 
+    // Extract locationId if provided
+    const locationId = this.extractLocationId(request);
+
     // Set clinic context in request for downstream use
     request.clinicId = clinicId;
+    if (locationId) {
+      request.locationId = locationId;
+    }
     request.clinicContext = clinicResult.clinicContext as unknown as {
       [key: string]: unknown;
       clinicName?: string;
@@ -155,53 +169,8 @@ export class ClinicGuard implements CanActivate {
     return true;
   }
 
-  /**
-   * Determines if the current route requires clinic context
-   *
-   * @param context - The execution context containing route information
-   * @returns True if the route requires clinic context
-   * @private
-   */
-  private isClinicRoute(context: ExecutionContext): boolean {
-    // Get the controller and handler metadata to determine if this is a clinic route
-    const isPublic = this.reflector.getAllAndOverride<boolean>('isPublic', [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-
-    // If marked as public, it's not a clinic route
-    if (isPublic) {
-      return false;
-    }
-
-    // Get controller metadata to check if it's a clinic route
-    const isClinicRoute = this.reflector.getAllAndOverride<boolean>('isClinicRoute', [
-      context.getHandler(),
-      context.getClass(),
-    ]);
-
-    // If explicitly marked as a clinic route, return true
-    if (isClinicRoute) {
-      return true;
-    }
-
-    // Otherwise, check the route path to determine if it's a clinic route
-    const request = context.switchToHttp().getRequest<ClinicRequest>();
-    const path = request.url;
-
-    // Clinic routes typically include /clinics/ or /appointments/ or similar
-    const clinicRoutePatterns = [
-      /\/appointments\//,
-      /\/clinics\//,
-      /\/doctors\//,
-      /\/locations\//,
-      /\/patients\//,
-      /\/queue\//,
-      /\/prescriptions\//,
-    ];
-
-    return clinicRoutePatterns.some(pattern => pattern.test(path));
-  }
+  // Note: isClinicRoute method removed - ALL authenticated requests now require clinicId
+  // Only public endpoints (marked with @Public()) are exempt
 
   /**
    * Extracts clinic ID from various sources in the request
@@ -239,6 +208,48 @@ export class ClinicGuard implements CanActivate {
     // 5. From body (for POST/PUT requests)
     if (request.body?.clinicId) {
       return request.body.clinicId;
+    }
+
+    return null;
+  }
+
+  /**
+   * Extracts location ID from various sources in the request
+   *
+   * @param request - The clinic request object
+   * @returns The location ID if found, null otherwise
+   * @private
+   */
+  private extractLocationId(request: ClinicRequest): string | null {
+    // Try to get location ID from various sources
+
+    // 1. From headers
+    const headerLocationId = request.headers['x-location-id'] || request.headers['location-id'];
+    if (headerLocationId) {
+      return headerLocationId;
+    }
+
+    // 2. From query parameters
+    const queryLocationId = request.query?.locationId || request.query?.location_id;
+    if (queryLocationId) {
+      return queryLocationId;
+    }
+
+    // 3. From JWT token (if user is authenticated)
+    const userLocationId = request.user?.['locationId'];
+    if (typeof userLocationId === 'string') {
+      return userLocationId;
+    }
+
+    // 4. From route parameters
+    const routeLocationId = request.params?.locationId || request.params?.location_id;
+    if (routeLocationId) {
+      return routeLocationId;
+    }
+
+    // 5. From body (for POST/PUT requests)
+    if (request.body?.['locationId']) {
+      return request.body['locationId'] as string;
     }
 
     return null;

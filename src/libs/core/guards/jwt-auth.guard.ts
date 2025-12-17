@@ -412,10 +412,11 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException('Token has been revoked');
         }
       } catch (blacklistError) {
+        // Reduce to WARN - blacklist check failure is non-critical, validation continues
         void logger.log(
           LogType.AUTH,
-          LogLevel.ERROR,
-          'Failed to check token blacklist',
+          LogLevel.WARN,
+          'Failed to check token blacklist (non-critical)',
           'JwtAuthGuard',
           {
             _error: blacklistError instanceof Error ? blacklistError.message : 'Unknown',

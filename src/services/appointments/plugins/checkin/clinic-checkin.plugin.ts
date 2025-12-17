@@ -8,6 +8,7 @@ interface CheckInPluginData {
   appointmentId?: string;
   userId?: string;
   clinicId?: string;
+  locationId?: string;
   doctorId?: string;
   appointmentOrder?: string[];
   therapyType?: string;
@@ -90,10 +91,13 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
         );
 
       case 'getLocationQueue':
-        if (!pluginData.clinicId) {
-          throw new Error('Missing required field clinicId for getLocationQueue');
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for getLocationQueue');
         }
-        return await this.checkInService.getLocationQueue(pluginData.clinicId);
+        return await this.checkInService.getLocationQueue(
+          pluginData.locationId,
+          pluginData.clinicId
+        );
 
       // NEW AYURVEDIC OPERATIONS
       case 'processAyurvedicCheckIn':
@@ -134,7 +138,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       startConsultation: ['appointmentId', 'clinicId'],
       getDoctorActiveQueue: ['doctorId', 'clinicId'],
       reorderQueue: ['clinicId', 'appointmentOrder'],
-      getLocationQueue: ['clinicId'],
+      getLocationQueue: ['locationId'],
       // NEW AYURVEDIC FIELDS
       processAyurvedicCheckIn: ['appointmentId', 'clinicId', 'checkInData'],
       getTherapyQueue: ['therapyType', 'clinicId'],

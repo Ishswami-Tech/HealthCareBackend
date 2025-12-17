@@ -1,6 +1,7 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
+import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type {
@@ -21,7 +22,10 @@ export class ClinicLocationService {
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => CacheService))
-    private readonly cacheService?: CacheService
+    private readonly cacheService?: CacheService,
+    @Optional()
+    @Inject(forwardRef(() => LocationCacheService))
+    private readonly locationCacheService?: LocationCacheService
   ) {}
 
   async createClinicLocation(
@@ -52,6 +56,15 @@ export class ClinicLocationService {
         }
       );
 
+      // Invalidate location cache after creation
+      if (this.locationCacheService) {
+        const locationWithClinicId = clinicLocation as ClinicLocation & { clinicId: string };
+        await this.locationCacheService.invalidateLocation(
+          locationWithClinicId.id,
+          locationWithClinicId.clinicId
+        );
+      }
+
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -77,10 +90,19 @@ export class ClinicLocationService {
     clinicId: string,
     includeDoctors = false
   ): Promise<ClinicLocationResponseDto[]> {
+    // Use LocationCacheService for shared cache
+    if (this.locationCacheService) {
+      const cached = await this.locationCacheService.getLocationsByClinic(clinicId, includeDoctors);
+      if (cached) {
+        return cached;
+      }
+    }
+
+    // Fallback to direct cache or fetch
     const cacheKey = `clinic_locations:${clinicId}:${includeDoctors}`;
 
     if (this.cacheService) {
-      return this.cacheService.cache(
+      const locations = await this.cacheService.cache(
         cacheKey,
         async () => {
           return this.fetchLocations(clinicId, includeDoctors);
@@ -91,9 +113,23 @@ export class ClinicLocationService {
           enableSwr: true,
         }
       );
+
+      // Also set in LocationCacheService for consistency
+      if (this.locationCacheService) {
+        await this.locationCacheService.setLocationsByClinic(clinicId, locations, includeDoctors);
+      }
+
+      return locations;
     }
 
-    return this.fetchLocations(clinicId, includeDoctors);
+    const locations = await this.fetchLocations(clinicId, includeDoctors);
+
+    // Set in LocationCacheService if available
+    if (this.locationCacheService) {
+      await this.locationCacheService.setLocationsByClinic(clinicId, locations, includeDoctors);
+    }
+
+    return locations;
   }
 
   private async fetchLocations(
@@ -176,7 +212,15 @@ export class ClinicLocationService {
     includeDoctors = false
   ): Promise<ClinicLocationResponseDto | null> {
     try {
-      // Use executeHealthcareRead for optimized query
+      // Use LocationCacheService for shared cache (single source of truth)
+      if (this.locationCacheService) {
+        const cached = await this.locationCacheService.getLocation(id, includeDoctors);
+        if (cached) {
+          return cached;
+        }
+      }
+
+      // Cache miss - fetch from database
       const queryOptions: {
         where: { id: string };
         include?: {
@@ -231,6 +275,11 @@ export class ClinicLocationService {
           }
         );
 
+      // Cache the result in LocationCacheService
+      if (location && this.locationCacheService) {
+        await this.locationCacheService.setLocation(id, location, includeDoctors);
+      }
+
       return location;
     } catch (error) {
       void this.loggingService.log(
@@ -273,6 +322,15 @@ export class ClinicLocationService {
           details: { updateFields: Object.keys(data) },
         }
       );
+
+      // Invalidate location cache after update
+      if (this.locationCacheService) {
+        const locationWithClinicId = location as ClinicLocation & { clinicId: string };
+        await this.locationCacheService.invalidateLocation(
+          locationWithClinicId.id,
+          locationWithClinicId.clinicId
+        );
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -319,6 +377,17 @@ export class ClinicLocationService {
           details: { locationId: id, softDelete: true },
         }
       );
+
+      // Invalidate location cache after deletion
+      if (this.locationCacheService) {
+        // Get clinicId before invalidating (if needed)
+        const location = await this.getClinicLocationById(id, false);
+        if (location) {
+          await this.locationCacheService.invalidateLocation(id, location.clinicId);
+        } else {
+          await this.locationCacheService.invalidateLocation(id);
+        }
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,

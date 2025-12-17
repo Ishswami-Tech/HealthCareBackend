@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Post,
   Body,
   Patch,
   Param,
@@ -20,10 +21,13 @@ import {
   ApiSecurity,
 } from '@nestjs/swagger';
 import { UsersService } from '@services/users/users.service';
+import { LocationManagementService } from '../services/location-management.service';
 import { UpdateUserDto, UserResponseDto, UpdateUserRoleDto } from '@dtos/user.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ClinicId } from '@core/decorators/clinic.decorator';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { Role } from '@core/types/enums.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -36,11 +40,12 @@ import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 @Controller('user')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
-@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
-    private readonly rbacService: RbacService
+    private readonly rbacService: RbacService,
+    private readonly locationManagementService: LocationManagementService
   ) {}
 
   @Get('all')
@@ -381,5 +386,64 @@ export class UsersController {
     };
 
     return this.usersService.updateUserRole(id, updateUserRoleDto.role, createUserData);
+  }
+
+  @Post(':id/change-location')
+  @RateLimitAPI()
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('users', 'change-location')
+  @ApiOperation({
+    summary: 'Change user location',
+    description:
+      'Change the location assignment for a staff user. Only accessible by Clinic Admin and Super Admin.',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        locationId: {
+          type: 'string',
+          format: 'uuid',
+          description: 'New location ID',
+        },
+      },
+      required: ['locationId'],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Location changed successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean' },
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Only clinic admin or super admin can change locations',
+  })
+  @ApiResponse({ status: 404, description: 'User or location not found' })
+  async changeUserLocation(
+    @Param('id') userId: string,
+    @Body() body: { locationId: string },
+    @ClinicId() clinicId: string,
+    @Request() request: ClinicAuthenticatedRequest
+  ): Promise<{ success: boolean; message: string }> {
+    const currentUserId = request.user?.id || request.user?.sub || '';
+
+    await this.locationManagementService.changeUserLocation(
+      userId,
+      body.locationId,
+      currentUserId,
+      clinicId
+    );
+
+    return {
+      success: true,
+      message: 'User location changed successfully',
+    };
   }
 }

@@ -113,6 +113,11 @@ const doctorTests = {
       ctx.recordTest('Start Consultation', false, true);
       return false;
     }
+    // Consultation requires check-in to succeed first
+    if (ctx.checkInSucceeded === false) {
+      ctx.recordTest('Start Consultation', false, true); // Skip if check-in failed
+      return false;
+    }
     const result = await ctx.makeRequest('POST', `/appointments/${ctx.appointmentId}/start`, {
       doctorId: ctx.doctorId,
       notes: 'Test consultation start',
@@ -164,6 +169,12 @@ const doctorTests = {
       ctx.recordTest('Create Video Room', false, true);
       return false;
     }
+    // Check if appointment is VIDEO_CALL type before testing video endpoints
+    const appointmentResult = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}`);
+    if (appointmentResult.ok && appointmentResult.data?.data?.type !== 'VIDEO_CALL') {
+      ctx.recordTest('Create Video Room', false, true); // Skip for non-video appointments
+      return false;
+    }
     const result = await ctx.makeRequest(
       'POST',
       `/appointments/${ctx.appointmentId}/video/create-room`
@@ -176,6 +187,12 @@ const doctorTests = {
   async testGetVideoStatus(ctx) {
     if (!ctx.appointmentId) {
       ctx.recordTest('Get Video Status', false, true);
+      return false;
+    }
+    // Check if appointment is VIDEO_CALL type before testing video endpoints
+    const appointmentResult = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}`);
+    if (appointmentResult.ok && appointmentResult.data?.data?.type !== 'VIDEO_CALL') {
+      ctx.recordTest('Get Video Status', false, true); // Skip for non-video appointments
       return false;
     }
     const result = await ctx.makeRequest('GET', `/appointments/${ctx.appointmentId}/video/status`);
@@ -192,7 +209,9 @@ const doctorTests = {
     const result = await ctx.makeRequest('POST', `/appointments/${ctx.appointmentId}/check-in`, {
       locationId: ctx.locationId || undefined,
     });
-    const passed = result.ok || result.status === 400;
+    // Only pass if check-in actually succeeded (not validation errors)
+    const passed = result.ok;
+    ctx.checkInSucceeded = passed; // Track check-in success for subsequent tests
     ctx.recordTest('Check In Appointment', passed);
     return passed;
   },
