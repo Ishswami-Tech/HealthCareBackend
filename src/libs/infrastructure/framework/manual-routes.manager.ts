@@ -3,9 +3,11 @@
  *
  * Fastify doesn't always respect NestJS global prefix exclusions,
  * so we need to manually register certain routes that should be
- * accessible without the global prefix (e.g., /health, /logger, /socket-test, /email/status).
+ * accessible without the global prefix (e.g., /health, /socket-test, /email/status).
  *
  * This manager handles the manual registration of these routes in Fastify.
+ *
+ * Note: /logger is handled via NestJS controller with prefix exclusion, not manually registered.
  *
  * @module Framework
  * @see https://docs.nestjs.com/techniques/http-server - NestJS HTTP server documentation
@@ -31,7 +33,6 @@ import type { FastifyReply } from 'fastify';
 // Import controller classes directly for type safety
 // Using static imports ensures TypeScript can resolve types correctly
 import { HealthController } from '@services/health/health.controller';
-import { LoggingController } from '@infrastructure/logging/logging.controller';
 import { EmailController } from '@communication/channels/email/email.controller';
 // AppController is in root src/ directory - import using relative path
 // From: src/libs/infrastructure/framework/manual-routes.manager.ts
@@ -56,14 +57,6 @@ interface IAppController {
  */
 interface IHealthController {
   getHealth?: (reply: FastifyReply) => Promise<unknown>;
-}
-
-/**
- * @interface ILoggingController
- * @description LoggingController method signatures for logging UI routes
- */
-interface ILoggingController {
-  getUI?: (reply: FastifyReply) => Promise<unknown>;
 }
 
 /**
@@ -118,9 +111,6 @@ export async function registerManualRoutes(
 
     // Register health route
     await registerHealthRoute(app, fastifyInstance, loggingService);
-
-    // Register logger route
-    await registerLoggerRoute(app, fastifyInstance, loggingService);
 
     // Register socket-test route
     await registerSocketTestRoute(app, fastifyInstance, loggingService);
@@ -238,58 +228,6 @@ async function registerHealthRoute(
       LogType.SYSTEM,
       LogLevel.WARN,
       `Failed to register health route: ${error instanceof Error ? error.message : String(error)}`,
-      'ManualRoutesManager',
-      { error: error instanceof Error ? error.stack : String(error) }
-    );
-  }
-}
-
-/**
- * Register logger route (/logger)
- *
- * @param app - NestJS application instance
- * @param fastifyInstance - Fastify instance for route registration
- * @param loggingService - LoggingService instance for structured logging
- * @returns Promise<void>
- */
-async function registerLoggerRoute(
-  app: INestApplication,
-  fastifyInstance: FastifyInstance,
-  loggingService: LoggingService
-): Promise<void> {
-  try {
-    const loggingController = await app.resolve(LoggingController);
-    const typedLoggingController = loggingController as ILoggingController | null;
-
-    if (typedLoggingController && typeof typedLoggingController.getUI === 'function') {
-      // Register GET handler
-      fastifyInstance.get?.('/logger', async (_request: unknown, reply: FastifyReply) => {
-        if (typedLoggingController.getUI) {
-          return typedLoggingController.getUI(reply);
-        }
-        return reply.code(500).send({ error: 'Logging UI handler not available' });
-      });
-      // Register OPTIONS handler for CORS preflight
-      fastifyInstance.options?.('/logger', async (_request: unknown, reply: FastifyReply) => {
-        return reply
-          .code(200)
-          .header('Access-Control-Allow-Origin', '*')
-          .header('Access-Control-Allow-Methods', 'GET, OPTIONS')
-          .header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-          .send();
-      });
-      await loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Logger route /logger manually registered for Fastify (GET and OPTIONS)',
-        'ManualRoutesManager'
-      );
-    }
-  } catch (error) {
-    await loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.WARN,
-      `Failed to register logger route: ${error instanceof Error ? error.message : String(error)}`,
       'ManualRoutesManager',
       { error: error instanceof Error ? error.stack : String(error) }
     );

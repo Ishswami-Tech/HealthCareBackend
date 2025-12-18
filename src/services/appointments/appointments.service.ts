@@ -606,7 +606,8 @@ export class AppointmentsService {
       // Hot path: Direct plugin injection for performance (10M+ users scale)
       // Direct access: ~0.1ms faster than registry lookup
       const checkInData = await this.clinicCheckInPlugin.process({
-        operation: 'process_checkin',
+        operation: 'processCheckIn',
+        clinicId,
         ...checkInDto,
       });
 

@@ -45,7 +45,7 @@ await this.communicationService.send({
 
 - [Communication Module](../../libs/communication/README.md)
 - [Multi-Tenant Communication](../../docs/features/MULTI_TENANT_COMMUNICATION.md)
-- [Notification System Implementation](../../docs/features/NOTIFICATION_SYSTEM_IMPLEMENTATION.md)
+- [Event Integration](../../docs/architecture/EVENT_INTEGRATION.md) - Event-driven notification system
 
 ---
 
