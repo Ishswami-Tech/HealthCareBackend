@@ -1,5 +1,14 @@
 // External imports
-import { Controller, Get, Query, Res, Post, Inject, forwardRef, VERSION_NEUTRAL } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  Res,
+  Post,
+  Inject,
+  forwardRef,
+  VERSION_NEUTRAL,
+} from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import { ApiTags } from '@nestjs/swagger';
 

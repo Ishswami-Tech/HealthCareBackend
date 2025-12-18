@@ -14,13 +14,7 @@ import {
   OnModuleDestroy,
   Optional,
 } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import {
-  isHttpServiceAvailable,
-  type HealthCheckHttpResponse,
-  toHealthCheckResponse,
-} from '@core/types/http.types';
+import { HttpService } from '@infrastructure/http';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
@@ -471,21 +465,18 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
 
       // Use lightweight HTTP check - just verify endpoint responds (any status code means service is responding)
       // Accept any status code including 404, 500, etc. - as long as we get a response, the server is up
-      const httpServiceCheck = this.httpService;
-      if (!isHttpServiceAvailable(httpServiceCheck)) {
+      if (!this.httpService) {
         throw new Error('HttpService is not available for logging endpoint check');
       }
-      const httpService = httpServiceCheck;
 
-      const httpCheckPromise: Promise<{ status: number }> = firstValueFrom(
-        httpService.get<unknown>(loggerUrl, {
+      const httpCheckPromise: Promise<{ status: number }> = this.httpService
+        .get<unknown>(loggerUrl, {
           timeout: QUERY_TIMEOUT_MS,
-          validateStatus: () => true, // Accept any status code - server responding is what matters
         })
-      ).then(response => {
-        const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
-        return { status: healthResponse.status };
-      });
+        .then(response => {
+          // Response already has status from centralized HTTP service
+          return { status: response.status };
+        });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('Logging endpoint check timeout')), QUERY_TIMEOUT_MS);

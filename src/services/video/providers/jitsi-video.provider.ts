@@ -171,8 +171,8 @@ export class JitsiVideoProvider implements IVideoProvider {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const delegate = getVideoConsultationDelegate(client);
-          const existing = await delegate.findUnique({
-            where: { appointmentId },
+          const existing = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
 
           if (!existing) {
@@ -260,8 +260,8 @@ export class JitsiVideoProvider implements IVideoProvider {
         async client => {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
-          const consultation = await delegate.findUnique({
-            where: { appointmentId },
+          const consultation = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(
@@ -334,8 +334,8 @@ export class JitsiVideoProvider implements IVideoProvider {
         async client => {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
-          const consultation = await delegate.findUnique({
-            where: { appointmentId },
+          const consultation = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(

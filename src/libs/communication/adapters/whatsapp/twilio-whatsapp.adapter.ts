@@ -9,8 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@infrastructure/http';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
@@ -72,13 +71,14 @@ export class TwilioWhatsAppAdapter extends BaseWhatsAppAdapter {
 
     try {
       // Verify by getting account info
-      const response = await firstValueFrom(
-        this.httpService.get(`https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}.json`, {
+      const response = await this.httpService.get(
+        `https://api.twilio.com/2010-04-01/Accounts/${this.accountSid}.json`,
+        {
           auth: {
             username: this.accountSid,
             password: this.authToken,
           },
-        })
+        }
       );
 
       return response.status === 200;
@@ -130,17 +130,18 @@ export class TwilioWhatsAppAdapter extends BaseWhatsAppAdapter {
       }
 
       const response = await this.sendWithRetry(async () => {
-        return await firstValueFrom(
-          this.httpService!.post<{ sid?: string }>(url, formData.toString(), {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            auth: {
-              username: this.accountSid,
-              password: this.authToken,
-            },
-          })
-        );
+        if (!this.httpService) {
+          throw new Error('HTTP service not initialized');
+        }
+        return await this.httpService.post<{ sid?: string }>(url, formData.toString(), {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          auth: {
+            username: this.accountSid,
+            password: this.authToken,
+          },
+        });
       });
 
       const responseData = response.data;

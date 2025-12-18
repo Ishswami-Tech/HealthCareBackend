@@ -144,6 +144,7 @@ make k8s-local-access   # Access at localhost:8088
 - [User Service](src/services/users/README.md) - User management & authentication
 
 ### Infrastructure & Integration
+- [HTTP Service](src/libs/infrastructure/http/README.md) - Centralized HTTP service with retry logic and error handling
 - [Redis Caching System](src/libs/infrastructure/cache/CACHE_DOCUMENTATION.md) - Enterprise caching with SWR
 - [WhatsApp Integration](src/libs/communication/messaging/whatsapp/WHATSAPP_INTEGRATION.md) - WhatsApp Business API setup
 
@@ -292,6 +293,13 @@ npm run test:e2e           # Run e2e tests
 - **WebSocket**: Room-based messaging with reconnection handling
 - **Event-Driven Architecture**: Enterprise event service with HIPAA compliance
 - **Multi-channel OTP**: Email, SMS, WhatsApp with intelligent fallback
+
+#### **HTTP Service (Centralized)**
+- **Centralized HTTP Client**: Unified HTTP service with automatic error handling
+- **Retry Logic**: Configurable retries with exponential backoff
+- **Automatic Logging**: Request/response logging via LoggingService
+- **Type-Safe**: Full TypeScript support with generic types
+- **Error Transformation**: All errors converted to HealthcareError
 
 ## 🚀 Deployment
 

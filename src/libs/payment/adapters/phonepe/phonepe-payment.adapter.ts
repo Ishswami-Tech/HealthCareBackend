@@ -9,8 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 import { BasePaymentAdapter } from '../base/base-payment-adapter';
@@ -264,18 +263,16 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
         }
-        return await firstValueFrom(
-          this.httpService.post<PhonePePaymentResponse>(
-            `${this.baseUrl}/pg/v1/pay`,
-            { request: base64Payload },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'X-VERIFY': xVerify,
-                Accept: 'application/json',
-              },
-            }
-          )
+        return await this.httpService.post<PhonePePaymentResponse>(
+          `${this.baseUrl}/pg/v1/pay`,
+          { request: base64Payload },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-VERIFY': xVerify,
+              Accept: 'application/json',
+            },
+          }
         );
       });
 
@@ -352,18 +349,16 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
         }
-        return await firstValueFrom(
-          this.httpService.get<PhonePeStatusResponse>(
-            `${this.baseUrl}/pg/v1/status/${this.merchantId}/${merchantTransactionId}`,
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'X-VERIFY': xVerify,
-                'X-MERCHANT-ID': this.merchantId,
-                Accept: 'application/json',
-              },
-            }
-          )
+        return await this.httpService.get<PhonePeStatusResponse>(
+          `${this.baseUrl}/pg/v1/status/${this.merchantId}/${merchantTransactionId}`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-VERIFY': xVerify,
+              'X-MERCHANT-ID': this.merchantId,
+              Accept: 'application/json',
+            },
+          }
         );
       });
 
@@ -460,18 +455,16 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
         }
-        return await firstValueFrom(
-          this.httpService.post<PhonePeRefundResponse>(
-            `${this.baseUrl}/pg/v1/refund`,
-            { request: base64Payload },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                'X-VERIFY': xVerify,
-                Accept: 'application/json',
-              },
-            }
-          )
+        return await this.httpService.post<PhonePeRefundResponse>(
+          `${this.baseUrl}/pg/v1/refund`,
+          { request: base64Payload },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-VERIFY': xVerify,
+              Accept: 'application/json',
+            },
+          }
         );
       });
 

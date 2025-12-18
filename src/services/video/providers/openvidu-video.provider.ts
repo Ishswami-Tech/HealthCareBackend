@@ -6,14 +6,13 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import type { AxiosResponse } from 'axios';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database/database.service';
-import { ConfigService } from '@config/config.service';
+import { HttpService } from '@infrastructure/http';
+import type { HttpRequestOptions } from '@core/types';
+import { ConfigService } from '@config';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -73,6 +72,39 @@ export class OpenViduVideoProvider implements IVideoProvider {
   }
 
   /**
+   * Get HTTP request config with SSL verification skipped in development
+   */
+  private getHttpConfig(options?: {
+    headers?: Record<string, string>;
+    timeout?: number;
+  }): HttpRequestOptions {
+    // Use the centralized HTTP service's getHttpConfig for SSL handling
+    const baseConfig = this.httpService.getHttpConfig({
+      ...options,
+    });
+
+    // Build HttpRequestOptions with merged headers
+    const result: HttpRequestOptions = {
+      headers: {
+        Authorization: this.getAuthHeader(),
+        ...(options?.headers || {}),
+      },
+    };
+
+    // Only include timeout if it's defined (for exactOptionalPropertyTypes)
+    if (options?.timeout !== undefined) {
+      result.timeout = options.timeout;
+    } else if (baseConfig.timeout !== undefined) {
+      result.timeout = baseConfig.timeout;
+    }
+
+    // Note: httpsAgent is already handled by httpService.getHttpConfig() for SSL in dev
+    // We don't need to copy it here as it will be applied automatically
+
+    return result;
+  }
+
+  /**
    * Generate secure room name
    */
   private generateSecureRoomName(appointmentId: string, clinicId: string): string {
@@ -89,12 +121,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
   private async createOrGetSession(roomName: string): Promise<OpenViduRoomConfig> {
     try {
       // Try to get existing session
-      const response = await firstValueFrom(
-        this.httpService.get<OpenViduRoomConfig>(`${this.apiUrl}/api/sessions/${roomName}`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
+      const response = await this.httpService.get<OpenViduRoomConfig>(
+        `${this.apiUrl}/api/sessions/${roomName}`,
+        this.getHttpConfig()
       );
 
       if (response.data) {
@@ -103,13 +132,11 @@ export class OpenViduVideoProvider implements IVideoProvider {
     } catch (error) {
       // Session doesn't exist, create new one
       if (
-        error &&
-        typeof error === 'object' &&
-        'response' in error &&
-        error.response &&
-        typeof error.response === 'object' &&
-        'status' in error.response &&
-        error.response.status === 404
+        error instanceof HealthcareError &&
+        error.metadata &&
+        typeof error.metadata === 'object' &&
+        'status' in error.metadata &&
+        error.metadata['status'] === 404
       ) {
         // Session doesn't exist, create it
       } else {
@@ -118,29 +145,26 @@ export class OpenViduVideoProvider implements IVideoProvider {
     }
 
     // Create new session
-    const createResponse = await firstValueFrom(
-      this.httpService.post<OpenViduRoomConfig>(
-        `${this.apiUrl}/api/sessions`,
-        {
-          customSessionId: roomName,
-          mediaMode: 'ROUTED',
-          recordingMode: 'MANUAL',
-          defaultRecordingProperties: {
-            name: `Consultation-${roomName}`,
-            hasAudio: true,
-            hasVideo: true,
-            outputMode: 'COMPOSED',
-            resolution: '1280x720',
-            frameRate: 30,
-          },
+    const createResponse = await this.httpService.post<OpenViduRoomConfig>(
+      `${this.apiUrl}/api/sessions`,
+      {
+        customSessionId: roomName,
+        mediaMode: 'ROUTED',
+        recordingMode: 'MANUAL',
+        defaultRecordingProperties: {
+          name: `Consultation-${roomName}`,
+          hasAudio: true,
+          hasVideo: true,
+          outputMode: 'COMPOSED',
+          resolution: '1280x720',
+          frameRate: 30,
         },
-        {
-          headers: {
-            Authorization: this.getAuthHeader(),
-            'Content-Type': 'application/json',
-          },
-        }
-      )
+      },
+      this.getHttpConfig({
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
     );
 
     return createResponse.data;
@@ -196,27 +220,24 @@ export class OpenViduVideoProvider implements IVideoProvider {
         id?: string;
         session?: string;
       }
-      const tokenResponse = await firstValueFrom(
-        this.httpService.post<OpenViduTokenResponse>(
-          `${this.apiUrl}/api/tokens`,
-          {
-            session: session.id,
-            role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
-            data: JSON.stringify({
-              userId,
-              userRole,
-              displayName: userInfo.displayName,
-              email: userInfo.email,
-              avatar: userInfo.avatar,
-            }),
+      const tokenResponse = await this.httpService.post<OpenViduTokenResponse>(
+        `${this.apiUrl}/api/tokens`,
+        {
+          session: session.id,
+          role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
+          data: JSON.stringify({
+            userId,
+            userRole,
+            displayName: userInfo.displayName,
+            email: userInfo.email,
+            avatar: userInfo.avatar,
+          }),
+        },
+        this.getHttpConfig({
+          headers: {
+            'Content-Type': 'application/json',
           },
-          {
-            headers: {
-              Authorization: this.getAuthHeader(),
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+        })
       );
 
       const token = tokenResponse.data.token;
@@ -225,8 +246,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const delegate = getVideoConsultationDelegate(client);
-          const existing = await delegate.findUnique({
-            where: { appointmentId },
+          const existing = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
 
           if (!existing) {
@@ -329,8 +350,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
         async client => {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
-          const consultation = await delegate.findUnique({
-            where: { appointmentId },
+          const consultation = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(
@@ -403,8 +424,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
         async client => {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
-          const consultation = await delegate.findUnique({
-            where: { appointmentId },
+          const consultation = await delegate.findFirst({
+            where: { OR: [{ appointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(
@@ -522,17 +543,29 @@ export class OpenViduVideoProvider implements IVideoProvider {
    * Check if provider is healthy
    */
   async isHealthy(): Promise<boolean> {
+    // In development, always return true if OpenVidu is enabled
+    // This avoids SSL certificate issues with self-signed certificates
+    if (process.env['NODE_ENV'] === 'development' || process.env['IS_DEV'] === 'true') {
+      return this.isEnabled();
+    }
+
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.apiUrl}/api/config`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-          timeout: 5000,
-        })
+      const response = await this.httpService.get(
+        `${this.apiUrl}/api/config`,
+        this.getHttpConfig({ timeout: 5000 })
       );
       return response.status === 200;
-    } catch {
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'OpenVidu health check failed',
+        'OpenViduVideoProvider.isHealthy',
+        {
+          error: (error as Error).message,
+          apiUrl: this.apiUrl,
+        }
+      );
       return false;
     }
   }
@@ -550,23 +583,20 @@ export class OpenViduVideoProvider implements IVideoProvider {
     }
   ): Promise<OpenViduRecording> {
     try {
-      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
-        this.httpService.post<OpenViduRecording>(
-          `${this.apiUrl}/api/recordings/start`,
-          {
-            session: sessionId,
-            ...(options?.outputMode && { outputMode: options.outputMode }),
-            ...(options?.resolution && { resolution: options.resolution }),
-            ...(options?.frameRate && { frameRate: options.frameRate }),
-            ...(options?.customLayout && { customLayout: options.customLayout }),
+      const response = await this.httpService.post<OpenViduRecording>(
+        `${this.apiUrl}/api/recordings/start`,
+        {
+          session: sessionId,
+          ...(options?.outputMode && { outputMode: options.outputMode }),
+          ...(options?.resolution && { resolution: options.resolution }),
+          ...(options?.frameRate && { frameRate: options.frameRate }),
+          ...(options?.customLayout && { customLayout: options.customLayout }),
+        },
+        this.getHttpConfig({
+          headers: {
+            'Content-Type': 'application/json',
           },
-          {
-            headers: {
-              Authorization: this.getAuthHeader(),
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+        })
       );
 
       void this.loggingService.log(
@@ -602,17 +632,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async stopRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
-      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
-        this.httpService.post<OpenViduRecording>(
-          `${this.apiUrl}/api/recordings/stop/${recordingId}`,
-          {},
-          {
-            headers: {
-              Authorization: this.getAuthHeader(),
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+      const response = await this.httpService.post<OpenViduRecording>(
+        `${this.apiUrl}/api/recordings/stop/${recordingId}`,
+        {},
+        this.getHttpConfig({
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
       );
 
       void this.loggingService.log(
@@ -647,12 +674,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async getRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
-      const response: AxiosResponse<OpenViduRecording> = await firstValueFrom(
-        this.httpService.get<OpenViduRecording>(`${this.apiUrl}/api/recordings/${recordingId}`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
+      const response = await this.httpService.get<OpenViduRecording>(
+        `${this.apiUrl}/api/recordings/${recordingId}`,
+        this.getHttpConfig()
       );
 
       return response.data;
@@ -679,14 +703,10 @@ export class OpenViduVideoProvider implements IVideoProvider {
       const url = sessionId
         ? `${this.apiUrl}/api/recordings?sessionId=${sessionId}`
         : `${this.apiUrl}/api/recordings`;
-      const response: AxiosResponse<{ numberOfElements: number; content: OpenViduRecording[] }> =
-        await firstValueFrom(
-          this.httpService.get<{ numberOfElements: number; content: OpenViduRecording[] }>(url, {
-            headers: {
-              Authorization: this.getAuthHeader(),
-            },
-          })
-        );
+      const response = await this.httpService.get<{
+        numberOfElements: number;
+        content: OpenViduRecording[];
+      }>(url, this.getHttpConfig());
 
       return response.data.content || [];
     } catch (error) {
@@ -709,12 +729,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async deleteRecording(recordingId: string): Promise<void> {
     try {
-      await firstValueFrom(
-        this.httpService.delete(`${this.apiUrl}/api/recordings/${recordingId}`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
+      await this.httpService.delete(
+        `${this.apiUrl}/api/recordings/${recordingId}`,
+        this.getHttpConfig()
       );
 
       void this.loggingService.log(
@@ -746,12 +763,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async getSessionInfo(sessionId: string): Promise<OpenViduSessionInfo> {
     try {
-      const response: AxiosResponse<OpenViduSessionInfo> = await firstValueFrom(
-        this.httpService.get<OpenViduSessionInfo>(`${this.apiUrl}/api/sessions/${sessionId}`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
+      const response = await this.httpService.get<OpenViduSessionInfo>(
+        `${this.apiUrl}/api/sessions/${sessionId}`,
+        this.getHttpConfig()
       );
 
       return response.data;
@@ -797,15 +811,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async kickParticipant(sessionId: string, connectionId: string): Promise<void> {
     try {
-      await firstValueFrom(
-        this.httpService.delete(
-          `${this.apiUrl}/api/sessions/${sessionId}/connection/${connectionId}`,
-          {
-            headers: {
-              Authorization: this.getAuthHeader(),
-            },
-          }
-        )
+      await this.httpService.delete(
+        `${this.apiUrl}/api/sessions/${sessionId}/connection/${connectionId}`,
+        this.getHttpConfig()
       );
 
       void this.loggingService.log(
@@ -839,12 +847,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async forceUnpublish(sessionId: string, streamId: string): Promise<void> {
     try {
-      await firstValueFrom(
-        this.httpService.delete(`${this.apiUrl}/api/sessions/${sessionId}/stream/${streamId}`, {
-          headers: {
-            Authorization: this.getAuthHeader(),
-          },
-        })
+      await this.httpService.delete(
+        `${this.apiUrl}/api/sessions/${sessionId}/stream/${streamId}`,
+        this.getHttpConfig()
       );
 
       void this.loggingService.log(

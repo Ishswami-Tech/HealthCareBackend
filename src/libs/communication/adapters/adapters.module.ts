@@ -8,7 +8,7 @@
  */
 
 import { Module, forwardRef } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
+import { HttpModule } from '@infrastructure/http';
 import { LoggingModule } from '@logging';
 import { ProviderFactory } from './factories/provider.factory';
 import { CommunicationConfigModule } from '../config/communication-config.module';

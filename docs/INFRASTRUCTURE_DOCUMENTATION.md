@@ -23,10 +23,11 @@ This document consolidates all infrastructure module documentation from `src/` d
 7. [Framework Abstraction](#7-framework-abstraction)
 8. [Storage Service](#8-storage-service)
 9. [Search Service](#9-search-service)
+10. [HTTP Service](#10-http-service)
 
 ### Additional Documentation
-10. [Error Handling](#10-error-handling)
-11. [Communication Module](#11-communication-module)
+11. [Error Handling](#11-error-handling)
+12. [Communication Module](#12-communication-module)
 
 ---
 
@@ -523,7 +524,111 @@ export class MyService {
 
 ---
 
-## 10. Error Handling
+## 10. HTTP Service
+
+**Location**: `src/libs/infrastructure/http/`  
+**Individual README**: [HTTP Service README](../../src/libs/infrastructure/http/README.md)
+
+### Overview
+
+Centralized HTTP service for making HTTP requests throughout the application. Wraps NestJS HttpService (axios) to provide consistent error handling, logging, retry logic, and type safety.
+
+### Key Features
+
+- ✅ **Automatic Error Handling** - All errors transformed to HealthcareError
+- ✅ **Request/Response Logging** - Automatic logging with LoggingService
+- ✅ **Retry Logic** - Configurable retries with exponential backoff
+- ✅ **Type-Safe** - Full TypeScript support with generic types
+- ✅ **Timeout Management** - Configurable timeouts per request
+- ✅ **Health Check Support** - Built-in health check capabilities
+- ✅ **SSL Support** - Automatic SSL verification skip in development
+
+### Quick Start
+
+```typescript
+import { HttpService } from '@infrastructure/http';
+
+@Injectable()
+export class MyService {
+  constructor(private readonly httpService: HttpService) {}
+
+  async fetchData() {
+    const response = await this.httpService.get<MyType>('https://api.example.com/data', {
+      retries: 3,
+      timeout: 5000,
+    });
+    return response.data;
+  }
+}
+```
+
+### Available Methods
+
+- `get<T>(url, options?)` - GET request
+- `post<T, D>(url, data?, options?)` - POST request
+- `put<T, D>(url, data?, options?)` - PUT request
+- `patch<T, D>(url, data?, options?)` - PATCH request
+- `delete<T>(url, options?)` - DELETE request
+- `head<T>(url, options?)` - HEAD request
+
+### Request Options
+
+```typescript
+interface HttpRequestOptions {
+  retries?: number;                    // Number of retry attempts (default: 0)
+  retryDelay?: number;                 // Retry delay in ms (default: 1000)
+  exponentialBackoff?: boolean;        // Use exponential backoff (default: true)
+  shouldRetry?: (error: unknown) => boolean; // Custom retry condition
+  logRequest?: boolean;                // Whether to log request (default: true)
+  timeout?: number;                    // Request timeout in ms
+  headers?: Record<string, string>;     // Additional headers
+  // ... all AxiosRequestConfig options
+}
+```
+
+### Response Format
+
+```typescript
+interface HttpResponse<T> {
+  data: T;                              // Response data (typed)
+  status: number;                       // HTTP status code
+  statusText: string;                   // HTTP status text
+  headers: Record<string, string>;      // Response headers
+  config: AxiosRequestConfig;          // Request configuration
+  requestDuration: number;              // Request duration in milliseconds
+}
+```
+
+### Best Practices
+
+1. **Always use centralized HTTP service** - Never use `@nestjs/axios` HttpService directly
+2. **Use type generics** - Always specify response type: `get<MyType>(url)`
+3. **Configure retries** - Use retries for external API calls: `{ retries: 3 }`
+4. **Handle errors** - Errors are automatically transformed to HealthcareError
+5. **Use timeouts** - Always set appropriate timeouts for external calls
+
+### Migration from @nestjs/axios
+
+**Before:**
+```typescript
+import { HttpService } from '@nestjs/axios';
+import { firstValueFrom } from 'rxjs';
+
+const response = await firstValueFrom(
+  this.httpService.get<Data>('https://api.example.com/data')
+);
+```
+
+**After:**
+```typescript
+import { HttpService } from '@infrastructure/http';
+
+const response = await this.httpService.get<Data>('https://api.example.com/data');
+```
+
+---
+
+## 11. Error Handling
 
 **Location**: `src/libs/core/errors/`
 **Individual README**: [Core Library README](./libs/core/README.md#error-handling)
@@ -601,7 +706,7 @@ export class UserService {
 
 ---
 
-## 11. Communication Module
+## 12. Communication Module
 
 **Location**: `src/libs/communication/`
 **Individual README**: [Communication Module README](../../src/libs/communication/README.md)
@@ -667,6 +772,9 @@ import { DatabaseService } from '@infrastructure/database';
 // Cache
 import { CacheService } from '@infrastructure/cache';
 import { Cache } from '@core/decorators';
+
+// HTTP Service (Centralized)
+import { HttpService } from '@infrastructure/http';
 
 // Framework
 import { BootstrapOrchestrator } from '@infrastructure/framework';

@@ -5,3 +5,4 @@ export * from './cache';
 export * from './queue';
 export * from './storage';
 export * from './search';
+export * from './http';
