@@ -43,8 +43,6 @@ export interface UrlsConfig {
   readonly redisCommander: string;
   /** Prisma Studio URL */
   readonly prismaStudio: string;
-  /** PgAdmin URL */
-  readonly pgAdmin: string;
   /** Frontend URL */
   readonly frontend: string;
 }

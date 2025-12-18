@@ -303,7 +303,6 @@ export class AppController {
         ?.status;
       const redisCommanderStatus = (healthServices as { redisCommander?: ServiceHealth })
         .redisCommander?.status;
-      const pgAdminStatus = (healthServices as { pgAdmin?: ServiceHealth }).pgAdmin?.status;
 
       // Extract communication sub-services status from communicationHealth
       const communicationHealthData = communicationHealth as
@@ -345,7 +344,6 @@ export class AppController {
       const isEmailRunning = emailStatus === 'healthy';
       const isPrismaStudioRunning = prismaStudioStatus === 'healthy';
       const isRedisCommanderRunning = redisCommanderStatus === 'healthy';
-      const isPgAdminRunning = pgAdminStatus === 'healthy';
 
       // Define all services with real-time status based on actual health checks
       // Services are active if their health check passes (API is already running since we're serving this page)
@@ -423,7 +421,10 @@ export class AppController {
           description: isDragonflyProvider
             ? 'Dragonfly cache management interface (Redis-compatible).'
             : 'Redis database management interface.',
-          url: urlsConfig.redisCommander || 'http://localhost:8082',
+          url:
+            urlsConfig.redisCommander ||
+            this.configService.getEnv('REDIS_COMMANDER_URL') ||
+            'http://localhost:8082',
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -434,7 +435,10 @@ export class AppController {
         allServices.push({
           name: 'Redis Commander',
           description: 'Redis database management interface.',
-          url: urlsConfig.redisCommander || 'http://localhost:8082',
+          url:
+            urlsConfig.redisCommander ||
+            this.configService.getEnv('REDIS_COMMANDER_URL') ||
+            'http://localhost:8082',
           active: isRedisCommanderRunning,
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -446,21 +450,12 @@ export class AppController {
         allServices.push({
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
-          url: urlsConfig.prismaStudio || 'http://localhost:5555',
+          url:
+            urlsConfig.prismaStudio ||
+            this.configService.getEnv('PRISMA_STUDIO_URL') ||
+            'http://localhost:5555',
           active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
           category: 'Database',
-          devOnly: !isProduction,
-        });
-      }
-
-      if (!isProduction || isPgAdminRunning) {
-        allServices.push({
-          name: 'pgAdmin',
-          description: 'PostgreSQL database management interface.',
-          url: urlsConfig.pgAdmin || 'http://localhost:5050',
-          active: isPgAdminRunning, // Active if pgAdmin health check passes
-          category: 'Database',
-          credentials: 'Email: admin@admin.com, Password: admin',
           devOnly: !isProduction,
         });
       }
@@ -471,7 +466,7 @@ export class AppController {
       const services = isProduction
         ? allServices.filter((service: ServiceInfo) => {
             // In production/staging, only show: API Documentation, Queue Dashboard, Logger, WebSocket, Email Service
-            // Hide: Prisma Studio, pgAdmin, Redis Commander (unless Redis is provider)
+            // Hide: Prisma Studio, Redis Commander (unless Redis is provider)
             const essentialServices = [
               'API Documentation',
               'Queue Dashboard',
@@ -608,7 +603,12 @@ export class AppController {
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
     const appConfig = this.configService.getAppConfig();
-    const baseUrl: string = appConfig.apiUrl || appConfig.baseUrl || 'http://localhost:8088';
+    const baseUrl: string =
+      appConfig.apiUrl ||
+      appConfig.baseUrl ||
+      this.configService.getEnv('API_URL') ||
+      this.configService.getEnv('BASE_URL') ||
+      'http://localhost:8088';
 
     const html = `
 <!DOCTYPE html>

@@ -76,6 +76,9 @@ import { ScheduleModule } from '@nestjs/schedule';
 // Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
 // Logging Module - explicitly import to ensure LOGGING_SERVICE token is available
 import { LoggingModule } from '@infrastructure/logging/logging.module';
+// Guards Module - required for CacheController which uses JwtAuthGuard
+// Use direct import to avoid TDZ issues with barrel exports
+import { GuardsModule } from '@core/guards/guards.module';
 
 /**
  * Cache Module with SOLID architecture and provider-agnostic design
@@ -111,6 +114,9 @@ export class CacheModule {
       forwardRef(() => LoggingModule),
       // DatabaseModule is @Global() but needs forwardRef due to circular dependency with ConfigModule
       forwardRef(() => DatabaseModule),
+      // GuardsModule - required for CacheController which uses JwtAuthGuard, RolesGuard, IpWhitelistGuard
+      // Only import in non-worker services (workers don't need controllers)
+      ...(isWorker ? [] : [forwardRef(() => GuardsModule)]),
     ];
 
     // Only include ScheduleModule and CacheWarmingService in non-worker services
@@ -173,6 +179,9 @@ export class CacheModule {
       baseProviders.push(CacheWarmingService); // Comprehensive cache warming with cron jobs
     }
 
+    // Controllers - only include in non-worker services (workers don't need HTTP controllers)
+    const baseControllers = isWorker ? [] : [CacheController];
+
     const baseExports: Array<
       | typeof CacheService
       | typeof MultiLayerCacheService
@@ -205,7 +214,7 @@ export class CacheModule {
       module: CacheModule,
       global: true,
       imports: baseImports,
-      controllers: [CacheController],
+      controllers: baseControllers, // Only include controllers in non-worker services
       providers: baseProviders,
       exports: baseExports,
     };

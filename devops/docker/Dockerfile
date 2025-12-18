@@ -63,9 +63,11 @@ ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
-ENV NODE_OPTIONS="--max-old-space-size=1536 --max-http-header-size=16384 --expose-gc"
+# Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
+# Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
+ENV NODE_OPTIONS="--max-old-space-size=6144 --max-http-header-size=16384 --expose-gc"
 ENV ENABLE_GC=true
-ENV GC_INTERVAL=21600
+ENV GC_INTERVAL=10800
 
 EXPOSE 8088
 

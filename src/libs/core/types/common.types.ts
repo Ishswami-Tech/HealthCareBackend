@@ -136,7 +136,6 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
     communication: ServiceHealth;
     prismaStudio?: ServiceHealth;
     redisCommander?: ServiceHealth;
-    pgAdmin?: ServiceHealth;
   };
   processInfo: {
     pid: number;
@@ -180,7 +179,6 @@ export interface HealthCheckResult {
     email: ServiceHealth;
     prismaStudio?: ServiceHealth;
     redisCommander?: ServiceHealth;
-    pgAdmin?: ServiceHealth;
   };
   version: string;
   uptime: number;

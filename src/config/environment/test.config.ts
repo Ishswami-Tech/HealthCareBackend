@@ -42,7 +42,6 @@ export default function createTestConfig(): Config {
       socket: getEnvWithDefault('SOCKET_URL', '/socket.io'),
       redisCommander: getEnvWithDefault('REDIS_COMMANDER_URL', 'http://localhost:8082'),
       prismaStudio: getEnvWithDefault('PRISMA_STUDIO_URL', 'http://localhost:5555'),
-      pgAdmin: getEnvWithDefault('PGADMIN_URL', 'http://localhost:5050'),
       frontend: getEnvWithDefault('FRONTEND_URL', 'http://localhost:3000'),
     },
     database: {

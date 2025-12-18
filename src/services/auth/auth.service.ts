@@ -628,7 +628,7 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.getUrlsConfig().frontend || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.getUrlsConfig().frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
         },
       });
 

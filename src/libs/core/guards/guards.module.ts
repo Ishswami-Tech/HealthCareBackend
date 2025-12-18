@@ -16,7 +16,7 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { Reflector } from '@nestjs/core';
 import { LoggingModule } from '@infrastructure/logging';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
-import { CacheModule } from '@infrastructure/cache/cache.module';
+// CacheModule is @Global() - no need to import it
 import { SignOptions } from 'jsonwebtoken';
 
 /**
@@ -62,8 +62,8 @@ import { SignOptions } from 'jsonwebtoken';
     RateLimitModule,
     forwardRef(() => DatabaseModule),
     forwardRef(() => LoggingModule), // Use forwardRef to break potential circular dependency
-    RbacModule,
-    CacheModule,
+    forwardRef(() => RbacModule), // Use forwardRef to break circular dependency with DatabaseModule
+    // CacheModule is @Global() - no need to import it explicitly
   ],
   providers: [
     JwtAuthGuard,
