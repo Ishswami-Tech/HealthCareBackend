@@ -74,6 +74,8 @@ import { DragonflyModule } from '@infrastructure/cache/dragonfly/dragonfly.modul
 // Schedule Module for cron jobs (only needed for CacheWarmingService, not in worker)
 import { ScheduleModule } from '@nestjs/schedule';
 // Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
+// Logging Module - explicitly import to ensure LOGGING_SERVICE token is available
+import { LoggingModule } from '@infrastructure/logging/logging.module';
 
 /**
  * Cache Module with SOLID architecture and provider-agnostic design
@@ -105,7 +107,8 @@ export class CacheModule {
       DragonflyModule, // Required for DragonflyCacheProvider (even if using Redis)
       ResilienceModule, // Provides CircuitBreakerService
       // QueueModule is @Global() and already available - QueueService can be injected
-      // LoggingModule is @Global() and already available - no need to import
+      // Explicitly import LoggingModule to ensure LOGGING_SERVICE token is available for LocationCacheService
+      forwardRef(() => LoggingModule),
       // DatabaseModule is @Global() but needs forwardRef due to circular dependency with ConfigModule
       forwardRef(() => DatabaseModule),
     ];

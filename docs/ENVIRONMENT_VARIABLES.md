@@ -4,7 +4,7 @@ Complete list of all environment variables used in the Healthcare Backend applic
 
 ## 📋 Quick Reference
 
-All environment variables are managed through the central configuration service (`src/config/config.service.ts`). See `docs/CENTRAL_CONFIG_GUIDE.md` for usage instructions.
+All environment variables are managed through the central configuration service (`src/config/config.service.ts`). See `docs/DEVELOPER_GUIDE.md` for usage instructions.
 
 ## 🔧 Application Configuration
 
@@ -235,7 +235,7 @@ Environment variables are loaded in this order (later files override earlier one
 
 ## 🔍 See Also
 
-- **Central Config Guide**: `docs/CENTRAL_CONFIG_GUIDE.md`
+- **Developer Guide**: `docs/DEVELOPER_GUIDE.md` (includes configuration management)
 - **Jitsi Setup**: `devops/kubernetes/JITSI_SETUP.md`
 - **Config Service**: `src/config/config.service.ts`
 - **Config Types**: `src/libs/core/types/config.types.ts`
