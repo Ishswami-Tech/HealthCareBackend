@@ -1,6 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { HttpModule } from '@nestjs/axios';
+import { HttpModule } from '@infrastructure/http';
 import { TerminusModule } from '@nestjs/terminus';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';

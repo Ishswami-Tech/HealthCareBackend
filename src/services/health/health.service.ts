@@ -35,13 +35,7 @@ import { EmailService } from '@communication/channels/email';
 import { PushNotificationService } from '@communication/channels/push/push.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { HealthcareErrorsService } from '@core/errors/healthcare-errors.service';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
-import {
-  isHttpServiceAvailable,
-  type HealthCheckHttpResponse,
-  toHealthCheckResponse,
-} from '@core/types/http.types';
+import { HttpService } from '@infrastructure/http';
 import cluster from 'cluster';
 import * as os from 'os';
 
@@ -2759,19 +2753,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             const socketTestUrl = `${baseUrl}/socket-test`;
 
             try {
-              // Type assertion needed for strict TypeScript mode
-
-              const httpServiceCheck = this.httpService;
-
-              if (isHttpServiceAvailable(httpServiceCheck)) {
-                const httpService = httpServiceCheck;
+              if (this.httpService) {
                 await Promise.race([
-                  firstValueFrom(
-                    httpService.get<unknown>(socketTestUrl, {
-                      timeout: 3000,
-                      validateStatus: () => true,
-                    })
-                  ),
+                  this.httpService.get<unknown>(socketTestUrl, {
+                    timeout: 3000,
+                  }),
                   new Promise<never>((_, reject) =>
                     setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
                   ),
@@ -2846,27 +2832,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
           try {
-            // Type assertion needed for strict TypeScript mode
-
-            const httpServiceCheck = this.httpService;
-
-            if (isHttpServiceAvailable(httpServiceCheck)) {
-              const httpService = httpServiceCheck;
+            if (this.httpService) {
               const httpCheck = await Promise.race([
-                firstValueFrom(
-                  httpService.get<unknown>(emailStatusUrl, {
-                    timeout: 3000,
-                    validateStatus: () => true,
-                  })
-                ),
+                this.httpService.get<unknown>(emailStatusUrl, {
+                  timeout: 3000,
+                }),
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
                 ),
               ]);
 
-              const healthResponse: HealthCheckHttpResponse<unknown> =
-                toHealthCheckResponse(httpCheck);
-              if (healthResponse.status < 500) {
+              // Response already has status from centralized HTTP service
+              if (httpCheck.status < 500) {
                 return {
                   status: 'healthy',
                   details: 'Email service endpoint is accessible',
@@ -2910,28 +2887,19 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
         try {
-          // Type assertion needed for strict TypeScript mode
-
-          const httpServiceCheck = this.httpService;
-
-          if (isHttpServiceAvailable(httpServiceCheck)) {
-            const httpService = httpServiceCheck;
+          if (this.httpService) {
             const httpCheck = await Promise.race([
-              firstValueFrom(
-                httpService.get<unknown>(emailStatusUrl, {
-                  timeout: 3000,
-                  validateStatus: () => true,
-                })
-              ),
+              this.httpService.get<unknown>(emailStatusUrl, {
+                timeout: 3000,
+              }),
               new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('HTTP check timeout')), 3000)
               ),
             ]);
 
             // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
-            const healthResponse: HealthCheckHttpResponse<unknown> =
-              toHealthCheckResponse(httpCheck);
-            if (healthResponse.status < 500) {
+            // Response already has status from centralized HTTP service
+            if (httpCheck.status < 500) {
               return {
                 status: 'healthy',
                 details: 'Email service is configured and accessible',
@@ -3062,26 +3030,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   ): Promise<ServiceHealth> {
     const startTime = performance.now();
     try {
-      // Type assertion needed for strict TypeScript mode
-
-      const httpServiceCheck = this.httpService;
-
-      if (!isHttpServiceAvailable(httpServiceCheck)) {
+      if (!this.httpService) {
         throw new Error('HttpService is not available for external service check');
       }
-      const httpService = httpServiceCheck;
 
       const response = await Promise.race([
-        firstValueFrom(
-          httpService.get<unknown>(url, {
-            timeout,
-            validateStatus: () => true, // Don't throw on any status code
-            // Add headers to avoid CORS issues and improve compatibility
-            headers: {
-              'User-Agent': 'Healthcare-HealthCheck/1.0',
-            },
-          })
-        ),
+        this.httpService.get<unknown>(url, {
+          timeout,
+          headers: {
+            'User-Agent': 'Healthcare-HealthCheck/1.0',
+          },
+        }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Request timeout')), timeout)
         ),
@@ -3090,9 +3049,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const responseTime = Math.round(performance.now() - startTime);
       // Accept any HTTP response (even 404/401/500) as service is responding
       // Only connection errors (ECONNREFUSED, ETIMEDOUT) indicate service is down
-      const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
-      const isHealthy = healthResponse.status !== undefined;
-      const statusCode = healthResponse.status;
+      const isHealthy = response.status !== undefined;
+      const statusCode = response.status;
 
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
@@ -3147,22 +3105,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
       const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
-      // Type assertion needed for strict TypeScript mode
-
-      const httpServiceCheck = this.httpService;
-
-      if (!isHttpServiceAvailable(httpServiceCheck)) {
+      if (!this.httpService) {
         throw new Error('HttpService is not available for internal endpoint check');
       }
-      const httpService = httpServiceCheck;
 
       const response = await Promise.race([
-        firstValueFrom(
-          httpService.get<unknown>(url, {
-            timeout: timeout + 1000, // Add buffer to timeout
-            validateStatus: () => true, // Don't throw on any status code
-          })
-        ),
+        this.httpService.get<unknown>(url, {
+          timeout: timeout + 1000, // Add buffer to timeout
+        }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Request timeout')), timeout + 1000)
         ),
@@ -3170,9 +3120,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       const responseTime = Math.round(performance.now() - startTime);
       // Accept any status < 500 as endpoint exists (even 404/401 means service is responding)
-      const healthResponse: HealthCheckHttpResponse<unknown> = toHealthCheckResponse(response);
-      const isHealthy = healthResponse.status < 500;
-      const statusCode = healthResponse.status;
+      const isHealthy = response.status < 500;
+      const statusCode = response.status;
 
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',

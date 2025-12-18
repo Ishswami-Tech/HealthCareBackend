@@ -9,7 +9,7 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
+import { HttpService } from '@infrastructure/http';
 import {
   EmailProviderAdapter,
   WhatsAppProviderAdapter,

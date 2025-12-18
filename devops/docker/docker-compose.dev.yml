@@ -434,12 +434,19 @@ services:
       - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-localhost}
       - OPENVIDU_EDITION=ce
       - OPENVIDU_CDR=false
+      # Server Port Configuration
+      - SERVER_PORT=4443
+      - SERVER_SSL_ENABLED=false
+      - HTTPS_PORT=4443
+      - HTTP_PORT=5443
+      - server.port=4443
+      - server.address=0.0.0.0
       # OpenVidu Webhook Configuration (from .env files)
       - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
       - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
       - OPENVIDU_WEBHOOK_EVENTS=${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
-      - OPENVIDU_WEBHOOK_HEADERS=
-      - OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE=
+      - OPENVIDU_WEBHOOK_HEADERS=[]
+      - OPENVIDU_WEBHOOK_EVENTS_TO_IGNORE=[]
       # OpenVidu Stream Configuration
       - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
       - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300

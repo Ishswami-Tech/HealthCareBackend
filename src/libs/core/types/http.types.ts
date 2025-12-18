@@ -134,3 +134,85 @@ export function getHttpService(
   // TypeScript should narrow the type here, but we add explicit assertion for strict mode
   return service;
 }
+
+/**
+ * HTTP request options with retry configuration
+ * Used by the centralized HTTP service (@infrastructure/http)
+ */
+export interface HttpRequestOptions extends Partial<AxiosRequestConfig> {
+  /**
+   * Number of retry attempts (default: 0)
+   */
+  retries?: number;
+  /**
+   * Retry delay in milliseconds (default: 1000)
+   */
+  retryDelay?: number;
+  /**
+   * Whether to use exponential backoff for retries (default: true)
+   */
+  exponentialBackoff?: boolean;
+  /**
+   * Custom retry condition function
+   */
+  shouldRetry?: (error: unknown) => boolean;
+  /**
+   * Whether to log the request (default: true)
+   */
+  logRequest?: boolean;
+  /**
+   * Custom timeout in milliseconds
+   */
+  timeout?: number;
+  /**
+   * Additional headers to merge
+   */
+  headers?: Record<string, string>;
+}
+
+/**
+ * HTTP response wrapper with metadata
+ * Used by the centralized HTTP service (@infrastructure/http)
+ */
+export interface HttpResponse<T = unknown> {
+  data: T;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  config: AxiosRequestConfig;
+  requestDuration: number;
+}
+
+/**
+ * Retry configuration for HTTP requests
+ */
+export interface RetryConfig {
+  maxRetries: number;
+  delay: number;
+  exponentialBackoff: boolean;
+  shouldRetry: (error: unknown) => boolean;
+}
+
+/**
+ * Default retry configuration for HTTP requests
+ */
+export const DEFAULT_RETRY_CONFIG: RetryConfig = {
+  maxRetries: 0,
+  delay: 1000,
+  exponentialBackoff: true,
+  shouldRetry: (error: unknown) => {
+    // Retry on network errors or 5xx status codes
+    if (error && typeof error === 'object') {
+      if ('code' in error) {
+        // Network errors (ECONNREFUSED, ETIMEDOUT, etc.)
+        return true;
+      }
+      if ('response' in error && error.response) {
+        const response = error.response as { status?: number };
+        // Retry on server errors
+        return response.status !== undefined && response.status >= 500;
+      }
+    }
+    return false;
+  },
+};

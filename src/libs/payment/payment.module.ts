@@ -8,7 +8,7 @@
  */
 
 import { Module, forwardRef } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
+import { HttpModule } from '@infrastructure/http';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache';

@@ -9,8 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@infrastructure/http';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
@@ -74,16 +73,14 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
 
     try {
       // Verify by getting phone number info
-      const response = await firstValueFrom(
-        this.httpService.get(`${this.apiUrl}/${this.phoneNumberId}`, {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-          },
-          params: {
-            fields: 'verified_name',
-          },
-        })
-      );
+      const response = await this.httpService.get(`${this.apiUrl}/${this.phoneNumberId}`, {
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        params: {
+          fields: 'verified_name',
+        },
+      });
 
       return response.status === 200;
     } catch (error) {
@@ -157,17 +154,15 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
         }
-        return await firstValueFrom(
-          this.httpService.post<{
-            messages?: Array<{ id?: string }>;
-            [key: string]: unknown;
-          }>(url, payload, {
-            headers: {
-              Authorization: `Bearer ${this.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          })
-        );
+        return await this.httpService.post<{
+          messages?: Array<{ id?: string }>;
+          [key: string]: unknown;
+        }>(url, payload, {
+          headers: {
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        });
       });
 
       const messageId = response.data?.messages?.[0]?.id;

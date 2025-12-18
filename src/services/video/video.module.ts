@@ -8,12 +8,12 @@
 
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { HttpModule } from '@nestjs/axios';
 import { TerminusModule } from '@nestjs/terminus';
 import { ConfigModule } from '@config';
 import { CacheModule } from '@infrastructure/cache';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database';
+import { HttpModule } from '@infrastructure/http';
 import { SocketModule } from '@communication/channels/socket/socket.module';
 import { EventsModule } from '@infrastructure/events';
 import { GuardsModule } from '@core/guards/guards.module';
@@ -39,7 +39,7 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
 @Module({
   imports: [
     ConfigModule,
-    HttpModule, // HTTP client for OpenVidu API calls
+    HttpModule, // Centralized HTTP service for OpenVidu API calls
     TerminusModule, // Health checks
     EventEmitterModule, // Required for @OnEvent decorators
     forwardRef(() => EventsModule), // Central event system

@@ -1,5 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
+import { HttpModule } from '@infrastructure/http';
 import { TerminusModule } from '@nestjs/terminus';
 import { ConfigModule } from '@config';
 import { HealthController } from './health.controller';

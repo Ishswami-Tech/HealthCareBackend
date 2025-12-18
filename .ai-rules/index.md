@@ -11,6 +11,7 @@
 - [🗄️ Database Guidelines](./database.md) - PostgreSQL with Prisma, repository patterns, transactions
 - [🚀 NestJS Specific](./nestjs-specific.md) - NestJS/Fastify patterns, guards, decorators, events
 - [🔒 Security Guidelines](./security.md) - RBAC, session management, HIPAA compliance, audit logging
+- [🌐 HTTP Service Guidelines](./http-service.md) - Centralized HTTP service, error handling, retry logic
 
 ---
 

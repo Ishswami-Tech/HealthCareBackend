@@ -15,7 +15,12 @@
       "Bash(node -c:*)",
       "Bash(docker inspect:*)",
       "Bash(node test-scripts/test-all-apis.js:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(docker network:*)",
+      "Bash(docker run:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(tasklist /FI \"PID eq 14792\" /FO LIST)"
     ],
     "deny": [],
     "ask": []

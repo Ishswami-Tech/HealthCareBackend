@@ -9,7 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
+import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
 import { EventService } from '@infrastructure/events';
 import {

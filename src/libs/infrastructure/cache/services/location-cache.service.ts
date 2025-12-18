@@ -1,6 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
-import type { LoggingService } from '@infrastructure/logging';
 import type { LoggerLike } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 import type { ClinicLocationResponseDto, ClinicLocation } from '@core/types/clinic.types';

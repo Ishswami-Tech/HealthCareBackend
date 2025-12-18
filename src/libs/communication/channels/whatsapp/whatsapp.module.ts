@@ -1,5 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { HttpModule } from '@nestjs/axios';
+import { HttpModule } from '@infrastructure/http';
 // Use direct import to avoid circular dependency with barrel exports
 import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
