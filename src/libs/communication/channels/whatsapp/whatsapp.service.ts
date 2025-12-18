@@ -1,6 +1,5 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { HttpService } from '@nestjs/axios';
-import { firstValueFrom } from 'rxjs';
+import { HttpService } from '@infrastructure/http';
 import { ConfigService } from '@config/config.service';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -332,25 +331,23 @@ export class WhatsAppService {
         return false;
       }
 
-      await firstValueFrom(
-        this.httpService.post(
-          `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to: formattedPhone,
-            type: 'text',
-            text: {
-              body: message,
-            },
+      await this.httpService.post(
+        `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: formattedPhone,
+          type: 'text',
+          text: {
+            body: message,
           },
-          {
-            headers: {
-              Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
       );
 
       void this.loggingService.log(
@@ -396,29 +393,27 @@ export class WhatsAppService {
     }>
   ): Promise<unknown> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to,
-            type: 'template',
-            template: {
-              name: templateName,
-              language: {
-                code: 'en',
-              },
-              components,
+      const response = await this.httpService.post(
+        `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'template',
+          template: {
+            name: templateName,
+            language: {
+              code: 'en',
             },
+            components,
           },
-          {
-            headers: {
-              Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
       );
 
       return response.data;
@@ -455,26 +450,24 @@ export class WhatsAppService {
     caption: string
   ): Promise<unknown> {
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(
-          `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
-          {
-            messaging_product: 'whatsapp',
-            recipient_type: 'individual',
-            to,
-            type: 'document',
-            document: {
-              link: documentUrl,
-              caption,
-            },
+      const response = await this.httpService.post(
+        `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
+        {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to,
+          type: 'document',
+          document: {
+            link: documentUrl,
+            caption,
           },
-          {
-            headers: {
-              Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        )
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.whatsAppConfig.apiKey}`,
+            'Content-Type': 'application/json',
+          },
+        }
       );
 
       return response.data;
