@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -36,6 +36,7 @@ export class RoleService {
    * @param loggingService - Logging service
    */
   constructor(
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
     @Optional()

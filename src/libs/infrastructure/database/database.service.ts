@@ -2592,4 +2592,75 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   ): Promise<void> {
     await this.invalidateCache([], entityType, entityId, clinicId);
   }
+
+  /**
+   * Construct clinic-specific database connection string
+   *
+   * Utility method to build database connection strings for clinic-specific databases.
+   * Extracts connection details from the main DATABASE_URL and constructs a new connection
+   * string for a clinic-specific database.
+   *
+   * SECURITY: All credentials must come from environment variables. No hardcoded defaults.
+   *
+   * @param databaseName - Name of the clinic-specific database
+   * @param customConnectionString - Optional custom connection string (if provided, uses as-is)
+   * @returns Clinic-specific database connection string
+   * @throws HealthcareError if required database credentials are missing from environment variables
+   *
+   * @example
+   * ```typescript
+   * const clinicDbUrl = this.databaseService.constructClinicDatabaseUrl('clinic_123');
+   * // Returns: postgresql://user:password@host:port/clinic_123
+   * ```
+   */
+  constructClinicDatabaseUrl(databaseName: string, customConnectionString?: string): string {
+    // If custom connection string provided, use it as-is
+    if (customConnectionString) {
+      return customConnectionString;
+    }
+
+    // Get database URL from environment variables (no hardcoded defaults for security)
+    const dbUrl = getEnv('DATABASE_URL');
+
+    if (dbUrl) {
+      // Parse DATABASE_URL: postgresql://user:password@host:port/database
+      const urlMatch = dbUrl.match(/postgresql:\/\/([^:]+):([^@]+)@([^:]+):(\d+)\//);
+      if (urlMatch && urlMatch[1] && urlMatch[2] && urlMatch[3] && urlMatch[4]) {
+        const dbUser = urlMatch[1];
+        const dbPassword = urlMatch[2];
+        const dbHost = urlMatch[3];
+        const dbPort = urlMatch[4];
+
+        // Construct clinic-specific database connection string
+        return `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${databaseName}`;
+      }
+    }
+
+    // Fallback to individual environment variables (all required, no defaults)
+    const dbHost = getEnv('DATABASE_HOST');
+    const dbPort = getEnv('DATABASE_PORT');
+    const dbUser = getEnv('DATABASE_USER');
+    const dbPassword = getEnv('DATABASE_PASSWORD');
+
+    // Validate all required credentials are present
+    if (!dbHost || !dbPort || !dbUser || !dbPassword) {
+      throw new HealthcareError(
+        ErrorCode.DATABASE_QUERY_FAILED,
+        'Database credentials are missing. Please set DATABASE_URL or DATABASE_HOST, DATABASE_PORT, DATABASE_USER, and DATABASE_PASSWORD environment variables.',
+        undefined,
+        {
+          missingFields: {
+            host: !dbHost,
+            port: !dbPort,
+            user: !dbUser,
+            password: !dbPassword,
+          },
+        },
+        this.serviceName
+      );
+    }
+
+    // Construct clinic-specific database connection string
+    return `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${databaseName}`;
+  }
 }

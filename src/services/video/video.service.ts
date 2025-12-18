@@ -128,18 +128,19 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Initialize provider (OpenVidu primary, Jitsi fallback)
+    // Initialize provider (OpenVidu ONLY - no fallback)
     this.provider = await this.providerFactory.getProviderWithFallback();
-    this.fallbackProvider = this.providerFactory.getFallbackProvider();
+    // Note: No fallback provider - OpenVidu only configuration
+    // this.fallbackProvider = this.providerFactory.getFallbackProvider();
 
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
-      'Video Service initialized (OpenVidu primary, Jitsi fallback)',
+      'Video Service initialized (OpenVidu ONLY - no Jitsi fallback)',
       'VideoService',
       {
-        primaryProvider: this.provider.providerName,
-        fallbackProvider: this.fallbackProvider.providerName,
+        provider: this.provider.providerName,
+        fallbackDisabled: true,
       }
     );
   }

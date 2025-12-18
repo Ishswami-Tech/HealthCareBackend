@@ -404,7 +404,12 @@ export class InvoicePDFService {
   getPublicInvoiceUrl(fileName: string): string {
     // Use ConfigService (which uses dotenv) for environment variable access
     const appConfig = this.configService.getAppConfig();
-    const baseUrl = appConfig.apiUrl || 'http://localhost:3000';
+    const baseUrl =
+      appConfig.apiUrl ||
+      appConfig.baseUrl ||
+      this.configService.getEnv('API_URL') ||
+      this.configService.getEnv('BASE_URL') ||
+      'http://localhost:8088';
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 

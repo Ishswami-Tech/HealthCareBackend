@@ -41,7 +41,7 @@
  * NOTE: All database infrastructure components are INTERNAL.
  * External services should ONLY use DatabaseService.
  */
-export * from './database.module';
+export { DatabaseModule } from './database.module';
 
 // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY public interface
 // All database operations MUST go through this service with full optimization layers

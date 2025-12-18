@@ -15,7 +15,7 @@ import { RBAC_METADATA_KEY } from './rbac.decorators';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { RequestWithAuth } from '@core/types/guard.types';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 
 @Injectable()
 export class RbacGuard implements CanActivate {

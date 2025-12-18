@@ -63,9 +63,8 @@ export default function createProductionConfig(): ProductionConfig {
       swagger: getEnvWithDefault(ENV_VARS.SWAGGER_URL, '/docs'),
       bullBoard: getEnvWithDefault(ENV_VARS.BULL_BOARD_URL, '/queue-dashboard'),
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
-      redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, 'http://localhost:8082'),
+      redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, ''),
       prismaStudio: getEnvWithDefault(ENV_VARS.PRISMA_STUDIO_URL, '/prisma'),
-      pgAdmin: getEnvWithDefault(ENV_VARS.PGADMIN_URL, 'http://localhost:5050'),
       frontend: getEnvWithDefault(ENV_VARS.FRONTEND_URL, 'http://ishswami.in'),
     },
     database: {
@@ -143,9 +142,10 @@ export default function createProductionConfig(): ProductionConfig {
     },
     cors: {
       // Use helper functions (which use dotenv) for environment variable access
-      origin:
-        getEnvWithDefault(ENV_VARS.CORS_ORIGIN, '') ||
-        'http://localhost:8088,http://localhost:5050,http://localhost:8082',
+      origin: getEnvWithDefault(
+        ENV_VARS.CORS_ORIGIN,
+        'https://ishswami.in,https://www.ishswami.in'
+      ),
       credentials: getEnvBoolean('CORS_CREDENTIALS', true),
       methods: getEnvWithDefault('CORS_METHODS', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'),
     },

@@ -37,12 +37,7 @@ const getCorsOrigin = (): string | string[] => {
     return corsOrigin.split(',').map((o: string) => o.trim());
   }
   // Default to localhost origins only (more secure than '*')
-  return [
-    'http://localhost:3000',
-    'http://localhost:8088',
-    'http://localhost:5050',
-    'http://localhost:8082',
-  ];
+  return ['http://localhost:3000', 'http://localhost:8088', 'http://localhost:8082'];
 };
 
 @WebSocketGateway({

@@ -1,5 +1,5 @@
 import type { JitsiConfig } from '@core/types';
-import { getEnvWithDefault, getEnvBoolean } from './environment/utils';
+import { getEnv, getEnvWithDefault, getEnvBoolean } from './environment/utils';
 
 /**
  * Jitsi Meet Configuration Factory
@@ -20,26 +20,27 @@ export default function createJitsiConfig(): JitsiConfig {
   // Use helper functions (which use dotenv) for environment variable access
   // These mimic ConfigService methods but work in config factories
   // Dotenv is already loaded by config.module.ts before factories run
-  const fullDomain = getEnvWithDefault('JITSI_DOMAIN', 'localhost:8443');
+  // All values must come from environment variables - no hardcoded defaults
+  const fullDomain = getEnv('JITSI_DOMAIN') || '';
 
-  // Calculate baseDomain with fallback
-  const baseDomainEnv = getEnvWithDefault('JITSI_BASE_DOMAIN', '');
-  let baseDomain: string;
+  // Calculate baseDomain from environment variable
+  const baseDomainEnv = getEnv('JITSI_BASE_DOMAIN');
+  let baseDomain: string = '';
   if (baseDomainEnv) {
     baseDomain = baseDomainEnv;
-  } else if (fullDomain.includes(':')) {
-    baseDomain = 'localhost';
-  } else {
+  } else if (fullDomain && !fullDomain.includes(':')) {
+    // Extract base domain from full domain if JITSI_BASE_DOMAIN not set
     const parts = fullDomain.split('.');
     baseDomain = parts.length >= 2 ? parts.slice(-2).join('.') : fullDomain;
   }
 
-  // Calculate subdomain with fallback
-  const subdomainEnv = getEnvWithDefault('JITSI_SUBDOMAIN', '');
-  let subdomain: string = 'localhost'; // Default value
+  // Calculate subdomain from environment variable
+  const subdomainEnv = getEnv('JITSI_SUBDOMAIN');
+  let subdomain: string = '';
   if (subdomainEnv) {
     subdomain = subdomainEnv;
-  } else if (!fullDomain.includes(':')) {
+  } else if (fullDomain && !fullDomain.includes(':')) {
+    // Extract subdomain from full domain if JITSI_SUBDOMAIN not set
     const parts = fullDomain.split('.');
     const firstPart = parts[0];
     if (firstPart && firstPart.length > 0) {
@@ -47,17 +48,12 @@ export default function createJitsiConfig(): JitsiConfig {
     }
   }
 
-  // Construct URLs if not provided
-  const baseUrlEnv = getEnvWithDefault('JITSI_BASE_URL', '');
-  const baseUrl =
-    baseUrlEnv || (fullDomain.includes(':') ? `https://${fullDomain}` : `https://${fullDomain}`);
+  // Get URLs from environment variables - no hardcoded defaults
+  const baseUrlEnv = getEnv('JITSI_BASE_URL');
+  const baseUrl = baseUrlEnv || (fullDomain ? `https://${fullDomain}` : '');
 
-  const wsUrlEnv = getEnvWithDefault('JITSI_WS_URL', '');
-  const wsUrl =
-    wsUrlEnv ||
-    (fullDomain.includes(':')
-      ? `wss://${fullDomain}/xmpp-websocket`
-      : `wss://${fullDomain}/xmpp-websocket`);
+  const wsUrlEnv = getEnv('JITSI_WS_URL');
+  const wsUrl = wsUrlEnv || (fullDomain ? `wss://${fullDomain}/xmpp-websocket` : '');
 
   const appId = getEnvWithDefault('JITSI_APP_ID', 'healthcare-jitsi-app');
   const appSecret = getEnvWithDefault('JITSI_APP_SECRET', '');

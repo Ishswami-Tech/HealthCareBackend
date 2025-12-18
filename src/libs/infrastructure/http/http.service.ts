@@ -35,7 +35,6 @@ import * as https from 'https';
 import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError, ErrorCode } from '@core/errors';
 import { LogType, LogLevel } from '@core/types';
-import { ConfigService } from '@config';
 
 import type { HttpRequestOptions, HttpResponse, RetryConfig } from '@core/types';
 import { DEFAULT_RETRY_CONFIG } from '@core/types';
@@ -60,14 +59,16 @@ export class HttpService {
     private readonly nestHttpService: NestHttpService,
     @Inject(forwardRef(() => LoggingService))
     @Optional()
-    private readonly loggingService?: LoggingService,
-    @Optional()
-    private readonly configService?: ConfigService
+    private readonly loggingService?: LoggingService
   ) {
-    // Get default timeout from config (default: 30 seconds)
-    this.defaultTimeout = this.configService?.get<number>('http.timeout') ?? 30000;
-    // Get default retries from config (default: 0)
-    this.defaultRetries = this.configService?.get<number>('http.retries') ?? 0;
+    // Get default timeout from environment or config (default: 30 seconds)
+    // Read directly from process.env to avoid circular dependency with ConfigService
+    const timeoutEnv = process.env['http.timeout'] || process.env['HTTP_TIMEOUT'];
+    this.defaultTimeout = timeoutEnv ? Number.parseInt(timeoutEnv, 10) : 30000;
+
+    // Get default retries from environment or config (default: 0)
+    const retriesEnv = process.env['http.retries'] || process.env['HTTP_RETRIES'];
+    this.defaultRetries = retriesEnv ? Number.parseInt(retriesEnv, 10) : 0;
   }
 
   /**

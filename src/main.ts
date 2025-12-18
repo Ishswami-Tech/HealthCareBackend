@@ -798,7 +798,6 @@ async function bootstrap() {
         'email',
         'redis-ui',
         'prisma',
-        'pgadmin',
       ],
       enableShutdownHooks: true,
     };
@@ -938,8 +937,14 @@ async function bootstrap() {
     const _swaggerUrl = urlsConfig.swagger;
     const _bullBoardUrl = urlsConfig.bullBoard;
     const _socketUrl = urlsConfig.socket;
-    const _redisCommanderUrl = urlsConfig.redisCommander || 'http://localhost:8082';
-    const _prismaStudioUrl = urlsConfig.prismaStudio || 'http://localhost:5555';
+    const _redisCommanderUrl =
+      urlsConfig.redisCommander ||
+      configService.getEnv('REDIS_COMMANDER_URL') ||
+      'http://localhost:8082';
+    const _prismaStudioUrl =
+      urlsConfig.prismaStudio ||
+      configService.getEnv('PRISMA_STUDIO_URL') ||
+      'http://localhost:5555';
     const _loggerUrl = '/logger';
 
     // Check if app is available before configuring Swagger
@@ -1052,7 +1057,6 @@ async function bootstrap() {
         logger.log('Development services:');
         logger.log(`- Redis Commander: ${envConfig.urls.redisCommander}`);
         logger.log(`- Prisma Studio: ${envConfig.urls.prismaStudio}`);
-        logger.log(`- PgAdmin: ${envConfig.urls.pgAdmin}`);
 
         // Auto-start Prisma Studio in development mode
         // Use ConfigService (which uses dotenv) for environment variable access

@@ -47,7 +47,8 @@ export class EmailController {
   @ApiResponse({ status: 500, description: 'Failed to send test email' })
   async sendTestEmail() {
     const urlsConfig = this.configService.getUrlsConfig();
-    const frontendUrl = urlsConfig.frontend || 'http://localhost:3000';
+    const frontendUrl =
+      urlsConfig.frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000';
 
     const result = await this.emailService.sendEmail({
       to: 'aadeshbhujba1@gmail.com', // Your email address
@@ -81,7 +82,8 @@ export class EmailController {
   @ApiBody({ type: SendTestEmailDto })
   async sendCustomTestEmail(@Body() dto: SendTestEmailDto) {
     const urlsConfig = this.configService.getUrlsConfig();
-    const frontendUrl = urlsConfig.frontend || 'http://localhost:3000';
+    const frontendUrl =
+      urlsConfig.frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000';
 
     const template: EmailTemplate = dto.template || EmailTemplate.VERIFICATION;
     let context: EmailContext = {};

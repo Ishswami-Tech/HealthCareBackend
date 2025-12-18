@@ -1,7 +1,7 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -38,6 +38,7 @@ export class RbacService {
   constructor(
     private readonly roleService: RoleService,
     private readonly permissionService: PermissionService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,

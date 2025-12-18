@@ -30,7 +30,15 @@ import { QueueModule } from '@queue/src/queue.module';
     QueueModule, // Queue processing for invoice PDF generation, bulk operations
   ],
   controllers: [BillingController],
-  providers: [BillingService, InvoicePDFService, BillingEventsListener],
+  providers: [
+    BillingService,
+    InvoicePDFService,
+    BillingEventsListener,
+    {
+      provide: 'InvoicePDFService',
+      useExisting: InvoicePDFService,
+    },
+  ],
   exports: [BillingService, InvoicePDFService],
 })
 export class BillingModule {}

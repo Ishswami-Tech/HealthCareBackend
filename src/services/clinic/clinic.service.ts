@@ -3,6 +3,7 @@ import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
 import { EventService } from '@infrastructure/events';
+import { ConfigService } from '@config';
 import {
   LogType,
   LogLevel,
@@ -35,7 +36,10 @@ export class ClinicService {
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService?: CacheService,
     @Inject(forwardRef(() => EventService))
-    eventService?: unknown
+    eventService?: unknown,
+    @Optional()
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService?: ConfigService
   ) {
     // Type guard ensures type safety when using the service
     if (eventService && isEventService(eventService)) {
@@ -61,9 +65,14 @@ export class ClinicService {
         db_connection_string?: string;
         databaseName?: string;
       };
+      // Use DatabaseService to construct clinic-specific database connection string
+      // This ensures consistent database URL parsing across the application
+      const databaseName =
+        dataWithDefaults.databaseName ||
+        `clinic_${clinicId.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
       const dbConnectionString =
         dataWithDefaults.db_connection_string ||
-        `postgresql://localhost:5432/${dataWithDefaults.databaseName || `clinic_${clinicId.toLowerCase().replace(/[^a-z0-9]/g, '_')}`}`;
+        this.databaseService.constructClinicDatabaseUrl(databaseName);
 
       const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {

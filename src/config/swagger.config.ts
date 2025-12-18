@@ -1,5 +1,5 @@
 import { DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
-import { getEnvironment } from './environment/utils';
+import { getEnvironment, getEnv } from './environment/utils';
 import developmentConfig from './environment/development.config';
 import productionConfig from './environment/production.config';
 import stagingConfig from './environment/staging.config';
@@ -44,11 +44,13 @@ const getApiServers = () => {
       },
       // Development services with Docker network URLs - use config values
       {
-        url: config.urls.redisCommander || 'http://localhost:8082',
+        url: config.urls.redisCommander || getEnv('REDIS_COMMANDER_URL') || 'http://localhost:8082',
         description: 'Redis Commander',
       },
-      { url: config.urls.prismaStudio || 'http://localhost:5555', description: 'Prisma Studio' },
-      { url: config.urls.pgAdmin || 'http://localhost:5050', description: 'PgAdmin' }
+      {
+        url: config.urls.prismaStudio || getEnv('PRISMA_STUDIO_URL') || 'http://localhost:5555',
+        description: 'Prisma Studio',
+      }
     );
   }
 
@@ -73,11 +75,10 @@ ${
 `
     : `
 ### Development URLs (Docker)
-- API: http://localhost:8088
+- API: ${getEnvironmentConfig().app.apiUrl || getEnvironmentConfig().app.baseUrl}
 - Frontend: ${getEnvironmentConfig().urls.frontend}
-- Redis Commander: http://localhost:8082
-- Prisma Studio: http://localhost:5555
-- PgAdmin: http://localhost:5050
+- Redis Commander: ${getEnvironmentConfig().urls.redisCommander}
+- Prisma Studio: ${getEnvironmentConfig().urls.prismaStudio}
 `
 }
 
@@ -104,9 +105,8 @@ ${
   getEnvironmentConfig().app.environment !== 'production'
     ? `
 ### Development Tools (Docker)
-- Redis Commander: ${getEnvironmentConfig().urls.redisCommander || 'http://localhost:8082'}
-- Prisma Studio: ${getEnvironmentConfig().urls.prismaStudio || 'http://localhost:5555'}
-- PgAdmin: ${getEnvironmentConfig().urls.pgAdmin || 'http://localhost:5050'}`
+- Redis Commander: ${getEnvironmentConfig().urls.redisCommander}
+- Prisma Studio: ${getEnvironmentConfig().urls.prismaStudio}`
     : ''
 }
   `
