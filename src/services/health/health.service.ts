@@ -1662,45 +1662,25 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // In local: Use localhost
 
         // Prisma Studio URL - typically runs on the same pod/container
+        // Get from ConfigService (reads from .env files)
         const urlsConfig = this.config?.getUrlsConfig();
-        const prismaStudioUrl = urlsConfig?.prismaStudio || 'http://localhost:5555';
-
-        // pgAdmin URL - can be in different pod/service in Kubernetes
-        const pgAdminUrl =
-          urlsConfig?.pgAdmin ||
-          // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
-          // Fallback to localhost for local/Docker development
-          'http://localhost:5050';
+        const prismaStudioUrl =
+          urlsConfig?.prismaStudio ||
+          this.config?.getEnv('PRISMA_STUDIO_URL') ||
+          'http://localhost:5555';
 
         // Redis Commander URL - can be in different pod/service in Kubernetes
+        // Get from ConfigService (reads from .env files)
         const redisCommanderUrl =
           urlsConfig?.redisCommander ||
-          // In Kubernetes, use service name format: service-name.namespace.svc.cluster.local
-          // Fallback to localhost for local/Docker development
-          'http://localhost:8082';
+          this.config?.getEnv('REDIS_COMMANDER_URL') ||
+          (this.config?.isDevelopment() ? 'http://localhost:8082' : '');
 
         // Build fallback URLs based on environment
         // Only add Docker-specific fallbacks if we're in Docker (not Kubernetes)
         // Use ConfigService (which uses dotenv) for environment variable access
         const isKubernetes = this.config?.hasEnv('KUBERNETES_SERVICE_HOST') || false;
         const isDocker = this.config?.getEnvBoolean('DOCKER_ENV', false) && !isKubernetes;
-
-        // For pgAdmin: Try configured URL, then Kubernetes service name, then Docker container, then localhost
-        const pgAdminUrls = [pgAdminUrl];
-        if (isKubernetes) {
-          // Kubernetes service discovery patterns
-          // Use ConfigService (which uses dotenv) for environment variable access
-          const namespace = this.config?.getEnv('KUBERNETES_NAMESPACE', 'default') || 'default';
-          pgAdminUrls.push(
-            `http://pgadmin-service.${namespace}.svc.cluster.local`,
-            `http://pgadmin-service.${namespace}`,
-            `http://pgadmin-service:80`
-          );
-        } else if (isDocker) {
-          // Docker container names (only if not in Kubernetes)
-          pgAdminUrls.push('http://healthcare-pgadmin:80', 'http://pgadmin:80');
-        }
-        pgAdminUrls.push('http://localhost:5050'); // Always try localhost as last resort
 
         // For Redis Commander: Try configured URL, then Kubernetes service name, then Docker container, then localhost
         const redisCommanderUrls = [redisCommanderUrl];
@@ -1717,16 +1697,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           // Docker container names (only if not in Kubernetes)
           redisCommanderUrls.push('http://healthcare-redis-ui:8081', 'http://redis-ui:8081');
         }
-        redisCommanderUrls.push('http://localhost:8082'); // Always try localhost as last resort
+        // Add localhost fallback only if not already in the list and in development
+        if (this.config?.isDevelopment()) {
+          const localhostFallback =
+            this.config?.getEnv('REDIS_COMMANDER_URL') || 'http://localhost:8082';
+          if (!redisCommanderUrls.includes(localhostFallback)) {
+            redisCommanderUrls.push(localhostFallback);
+          }
+        }
 
         // Check services with environment-aware fallback URLs
         const healthCheckPromises: Array<Promise<ServiceHealth>> = [
-          this.checkExternalServiceWithFallback(
-            'Prisma Studio',
-            [prismaStudioUrl, 'http://localhost:5555'],
-            2000
-          ),
-          this.checkExternalServiceWithFallback('pgAdmin', pgAdminUrls, 2000),
+          this.checkExternalServiceWithFallback('Prisma Studio', [prismaStudioUrl], 2000),
         ];
 
         // Check Redis Commander for both Redis and Dragonfly in dev mode
@@ -1739,13 +1721,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
         const healthCheckResults = await Promise.allSettled(healthCheckPromises);
 
-        // Extract results - always have at least 2 (Prisma Studio and pgAdmin)
+        // Extract results - Prisma Studio is always included
         // Redis Commander is included if Redis provider OR dev mode
         const prismaStudioHealth = healthCheckResults[0];
-        const pgAdminHealth = healthCheckResults[1];
         const redisCommanderHealth =
-          (isRedisProvider || isDevMode) && healthCheckResults.length > 2
-            ? healthCheckResults[2]
+          (isRedisProvider || isDevMode) && healthCheckResults.length > 1
+            ? healthCheckResults[1]
             : undefined;
 
         // Handle Prisma Studio health
@@ -1769,35 +1750,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           // The service is likely starting up and will be available soon
           // In dev mode, we're more lenient since services might be accessible from host
           result.services.prismaStudio = {
-            status:
-              isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            details: errorDetails,
-          };
-        }
-
-        // Handle pgAdmin health
-        if (pgAdminHealth && pgAdminHealth.status === 'fulfilled') {
-          result.services.pgAdmin = pgAdminHealth.value;
-        } else {
-          // Extract error details from rejected promise
-          let errorDetails =
-            pgAdminHealth && pgAdminHealth.status === 'rejected'
-              ? pgAdminHealth.reason instanceof Error
-                ? pgAdminHealth.reason.message
-                : String(pgAdminHealth.reason)
-              : 'pgAdmin is not accessible';
-
-          // During startup grace period, show a more helpful message
-          if (isInStartupGracePeriod) {
-            errorDetails = `pgAdmin is starting up... (${Math.round((this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD - timeSinceStart) / 1000)}s remaining)`;
-          }
-
-          // During startup grace period or in dev mode, mark as 'healthy' to avoid false negatives
-          // The service is likely starting up and will be available soon
-          // In dev mode, we're more lenient since services might be accessible from host
-          result.services.pgAdmin = {
             status:
               isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
             responseTime: 0,
@@ -2749,7 +2701,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           try {
             // Use ConfigService (which uses dotenv) for environment variable access
             const appConfig = this.config?.getAppConfig();
-            const baseUrl = appConfig?.apiUrl || 'http://localhost:8088';
+            const baseUrl =
+              appConfig?.apiUrl ||
+              appConfig?.baseUrl ||
+              this.config?.getEnv('API_URL') ||
+              this.config?.getEnv('BASE_URL') ||
+              'http://localhost:8088';
             const socketTestUrl = `${baseUrl}/socket-test`;
 
             try {
@@ -2827,7 +2784,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // Try HTTP check as fallback
         try {
           const appConfig = this.config?.getAppConfig();
-          const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
+          const baseUrl =
+            appConfig?.apiUrl ||
+            appConfig?.baseUrl ||
+            this.config?.getEnv('API_URL') ||
+            this.config?.getEnv('BASE_URL') ||
+            'http://localhost:8088';
           const apiPrefix = appConfig?.apiPrefix || '/api/v1';
           const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
@@ -2882,7 +2844,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         // Also check HTTP endpoint for real-time status
         // Use ConfigService (which uses dotenv) for environment variable access
         const appConfig = this.config?.getAppConfig();
-        const baseUrl = appConfig?.apiUrl || 'http://localhost:8088';
+        const baseUrl =
+          appConfig?.apiUrl ||
+          appConfig?.baseUrl ||
+          this.config?.getEnv('API_URL') ||
+          this.config?.getEnv('BASE_URL') ||
+          'http://localhost:8088';
         const apiPrefix = appConfig?.apiPrefix || '/api/v1';
         const emailStatusUrl = `${baseUrl}${apiPrefix}/email/status`;
 
@@ -3102,7 +3069,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     const startTime = performance.now();
     try {
       const appConfig = this.config?.getAppConfig();
-      const baseUrl = appConfig?.apiUrl || appConfig?.baseUrl || 'http://localhost:8088';
+      const baseUrl =
+        appConfig?.apiUrl ||
+        appConfig?.baseUrl ||
+        this.config?.getEnv('API_URL') ||
+        this.config?.getEnv('BASE_URL') ||
+        'http://localhost:8088';
       const url = endpoint.startsWith('http') ? endpoint : `${baseUrl}${endpoint}`;
 
       if (!this.httpService) {

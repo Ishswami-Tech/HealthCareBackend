@@ -47,9 +47,9 @@ export const videoConfig = registerAs('video', (): VideoProviderConfig => {
   const provider = getVideoProvider();
 
   const openviduConfig: VideoProviderConfig['openvidu'] = {
-    url: getEnvWithDefault('OPENVIDU_URL', 'https://video.yourdomain.com'),
+    url: getEnv('OPENVIDU_URL') || '',
     secret: getEnv('OPENVIDU_SECRET') || '',
-    domain: getEnvWithDefault('OPENVIDU_DOMAIN', 'video.yourdomain.com'),
+    domain: getEnv('OPENVIDU_DOMAIN') || '',
     enabled: provider === 'openvidu' && enabled,
     webhookEnabled: getEnvBoolean('OPENVIDU_WEBHOOK_ENABLED', false),
   };
@@ -70,9 +70,9 @@ export const videoConfig = registerAs('video', (): VideoProviderConfig => {
     openvidu: openviduConfig,
     // Jitsi configuration (for fallback)
     jitsi: {
-      domain: getEnvWithDefault('JITSI_DOMAIN', 'localhost:8443'),
-      baseUrl: getEnvWithDefault('JITSI_BASE_URL', ''),
-      wsUrl: getEnvWithDefault('JITSI_WS_URL', ''),
+      domain: getEnv('JITSI_DOMAIN') || '',
+      baseUrl: getEnv('JITSI_BASE_URL') || '',
+      wsUrl: getEnv('JITSI_WS_URL') || '',
       appId: getEnvWithDefault('JITSI_APP_ID', 'healthcare-jitsi-app'),
       appSecret: getEnv('JITSI_APP_SECRET') || '',
       enabled: true, // Always enabled as fallback (similar to Redis in cache pattern)

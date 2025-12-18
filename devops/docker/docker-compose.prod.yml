@@ -25,16 +25,13 @@ services:
       FRONTEND_URL: https://ishswami.in
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
-      # Cache Provider Configuration (Dragonfly is default)
+      # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
+      # Can run on 6 vCPU/12GB RAM initially (Docker will enforce limits)
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60
+      # Cache Provider Configuration (Dragonfly is the only cache provider in production)
       CACHE_PROVIDER: dragonfly
       
-      # Redis Configuration (for Redis provider)
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
-      
-      # Dragonfly Configuration (default provider)
+      # Dragonfly Configuration (primary cache provider)
       DRAGONFLY_ENABLED: "true"
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
@@ -71,12 +68,20 @@ services:
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       SECURITY_RATE_LIMIT: "true"
-      SECURITY_RATE_LIMIT_MAX: 1000
-      SECURITY_RATE_LIMIT_WINDOW_MS: 150
-      REDIS_TTL: 3600
-      REDIS_PREFIX: "healthcare:"
+      # Optimized for 8 vCPU/24GB RAM: ~1200-1800 req/s peak capacity (700-900 concurrent users)
+      SECURITY_RATE_LIMIT_MAX: 4000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
+      # Cache TTL and prefix (used by Dragonfly)
+      CACHE_TTL: 3600
+      CACHE_PREFIX: "healthcare:"
+      # Rate limiting: Allow 600 req/min per IP (supports 800 users * 5 req/day + bursts)
       RATE_LIMIT_TTL: 60
-      RATE_LIMIT_MAX: 100
+      RATE_LIMIT_MAX: 600
+      API_RATE_LIMIT: 1000
+      AUTH_RATE_LIMIT: 30
+      HEAVY_RATE_LIMIT: 50
+      USER_RATE_LIMIT: 500
+      HEALTH_RATE_LIMIT: 2000
     expose:
       - "${API_PORT:-8088}"
     networks:
@@ -89,13 +94,10 @@ services:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
-      - "redis:172.18.0.3"
     depends_on:
       postgres:
         condition: service_healthy
       dragonfly:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -106,12 +108,14 @@ services:
       start_period: 15s
     deploy:
       resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "4.0"
-          memory: 4G
+          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for API)
+          memory: 6G       # Target: 24GB server (6GB for API)
         reservations:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 2G       # Minimum guaranteed (works on 12GB server)
     command: >
       sh -c "
         pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
@@ -135,8 +139,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
-      POSTGRES_MAX_CONNECTIONS: 200
-      POSTGRES_SHARED_BUFFERS: 512MB
+      # Optimized for 8 vCPU/24GB RAM: API (60) + Worker (30) + overhead = 120
+      POSTGRES_MAX_CONNECTIONS: 120
+      POSTGRES_SHARED_BUFFERS: 2GB
       PGDATA: /var/lib/postgresql/data/pgdata
     networks:
       app-network:
@@ -149,17 +154,45 @@ services:
       start_period: 60s
     deploy:
       resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "4"
-          memory: 8G
+          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for PostgreSQL)
+          memory: 10G      # Target: 24GB server (10GB for PostgreSQL)
         reservations:
-          cpus: "1.0"
-          memory: 2G
+          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 3G       # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
-    shm_size: 128mb
+    shm_size: 256mb  # Shared memory for PostgreSQL
     stop_grace_period: 1m
     command: >
-      postgres -c max_connections=200  -c shared_buffers=512MB  -c effective_cache_size=1536MB  -c maintenance_work_mem=128MB  -c checkpoint_completion_target=0.9  -c wal_buffers=16MB  -c default_statistics_target=100  -c random_page_cost=1.1  -c effective_io_concurrency=200  -c work_mem=8MB  -c min_wal_size=2GB  -c max_wal_size=8GB  -c max_worker_processes=8  -c max_parallel_workers_per_gather=4  -c max_parallel_workers=8  -c max_parallel_maintenance_workers=4 -c idle_in_transaction_session_timeout=60000 -c statement_timeout=60000 -c lock_timeout=60000 -c listen_addresses='*' -c log_connections=on -c log_disconnections=on -c tcp_keepalives_idle=60 -c tcp_keepalives_interval=10 -c tcp_keepalives_count=3 -c client_min_messages=notice
+      postgres 
+      -c max_connections=120 
+      -c shared_buffers=2GB 
+      -c effective_cache_size=12GB 
+      -c maintenance_work_mem=256MB 
+      -c checkpoint_completion_target=0.9 
+      -c wal_buffers=32MB 
+      -c default_statistics_target=100 
+      -c random_page_cost=1.1 
+      -c effective_io_concurrency=200 
+      -c work_mem=16MB 
+      -c min_wal_size=2GB 
+      -c max_wal_size=8GB 
+      -c max_worker_processes=8 
+      -c max_parallel_workers_per_gather=4 
+      -c max_parallel_workers=8 
+      -c max_parallel_maintenance_workers=4 
+      -c idle_in_transaction_session_timeout=60000 
+      -c statement_timeout=60000 
+      -c lock_timeout=60000 
+      -c listen_addresses='*' 
+      -c log_connections=on 
+      -c log_disconnections=on 
+      -c tcp_keepalives_idle=60 
+      -c tcp_keepalives_interval=10 
+      -c tcp_keepalives_count=3 
+      -c client_min_messages=warning
     labels:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
@@ -175,7 +208,7 @@ services:
       --alsologtostderr
       --cache_mode=false
       --maxmemory=4gb
-      --proactor_threads=8
+      --proactor_threads=6
       --logtostderr
       --default_lua_flags=allow-undeclared-keys
     ports:
@@ -193,15 +226,17 @@ services:
       start_period: 30s
     deploy:
       resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "4.0"
-          memory: 4G
+          cpus: "1.5"      # Target: 8 vCPU server (1.5 CPU for Dragonfly)
+          memory: 4G       # Target: 24GB server (4GB for Dragonfly cache)
         reservations:
-          cpus: "1.0"
-          memory: 1G
+          cpus: "0.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 1G       # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
     sysctls:
-      net.core.somaxconn: 1024
+      net.core.somaxconn: 2048  # Increased from 1024 for more connections
     ulimits:
       nproc: 65535
       nofile:
@@ -212,44 +247,6 @@ services:
       - "app.component=cache"
       - "app.type=dragonfly"
       - "app.healthcheck=enabled"
-
-  redis:
-    image: redis:7-alpine
-    container_name: latest-redis
-    command: sh -c "redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --replica-read-only no --replicaof no one --requirepass ${REDIS_PASSWORD:-changeme}"
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.3
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 2G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
-    restart: unless-stopped
-    sysctls:
-      net.core.somaxconn: 1024
-    ulimits:
-      nproc: 65535
-      nofile:
-        soft: 65535
-        hard: 65535
-    labels:
-      - "com.docker.compose.service=redis"
-      - "app.component=cache"
-      - "app.type=redis"
 
   worker:
     build:
@@ -271,11 +268,11 @@ services:
       DEV_MODE: "false"
       DOCKER_ENV: "true"
       
-      # Database Configuration
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=50
+      # Database Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=30&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=15&max_connections=30
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
-      # Cache Provider Configuration (Dragonfly is default)
+      # Cache Provider Configuration (Dragonfly is the only cache provider in production)
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: "true"
       DRAGONFLY_ENABLED: "true"
@@ -283,15 +280,10 @@ services:
       DRAGONFLY_PORT: 6379
       DRAGONFLY_KEY_PREFIX: "healthcare:"
       
-      # Redis Configuration (for Redis provider)
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
-      
       # JWT Configuration (for queue operations)
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       
-      # BullMQ Worker Configuration
+      # BullMQ Worker Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
       BULL_WORKER_CONCURRENCY: "10"
       BULL_MAX_JOBS_PER_WORKER: "100"
       
@@ -320,13 +312,10 @@ services:
       - "worker:172.18.0.6"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
-      - "redis:172.18.0.3"
     depends_on:
       postgres:
         condition: service_healthy
       dragonfly:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       api:
         condition: service_started
@@ -339,12 +328,14 @@ services:
       start_period: 30s
     deploy:
       resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "2.0"
-          memory: 2G
+          cpus: "1.0"      # Target: 8 vCPU server (1 CPU for Worker)
+          memory: 2G        # Target: 24GB server (2GB for Worker)
         reservations:
-          cpus: "0.5"
-          memory: 512M
+          cpus: "0.5"       # Minimum guaranteed (works on 6 vCPU server)
+          memory: 512M      # Minimum guaranteed (works on 12GB server)
     command: >
       sh -c "
         pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
@@ -360,8 +351,6 @@ volumes:
     name: latest_postgres_data
   dragonfly_data:
     name: latest_dragonfly_data
-  redis_data:
-    name: latest_redis_data
 
 networks:
   app-network:

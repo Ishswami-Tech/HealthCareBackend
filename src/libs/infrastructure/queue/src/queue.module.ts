@@ -7,6 +7,8 @@ import { isCacheEnabled } from '@config/cache.config';
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
 import { getEnvWithDefault } from '../../../../config/environment/utils';
+// Import BillingModule for InvoicePDFService (optional dependency)
+import { BillingModule } from '@services/billing/billing.module';
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -146,6 +148,7 @@ export class QueueModule {
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
+        forwardRef(() => BillingModule), // Import BillingModule for InvoicePDFService (optional, uses forwardRef to avoid circular dependency)
         BullModule.forRootAsync({
           imports: [forwardRef(() => ConfigModule)],
           useFactory: (configService: ConfigService) => {
