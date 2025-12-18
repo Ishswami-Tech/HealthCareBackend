@@ -7,7 +7,7 @@ This folder contains all API-related documentation and testing resources for the
 ### 🧪 Testing Resources
 - **[Postman Collection](postman_collection.json)** - Complete API collection with all endpoints
 - **[Postman Environment](postman_environment.json)** - Environment variables for testing
-- **[WhatsApp Integration](WHATSAPP_INTEGRATION.md)** - WhatsApp Business API setup guide
+- **[Multi-Tenant Communication](../features/MULTI_TENANT_COMMUNICATION.md)** - WhatsApp and email integration guide
 
 ### 📚 API Documentation
 - **[Swagger/OpenAPI Documentation](http://localhost:8088/api)** - Interactive API documentation (when server is running)

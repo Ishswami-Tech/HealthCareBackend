@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
-import { LoggingService } from '@infrastructure/logging';
+import type { LoggingService } from '@infrastructure/logging';
+import type { LoggerLike } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 import type { ClinicLocationResponseDto, ClinicLocation } from '@core/types/clinic.types';
 
@@ -27,7 +28,9 @@ export class LocationCacheService {
 
   constructor(
     private readonly cacheService: CacheService,
-    private readonly loggingService: LoggingService
+    // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {}
 
   /**

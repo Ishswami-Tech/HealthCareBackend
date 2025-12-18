@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { ClinicModule } from './services/clinic/clinic.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
+import { LoggingControllersModule } from '@infrastructure/logging/logging-controllers.module';
 import { AppService } from './app.service';
 import { AppointmentsModule } from './services/appointments/appointments.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
@@ -42,6 +43,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     // This ensures all JWT operations use the same secret from ConfigService
     // Core modules must be loaded before communication modules to ensure LoggingService is available
     LoggingModule,
+    LoggingControllersModule, // Separate module for controllers to avoid duplicate registration
     // Central event system - must be loaded early for event-driven architecture
     EventsModule,
     // Resilience, errors, and security modules

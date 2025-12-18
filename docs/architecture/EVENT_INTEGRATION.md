@@ -659,7 +659,7 @@ The centralized EventService acts as the **single source of truth** for all even
 - [CommunicationModule Documentation](../../src/libs/communication/README.md)
 - [Event Documentation](../features/EVENT_DOCUMENTATION.md)
 - [System Architecture](./SYSTEM_ARCHITECTURE.md)
-- [Infrastructure Documentation](../../src/INFRASTRUCTURE_DOCUMENTATION.md)
+- [Infrastructure Documentation](../INFRASTRUCTURE_DOCUMENTATION.md)
 
 ---
 

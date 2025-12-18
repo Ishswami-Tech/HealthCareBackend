@@ -10,6 +10,37 @@ const { TestContext, logSection, wait, TEST_USERS } = require('../_shared-utils'
 const TEST_USER = TEST_USERS.RECEPTIONIST;
 
 const receptionistVideoTests = {
+  async testCreateVideoAppointment(ctx) {
+    if (!ctx.clinicId || !ctx.doctorId || !ctx.patientId) {
+      ctx.recordTest('Create Video Appointment (setup)', false, true);
+      return false;
+    }
+
+    const appointmentDate = new Date();
+    appointmentDate.setDate(appointmentDate.getDate() + 1);
+    appointmentDate.setHours(10, 0, 0, 0);
+
+    const result = await ctx.makeRequest('POST', '/appointments', {
+      patientId: ctx.patientId,
+      doctorId: ctx.doctorId,
+      clinicId: ctx.clinicId,
+      ...(ctx.locationId ? { locationId: ctx.locationId } : {}),
+      appointmentDate: appointmentDate.toISOString(),
+      duration: 30,
+      type: 'VIDEO_CALL',
+      notes: 'Test VIDEO_CALL appointment for video consultation tests',
+    });
+
+    if (result.ok && result.data?.data) {
+      ctx.appointmentId = result.data.data.id;
+      ctx.recordTest('Create Video Appointment (setup)', true);
+      return true;
+    } else {
+      ctx.recordTest('Create Video Appointment (setup)', false);
+      return false;
+    }
+  },
+
   async testGenerateVideoToken(ctx) {
     if (!ctx.appointmentId || !ctx.userId) {
       ctx.recordTest('Generate Video Token', false, true);
@@ -53,8 +84,9 @@ async function runReceptionistVideoTests() {
 
   await ctx.loadTestIds();
 
-  // Try to get an appointment for video tests
+  // Try to get an existing VIDEO_CALL appointment for video tests
   const appointmentsResult = await ctx.makeRequest('GET', '/appointments');
+  let hasVideoAppointment = false;
   if (appointmentsResult.ok) {
     let appointments = [];
     if (Array.isArray(appointmentsResult.data)) {
@@ -64,9 +96,17 @@ async function runReceptionistVideoTests() {
     } else if (Array.isArray(appointmentsResult.data?.appointments)) {
       appointments = appointmentsResult.data.appointments;
     }
-    if (appointments.length > 0 && appointments[0].id) {
-      ctx.appointmentId = appointments[0].id;
+    const videoAppointment = appointments.find(apt => apt.type === 'VIDEO_CALL');
+    if (videoAppointment && videoAppointment.id) {
+      ctx.appointmentId = videoAppointment.id;
+      hasVideoAppointment = true;
     }
+  }
+
+  // If no VIDEO_CALL appointment exists, create one
+  if (!hasVideoAppointment) {
+    await receptionistVideoTests.testCreateVideoAppointment(ctx);
+    await wait(500);
   }
 
   const testSuite = ['testGenerateVideoToken', 'testGetConsultationStatus'];
@@ -94,6 +134,8 @@ runReceptionistVideoTests().catch(error => {
   console.error('Test suite failed:', error);
   process.exit(1);
 });
+
+
 
 
 

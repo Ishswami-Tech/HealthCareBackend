@@ -1,10 +1,57 @@
-# Healthcare Backend - Developer Guide
+# Developer Guide - Healthcare Backend
 
-Complete technical documentation for developers working on the healthcare backend system.
+**Date**: December 2024  
+**Status**: ✅ **COMPLETE**
+
+---
+
+## 📋 Table of Contents
+
+1. [Quick Start](#quick-start)
+2. [Architecture Overview](#architecture-overview)
+3. [Configuration Management](#configuration-management)
+4. [Environment Variables](#environment-variables)
+5. [Common Issues & Solutions](#common-issues--solutions)
+6. [Development Best Practices](#development-best-practices)
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Node.js v16+
+- PostgreSQL 14+
+- Redis/Dragonfly
+- Docker & Docker Compose (optional)
+
+### Setup
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd HealthCareBackend
+
+# Install dependencies
+npm install
+
+# Setup environment
+cp .env.example .env
+# Edit .env with your configuration
+
+# Run database migrations
+npx prisma migrate dev
+
+# Start development server
+npm run start:dev
+```
+
+---
 
 ## 🏗️ Architecture Overview
 
 ### System Architecture
+
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   Frontend      │    │   API Gateway   │    │   Load Balancer │
@@ -25,667 +72,304 @@ Complete technical documentation for developers working on the healthcare backen
         └─────────────┘ └─────────────┘ └─────────────┘
 ```
 
-### Core Architecture Principles
+### Core Principles
 
-#### 1. **Plugin-Based Architecture**
-- **Domain-Agnostic Core**: Shared functionality across healthcare and fashion domains
-- **Plugin System**: Extensible appointment system with domain-specific plugins
-- **SOLID & DRY Principles**: Single responsibility, open/closed, dependency inversion
+1. **Plugin-Based Architecture** - Extensible appointment system
+2. **Multi-Tenant Data Isolation** - Complete clinic separation
+3. **Enterprise-Grade Infrastructure** - Connection pooling, circuit breakers
+4. **Event-Driven Architecture** - Central EventService
+5. **RBAC System** - 12 roles, 25+ resources
 
-#### 2. **Multi-Tenant Data Isolation**
-- **Complete separation** between clinics with row-level security
-- **Clinic context** from headers (`X-Clinic-ID`), query params, JWT, or subdomain
-- **Scale**: 200 clinics, 50 locations per clinic, 25k patients per clinic
-- **HIPAA Compliance**: Audit trails and PHI data protection
+---
 
-#### 3. **Enterprise-Grade Infrastructure**
-- **Connection Pooling**: 20-300 connections with intelligent batch processing
-- **Circuit Breaker Patterns**: Resilience against database failures
-- **Real-time Monitoring**: Health checks and performance metrics
-- **Auto-scaling**: Dynamic resource allocation based on load
+## ⚙️ Configuration Management
 
-## 🔧 Development Setup
+### Central Configuration Service
 
-### Prerequisites
-- Node.js v16+
-- PostgreSQL v14+
-- Redis v6+
-- Docker & Docker Compose
+All configuration is managed through `src/config/config.service.ts`:
 
-### Environment Configuration
+```typescript
+// Access configuration
+const configService = app.get(ConfigService);
+
+// Get database config
+const dbConfig = configService.getDatabaseConfig();
+
+// Get cache config
+const cacheConfig = configService.getCacheConfig();
+
+// Get video config
+const videoConfig = configService.getVideoConfig();
+```
+
+### Configuration Files
+
+- **Base Config**: `src/config/config.service.ts`
+- **Environment Configs**: `src/config/environment/*.config.ts`
+- **Feature Configs**: `src/config/*.config.ts` (video, cache, etc.)
+
+### File Priority
+
+Environment variables loaded in order (later overrides earlier):
+
+1. `.env` (base configuration)
+2. `.env.{NODE_ENV}` (environment-specific)
+3. `.env.local` (local overrides, not committed)
+
+---
+
+## 🔧 Environment Variables
+
+### Quick Reference
+
+**Application**:
 ```env
-# Application
 NODE_ENV=development
 PORT=8088
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?schema=public
-REDIS_HOST=redis
-REDIS_PORT=6379
-
-# JWT
-JWT_SECRET=your-super-secret-jwt-key
-JWT_EXPIRES_IN=24h
-
-# Enterprise Database
-DB_POOL_MIN=20
-DB_POOL_MAX=300
-DB_CONNECTION_TIMEOUT=10000
-
-# Healthcare
-HEALTHCARE_ENABLE_AUDIT_LOGGING=true
-HEALTHCARE_ENABLE_PHI_PROTECTION=true
-HEALTHCARE_COMPLIANCE_LEVEL=HIPAA
+BASE_URL=http://localhost:8088
+API_PREFIX=/api/v1
 ```
 
-### Docker Development
-```bash
-# Start all services
-./run.sh dev start
-
-# View logs
-./run.sh dev logs:api
-./run.sh dev logs:db
-./run.sh dev logs:redis
-
-# Stop services
-./run.sh dev stop
+**Database**:
+```env
+DATABASE_URL=postgresql://user:password@localhost:5432/healthcare
+DIRECT_URL=postgresql://user:password@localhost:5432/healthcare
 ```
 
-## 🏗️ Code Architecture
-
-### Complete Module Structure
-```
-src/
-├── config/                    # Configuration modules
-│   └── configuration.ts      # Environment-based configuration
-├── libs/                     # Shared libraries
-│   ├── communication/        # Real-time communication
-│   │   ├── messaging/        # Email, SMS, WhatsApp
-│   │   ├── socket/          # WebSocket implementation
-│   │   └── events/          # Event emitters and handlers
-│   ├── core/                # Core utilities and security
-│   │   ├── guards/          # Authentication & authorization guards
-│   │   ├── rbac/            # Role-based access control
-│   │   ├── decorators/      # Custom decorators
-│   │   └── filters/         # Exception filters
-│   ├── dtos/                # Data Transfer Objects
-│   │   ├── auth/            # Authentication DTOs
-│   │   ├── users/           # User-related DTOs
-│   │   └── shared/          # Common DTOs
-│   ├── infrastructure/      # Infrastructure services
-│   │   ├── database/        # Prisma, connection pooling, metrics
-│   │   ├── cache/           # Redis caching strategies
-│   │   ├── queue/           # BullMQ queue management
-│   │   ├── logging/         # Enterprise logging system
-│   │   └── events/          # Event-driven architecture
-│   ├── security/            # Security components
-│   │   ├── rate-limiting/   # Rate limiting
-│   │   └── encryption/      # Data encryption
-│   └── utils/               # Utility functions
-├── services/                # Business logic modules
-│   ├── auth/               # Authentication with plugin architecture
-│   ├── users/              # User management with RBAC
-│   ├── clinic/             # Clinic management
-│   ├── appointments/       # Appointment system with plugins
-│   └── health/             # Health monitoring
-├── app.controller.ts        # Main application controller
-├── app.module.ts           # Main application module
-└── main.ts                 # Application entry point
+**Cache**:
+```env
+CACHE_ENABLED=true
+CACHE_PROVIDER=dragonfly
+DRAGONFLY_HOST=localhost
+DRAGONFLY_PORT=6379
 ```
 
-### Application Module Dependencies
+**Video**:
+```env
+VIDEO_ENABLED=true
+VIDEO_PROVIDER=openvidu
+OPENVIDU_URL=https://video.yourdomain.com
+OPENVIDU_SECRET=your-secret
+```
+
+**Complete List**: See `docs/ENVIRONMENT_VARIABLES.md` for all variables.
+
+---
+
+## 🔄 Common Issues & Solutions
+
+### Circular Dependencies
+
+**Problem**: Module A imports Module B, Module B imports Module A.
+
+**Solution 1**: Use `forwardRef()` for module dependencies:
+
 ```typescript
+// Module A
 @Module({
-  imports: [
-    // Configuration & Core
-    ConfigModule.forRoot({ isGlobal: true }),
-    EventEmitterModule.forRoot(),
-    ScheduleModule.forRoot(),
-    JwtModule.register({ secret: process.env.JWT_SECRET }),
-    
-    // Infrastructure
-    DatabaseModule,
-    CacheServiceModule,
-    LoggingServiceModule,
-    QueueModule.forRoot(),
-    SocketModule,
-    
-    // Business Modules
-    AuthModule,
-    UsersModule,
-    AppointmentsModule,
-    ClinicModule,
-    HealthModule,
-    
-    // Communication
-    WhatsAppModule,
-    BullBoardModule,
-  ],
+  imports: [forwardRef(() => ModuleB)],
 })
-export class AppModule {}
-```
+export class ModuleA {}
 
-### Core Services
-
-**Authentication Service** (Plugin-based):
-```typescript
-@Injectable()
-export class AuthService {
-  async login(email: string, password: string) {
-    // JWT authentication with session management
-  }
-  
-  async requestOTP(identifier: string, deliveryMethod: 'email' | 'sms' | 'whatsapp') {
-    // Multi-channel OTP delivery with fallback
-  }
-}
-```
-
-**Appointment Service** (Plugin Architecture):
-```typescript
-@Injectable()
-export class AppointmentsService {
-  constructor(
-    private readonly coreAppointmentService: CoreAppointmentService,
-    private readonly pluginManager: AppointmentEnterprisePluginManager,
-    private readonly conflictResolutionService: ConflictResolutionService,
-    private readonly workflowEngine: AppointmentWorkflowEngine,
-  ) {}
-}
-```
-
-**Clinic Service** (Enterprise-grade):
-```typescript
-@Injectable()
-export class ClinicService {
-  async getClinicDashboardEnterprise(clinicId: string, userId: string) {
-    // Enterprise-grade clinic dashboard with metrics
-  }
-  
-  async getClinicPatientsEnterprise(clinicId: string, userId: string, filters: any) {
-    // Advanced patient filtering with pagination
-  }
-}
-```
-
-## 🔐 Security Implementation
-
-### Authentication Flow
-```typescript
-@Injectable()
-export class JwtAuthGuard implements CanActivate {
-  async canActivate(context: ExecutionContext): Promise<boolean> {
-    const request = context.switchToHttp().getRequest();
-    const token = this.extractTokenFromHeader(request);
-
-      const payload = await this.jwtService.verifyAsync(token);
-      request['user'] = payload;
-      
-    // Rate limiting and audit logging
-      await this.rateLimitService.checkRateLimit(payload.id, request.ip);
-    await this.loggingService.log(LogType.AUTH, AppLogLevel.INFO, 'User authenticated');
-      
-      return true;
-  }
-}
-```
-
-### Role-Based Access Control
-```typescript
-@Get('patients')
-@UseGuards(JwtAuthGuard, RbacGuard)
-@RequireResourcePermission('patients', 'read')
-async getPatients(@Request() req: AuthenticatedRequest) {
-  // Implementation with automatic clinic context
-}
-```
-
-### Healthcare-Specific Roles
-- **Administrative**: SUPER_ADMIN, SYSTEM_ADMIN, CLINIC_ADMIN, SUPPORT
-- **Medical Staff**: DOCTOR, NURSE, PHARMACIST, LAB_TECHNICIAN, RADIOLOGIST
-- **Support Staff**: RECEPTIONIST, MEDICAL_ASSISTANT, BILLING_SPECIALIST
-- **Compliance**: AUDITOR, COMPLIANCE_OFFICER, DATA_ANALYST
-- **Patients**: PATIENT
-
-## 📊 Infrastructure Components
-
-### Database Layer Architecture - Single Unified Service
-
-#### **DatabaseService (PUBLIC API - Use This Only)**
-
-**CRITICAL**: Only `DatabaseService` should be used for all database operations. All other components are internal.
-
-```typescript
-import { DatabaseService } from "@infrastructure/database";
-
-@Injectable()
-export class UserService {
-  constructor(private readonly databaseService: DatabaseService) {}
-
-  // Use safe methods (recommended - includes all optimization layers)
-  async findUser(id: string) {
-    return await this.databaseService.findUserByIdSafe(id);
-    // Automatically includes:
-    // - Connection pooling (50-500 connections)
-    // - Query caching (100K+ entries)
-    // - Query optimization
-    // - Metrics tracking
-    // - HIPAA audit logging
-    // - Clinic isolation
-  }
-
-  // For custom queries, use executeHealthcareRead/Write
-  async findUsersWithAppointments(clinicId: string) {
-    return await this.databaseService.executeHealthcareRead(async (client) => {
-      return await client.user.findMany({
-        where: { clinicId },
-        include: { appointments: true }
-      });
-    });
-  }
-}
-```
-
-#### **Architecture Overview**
-
-```
-DatabaseService (PUBLIC - Only Export)
-├── HealthcareDatabaseClient (INTERNAL - Not Exported)
-│   ├── PrismaService (INTERNAL - Encapsulated)
-│   ├── ConnectionPoolManager (INTERNAL - 50-500 connections)
-│   ├── DatabaseMetricsService (INTERNAL - Metrics & Monitoring)
-│   ├── ClinicIsolationService (INTERNAL - Multi-Tenant Isolation)
-│   ├── HealthcareQueryOptimizerService (INTERNAL - Query Optimization)
-│   └── CacheService (INTERNAL - Caching Layer, 100K+ entries)
-```
-
-#### **10M+ Users Optimization**
-
-- **Connection Pooling**: 50-500 connections (auto-scaling)
-- **Caching**: 100,000+ entries (query cache: 50K, result cache: 100K)
-- **Query Optimization**: Automatic query analysis and optimization
-- **Read Replicas**: Enabled (25-200 replica connections)
-- **Auto-Scaling**: Enabled (CPU: 75%, Connections: 400)
-- **Circuit Breaker**: Enabled (5 failures threshold)
-
-#### **All Operations Include**
-
-1. ✅ Connection Pooling (via ConnectionPoolManager)
-2. ✅ Query Caching (read operations)
-3. ✅ Query Optimization (via HealthcareQueryOptimizerService)
-4. ✅ Metrics Tracking (via DatabaseMetricsService)
-5. ✅ HIPAA Audit Logging (write operations)
-6. ✅ Clinic Isolation (via ClinicIsolationService)
-7. ✅ Read Replica Routing (automatic)
-8. ✅ Cache Invalidation (write/delete operations)
-9. ✅ Error Handling & Retry Logic
-10. ✅ Circuit Breaker Protection
-
-### Caching Strategy
-
-#### **Multi-Level Caching**
-```typescript
-@Injectable()
-export class HealthcareCacheService {
-  async get<T>(key: string, clinicId: string): Promise<T | null> {
-    // L1: Memory cache (in-memory Map)
-    // L2: Redis cache (distributed)
-    // Automatic cache invalidation
-    // Clinic-specific cache keys
-    // TTL-based expiration
-  }
-  
-  // Cache TTL Configuration
-  clinicDataTtl: 3600,      // 1 hour
-  patientDataTtl: 1800,     // 30 minutes
-  appointmentDataTtl: 300,  // 5 minutes
-  emergencyDataTtl: 60,     // 1 minute
-}
-```
-
-### Queue System (19 Specialized Queues)
-
-#### **Queue Configuration**
-```typescript
-const queueConfigs = [
-  // Clinic queues
-  { name: APPOINTMENT_QUEUE, concurrency: 50, domain: 'clinic' },
-  { name: ENHANCED_APPOINTMENT_QUEUE, concurrency: 30, domain: 'clinic' },
-  { name: NOTIFICATION_QUEUE, concurrency: 100, domain: 'clinic' },
-  { name: EMAIL_QUEUE, concurrency: 80, domain: 'clinic' },
-  { name: VIDHAKARMA_QUEUE, concurrency: 20, domain: 'clinic' },
-  { name: PANCHAKARMA_QUEUE, concurrency: 20, domain: 'clinic' },
-  { name: CHEQUP_QUEUE, concurrency: 25, domain: 'clinic' },
-  { name: AYURVEDA_THERAPY_QUEUE, concurrency: 15, domain: 'clinic' },
-  { name: SERVICE_QUEUE, concurrency: 40, domain: 'clinic' },
-  { name: DOCTOR_AVAILABILITY_QUEUE, concurrency: 30, domain: 'clinic' },
-  { name: QUEUE_MANAGEMENT_QUEUE, concurrency: 20, domain: 'clinic' },
-  { name: WAITING_LIST_QUEUE, concurrency: 25, domain: 'clinic' },
-  { name: PAYMENT_PROCESSING_QUEUE, concurrency: 35, domain: 'clinic' },
-  { name: CALENDAR_SYNC_QUEUE, concurrency: 20, domain: 'clinic' },
-  { name: PATIENT_PREFERENCE_QUEUE, concurrency: 15, domain: 'clinic' },
-  { name: ANALYTICS_QUEUE, concurrency: 25, domain: 'clinic' },
-  { name: REMINDER_QUEUE, concurrency: 40, domain: 'clinic' },
-  { name: FOLLOW_UP_QUEUE, concurrency: 30, domain: 'clinic' },
-  { name: RECURRING_APPOINTMENT_QUEUE, concurrency: 20, domain: 'clinic' },
-];
-```
-
-#### **Queue Management Features**
-- **Priority-based processing**: Critical queues get higher priority
-- **Retry mechanisms**: Exponential backoff for failed jobs
-- **Dead letter queues**: Failed job handling and analysis
-- **Real-time monitoring**: Queue health and performance metrics
-- **Auto-scaling**: Dynamic worker allocation based on load
-
-### Logging System
-
-#### **Enterprise Logging Service**
-```typescript
-@Injectable()
-export class LoggingService {
-  // Enterprise-grade logging for 1M+ users
-  // HIPAA-compliant PHI audit logging
-  // Real-time performance monitoring
-  // Multi-tenant clinic isolation
-  // Advanced security event tracking
-  // Circuit breaker patterns for resilience
-  
-  private readonly maxBufferSize = 10000; // Increased for 1M users
-  private readonly flushInterval = 5000; // 5 seconds for 1M users
-  
-  async log(
-    type: LogType,
-    level: AppLogLevel,
-    message: string,
-    source: string,
-    metadata?: any
-  ) {
-    // Structured logging with correlation IDs
-    // HIPAA compliance features
-    // Performance metrics buffering
-    // Multi-tenant isolation
-  }
-}
-```
-
-### Communication Infrastructure
-
-#### **WebSocket Implementation**
-```typescript
-@Injectable()
-@WebSocketGateway({
-  cors: { origin: '*' },
-  transports: ['websocket', 'polling'],
-  pingInterval: 25000,
-  pingTimeout: 60000,
+// Module B
+@Module({
+  imports: [forwardRef(() => ModuleA)],
 })
-export class BaseSocket {
-  // Real-time communication
-  // Room-based messaging
-  // Connection management
-  // Reconnection handling
-  // Client metadata tracking
-}
+export class ModuleB {}
 ```
 
-#### **Event-Driven Architecture**
+**Solution 2**: Use `forwardRef()` for service injection:
+
 ```typescript
-@Injectable()
-export class EnterpriseEventService {
-  // Event-driven architecture with HIPAA compliance
-  // Circuit breaker patterns
-  // Event buffering for high volume
-  // Multi-tenant event isolation
-  // Performance monitoring
-}
+constructor(
+  @Inject(forwardRef(() => ServiceB))
+  private readonly serviceB: ServiceB
+) {}
 ```
 
-## 🧪 Testing
+**Solution 3**: Extract shared logic to a common module:
 
-### Unit Testing
 ```typescript
-describe('ClinicService', () => {
-  let service: ClinicService;
-  let prismaService: PrismaService;
-
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        ClinicService,
-        { provide: PrismaService, useValue: mockPrismaService },
-      ],
-    }).compile();
-
-    service = module.get<ClinicService>(ClinicService);
-  });
-
-  it('should create a clinic', async () => {
-    const result = await service.create(clinicData);
-    expect(result).toBeDefined();
-  });
-});
+// SharedModule
+@Module({
+  providers: [SharedService],
+  exports: [SharedService],
+})
+export class SharedModule {}
 ```
 
-### Integration Testing
-```typescript
-describe('ClinicController (e2e)', () => {
-  it('/clinics (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/clinics')
-      .set('Authorization', 'Bearer valid-jwt-token')
-      .set('X-Clinic-ID', 'test-clinic-001')
-      .expect(200);
-  });
-});
+**Detection**:
+```bash
+npx madge --circular --extensions ts src/
 ```
 
-## 📈 Performance Optimization
+### Database Connection Issues
 
-### Database Performance
-- **300 DB connections** (vs previous 100)
-- **Intelligent query batching** (20-100 queries per batch)
-- **Circuit breaker patterns** for resilience
-- **Real-time health monitoring**
+**Problem**: Connection pool exhausted or timeout errors.
 
-### Caching Strategy
-- **Redis with 1GB memory** allocation
-- **LRU eviction policy**
-- **Multi-level caching** (memory + Redis)
-- **Healthcare-specific cache keys**
+**Solution**:
+```env
+# Increase connection pool
+DB_POOL_SIZE=50
+DB_CONNECTION_TIMEOUT=30000
+```
 
-### Queue System
-- **19 specialized queues** for different operations
-- **Priority-based processing**
-- **Retry mechanisms** with exponential backoff
-- **Dead letter queues** for failed jobs
-
-## 📈 Monitoring & Debugging
-
-### Health Checks
-- `/health` - Basic health check
-- `/health/detailed` - Comprehensive system status
-- `/health/api` - API-specific health
-
-### Performance Monitoring
+**Check Connection Pool**:
 ```typescript
-@Injectable()
-export class MetricsService {
-  recordTiming(key: string, duration: number) {
-    this.incrementCounter(`${key}.count`);
-    this.incrementCounter(`${key}.total`, duration);
-    this.setGauge(`${key}.avg`, this.getAverage(key));
+// Monitor pool usage
+const poolStats = await databaseService.getConnectionPoolStats();
+```
+
+### Cache Issues
+
+**Problem**: Cache not working or stale data.
+
+**Solution**:
+```typescript
+// Clear cache
+await cacheService.deleteByTag('users');
+
+// Check cache health
+const isHealthy = await cacheService.isHealthy();
+```
+
+### Video Provider Issues
+
+**Problem**: Video service not working.
+
+**Solution**:
+```typescript
+// Check provider health
+const isHealthy = await videoService.isHealthy();
+const provider = videoService.getCurrentProvider();
+
+// Force fallback
+process.env.VIDEO_PROVIDER = 'jitsi';
+```
+
+---
+
+## 💡 Development Best Practices
+
+### Path Aliases (MANDATORY)
+
+**Always use path aliases**, never relative imports:
+
+```typescript
+// ✅ GOOD
+import { DatabaseService } from '@database';
+import { CacheService } from '@cache';
+import { LoggingService } from '@logging';
+
+// ❌ BAD
+import { DatabaseService } from '../../../libs/infrastructure/database/database.service';
+```
+
+**Available Aliases**:
+- `@services/*` → `src/services/*`
+- `@infrastructure/*` → `src/libs/infrastructure/*`
+- `@dtos/*` → `src/libs/dtos/*`
+- `@core/*` → `src/libs/core/*`
+- `@config` → `src/config`
+- `@logging` → `src/libs/infrastructure/logging`
+- `@cache` → `src/libs/infrastructure/cache`
+- `@database` → `src/libs/infrastructure/database`
+
+### TypeScript Standards
+
+**Zero Tolerance Rules**:
+- ❌ No `any` types
+- ❌ No relative imports
+- ❌ No `console.log` (use `LoggingService`)
+- ❌ No missing error handling
+- ❌ No missing input validation
+
+**Example**:
+```typescript
+// ✅ GOOD
+async findUser(id: string): Promise<User | null> {
+  if (!id) {
+    throw new BadRequestException('User ID is required');
   }
+  return await this.databaseService.findUserByIdSafe(id);
+}
+
+// ❌ BAD
+async findUser(id: any): Promise<any> {
+  console.log('Finding user', id);
+  return await this.databaseService.findUserByIdSafe(id);
+}
+```
+
+### Error Handling
+
+**Always use HealthcareError**:
+```typescript
+import { HealthcareError, ErrorCode } from '@core/errors';
+
+if (!user) {
+  throw new HealthcareError(
+    ErrorCode.DATABASE_RECORD_NOT_FOUND,
+    'User not found',
+    undefined,
+    { userId: id },
+    'UserService.findUser'
+  );
 }
 ```
 
 ### Logging
+
+**Always use LoggingService**:
 ```typescript
-@Injectable()
-export class LoggingService {
-  async log(type: LogType, level: AppLogLevel, message: string, source: string, metadata?: any) {
-    const logEntry = {
-      type, level, message, source, metadata,
-      timestamp: new Date(),
-      clinicId: this.getCurrentClinicId(),
-      userId: this.getCurrentUserId(),
-    };
-    
-    await this.prisma.log.create({ data: logEntry });
-    await this.redis.lpush('recent-logs', JSON.stringify(logEntry));
-  }
-}
+import { LoggingService, LogType, LogLevel } from '@logging';
+
+await this.loggingService.log(
+  LogType.BUSINESS,
+  LogLevel.INFO,
+  'User created successfully',
+  'UserService.createUser',
+  { userId: user.id, email: user.email }
+);
 ```
-
-## 🚀 Deployment
-
-### Docker Production
-```dockerfile
-FROM node:16-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-RUN npm run build
-
-FROM node:16-alpine AS production
-WORKDIR /app
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules ./node_modules
-EXPOSE 8088
-CMD ["node", "dist/main.js"]
-```
-
-### Environment-Specific Configuration
-```env
-# Production
-NODE_ENV=production
-DATABASE_URL=postgresql://user:password@postgres:5432/userdb?schema=public
-JWT_SECRET=super-secure-production-secret
-HEALTHCARE_ENABLE_AUDIT_LOGGING=true
-```
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-**Database Connection Issues**:
-```bash
-# Check database connectivity
-npm run db:health
-psql $DATABASE_URL -c "SELECT * FROM pg_stat_activity;"
-```
-
-**Redis Connection Issues**:
-```bash
-# Check Redis connectivity
-redis-cli ping
-redis-cli info stats
-```
-
-**Queue Processing Issues**:
-```bash
-# Check queue status
-curl http://localhost:8088/queue-dashboard
-curl http://localhost:8088/queue/metrics
-```
-
-### Performance Debugging
-```sql
--- Find slow queries
-SELECT query, mean_time, calls, total_time
-FROM pg_stat_statements
-ORDER BY mean_time DESC
-LIMIT 10;
-
--- Check index usage
-SELECT schemaname, tablename, indexname, idx_scan
-FROM pg_stat_user_indexes
-ORDER BY idx_scan DESC;
-```
-
-## 📊 Expected Performance
 
 ### Database Queries
-- **Before**: 170-380ms for common queries
-- **After**: 50-150ms (60-70% improvement)
 
-### System Capacity
-- **Response Time**: < 100ms
-- **Cache Hit Ratio**: > 80%
-- **API Availability**: 99.9%
-- **Concurrent Users**: 10+ lakh users
-- **Clinics Supported**: Up to 200 clinics
+**Always use safe methods**:
+```typescript
+// ✅ GOOD - Uses safe method with pagination
+const users = await this.databaseService.findUsersSafe(
+  { role: 'PATIENT' },
+  { take: 100, skip: 0 }
+);
 
-## 🔧 Available Scripts
+// ❌ BAD - Direct Prisma access
+const users = await prisma.user.findMany({ where: { role: 'PATIENT' } });
+```
 
-```json
-{
-  "scripts": {
-    "build": "nest build",
-    "start:dev": "nest start --watch",
-    "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate deploy",
-    "prisma:seed": "ts-node src/libs/infrastructure/database/prisma/seed.ts",
-    "prisma:studio": "prisma studio",
-    "test": "jest",
-    "test:e2e": "jest --config ./test/jest-e2e.json",
-    "test:cov": "jest --coverage"
-  }
+### RBAC
+
+**Always protect endpoints**:
+```typescript
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@RequireResourcePermission('appointments', 'read')
+@Get(':id')
+async getAppointment(@Param('id') id: string) {
+  // Implementation
 }
 ```
 
-## 🏥 Service-Specific Documentation
+---
 
-### Authentication Service
-- **Location**: `src/services/auth/`
-- **Documentation**: `src/services/auth/Auth.readme.md`
-- **Features**: Plugin-based architecture, multi-domain support, OTP delivery
+## 📚 Additional Resources
 
-### User Management
-- **Location**: `src/services/users/`
-- **Documentation**: `src/services/users/UserServiceReadme.md`
-- **Features**: RBAC, clinic isolation, profile management
+- **API Documentation**: `docs/API_DOCUMENTATION.md`
+- **System Architecture**: `docs/architecture/SYSTEM_ARCHITECTURE.md`
+- **Infrastructure**: `docs/INFRASTRUCTURE_DOCUMENTATION.md`
+- **Role Permissions**: `docs/ROLE_PERMISSIONS_COMPLETE.md`
+- **Complete System**: `docs/SYSTEM_COMPLETE.md`
 
-### Appointment System
-- **Location**: `src/services/appointments/`
-- **Documentation**: `src/services/appointments/ARCHITECTURE.md`
-- **Features**: Plugin architecture, conflict resolution, workflow engine
+---
 
-### Clinic Management
-- **Location**: `src/services/clinic/`
-- **Documentation**: `src/services/clinic/README.md`
-- **Features**: Multi-tenant, enterprise dashboard, patient management
-
-### Infrastructure Services
-- **Database**: `src/libs/infrastructure/database/`
-- **Caching**: `src/libs/infrastructure/cache/`
-- **Queue**: `src/libs/infrastructure/queue/`
-- **Logging**: `src/libs/infrastructure/logging/`
-- **Communication**: `src/libs/communication/` (WhatsApp, WebSocket, Events)
-
-## 🔧 Development Workflow
-
-### Code Organization
-- **Services**: Business logic in `src/services/`
-- **Infrastructure**: Shared utilities in `src/libs/infrastructure/`
-- **Core**: Security and utilities in `src/libs/core/`
-- **Communication**: Real-time features in `src/libs/communication/`
-
-### Best Practices
-- **Multi-tenancy**: Always use clinic context for data operations
-- **Error Handling**: Use RepositoryResult pattern for database operations
-- **Logging**: Include clinic ID and user ID in all log entries
-- **Caching**: Use clinic-specific cache keys
-- **Security**: Apply RBAC guards to all protected endpoints
-
-### Adding New Features
-1. Create service in appropriate `src/services/` directory
-2. Add module to `app.module.ts` imports
-3. Implement proper error handling and logging
-4. Add RBAC permissions if needed
-5. Update API documentation
-6. Write unit and integration tests
-
-This developer guide provides all the essential technical information needed to work with the healthcare backend system. For API-specific documentation, see [API Documentation](api/README.md).
+**Last Updated**: December 2024  
+**Status**: ✅ **COMPLETE**

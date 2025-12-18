@@ -842,6 +842,11 @@ export class ProcessCheckInDto {
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
   appointmentId?: string;
 
+  @ApiPropertyOptional({ description: 'Location ID for check-in', required: false })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+
   @ApiPropertyOptional({ description: 'QR code for verification', required: false })
   @IsOptional()
   @IsString({ message: 'QR code must be a string' })

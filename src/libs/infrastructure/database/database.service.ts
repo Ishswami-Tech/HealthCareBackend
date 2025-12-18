@@ -1762,8 +1762,24 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.userMethods.findUserByIdSafe(id);
   }
 
-  async findUserByEmailSafe(email: string): Promise<UserWithRelations | null> {
-    return this.userMethods.findUserByEmailSafe(email);
+  async findUserByEmailSafe(
+    email: string,
+    includeRelations?: Partial<{
+      doctor: true;
+      patient: true;
+      receptionists: true;
+      clinicAdmins: true;
+      superAdmin: true;
+      pharmacist: true;
+      therapist: true;
+      labTechnician: true;
+      financeBilling: true;
+      supportStaff: true;
+      nurse: true;
+      counselor: true;
+    }>
+  ): Promise<UserWithRelations | null> {
+    return this.userMethods.findUserByEmailSafe(email, includeRelations);
   }
 
   async findUserByEmailForAuth(
@@ -1773,8 +1789,11 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return result as (UserWithRelations & { password: string }) | null;
   }
 
-  async findUsersSafe(where: UserWhereInput): Promise<UserWithRelations[]> {
-    return this.userMethods.findUsersSafe(where);
+  async findUsersSafe(
+    where: UserWhereInput,
+    pagination?: { take?: number; skip?: number }
+  ): Promise<UserWithRelations[]> {
+    return this.userMethods.findUsersSafe(where, pagination);
   }
 
   async createUserSafe(data: UserCreateInput): Promise<UserWithRelations> {

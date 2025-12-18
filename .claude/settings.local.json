@@ -9,7 +9,13 @@
       "Bash(docker system prune:*)",
       "Bash(docker ps:*)",
       "Bash(curl:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(docker stop:*)",
+      "Bash(find:*)",
+      "Bash(node -c:*)",
+      "Bash(docker inspect:*)",
+      "Bash(node test-scripts/test-all-apis.js:*)",
+      "Bash(node:*)"
     ],
     "deny": [],
     "ask": []
