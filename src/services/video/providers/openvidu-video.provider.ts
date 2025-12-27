@@ -122,7 +122,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
     try {
       // Try to get existing session
       const response = await this.httpService.get<OpenViduRoomConfig>(
-        `${this.apiUrl}/api/sessions/${roomName}`,
+        `${this.apiUrl}/openvidu/api/sessions/${roomName}`,
         this.getHttpConfig()
       );
 
@@ -146,7 +146,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
     // Create new session
     const createResponse = await this.httpService.post<OpenViduRoomConfig>(
-      `${this.apiUrl}/api/sessions`,
+      `${this.apiUrl}/openvidu/api/sessions`,
       {
         customSessionId: roomName,
         mediaMode: 'ROUTED',
@@ -215,15 +215,18 @@ export class OpenViduVideoProvider implements IVideoProvider {
       const session = await this.createOrGetSession(roomName);
 
       // Generate token
-      interface OpenViduTokenResponse {
+      // Use Connection API (new API) instead of deprecated Token API
+      interface OpenViduConnectionResponse {
         token: string;
-        id?: string;
+        id: string;
+        connectionId?: string;
         session?: string;
+        createdAt?: number;
+        status?: string;
       }
-      const tokenResponse = await this.httpService.post<OpenViduTokenResponse>(
-        `${this.apiUrl}/api/tokens`,
+      const connectionResponse = await this.httpService.post<OpenViduConnectionResponse>(
+        `${this.apiUrl}/openvidu/api/sessions/${session.id}/connection`,
         {
-          session: session.id,
           role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
           data: JSON.stringify({
             userId,
@@ -240,7 +243,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         })
       );
 
-      const token = tokenResponse.data.token;
+      const token = connectionResponse.data.token;
       const meetingUrl = `${this.apiUrl}/#/sessions/${session.id}?token=${token}`;
 
       await this.databaseService.executeHealthcareWrite(
@@ -551,7 +554,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
     try {
       const response = await this.httpService.get(
-        `${this.apiUrl}/api/config`,
+        `${this.apiUrl}/openvidu/api/config`,
         this.getHttpConfig({ timeout: 5000 })
       );
       return response.status === 200;
@@ -584,7 +587,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   ): Promise<OpenViduRecording> {
     try {
       const response = await this.httpService.post<OpenViduRecording>(
-        `${this.apiUrl}/api/recordings/start`,
+        `${this.apiUrl}/openvidu/api/recordings/start`,
         {
           session: sessionId,
           ...(options?.outputMode && { outputMode: options.outputMode }),
@@ -633,7 +636,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async stopRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
       const response = await this.httpService.post<OpenViduRecording>(
-        `${this.apiUrl}/api/recordings/stop/${recordingId}`,
+        `${this.apiUrl}/openvidu/api/recordings/stop/${recordingId}`,
         {},
         this.getHttpConfig({
           headers: {
@@ -675,7 +678,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async getRecording(recordingId: string): Promise<OpenViduRecording> {
     try {
       const response = await this.httpService.get<OpenViduRecording>(
-        `${this.apiUrl}/api/recordings/${recordingId}`,
+        `${this.apiUrl}/openvidu/api/recordings/${recordingId}`,
         this.getHttpConfig()
       );
 
@@ -701,8 +704,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async listRecordings(sessionId?: string): Promise<OpenViduRecording[]> {
     try {
       const url = sessionId
-        ? `${this.apiUrl}/api/recordings?sessionId=${sessionId}`
-        : `${this.apiUrl}/api/recordings`;
+        ? `${this.apiUrl}/openvidu/api/recordings?sessionId=${sessionId}`
+        : `${this.apiUrl}/openvidu/api/recordings`;
       const response = await this.httpService.get<{
         numberOfElements: number;
         content: OpenViduRecording[];
@@ -730,7 +733,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async deleteRecording(recordingId: string): Promise<void> {
     try {
       await this.httpService.delete(
-        `${this.apiUrl}/api/recordings/${recordingId}`,
+        `${this.apiUrl}/openvidu/api/recordings/${recordingId}`,
         this.getHttpConfig()
       );
 
@@ -764,7 +767,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async getSessionInfo(sessionId: string): Promise<OpenViduSessionInfo> {
     try {
       const response = await this.httpService.get<OpenViduSessionInfo>(
-        `${this.apiUrl}/api/sessions/${sessionId}`,
+        `${this.apiUrl}/openvidu/api/sessions/${sessionId}`,
         this.getHttpConfig()
       );
 
@@ -812,7 +815,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async kickParticipant(sessionId: string, connectionId: string): Promise<void> {
     try {
       await this.httpService.delete(
-        `${this.apiUrl}/api/sessions/${sessionId}/connection/${connectionId}`,
+        `${this.apiUrl}/openvidu/api/sessions/${sessionId}/connection/${connectionId}`,
         this.getHttpConfig()
       );
 
@@ -848,7 +851,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async forceUnpublish(sessionId: string, streamId: string): Promise<void> {
     try {
       await this.httpService.delete(
-        `${this.apiUrl}/api/sessions/${sessionId}/stream/${streamId}`,
+        `${this.apiUrl}/openvidu/api/sessions/${sessionId}/stream/${streamId}`,
         this.getHttpConfig()
       );
 

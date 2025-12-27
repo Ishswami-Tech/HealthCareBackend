@@ -8,6 +8,8 @@ import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.servi
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
 import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
+import { WhatsAppWebhookModule } from '@communication/adapters/whatsapp/webhooks/whatsapp-webhook.module';
+import { WhatsAppSuppressionService } from '@communication/adapters/whatsapp/whatsapp-suppression.service';
 
 /**
  * WhatsApp Business API Module
@@ -17,6 +19,8 @@ import { CommunicationConfigModule } from '@communication/config/communication-c
  * - Template message support (OTP, appointment reminders, prescriptions)
  * - Document sending (prescriptions, invoices)
  * - HIPAA-compliant logging
+ * - Webhook handlers for delivery status
+ * - Suppression list management
  *
  * Architecture:
  * - WhatsAppService: Primary service for WhatsApp messaging
@@ -30,9 +34,10 @@ import { CommunicationConfigModule } from '@communication/config/communication-c
     LoggingModule,
     DatabaseModule, // Optional: For message delivery logging/audit trails
     forwardRef(() => CommunicationAdaptersModule), // Provider adapters
-    forwardRef(() => CommunicationConfigModule), // Communication config service
+    forwardRef(() => CommunicationConfigModule), // Communication config service (includes ClinicTemplateService)
+    WhatsAppWebhookModule, // Webhook handlers
   ],
-  providers: [WhatsAppService, WhatsAppConfig],
-  exports: [WhatsAppService, WhatsAppConfig],
+  providers: [WhatsAppService, WhatsAppConfig, WhatsAppSuppressionService],
+  exports: [WhatsAppService, WhatsAppConfig, WhatsAppSuppressionService],
 })
 export class WhatsAppModule {}

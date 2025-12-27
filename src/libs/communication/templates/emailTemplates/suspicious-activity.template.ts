@@ -3,15 +3,18 @@
  * @module EmailTemplates
  */
 
-import type { SuspiciousActivityEmailContext } from '@core/types/common.types';
+import type { SuspiciousActivityEmailContext } from '@core/types';
+import { generateUnsubscribeFooter } from './unsubscribe-footer';
 
 /**
  * Generates suspicious activity template
  * @param context - Suspicious activity email context
+ * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
  * @returns HTML email template
  */
 export function generateSuspiciousActivityTemplate(
-  context: SuspiciousActivityEmailContext
+  context: SuspiciousActivityEmailContext,
+  unsubscribeUrl?: string
 ): string {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
@@ -30,9 +33,7 @@ export function generateSuspiciousActivityTemplate(
       <p>If you believe this is an error or have questions, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
       
       <p>Best regards,<br>The Healthcare App Security Team</p>
-      <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;">
-        <p>This is an automated security notification. Please do not reply to this email.</p>
-      </div>
+      ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;"><p>This is an automated security notification. Please do not reply to this email.</p></div>'}
     </div>
   `;
 }

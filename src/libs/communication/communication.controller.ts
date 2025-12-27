@@ -24,12 +24,9 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { CommunicationService } from './communication.service';
 import { PushNotificationService } from './channels/push/push.service';
+import { DeviceTokenService } from './channels/push/device-token.service';
 import { ChatBackupService } from './channels/chat/chat-backup.service';
-import {
-  CommunicationCategory,
-  CommunicationPriority,
-  CommunicationChannel,
-} from '@core/types/communication.types';
+import { CommunicationCategory, CommunicationPriority, CommunicationChannel } from '@core/types';
 import {
   SendPushNotificationDto,
   SendMultiplePushNotificationsDto,
@@ -40,6 +37,7 @@ import {
   ChatBackupDto,
   UnifiedNotificationDto,
   SubscribeToTopicDto,
+  RegisterDeviceTokenDto,
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
@@ -51,14 +49,14 @@ import type {
   NotificationHealthStatusResponse,
   NotificationTestSystemResponse,
   NotificationServiceHealthStatus,
-} from '@core/types/notification.types';
+} from '@core/types';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
-import { Role } from '@core/types/enums.types';
+import { RoleEnum as Role } from '@core/types';
 
 /**
  * Unified Communication Controller
@@ -72,6 +70,7 @@ export class CommunicationController {
   constructor(
     private readonly communicationService: CommunicationService,
     private readonly pushService: PushNotificationService,
+    private readonly deviceTokenService: DeviceTokenService,
     private readonly chatBackupService: ChatBackupService
   ) {}
 
@@ -368,7 +367,8 @@ export class CommunicationController {
   @RequireResourcePermission('notifications', 'create')
   @ApiOperation({
     summary: 'Send email notification',
-    description: 'Send an email notification using CommunicationService (AWS SES with fallback)',
+    description:
+      'Send an email notification using CommunicationService (ZeptoMail primary, with fallback)',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -486,6 +486,45 @@ export class CommunicationController {
     };
   }
 
+  @Post('push/device-token')
+  @RequireResourcePermission('notifications', 'create')
+  @ApiOperation({
+    summary: 'Register device token for push notifications',
+    description:
+      'Register a device token (FCM token) for push notifications. Supports iOS, Android, and Web platforms.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Device token registered successfully',
+    type: NotificationResponseDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid device token or platform',
+  })
+  async registerDeviceToken(
+    @Body() registerDto: RegisterDeviceTokenDto
+  ): Promise<{ success: boolean; error?: string }> {
+    // Get userId from request context if not provided
+    // TODO: Extract from JWT token or request context
+    const userId = registerDto.userId || 'anonymous';
+
+    const success = await this.deviceTokenService.registerDeviceToken({
+      userId,
+      token: registerDto.token,
+      platform: registerDto.platform,
+      ...(registerDto.appVersion && { appVersion: registerDto.appVersion }),
+      ...(registerDto.deviceModel && { deviceModel: registerDto.deviceModel }),
+      ...(registerDto.osVersion && { osVersion: registerDto.osVersion }),
+      isActive: true,
+    });
+
+    return {
+      success,
+      ...(success ? {} : { error: 'Failed to register device token' }),
+    };
+  }
+
   /**
    * Chat History
    */
@@ -584,10 +623,95 @@ export class CommunicationController {
       successRate: Math.round(successRate * 100) / 100,
       services: {
         firebase: metrics.channelMetrics.push.successful > 0,
-        awsSes: metrics.channelMetrics.email.successful > 0,
+        zeptomail: metrics.channelMetrics.email.successful > 0,
+        awsSes: metrics.channelMetrics.email.successful > 0, // Legacy/fallback
         awsSns: metrics.channelMetrics.push.successful > 0,
         firebaseDatabase: metrics.channelMetrics.socket.successful > 0,
       },
+    };
+  }
+
+  /**
+   * Enhanced Analytics Endpoint
+   */
+  @Get('analytics')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
+  @Cache({
+    keyTemplate: 'communication:analytics',
+    ttl: 300, // 5 minutes
+    tags: ['communication', 'analytics'],
+    enableSWR: true,
+  })
+  @ApiOperation({
+    summary: 'Get enhanced communication analytics',
+    description:
+      'Retrieve detailed communication analytics including bounce rates, complaint rates, and per-provider metrics. Cached for performance.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Analytics retrieved successfully',
+  })
+  getAnalytics(
+    @Query('clinicId') _clinicId?: string,
+    @Query('provider') _provider?: string,
+    @Query('period') _period: '1h' | '24h' | '7d' | '30d' = '24h'
+  ): {
+    metrics: {
+      email: {
+        sent: number;
+        delivered: number;
+        bounced: number;
+        complained: number;
+        bounceRate: number;
+        complaintRate: number;
+        deliveryRate: number;
+        providers: Record<string, unknown>;
+      };
+      whatsapp: {
+        sent: number;
+        delivered: number;
+        failed: number;
+        deliveryRate: number;
+        providers: Record<string, unknown>;
+      };
+    };
+    timestamp: string;
+  } {
+    // Get basic metrics from communication service
+    const metrics = this.communicationService.getMetrics();
+
+    // For now, return basic metrics
+    // TODO: Inject EmailRateMonitoringService via constructor when module structure is finalized
+    // The rate monitoring service will provide detailed bounce/complaint rates per provider
+    return {
+      metrics: {
+        email: {
+          sent: metrics.channelMetrics.email.sent,
+          delivered: 0, // TODO: Calculate from delivery logs via EmailRateMonitoringService
+          bounced: 0, // TODO: Calculate from suppression list via EmailRateMonitoringService
+          complained: 0, // TODO: Calculate from suppression list via EmailRateMonitoringService
+          bounceRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
+          complaintRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
+          deliveryRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
+          providers: {
+            zeptomail: { sent: 0 },
+            aws_ses: { sent: 0 },
+            smtp: { sent: 0 },
+          },
+        },
+        whatsapp: {
+          sent: metrics.channelMetrics.whatsapp.sent,
+          delivered: 0, // TODO: Calculate from delivery logs
+          failed: metrics.channelMetrics.whatsapp.failed,
+          deliveryRate: 0, // TODO: Calculate from delivery logs
+          providers: {
+            meta: { sent: 0 },
+            twilio: { sent: 0 },
+          },
+        },
+      },
+      timestamp: new Date().toISOString(),
     };
   }
 
@@ -611,7 +735,9 @@ export class CommunicationController {
     const metrics = this.communicationService.getMetrics();
     const services: NotificationServiceHealthStatus = {
       firebase: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
-      awsSes: metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0,
+      zeptomail:
+        metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0,
+      awsSes: metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0, // Legacy/fallback
       awsSns: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
       firebaseDatabase:
         metrics.channelMetrics.socket.successful > 0 || metrics.channelMetrics.socket.sent > 0,

@@ -19,6 +19,8 @@ import { CommunicationHealthMonitorService } from './communication-health-monito
 import { CommunicationController } from './communication.controller';
 import { CommunicationConfigModule } from './config/communication-config.module';
 import { CommunicationAdaptersModule } from './adapters/adapters.module';
+import { EmailServicesModule } from './adapters/email/email-services.module';
+import { ClinicTemplateService } from './services/clinic-template.service';
 
 /**
  * Unified Communication Module
@@ -62,13 +64,14 @@ import { CommunicationAdaptersModule } from './adapters/adapters.module';
     ListenersModule, // Event-driven communication listeners
     CommunicationConfigModule, // Multi-tenant communication configuration
     CommunicationAdaptersModule, // Provider adapters (SMTP, SES, SendGrid, Meta WhatsApp, Twilio)
+    EmailServicesModule, // Email services (suppression list, webhooks, rate monitoring)
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
     forwardRef(() => DatabaseModule), // Database for notification preferences and delivery tracking
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
   controllers: [CommunicationController],
-  providers: [CommunicationService, CommunicationHealthMonitorService],
+  providers: [CommunicationService, CommunicationHealthMonitorService, ClinicTemplateService],
   exports: [
     EmailModule,
     WhatsAppModule,
@@ -81,6 +84,7 @@ import { CommunicationAdaptersModule } from './adapters/adapters.module';
     CommunicationService, // Unified communication service
     // Export health monitor for HealthService
     CommunicationHealthMonitorService,
+    ClinicTemplateService, // Clinic template data service
   ],
 })
 export class CommunicationModule {}

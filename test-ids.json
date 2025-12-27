@@ -1,51 +1,51 @@
 {
   "clinics": [
-    "0df7ee6f-eb7b-49fc-86e5-66d3a80aa73a",
-    "90df9a01-d229-4f66-adb7-e9c17f3f59c3"
+    "7672bb05-4344-4ff1-a6df-dbefa6e6ab48",
+    "8815ca56-7ad7-4acd-876f-7d0d839fe340"
   ],
   "clinicNames": [
     "Aadesh Ayurvedalay",
     "Shri Vishwamurthi Ayurvedalay"
   ],
-  "demoDoctorId": "3cc2e8e2-b336-49cb-9981-c4dc2b60c3a3",
-  "demoPatientId": "438c329c-c1fb-4453-b804-c24757d8a8b9",
-  "demoReceptionistId": "68ac604c-b0dd-472b-8015-bd0e63ef66e6",
-  "demoClinicAdminId": "239ac60d-eedf-4810-8623-ff875b441110",
-  "superAdminId": "e4c2ee35-ae3a-4003-b14c-b0249fcabbe8",
+  "demoDoctorId": "a588e7e6-8995-4c9c-bf90-4fd7b5345d66",
+  "demoPatientId": "42981ab1-33c2-4add-b19c-3bb6c0026a75",
+  "demoReceptionistId": "331e0b45-7ca5-497a-9619-c973cee4ac88",
+  "demoClinicAdminId": "5e65113d-2425-4337-9f3d-a7217c2851cc",
+  "superAdminId": "5fd8cc88-6b0c-4c66-959d-365bacf06139",
   "doctors": [
-    "7bfc0e7d-1372-409a-a90d-ef1a169bbac5",
-    "97e4e1b2-0140-4a2a-a4fe-3de9a653b4fd",
-    "c20a7d6b-5098-4019-913d-945ec506451f",
-    "3f9cf0b8-8472-4801-9993-a0dda778a6cd",
-    "cc952fa8-69d6-40e7-9331-5ea8c297611d"
+    "56e75052-6db7-4854-b83a-533aecf00126",
+    "8bcdd8d0-1071-4f81-a96d-213f5c9111a3",
+    "064357cc-df9e-47b2-8a8c-88336f9f2b35",
+    "be3164fd-0dea-4dab-b6ac-9511883f7997",
+    "8d2d5dd5-9305-4d73-8794-987a0ff6052a"
   ],
   "patients": [
-    "2b91feb7-6448-405f-a275-853dee49dc2a",
-    "3803a162-b792-49ff-b89a-b5c841e62b09",
-    "039c593a-e09d-4948-8a30-367c3c51ab58",
-    "cf2da200-eaa3-467c-8a5d-c59b64c24335",
-    "f5464b0c-e604-4b46-8c94-ddbb9e85629e"
+    "b81ee414-36cd-475e-8ec0-73f3cff7c305",
+    "023b0a8e-7ccd-4e4c-86a6-33b156eeefac",
+    "2784b03f-67cd-49bf-8dc7-0ee40535ecc7",
+    "b4273c2d-7b31-4569-9e08-15e51b9876d5",
+    "581c2266-95a5-4214-a384-91a5e8c64b84"
   ],
   "locations": {
     "clinic1": [
-      "356fc4bb-1e7d-42ef-ac61-b2555252e5fc",
-      "94c4154d-086e-475a-823b-d21459dc8910",
-      "ef9769a0-f734-49f1-adfe-b82ac44340bf"
+      "3a1b8182-5c29-46d0-9f72-b1bac8921f50",
+      "cb12b05d-1cef-4635-9478-54e664d16c37",
+      "90f4c7f1-9af2-4e69-b644-9c5bbbcb474d"
     ],
     "clinic2": [
-      "f0b2ef77-0df0-4205-9c4f-aa3eb0fab775",
-      "f885ac42-c44d-4350-9f58-625060e89574",
-      "e0ea5568-ed8b-4f80-9016-649bcd1133b0"
+      "cb5111f1-e641-4142-9a7f-ff775929dd8e",
+      "978d3463-1f84-47c1-81d2-d373cc14d873",
+      "c6f3c000-235e-4b66-8817-363bd1225606"
     ]
   },
   "locationHeads": [
-    "2bc3e4f8-ada9-481d-8c39-d5bd5a0862dd",
-    "7c223121-7f01-4034-a395-35437b65d43f",
-    "eda8e881-57c1-4dcf-af53-cb871761c4ba"
+    "e92fdd29-1988-451d-926c-5ded8f8edf89",
+    "1f990f8f-e1cf-4c2d-bacc-146b0f8c7a36",
+    "4bdf3cf1-9cff-4ba3-bb6d-42f8b65fbad2"
   ],
   "checkInLocations": [
-    "54305593-ee05-4edf-9c93-659cf05a7d07",
-    "c33021af-5401-4297-8523-23040e0f50a9",
-    "f6fc4cc6-8b46-4bd9-9293-d4ada4d2d9eb"
+    "caa69cd0-f659-44f0-8c48-1bc89897bf54",
+    "641aa00f-18d1-49bf-856b-0237f3e530fb",
+    "24f021a9-0d1b-45c0-b1bb-39dd36d14b43"
   ]
 }

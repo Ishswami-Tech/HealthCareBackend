@@ -80,7 +80,9 @@ export interface NotificationMetrics {
 export interface NotificationServiceHealthStatus {
   /** Firebase push notification service health */
   readonly firebase: boolean;
-  /** AWS SES email service health */
+  /** ZeptoMail email service health */
+  readonly zeptomail: boolean;
+  /** AWS SES email service health (legacy/fallback) */
   readonly awsSes: boolean;
   /** AWS SNS backup service health */
   readonly awsSns: boolean;

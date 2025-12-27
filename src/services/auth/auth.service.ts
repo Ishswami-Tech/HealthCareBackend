@@ -8,6 +8,7 @@ import { EventService } from '@infrastructure/events';
 import { HealthcareErrorsService } from '@core/errors';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
+import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';
@@ -43,6 +44,7 @@ export class AuthService {
     private readonly eventService: EventService,
     private readonly errors: HealthcareErrorsService,
     private readonly emailService: EmailService,
+    private readonly whatsAppService: WhatsAppService,
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService,
@@ -863,7 +865,10 @@ export class AuthService {
         300 // 5 minutes
       );
 
-      // Send OTP email
+      // Extract clinicId from requestDto or user's primary clinic
+      const clinicId = requestDto.clinicId || user.primaryClinicId || undefined;
+
+      // Send OTP via email
       await this.emailService.sendEmail({
         to: user.email,
         subject: 'Your OTP Code',
@@ -872,20 +877,50 @@ export class AuthService {
           name: `${user.firstName} ${user.lastName}`,
           otp,
         },
+        clinicId, // Pass clinicId for multi-tenant email routing
       });
+
+      // Send OTP via WhatsApp if phone number is available
+      if (user.phoneNumber) {
+        try {
+          await this.whatsAppService.sendOTP(
+            user.phoneNumber,
+            otp,
+            10, // 10 minutes expiry
+            2, // max retries
+            clinicId // Pass clinicId for multi-tenant WhatsApp routing
+          );
+        } catch (whatsappError) {
+          // Log WhatsApp failure but don't fail the entire OTP request
+          // Email OTP is the primary channel
+          await this.logging.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to send WhatsApp OTP, email OTP sent successfully`,
+            'AuthService.requestOtp',
+            {
+              userId: user.id,
+              phoneNumber: user.phoneNumber,
+              error: whatsappError instanceof Error ? whatsappError.message : String(whatsappError),
+            }
+          );
+        }
+      }
 
       // Emit OTP requested event
       await this.eventService.emit('user.otp_requested', {
         userId: user.id,
         email: user.email,
+        ...(user.phoneNumber && { phoneNumber: user.phoneNumber }),
+        ...(clinicId && { clinicId }),
       });
 
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `OTP sent to: ${user.email}`,
+        `OTP sent to: ${user.email}${user.phoneNumber ? ` and ${user.phoneNumber}` : ''}`,
         'AuthService.requestOtp',
-        { userId: user.id, email: user.email }
+        { userId: user.id, email: user.email, ...(user.phoneNumber && { phoneNumber: user.phoneNumber }), ...(clinicId && { clinicId }) }
       );
 
       return {

@@ -45,8 +45,8 @@ import {
   type CommunicationChannel,
   type CategoryChannelConfig,
   type UserCommunicationPreferences,
-} from '@core/types/communication.types';
-import type { EnterpriseEventPayload } from '@core/types/event.types';
+} from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types';
 
 /**
  * Communication Service
@@ -55,11 +55,14 @@ import type { EnterpriseEventPayload } from '@core/types/event.types';
 @Injectable()
 export class CommunicationService implements OnModuleInit {
   // Category to channel mapping
+  // Primary channels: Email + WhatsApp + Push + Socket (always sent)
+  // SMS: Secondary (only on user request)
   private readonly categoryConfig: Map<CommunicationCategory, CategoryChannelConfig> = new Map([
     [
       CommunicationCategory.LOGIN,
       {
-        defaultChannels: ['socket'],
+        // Auth: Only email + WhatsApp (no push/socket for security)
+        defaultChannels: ['email', 'whatsapp'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.LOW,
         rateLimit: { limit: 10, windowSeconds: 60 }, // Prevent spam
@@ -68,7 +71,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.EHR_RECORD,
       {
-        defaultChannels: ['socket', 'push', 'email'],
+        defaultChannels: ['socket', 'push', 'email', 'whatsapp'],
         requiredChannels: ['socket'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.HIGH,
@@ -77,7 +80,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.APPOINTMENT,
       {
-        defaultChannels: ['socket', 'push', 'email'],
+        defaultChannels: ['socket', 'push', 'email', 'whatsapp'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.HIGH,
       },
@@ -85,7 +88,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.REMINDER,
       {
-        defaultChannels: ['push', 'email'],
+        defaultChannels: ['push', 'email', 'whatsapp', 'socket'],
         strategy: DeliveryStrategy.SCHEDULED,
         priority: CommunicationPriority.NORMAL,
       },
@@ -93,7 +96,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.BILLING,
       {
-        defaultChannels: ['push', 'email'],
+        defaultChannels: ['push', 'email', 'whatsapp', 'socket'],
         strategy: DeliveryStrategy.QUEUED,
         priority: CommunicationPriority.NORMAL,
       },
@@ -101,9 +104,9 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.CRITICAL,
       {
-        defaultChannels: ['socket', 'push', 'email', 'sms', 'whatsapp'],
+        defaultChannels: ['socket', 'push', 'email', 'whatsapp'],
         requiredChannels: ['socket', 'push'],
-        fallbackChannels: ['sms', 'whatsapp'],
+        fallbackChannels: ['sms'], // SMS only as fallback, requires user preference
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.CRITICAL,
       },
@@ -111,7 +114,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.SYSTEM,
       {
-        defaultChannels: ['socket', 'email'],
+        defaultChannels: ['socket', 'email', 'whatsapp'],
         strategy: DeliveryStrategy.QUEUED,
         priority: CommunicationPriority.NORMAL,
       },
@@ -119,7 +122,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.USER_ACTIVITY,
       {
-        defaultChannels: ['socket'],
+        defaultChannels: ['socket', 'email', 'whatsapp'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.LOW,
       },
@@ -127,7 +130,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.PRESCRIPTION,
       {
-        defaultChannels: ['push', 'email'],
+        defaultChannels: ['push', 'email', 'whatsapp', 'socket'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.HIGH,
       },
@@ -135,7 +138,7 @@ export class CommunicationService implements OnModuleInit {
     [
       CommunicationCategory.CHAT,
       {
-        defaultChannels: ['socket'],
+        defaultChannels: ['socket', 'email', 'whatsapp'],
         strategy: DeliveryStrategy.IMMEDIATE,
         priority: CommunicationPriority.NORMAL,
       },
@@ -242,19 +245,25 @@ export class CommunicationService implements OnModuleInit {
         }
       }
 
+      // Fetch phone numbers for recipients with userId (for WhatsApp/SMS)
+      const enrichedRecipients = await this.enrichRecipientsWithPhoneNumbers(request.recipients);
+
       // Get user preferences if enabled
       const preferences =
         request.respectPreferences !== false
-          ? await this.getUserPreferences(request.recipients)
+          ? await this.getUserPreferences(enrichedRecipients)
           : undefined;
 
-      // Filter channels based on preferences
+      // Filter channels based on preferences (SMS only if user explicitly enabled)
       const finalChannels = this.filterChannelsByPreferences(
         channels,
         preferences,
-        request.recipients,
+        enrichedRecipients,
         request.category
       );
+
+      // Update request with enriched recipients
+      request.recipients = enrichedRecipients;
 
       // Send through each channel and track delivery status
       const results: ChannelDeliveryResult[] = [];
@@ -360,6 +369,26 @@ export class CommunicationService implements OnModuleInit {
 
       for (const channel of finalChannels) {
         for (const recipient of request.recipients) {
+          // Validate channel can be sent to this recipient (skip if missing required contact info)
+          if (!this.canSendChannel(channel, recipient)) {
+            const recipientId = recipient.userId || recipient.email || recipient.phoneNumber || 'unknown';
+            await this.loggingService.log(
+              LogType.NOTIFICATION,
+              LogLevel.DEBUG,
+              `Skipping ${channel} channel - missing required contact info for recipient`,
+              'CommunicationService',
+              {
+                channel,
+                recipientId,
+                hasEmail: !!recipient.email,
+                hasPhone: !!recipient.phoneNumber,
+                hasDeviceToken: !!recipient.deviceToken,
+                hasUserId: !!recipient.userId,
+              }
+            );
+            continue;
+          }
+
           const sendPromise = this.sendToChannelWithTracking(
             channel,
             request,
@@ -501,6 +530,143 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
+   * Enrich recipients with phone numbers and email addresses from database
+   * Fetches missing contact information to enable all communication channels
+   */
+  private async enrichRecipientsWithPhoneNumbers(
+    recipients: CommunicationRequest['recipients']
+  ): Promise<CommunicationRequest['recipients']> {
+    const enriched = await Promise.all(
+      recipients.map(async recipient => {
+        // If both email and phone already provided, no need to fetch
+        if (recipient.email && recipient.phoneNumber) {
+          return recipient;
+        }
+
+        // If userId provided, fetch email and phone number from database
+        if (recipient.userId) {
+          try {
+            const user = await this.databaseService.executeHealthcareRead(async prisma => {
+              return await prisma.user.findUnique({
+                where: { id: recipient.userId },
+                select: {
+                  email: true,
+                  phoneNumber: true,
+                },
+              });
+            });
+
+            if (user) {
+              return {
+                ...recipient,
+                // Only add if not already provided
+                ...(recipient.email ? {} : { email: user.email || undefined }),
+                ...(recipient.phoneNumber ? {} : { phoneNumber: user.phoneNumber || undefined }),
+              };
+            }
+          } catch (error) {
+            await this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.WARN,
+              `Failed to fetch user contact info for ${recipient.userId}`,
+              'CommunicationService',
+              {
+                userId: recipient.userId,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }
+            );
+          }
+        }
+
+        return recipient;
+      })
+    );
+
+    return enriched;
+  }
+
+  /**
+   * Check if SMS should be sent (only if user explicitly enabled it)
+   */
+  private shouldSendSMS(
+    channel: CommunicationChannel,
+    userId: string | undefined,
+    preferences: Map<string, UserCommunicationPreferences> | undefined,
+    category?: CommunicationCategory
+  ): boolean {
+    // SMS is only sent if explicitly requested/enabled
+    if (channel !== 'sms') {
+      return true; // Not SMS, proceed normally
+    }
+
+    // If no userId, don't send SMS (can't check preference)
+    if (!userId) {
+      return false;
+    }
+
+    // If no preferences, don't send SMS (opt-in required)
+    if (!preferences || preferences.size === 0) {
+      return false;
+    }
+
+    const userPrefs = preferences.get(userId);
+    if (!userPrefs) {
+      return false; // No preferences = no SMS
+    }
+
+    // Check if SMS is explicitly enabled
+    // Access via type assertion since smsEnabled may not be in the interface
+    const prefs = userPrefs as UserCommunicationPreferences & {
+      smsEnabled?: boolean;
+    };
+
+    // SMS must be explicitly enabled
+    if (prefs.smsEnabled !== true) {
+      return false;
+    }
+
+    // Check category-specific SMS preference
+    if (category && userPrefs.categoryPreferences) {
+      const categoryKey = category.toLowerCase();
+      const categoryChannels = this.getCategoryChannels(
+        userPrefs.categoryPreferences,
+        categoryKey
+      );
+      // If category preferences exist and SMS is not included, don't send
+      if (categoryChannels && categoryChannels.length > 0 && !categoryChannels.includes('sms')) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Check if a channel can be sent to a recipient based on required contact info
+   * @param channel - Channel to check
+   * @param recipient - Recipient to validate
+   * @returns true if channel can be sent, false otherwise
+   */
+  private canSendChannel(
+    channel: CommunicationChannel,
+    recipient: CommunicationRequest['recipients'][0]
+  ): boolean {
+    switch (channel) {
+      case 'email':
+        return !!recipient.email;
+      case 'whatsapp':
+      case 'sms':
+        return !!recipient.phoneNumber;
+      case 'push':
+        return !!recipient.deviceToken || !!recipient.userId; // Can fetch device token from userId
+      case 'socket':
+        return !!recipient.socketRoom || !!recipient.userId; // Can derive room from userId
+      default:
+        return true; // Unknown channels - allow (will fail gracefully in sendToChannel)
+    }
+  }
+
+  /**
    * Filter channels based on user preferences
    */
   private filterChannelsByPreferences(
@@ -510,7 +676,8 @@ export class CommunicationService implements OnModuleInit {
     category?: CommunicationCategory
   ): CommunicationChannel[] {
     if (!preferences || preferences.size === 0) {
-      return channels;
+      // Even without preferences, SMS should be opt-in only
+      return channels.filter(channel => channel !== 'sms');
     }
 
     const filteredChannels = new Set<CommunicationChannel>();
@@ -522,6 +689,15 @@ export class CommunicationService implements OnModuleInit {
         if (recipient.userId) {
           const userPrefs = preferences.get(recipient.userId);
           if (userPrefs) {
+            // Special handling for SMS: Only send if user explicitly enabled
+            if (channel === 'sms') {
+              if (
+                !this.shouldSendSMS(channel, recipient.userId, preferences, category)
+              ) {
+                shouldInclude = false;
+                break;
+              }
+            }
             // Check quiet hours
             if (userPrefs.quietHours) {
               const now = new Date();
@@ -1119,12 +1295,14 @@ export class CommunicationService implements OnModuleInit {
       // Use EmailService as the unified email provider interface
       // EmailService handles provider selection (SMTP, Mailtrap, SES, etc.) internally
       // Pass clinicId for multi-tenant provider routing
+      // Pass userId for unsubscribe link generation
       const emailResult = await this.emailService.sendSimpleEmail(
         {
           to: recipient.email,
           subject: request.title,
           body: request.body,
           isHtml: true,
+          ...(recipient.userId && { userId: recipient.userId }),
         },
         clinicId
       );
@@ -1210,20 +1388,71 @@ export class CommunicationService implements OnModuleInit {
   }
 
   /**
-   * Send SMS (placeholder - implement when SMS service is available)
+   * Send SMS (only if user explicitly enabled it)
    */
   private async sendSMS(
-    _request: CommunicationRequest,
-    _recipient: CommunicationRequest['recipients'][0],
+    request: CommunicationRequest,
+    recipient: CommunicationRequest['recipients'][0],
     timestamp: Date
   ): Promise<ChannelDeliveryResult> {
-    // TODO: Implement SMS service when available
-    return Promise.resolve({
-      channel: 'sms',
-      success: false,
-      error: 'SMS service not yet implemented',
-      timestamp,
-    });
+    try {
+      if (!recipient.phoneNumber) {
+        return {
+          channel: 'sms',
+          success: false,
+          error: 'No phone number provided',
+          timestamp,
+        };
+      }
+
+      // SMS should only be sent if user explicitly enabled it
+      // This check should have been done in filterChannelsByPreferences,
+      // but double-check here for safety
+      if (recipient.userId) {
+        const preferences = await this.getUserPreferences([recipient]);
+        if (!this.shouldSendSMS('sms', recipient.userId, preferences, request.category)) {
+          return {
+            channel: 'sms',
+            success: false,
+            error: 'SMS not enabled by user preference',
+            timestamp,
+          };
+        }
+      }
+
+      // Extract clinicId from request metadata
+      const clinicId =
+        request.metadata && typeof request.metadata === 'object' && 'clinicId' in request.metadata
+          ? (request.metadata['clinicId'] as string | undefined)
+          : undefined;
+
+      // TODO: Implement SMS service adapter when available
+      // For now, return not implemented
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        'SMS service not yet implemented',
+        'CommunicationService',
+        {
+          phoneNumber: recipient.phoneNumber,
+          clinicId,
+        }
+      );
+
+      return {
+        channel: 'sms',
+        success: false,
+        error: 'SMS service not yet implemented',
+        timestamp,
+      };
+    } catch (error) {
+      return {
+        channel: 'sms',
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+        timestamp,
+      };
+    }
   }
 
   /**

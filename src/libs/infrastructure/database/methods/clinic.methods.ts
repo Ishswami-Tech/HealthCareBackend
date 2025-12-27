@@ -18,12 +18,14 @@ export class ClinicMethods extends DatabaseMethodsBase {
     address?: string | null;
     phone?: string | null;
     email?: string | null;
+    isActive: boolean;
   } | null> {
     return await this.executeRead<{
       name: string;
       address?: string | null;
       phone?: string | null;
       email?: string | null;
+      isActive: boolean;
     } | null>(async prisma => {
       const clinic = await prisma.clinic.findUnique({
         where: { id },
@@ -32,6 +34,7 @@ export class ClinicMethods extends DatabaseMethodsBase {
           address: true,
           phone: true,
           email: true,
+          isActive: true,
         },
       });
       return clinic as {
@@ -39,6 +42,7 @@ export class ClinicMethods extends DatabaseMethodsBase {
         address?: string | null;
         phone?: string | null;
         email?: string | null;
+        isActive: boolean;
       } | null;
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());
   }

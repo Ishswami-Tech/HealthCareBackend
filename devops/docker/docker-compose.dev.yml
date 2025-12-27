@@ -93,8 +93,10 @@ services:
       
       # OpenVidu Configuration (Primary Video Provider - from .env files)
       # Values are loaded from .env.development via env_file directive above
+      # IMPORTANT: Inside Docker, use container name (openvidu-server) not localhost
+      # NOTE: OpenVidu in dev mode uses HTTP (SERVER_SSL_ENABLED=false)
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: ${OPENVIDU_URL:-https://localhost:4443}
+      OPENVIDU_URL: http://openvidu-server:4443
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
       OPENVIDU_DOMAIN: ${OPENVIDU_DOMAIN:-localhost}
       # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
@@ -193,7 +195,8 @@ services:
       "
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
+    platform: linux/amd64
     container_name: healthcare-postgres
     ports:
       - "5432:5432"
@@ -230,11 +233,13 @@ services:
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 30s
     restart: unless-stopped
+    shm_size: 256mb
 
   dragonfly:
     # Using official Dragonfly registry with specific version (more reliable than latest)

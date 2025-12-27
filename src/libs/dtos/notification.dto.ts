@@ -50,6 +50,7 @@ export enum MessageType {
 export enum Platform {
   IOS = 'ios',
   ANDROID = 'android',
+  WEB = 'web',
 }
 
 export class SendPushNotificationDto {
@@ -361,6 +362,47 @@ export class SubscribeToTopicDto {
   topic!: string;
 }
 
+export class RegisterDeviceTokenDto {
+  @ApiProperty({ description: 'FCM device token from client' })
+  @IsString()
+  @Length(10, 2000)
+  token!: string;
+
+  @ApiProperty({
+    description: 'Device platform',
+    enum: Platform,
+    default: Platform.WEB,
+  })
+  @IsEnum(Platform)
+  platform: Platform = Platform.WEB;
+
+  @ApiPropertyOptional({ description: 'User ID associated with the device' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  userId?: string;
+
+  @ApiPropertyOptional({ description: 'App version' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 50)
+  appVersion?: string;
+
+  @ApiPropertyOptional({
+    description: 'Device model (e.g., Chrome, Firefox, Safari)',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  deviceModel?: string;
+
+  @ApiPropertyOptional({ description: 'Operating system version' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 50)
+  osVersion?: string;
+}
+
 export class GetMessageHistoryDto {
   @ApiProperty({ description: 'User ID to get message history for' })
   @IsString()
@@ -442,6 +484,7 @@ export class NotificationStatsResponseDto {
   @ApiPropertyOptional({ description: 'Service health status' })
   services?: {
     firebase?: boolean;
+    zeptomail?: boolean;
     awsSes?: boolean;
     awsSns?: boolean;
     firebaseDatabase?: boolean;

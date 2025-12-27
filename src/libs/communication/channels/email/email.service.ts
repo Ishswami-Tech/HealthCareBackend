@@ -33,6 +33,8 @@ import {
 } from '@communication/templates/emailTemplates';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
 import { CommunicationConfigService } from '@communication/config';
+import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
+import { EmailUnsubscribeService } from '@communication/adapters/email/email-unsubscribe.service';
 
 /**
  * Email configuration interface
@@ -78,7 +80,11 @@ export class EmailService implements OnModuleInit {
     @Inject(forwardRef(() => ProviderFactory))
     private readonly providerFactory: ProviderFactory,
     @Inject(forwardRef(() => CommunicationConfigService))
-    private readonly communicationConfigService: CommunicationConfigService
+    private readonly communicationConfigService: CommunicationConfigService,
+    @Inject(forwardRef(() => SuppressionListService))
+    private readonly suppressionListService: SuppressionListService,
+    @Inject(forwardRef(() => EmailUnsubscribeService))
+    private readonly unsubscribeService: EmailUnsubscribeService
   ) {}
 
   /**
@@ -260,11 +266,54 @@ export class EmailService implements OnModuleInit {
       replyTo?: string;
       cc?: string[];
       bcc?: string[];
+      userId?: string; // Optional: for generating unsubscribe links
     },
     clinicId?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
+
+      // Check suppression list for all recipients
+      const suppressedEmails: string[] = [];
+      const allowedEmails: string[] = [];
+
+      for (const email of toAddresses) {
+        const isSuppressed = await this.suppressionListService.isSuppressed(email);
+        if (isSuppressed) {
+          suppressedEmails.push(email);
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            `Email suppressed, skipping send: ${email}`,
+            'EmailService',
+            { email }
+          );
+        } else {
+          allowedEmails.push(email);
+        }
+      }
+
+      // If all emails are suppressed, return early
+      if (allowedEmails.length === 0) {
+        return {
+          success: false,
+          error: `All recipient emails are suppressed: ${suppressedEmails.join(', ')}`,
+        };
+      }
+
+      // If some emails are suppressed, log and continue with allowed emails
+      if (suppressedEmails.length > 0) {
+        void this.loggingService.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          `Some emails suppressed, sending only to allowed recipients`,
+          'EmailService',
+          {
+            suppressed: suppressedEmails,
+            allowed: allowedEmails,
+          }
+        );
+      }
 
       // If clinicId is provided, use multi-tenant provider adapter
       if (clinicId) {
@@ -288,14 +337,29 @@ export class EmailService implements OnModuleInit {
               bcc?: string | string[];
               replyTo?: string;
             };
+            // Generate unsubscribe URL for each recipient
             const results = await Promise.allSettled(
-              toAddresses.map(async to => {
+              allowedEmails.map(async to => {
+                // Generate unsubscribe URL
+                const unsubscribeUrl = this.unsubscribeService.generateUnsubscribeUrl(
+                  to,
+                  options.userId
+                );
+
+                // Add unsubscribe footer to body if HTML
+                let emailBody = options.body;
+                if (options.isHtml !== false) {
+                  const { generateUnsubscribeFooter } =
+                    await import('@communication/templates/emailTemplates/unsubscribe-footer');
+                  emailBody = options.body + generateUnsubscribeFooter(unsubscribeUrl);
+                }
+
                 const emailOptions: AdapterEmailOptions = {
                   to,
                   from: defaultFrom,
                   fromName: defaultFromName,
                   subject: options.subject,
-                  body: options.body,
+                  body: emailBody,
                   html: options.isHtml !== false,
                 };
                 if (options.replyTo) {
@@ -370,15 +434,30 @@ export class EmailService implements OnModuleInit {
         ...(options.isHtml !== false ? { html: emailContent } : { text: emailContent }),
       };
 
+      // Generate unsubscribe URLs and add to body
       const results = await Promise.allSettled(
-        toAddresses.map(async (to, index) => {
+        allowedEmails.map(async (to, index) => {
+          // Generate unsubscribe URL
+          const unsubscribeUrl = this.unsubscribeService.generateUnsubscribeUrl(to, options.userId);
+
+          // Add unsubscribe footer to body if HTML
+          let emailBody = options.body;
+          if (options.isHtml !== false) {
+            const { generateUnsubscribeFooter } =
+              await import('@communication/templates/emailTemplates/unsubscribe-footer');
+            emailBody = options.body + generateUnsubscribeFooter(unsubscribeUrl);
+          }
+
+          const emailOptions: EmailOptions = {
+            ...baseEmailOptions,
+            to,
+            html: emailBody,
+          };
+
           if (index === 0) {
-            return await this.sendEmail(baseEmailOptions);
+            return await this.sendEmail(emailOptions);
           } else {
-            return await this.sendEmail({
-              ...baseEmailOptions,
-              to,
-            });
+            return await this.sendEmail(emailOptions);
           }
         })
       );
@@ -389,7 +468,7 @@ export class EmailService implements OnModuleInit {
       if (allSuccessful && firstResult && firstResult.status === 'fulfilled' && firstResult.value) {
         return {
           success: true,
-          messageId: `email:${toAddresses.join(',')}:${Date.now()}`,
+          messageId: `email:${allowedEmails.join(',')}:${Date.now()}`,
         };
       }
 
@@ -426,6 +505,13 @@ export class EmailService implements OnModuleInit {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
+  }
+
+  /**
+   * Check if email is suppressed before sending
+   */
+  async isEmailSuppressed(email: string): Promise<boolean> {
+    return await this.suppressionListService.isSuppressed(email);
   }
 
   /**

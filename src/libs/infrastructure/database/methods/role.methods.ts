@@ -16,13 +16,27 @@ export class RoleMethods extends DatabaseMethodsBase {
    */
   async findRoleByNameSafe(name: string, clinicId?: string): Promise<RbacRoleEntity | null> {
     return await this.executeRead<RbacRoleEntity | null>(async prisma => {
-      return await prisma.rbacRole.findUnique({
-        where: {
-          name_domain_clinicId: {
-            name,
-            domain: 'healthcare',
-            clinicId: clinicId || null,
+      // For composite unique keys with nullable fields, we need different approaches:
+      // - When clinicId is provided: use findUnique with composite key
+      // - When clinicId is null/undefined: use findFirst since Prisma doesn't allow null in composite unique
+      if (clinicId) {
+        return await prisma.rbacRole.findUnique({
+          where: {
+            name_domain_clinicId: {
+              name,
+              domain: 'healthcare',
+              clinicId,
+            },
           },
+        });
+      }
+
+      // For system roles (no clinicId), use findFirst with explicit null check
+      return await prisma.rbacRole.findFirst({
+        where: {
+          name,
+          domain: 'healthcare',
+          clinicId: null,
         },
       });
     }, this.queryOptionsBuilder.useCache(true).cacheStrategy('long').priority('normal').hipaaCompliant(false).build());

@@ -11,6 +11,7 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { SessionModule } from '@core/session/session.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { EmailModule } from '@communication/channels/email/email.module';
+import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { LoggingModule } from '@infrastructure/logging';
 
 // Auth services
@@ -52,6 +53,7 @@ import { SignOptions } from 'jsonwebtoken';
     LoggingModule, // Must be imported before GuardsModule (GuardsModule depends on LoggingService)
     GuardsModule,
     EmailModule,
+    WhatsAppModule, // WhatsApp OTP support
   ],
   controllers: [AuthController],
   providers: [

@@ -135,7 +135,7 @@
 ## 📖 Guides (7 files)
 
 1. **[AI_IMPLEMENTATION_PROMPT.md](./guides/AI_IMPLEMENTATION_PROMPT.md)**
-2. **[AWS_SES_INTEGRATION_GUIDE.md](./guides/AWS_SES_INTEGRATION_GUIDE.md)**
+2. **[AWS_SES_COMPLETE_GUIDE.md](./guides/AWS_SES_COMPLETE_GUIDE.md)** - Complete SES setup, multi-tenant configuration, and best practices
 3. **[AWS_SNS_INTEGRATION_GUIDE.md](./guides/AWS_SNS_INTEGRATION_GUIDE.md)**
 4. **[FCM_INTEGRATION_GUIDE.md](./guides/FCM_INTEGRATION_GUIDE.md)**
 5. **[NOTIFICATION_IMPLEMENTATION_GUIDE.md](./guides/NOTIFICATION_IMPLEMENTATION_GUIDE.md)**

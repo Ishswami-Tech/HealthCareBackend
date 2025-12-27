@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { PasswordResetEmailContext } from '@core/types/common.types';
+import type { PasswordResetEmailContext } from '@core/types';
 
 /**
  * Generates password reset confirmation template

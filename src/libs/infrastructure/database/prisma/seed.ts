@@ -49,9 +49,13 @@ const RoleValues = {
 const SEED_COUNT = 50;
 
 // Clinic ID counter for sequential generation (CL0001, CL0002, etc.)
-let clinicIdCounter = 1;
+// Starts at 2 to ensure Aadesh Ayurvedalay gets CL0002
+let clinicIdCounter = 2;
 
-// Generate sequential clinic ID (CL0001, CL0002, etc.)
+/**
+ * Generate sequential clinic ID in format CL0001, CL0002, etc.
+ * Format matches ClinicService.generateNextClinicId() implementation
+ */
 function generateClinicId(): string {
   return `CL${String(clinicIdCounter++).padStart(4, '0')}`;
 }
@@ -518,7 +522,7 @@ async function createClinicIfNeeded() {
       createdByUser: {
         connect: { id: superAdmin.id },
       },
-      clinicId: 'CL0001',
+      clinicId: 'CL0002',
       subdomain: 'aadesh',
       isActive: true,
     },
@@ -622,7 +626,7 @@ async function main() {
     // ===== CLINIC CREATION =====
     console.log('Creating clinics...');
 
-    // Aadesh Ayurvedalay
+    // Aadesh Ayurvedalay - Clinic ID: CL0002
     const clinic1 = (await (prisma.clinic.create({
       data: {
         name: 'Aadesh Ayurvedalay',
@@ -638,13 +642,15 @@ async function main() {
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: generateClinicId(), // CL0001
+        clinicId: generateClinicId(), // CL0002 - Aadesh Ayurvedalay
         subdomain: 'aadesh',
         isActive: true,
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
-    // Shri Vishwamurthi Ayurvedalay
+    console.log(`✓ Aadesh Ayurvedalay created with Clinic ID: CL0002`);
+
+    // Shri Vishwamurthi Ayurvedalay - Clinic ID: CL0003
     const clinic2 = (await (prisma.clinic.create({
       data: {
         name: 'Shri Vishwamurthi Ayurvedalay',
@@ -660,11 +666,13 @@ async function main() {
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: generateClinicId(), // CL0002
+        clinicId: generateClinicId(), // CL0003 - Shri Vishwamurthi Ayurvedalay
         subdomain: 'vishwamurthi',
         isActive: true,
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
+
+    console.log(`✓ Shri Vishwamurthi Ayurvedalay created with Clinic ID: CL0003`);
 
     // Create clinic locations
     console.log('Creating clinic locations...');
@@ -1669,8 +1677,10 @@ async function main() {
     console.log('  Clinic Admin: clinicadmin@example.com / admin123\n');
 
     console.log('🏥 Created Clinics:');
-    console.log('  1. Aadesh Ayurvedalay (ID: ' + clinic1.id + ')');
-    console.log('  2. Shri Vishwamurthi Ayurvedalay (ID: ' + clinic2.id + ')\n');
+    console.log('  1. Aadesh Ayurvedalay (Clinic ID: CL0002, UUID: ' + clinic1.id + ')');
+    console.log(
+      '  2. Shri Vishwamurthi Ayurvedalay (Clinic ID: CL0003, UUID: ' + clinic2.id + ')\n'
+    );
 
     console.log('👥 Demo Login Credentials:');
     console.log('  Clinic Admin: clinicadmin1@example.com / test1234');

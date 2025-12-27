@@ -14,7 +14,8 @@ import type { Transporter } from 'nodemailer';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { BaseEmailAdapter } from '../base/base-email-adapter';
+import { BaseEmailAdapter } from '@communication/adapters/base/base-email-adapter';
+import { SuppressionListService } from './suppression-list.service';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
 import type { ProviderConfig } from '@communication/config';
 
@@ -45,10 +46,13 @@ async function callSendMailTyped(
 export class SMTPEmailAdapter extends BaseEmailAdapter {
   private transporter: Transporter | null = null;
   private config: ProviderConfig | null = null;
+  private clinicId: string | undefined = undefined; // Store clinicId for multi-tenant support
 
   constructor(
     @Inject(forwardRef(() => LoggingService))
-    loggingService: LoggingService
+    loggingService: LoggingService,
+    @Inject(forwardRef(() => SuppressionListService))
+    private readonly suppressionListService: SuppressionListService
   ) {
     super(loggingService);
   }
@@ -56,8 +60,9 @@ export class SMTPEmailAdapter extends BaseEmailAdapter {
   /**
    * Initialize adapter with clinic-specific configuration
    */
-  initialize(config: ProviderConfig): void {
+  initialize(config: ProviderConfig, clinicId?: string): void {
     this.config = config;
+    this.clinicId = clinicId; // Store clinicId for multi-tenant support
 
     if (!config.credentials || typeof config.credentials !== 'object') {
       throw new Error('SMTP credentials are required');
@@ -237,10 +242,54 @@ export class SMTPEmailAdapter extends BaseEmailAdapter {
       // Validate options
       this.validateEmailOptions(options);
 
+      const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
+
+      // Check suppression list for all recipients
+      const suppressedEmails: string[] = [];
+      const allowedEmails: string[] = [];
+
+      for (const email of toAddresses) {
+        // Check suppression list with clinicId for multi-tenant support
+        const isSuppressed = await this.suppressionListService.isSuppressed(email, this.clinicId);
+        if (isSuppressed) {
+          suppressedEmails.push(email);
+          await this.logger.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            `Email suppressed, skipping send: ${email}`,
+            'SMTPEmailAdapter',
+            { email }
+          );
+        } else {
+          allowedEmails.push(email);
+        }
+      }
+
+      // If all emails are suppressed, return early
+      if (allowedEmails.length === 0) {
+        return this.createErrorResult(
+          `All recipient emails are suppressed: ${suppressedEmails.join(', ')}`
+        );
+      }
+
+      // If some emails are suppressed, log and continue with allowed emails
+      if (suppressedEmails.length > 0) {
+        await this.logger.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          `Some emails suppressed, sending only to allowed recipients`,
+          'SMTPEmailAdapter',
+          {
+            suppressed: suppressedEmails,
+            allowed: allowedEmails,
+          }
+        );
+      }
+
       // Prepare mail options
       const mailOptions: nodemailer.SendMailOptions = {
         from: options.fromName ? `${options.fromName} <${options.from}>` : options.from,
-        to: Array.isArray(options.to) ? options.to.join(', ') : options.to,
+        to: allowedEmails.join(', '),
         subject: options.subject,
         ...(options.html !== false ? { html: options.body } : { text: options.body }),
         ...(options.cc && {

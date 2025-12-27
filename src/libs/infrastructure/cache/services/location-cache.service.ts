@@ -22,8 +22,8 @@ import type { ClinicLocationResponseDto, ClinicLocation } from '@core/types/clin
 @Injectable()
 export class LocationCacheService {
   private readonly CACHE_PREFIX = 'location';
-  private readonly DEFAULT_TTL = 3600; // 1 hour
-  private readonly LOCATIONS_LIST_TTL = 1800; // 30 minutes
+  private readonly DEFAULT_TTL = 7200; // Increased from 3600 to 2 hours for better hit rate
+  private readonly LOCATIONS_LIST_TTL = 3600; // Increased from 1800 to 1 hour for better hit rate
 
   constructor(
     private readonly cacheService: CacheService,

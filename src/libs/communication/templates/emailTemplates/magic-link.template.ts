@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { MagicLinkEmailContext } from '@core/types/common.types';
+import type { MagicLinkEmailContext } from '@core/types';
 
 /**
  * Generates magic link template

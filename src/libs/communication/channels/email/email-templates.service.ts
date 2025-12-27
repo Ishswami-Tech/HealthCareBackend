@@ -119,9 +119,13 @@ export class EmailTemplatesService {
   /**
    * Generates appointment reminder email template
    * @param data - Appointment template data
+   * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
    * @returns HTML email template
    */
-  generateAppointmentReminderTemplate(data: AppointmentTemplateData): string {
+  generateAppointmentReminderTemplate(
+    data: AppointmentTemplateData,
+    unsubscribeUrl?: string
+  ): string {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -134,15 +138,19 @@ export class EmailTemplatesService {
       }
     );
 
-    return generateAppointmentReminderTemplate(data);
+    return generateAppointmentReminderTemplate(data, unsubscribeUrl);
   }
 
   /**
    * Generates prescription ready email template
    * @param data - Prescription template data
+   * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
    * @returns HTML email template
    */
-  generatePrescriptionReadyTemplate(data: PrescriptionTemplateData): string {
+  generatePrescriptionReadyTemplate(
+    data: PrescriptionTemplateData,
+    unsubscribeUrl?: string
+  ): string {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -155,15 +163,16 @@ export class EmailTemplatesService {
       }
     );
 
-    return generatePrescriptionReadyTemplate(data);
+    return generatePrescriptionReadyTemplate(data, unsubscribeUrl);
   }
 
   /**
    * Generates payment confirmation email template
    * @param data - Payment template data
+   * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
    * @returns HTML email template
    */
-  generatePaymentConfirmationTemplate(data: PaymentTemplateData): string {
+  generatePaymentConfirmationTemplate(data: PaymentTemplateData, unsubscribeUrl?: string): string {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -176,7 +185,7 @@ export class EmailTemplatesService {
       }
     );
 
-    return generatePaymentConfirmationTemplate(data);
+    return generatePaymentConfirmationTemplate(data, unsubscribeUrl);
   }
 
   /**

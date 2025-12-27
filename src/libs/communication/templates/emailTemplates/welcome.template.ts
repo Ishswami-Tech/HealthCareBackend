@@ -3,14 +3,19 @@
  * @module EmailTemplates
  */
 
-import type { WelcomeEmailContext } from '@core/types/common.types';
+import type { WelcomeEmailContext } from '@core/types';
+import { generateUnsubscribeFooter } from './unsubscribe-footer';
 
 /**
  * Generates welcome email template
  * @param context - Welcome email context
+ * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
  * @returns HTML email template
  */
-export function generateWelcomeTemplate(context: WelcomeEmailContext): string {
+export function generateWelcomeTemplate(
+  context: WelcomeEmailContext,
+  unsubscribeUrl?: string
+): string {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
       <h2 style="color: #4a4a4a;">Welcome to Healthcare App!</h2>
@@ -38,9 +43,7 @@ export function generateWelcomeTemplate(context: WelcomeEmailContext): string {
       <p>If you have any questions or need assistance, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
       
       <p>Best regards,<br>The Healthcare App Team</p>
-      <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;">
-        <p>This is an automated message, please do not reply to this email.</p>
-      </div>
+      ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : ''}
     </div>
   `;
 }

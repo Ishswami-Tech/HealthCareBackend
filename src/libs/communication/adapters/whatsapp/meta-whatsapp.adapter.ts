@@ -13,7 +13,7 @@ import { HttpService } from '@infrastructure/http';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { BaseWhatsAppAdapter } from '../base/base-whatsapp-adapter';
+import { BaseWhatsAppAdapter } from '@communication/adapters/base/base-whatsapp-adapter';
 import type { WhatsAppOptions, WhatsAppResult } from '@communication/adapters/interfaces';
 import type { ProviderConfig } from '@communication/config';
 

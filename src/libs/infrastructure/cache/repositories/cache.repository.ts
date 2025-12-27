@@ -218,25 +218,27 @@ export class CacheRepository implements ICacheRepository {
 
   /**
    * Calculate TTL from options
+   * Optimized TTLs to improve cache hit rate (target: 70%+)
    */
   private calculateTTL(options: CacheOperationOptions): number {
     if (options.ttl) {
       return options.ttl;
     }
 
-    if (options.emergencyData) return 300;
-    if (options.containsPHI) return 1800;
-    if (options.patientSpecific) return 3600;
-    if (options.doctorSpecific) return 7200;
-    if (options.clinicSpecific) return 14400;
+    // Optimized TTLs for better cache hit rates
+    if (options.emergencyData) return 600; // Increased from 300 to 10 minutes
+    if (options.containsPHI) return 3600; // Increased from 1800 to 1 hour (PHI data changes less frequently)
+    if (options.patientSpecific) return 7200; // Increased from 3600 to 2 hours
+    if (options.doctorSpecific) return 14400; // Increased from 7200 to 4 hours (doctor data is relatively static)
+    if (options.clinicSpecific) return 28800; // Increased from 14400 to 8 hours (clinic data changes infrequently)
 
     switch (options.complianceLevel) {
       case 'restricted':
-        return 900;
+        return 1800; // Increased from 900 to 30 minutes
       case 'sensitive':
-        return 1800;
+        return 3600; // Increased from 1800 to 1 hour
       default:
-        return 3600;
+        return 7200; // Increased from 3600 to 2 hours (default TTL for better hit rates)
     }
   }
 }

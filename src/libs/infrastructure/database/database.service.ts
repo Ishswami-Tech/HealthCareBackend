@@ -2218,6 +2218,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     address?: string | null;
     phone?: string | null;
     email?: string | null;
+    isActive: boolean;
   } | null> {
     return this.clinicMethods.findClinicByIdSafe(id);
   }

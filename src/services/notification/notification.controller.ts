@@ -612,6 +612,8 @@ export class NotificationController {
     const metrics = this.communicationService.getMetrics();
     const services: NotificationServiceHealthStatus = {
       firebase: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
+      zeptomail:
+        metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0,
       awsSes: metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0,
       awsSns: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
       firebaseDatabase:

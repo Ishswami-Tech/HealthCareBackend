@@ -261,6 +261,20 @@ export class PushNotificationService implements OnModuleInit {
             },
           },
         },
+        webpush: {
+          notification: {
+            title: notification.title,
+            body: notification.body,
+            icon: '/icon-192x192.png', // Default icon path
+            badge: '/badge-72x72.png',
+          },
+          fcmOptions: {
+            link:
+              notification.data && 'link' in notification.data
+                ? String(notification.data['link'])
+                : '/', // Deep link from data payload
+          },
+        },
       };
 
       const response = await admin.messaging().send(message);

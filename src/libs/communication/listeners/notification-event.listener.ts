@@ -26,8 +26,8 @@ import {
   CommunicationCategory,
   CommunicationPriority,
   type CommunicationChannel,
-} from '@core/types/communication.types';
-import type { EnterpriseEventPayload } from '@core/types/event.types';
+} from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types';
 
 /**
  * Event-to-Communication mapping rules
@@ -251,7 +251,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^appointment\.created$/,
       category: CommunicationCategory.APPOINTMENT,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
       template: 'appointment_created',
       recipients: payload => {
@@ -281,7 +281,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^appointment\.(cancelled|rescheduled)$/,
       category: CommunicationCategory.APPOINTMENT,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
       template: 'appointment_updated',
       recipients: payload => {

@@ -11,6 +11,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from '@infrastructure/queue';
 import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
+import { EmailServicesModule } from '@communication/adapters/email/email-services.module';
 
 /**
  * Safely check if cache is enabled
@@ -49,6 +50,7 @@ function isCacheEnabledSafe(): boolean {
     // DatabaseModule is @Global() - DatabaseService is available without explicit import
     forwardRef(() => CommunicationAdaptersModule), // Provider adapters
     forwardRef(() => CommunicationConfigModule), // Communication config service
+    forwardRef(() => EmailServicesModule), // Email services (suppression list, unsubscribe, webhooks)
     // QueueModule is already imported globally via AppModule.forRoot()
     // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
     // Use direct environment variable check to avoid module loading issues

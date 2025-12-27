@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { OTPEmailContext } from '@core/types/common.types';
+import type { OTPEmailContext } from '@core/types';
 
 /**
  * Generates OTP login template

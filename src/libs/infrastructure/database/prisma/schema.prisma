@@ -91,6 +91,7 @@ model User {
   primaryClinic           Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
   videoParticipants       VideoParticipant[]
   clinics                 Clinic[]                @relation("UserClinics")
+  emailSuppressions       EmailSuppressionList[]
 
   @@index([primaryClinicId])
   @@index([email])
@@ -173,6 +174,7 @@ model Clinic {
   users                 User[]                       @relation("UserClinics")
   checkIns              CheckIn[]
   locationHeads         LocationHead[]
+  emailSuppressions     EmailSuppressionList[]
 
   @@index([app_name])
   @@index([isActive])
@@ -763,6 +765,38 @@ model NotificationDeliveryLog {
   @@index([notificationId])
   @@index([status])
   @@index([channel, status])
+}
+
+model EmailSuppressionList {
+  id            String            @id @default(uuid())
+  email         String
+  reason        SuppressionReason
+  source        SuppressionSource
+  userId        String?
+  clinicId      String? // Optional: for clinic-specific suppression lists
+  messageId     String? // SES message ID if available
+  bounceType    String? // 'Permanent', 'Transient', 'Undetermined'
+  bounceSubType String? // 'General', 'NoEmail', 'Suppressed', etc.
+  complaintType String? // 'abuse', 'fraud', 'virus', etc.
+  description   String?
+  metadata      Json? // Additional metadata from SES
+  suppressedAt  DateTime          @default(now())
+  expiresAt     DateTime? // For temporary suppressions
+  isActive      Boolean           @default(true)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  clinic        Clinic?           @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+
+  @@unique([email, reason, clinicId], name: "email_reason_clinicId_unique") // Allow same email/reason for different clinics
+  @@index([email])
+  @@index([userId])
+  @@index([clinicId])
+  @@index([reason])
+  @@index([source])
+  @@index([isActive])
+  @@index([suppressedAt])
+  @@map("email_suppression_list")
 }
 
 model HealthRecord {
@@ -1898,4 +1932,18 @@ enum InvoiceStatus {
   VOID
   UNCOLLECTIBLE
   OVERDUE
+}
+
+enum SuppressionReason {
+  BOUNCE
+  COMPLAINT
+  UNSUBSCRIBE
+  MANUAL
+}
+
+enum SuppressionSource {
+  SES
+  USER_ACTION
+  ADMIN
+  SYSTEM
 }
