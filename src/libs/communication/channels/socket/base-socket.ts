@@ -118,20 +118,20 @@ export class BaseSocket
       // If still not initialized after retries, continue without logging (expected in some cases)
       if (!this.isInitialized || !this.loggingService) {
         // This is expected behavior when LoggingService initializes after WebSocket gateway
-        // Reduce to debug level since it's not an error - the service will work without logging
-        // Note: Using console.warn instead of console.debug as per linting rules
-        if (process.env['NODE_ENV'] === 'development') {
-          console.warn(
-            '[BaseSocket] LoggingService not available yet, initializing without logging (will retry later)'
-          );
-        }
+        // Service will work without logging - LoggingService will be available on next operation
         // Continue initialization without logging
         this.server = server;
         if (this.socketService) {
           try {
             await this.initializeSocketService();
           } catch (err) {
-            console.error('[BaseSocket] Socket service initialization failed:', err);
+            // LoggingService not available yet - error will be logged when service is available
+            // Use safeLogError helper if available, otherwise silently continue
+            if (this.loggingService) {
+              safeLogError(this.loggingService, err, this.serviceName, {
+                operation: 'initializeSocketService',
+              });
+            }
           }
         }
         return;

@@ -16,6 +16,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { CredentialEncryptionService } from './credential-encryption.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
+import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 import { LogType, LogLevel } from '@core/types';
 import type { EmailResult } from '@communication/adapters/interfaces/email-provider.adapter';
 
@@ -34,10 +35,9 @@ export enum CommunicationProviderType {
 export enum EmailProvider {
   SMTP = 'smtp',
   AWS_SES = 'aws_ses',
-  SENDGRID = 'sendgrid',
   MAILGUN = 'mailgun',
-  POSTMARK = 'postmark',
   MAILTRAP = 'mailtrap', // Dev/Staging only
+  ZEPTOMAIL = 'zeptomail',
 }
 
 /**
@@ -111,7 +111,9 @@ export class CommunicationConfigService implements OnModuleInit {
     private readonly cacheService: CacheService,
     private readonly credentialEncryption: CredentialEncryptionService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => SuppressionListService))
+    private readonly suppressionListService: SuppressionListService
   ) {}
 
   onModuleInit(): void {
@@ -212,7 +214,7 @@ export class CommunicationConfigService implements OnModuleInit {
       clinicId,
       email: {
         primary: {
-          provider: EmailProvider.AWS_SES,
+          provider: EmailProvider.ZEPTOMAIL,
           enabled: true,
           credentials: {},
           priority: 1,
@@ -652,7 +654,8 @@ export class CommunicationConfigService implements OnModuleInit {
           smtp: 'smtp',
           aws_ses: 'aws_ses',
           ses: 'aws_ses',
-          sendgrid: 'sendgrid',
+          zeptomail: 'zeptomail',
+          zoho: 'zeptomail',
         };
         const normalizedProvider = providerMap[provider.toLowerCase()] || provider;
 
@@ -660,23 +663,35 @@ export class CommunicationConfigService implements OnModuleInit {
           case 'smtp': {
             const { SMTPEmailAdapter } =
               await import('@communication/adapters/email/smtp-email.adapter');
-            const smtpAdapter = new SMTPEmailAdapter(this.loggingService);
+            const smtpAdapter = new SMTPEmailAdapter(
+              this.loggingService,
+              this.suppressionListService
+            );
             smtpAdapter.initialize(providerConfig as ProviderConfig);
             return smtpAdapter;
           }
           case 'aws_ses': {
             const { SESEmailAdapter } =
-              await import('@communication/adapters/email/ses-email.adapter');
-            const sesAdapter = new SESEmailAdapter(this.loggingService);
+              await import('@communication/adapters/email/ses/ses-email.adapter');
+            const sesAdapter = new SESEmailAdapter(
+              this.loggingService,
+              this.suppressionListService
+            );
             sesAdapter.initialize(providerConfig as ProviderConfig);
             return sesAdapter;
           }
-          case 'sendgrid': {
-            const { SendGridEmailAdapter } =
-              await import('@communication/adapters/email/sendgrid-email.adapter');
-            const sendgridAdapter = new SendGridEmailAdapter(this.loggingService);
-            sendgridAdapter.initialize(providerConfig as ProviderConfig);
-            return sendgridAdapter;
+          case 'zeptomail': {
+            // ZeptoMail adapter requires HttpService which needs NestHttpService
+            // For testing, return null - use ProviderFactory in production
+            // This is a limitation of the test adapter method
+            await this.loggingService.log(
+              LogType.EMAIL,
+              LogLevel.WARN,
+              'ZeptoMail adapter requires HttpService - use ProviderFactory for testing',
+              'CommunicationConfigService',
+              { provider: 'zeptomail' }
+            );
+            return null;
           }
         }
       } else if (type === 'whatsapp') {

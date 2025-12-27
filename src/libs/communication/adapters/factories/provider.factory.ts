@@ -24,15 +24,16 @@ import {
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
+import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 
 // Email adapters
-import { SMTPEmailAdapter } from '../email/smtp-email.adapter';
-import { SESEmailAdapter } from '../email/ses-email.adapter';
-import { SendGridEmailAdapter } from '../email/sendgrid-email.adapter';
+import { SMTPEmailAdapter } from '@communication/adapters/email/smtp-email.adapter';
+import { SESEmailAdapter } from '@communication/adapters/email/ses/ses-email.adapter';
+import { ZeptoMailEmailAdapter } from '@communication/adapters/email/zeptomail/zeptomail-email.adapter';
 
 // WhatsApp adapters
-import { MetaWhatsAppAdapter } from '../whatsapp/meta-whatsapp.adapter';
-import { TwilioWhatsAppAdapter } from '../whatsapp/twilio-whatsapp.adapter';
+import { MetaWhatsAppAdapter } from '@communication/adapters/whatsapp/meta-whatsapp.adapter';
+import { TwilioWhatsAppAdapter } from '@communication/adapters/whatsapp/twilio-whatsapp.adapter';
 
 /**
  * Provider Factory
@@ -50,7 +51,9 @@ export class ProviderFactory {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => HttpService))
-    private readonly httpService: HttpService
+    private readonly httpService: HttpService,
+    @Inject(forwardRef(() => SuppressionListService))
+    private readonly suppressionListService: SuppressionListService
   ) {}
 
   /**
@@ -78,18 +81,22 @@ export class ProviderFactory {
     try {
       switch (providerType) {
         case EmailProvider.SMTP:
-          adapter = new SMTPEmailAdapter(this.loggingService);
-          (adapter as SMTPEmailAdapter).initialize(config.email.primary);
+          adapter = new SMTPEmailAdapter(this.loggingService, this.suppressionListService);
+          (adapter as SMTPEmailAdapter).initialize(config.email.primary, clinicId);
           break;
 
         case EmailProvider.AWS_SES:
-          adapter = new SESEmailAdapter(this.loggingService);
-          (adapter as SESEmailAdapter).initialize(config.email.primary);
+          adapter = new SESEmailAdapter(this.loggingService, this.suppressionListService);
+          (adapter as SESEmailAdapter).initialize(config.email.primary, clinicId);
           break;
 
-        case EmailProvider.SENDGRID:
-          adapter = new SendGridEmailAdapter(this.loggingService);
-          (adapter as SendGridEmailAdapter).initialize(config.email.primary);
+        case EmailProvider.ZEPTOMAIL:
+          adapter = new ZeptoMailEmailAdapter(
+            this.loggingService,
+            this.httpService,
+            this.suppressionListService
+          );
+          (adapter as ZeptoMailEmailAdapter).initialize(config.email.primary, clinicId);
           break;
 
         default:

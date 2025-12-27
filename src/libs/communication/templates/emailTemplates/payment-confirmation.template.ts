@@ -4,13 +4,18 @@
  */
 
 import type { PaymentTemplateData } from '@communication/channels/email/email-templates.service';
+import { generateUnsubscribeFooter } from './unsubscribe-footer';
 
 /**
  * Generates payment confirmation email template
  * @param data - Payment template data
+ * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
  * @returns HTML email template
  */
-export function generatePaymentConfirmationTemplate(data: PaymentTemplateData): string {
+export function generatePaymentConfirmationTemplate(
+  data: PaymentTemplateData,
+  unsubscribeUrl?: string
+): string {
   return `
     <!DOCTYPE html>
     <html lang="en">
@@ -69,7 +74,7 @@ export function generatePaymentConfirmationTemplate(data: PaymentTemplateData): 
       <div style="background: #f8f9fc; padding: 25px 30px; text-align: center; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 10px 10px;">
         <p style="margin: 0 0 10px 0; font-size: 16px; color: #333; font-weight: bold;">Best regards,</p>
         <p style="margin: 0 0 20px 0; font-size: 16px; color: #4CAF50; font-weight: bold;">${data.clinicName || 'Healthcare Team'}</p>
-        <p style="margin: 0; font-size: 12px; color: #888;">This is an automated confirmation. Please do not reply to this email.</p>
+        ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<p style="margin: 0; font-size: 12px; color: #888;">This is an automated confirmation. Please do not reply to this email.</p>'}
       </div>
     </body>
     </html>

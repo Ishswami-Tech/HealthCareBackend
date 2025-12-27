@@ -8,14 +8,14 @@
  * @description AWS SES email adapter for multi-tenant communication
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
-// Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { BaseEmailAdapter } from '../base/base-email-adapter';
+import { BaseEmailAdapter } from '@communication/adapters/base/base-email-adapter';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
 import type { ProviderConfig } from '@communication/config';
+import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 
 /**
  * AWS SES Email Adapter
@@ -27,16 +27,22 @@ export class SESEmailAdapter extends BaseEmailAdapter {
   private config: ProviderConfig | null = null;
   private fromEmail: string = '';
   private fromName: string = '';
+  private clinicId: string | undefined = undefined; // Store clinicId for multi-tenant support
 
-  constructor(loggingService: LoggingService) {
+  constructor(
+    loggingService: LoggingService,
+    @Inject(forwardRef(() => SuppressionListService))
+    private readonly suppressionListService: SuppressionListService
+  ) {
     super(loggingService);
   }
 
   /**
    * Initialize adapter with clinic-specific configuration
    */
-  initialize(config: ProviderConfig): void {
+  initialize(config: ProviderConfig, clinicId?: string): void {
     this.config = config;
+    this.clinicId = clinicId; // Store clinicId for multi-tenant support
 
     if (!config.credentials || typeof config.credentials !== 'object') {
       throw new Error('SES credentials are required');
@@ -70,6 +76,7 @@ export class SESEmailAdapter extends BaseEmailAdapter {
         'SESEmailAdapter',
         {
           error: error instanceof Error ? error.message : String(error),
+          clinicId,
         }
       );
       throw error;
@@ -123,10 +130,52 @@ export class SESEmailAdapter extends BaseEmailAdapter {
 
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
 
+      // Check suppression list for all recipients
+      const suppressedEmails: string[] = [];
+      const allowedEmails: string[] = [];
+
+      for (const email of toAddresses) {
+        // Check suppression list with clinicId for multi-tenant support
+        const isSuppressed = await this.suppressionListService.isSuppressed(email, this.clinicId);
+        if (isSuppressed) {
+          suppressedEmails.push(email);
+          await this.logger.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            `Email suppressed, skipping send: ${email}`,
+            'SESEmailAdapter',
+            { email }
+          );
+        } else {
+          allowedEmails.push(email);
+        }
+      }
+
+      // If all emails are suppressed, return early
+      if (allowedEmails.length === 0) {
+        return this.createErrorResult(
+          `All recipient emails are suppressed: ${suppressedEmails.join(', ')}`
+        );
+      }
+
+      // If some emails are suppressed, log and continue with allowed emails
+      if (suppressedEmails.length > 0) {
+        await this.logger.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          `Some emails suppressed, sending only to allowed recipients`,
+          'SESEmailAdapter',
+          {
+            suppressed: suppressedEmails,
+            allowed: allowedEmails,
+          }
+        );
+      }
+
       const command = new SendEmailCommand({
         Source: this.fromName ? `${this.fromName} <${this.fromEmail}>` : this.fromEmail,
         Destination: {
-          ToAddresses: toAddresses,
+          ToAddresses: allowedEmails,
           ...(options.cc && {
             CcAddresses: Array.isArray(options.cc) ? options.cc : [options.cc],
           }),

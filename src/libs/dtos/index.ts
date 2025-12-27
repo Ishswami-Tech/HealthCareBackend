@@ -29,6 +29,7 @@ export {
   ChatBackupDto,
   UnifiedNotificationDto,
   SubscribeToTopicDto,
+  RegisterDeviceTokenDto,
   GetMessageHistoryDto,
   NotificationResponseDto,
   MessageHistoryResponseDto,

@@ -16,6 +16,7 @@ import { QueueModule } from '@infrastructure/queue';
 import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
+import { VideoModule } from './services/video/video.module';
 import { ResilienceModule } from '@core/resilience';
 import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
@@ -67,6 +68,8 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     ClinicModule,
     BillingModule,
     EHRModule,
+    // Video consultation module (OpenVidu/Jitsi integration)
+    VideoModule,
     // Unified Communication Module (includes all channels: socket, push, email, WhatsApp, SMS, listeners)
     CommunicationModule,
     // Support modules

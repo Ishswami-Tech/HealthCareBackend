@@ -7,6 +7,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
 import { CommunicationConfigService } from '@communication/config';
+import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 
 /**
  * WhatsApp Business API service for sending messages and notifications
@@ -24,7 +25,9 @@ export class WhatsAppService {
     @Inject(forwardRef(() => ProviderFactory))
     private readonly providerFactory: ProviderFactory,
     @Inject(forwardRef(() => CommunicationConfigService))
-    private readonly communicationConfigService: CommunicationConfigService
+    private readonly communicationConfigService: CommunicationConfigService,
+    @Inject(forwardRef(() => ClinicTemplateService))
+    private readonly clinicTemplateService: ClinicTemplateService
   ) {}
   /**
    * Creates an instance of WhatsAppService
@@ -42,19 +45,22 @@ export class WhatsAppService {
    */
   /**
    * Sends OTP via WhatsApp template message
+   * Supports multi-tenant communication via clinicId
    * @param phoneNumber - Recipient phone number (with country code)
    * @param otp - OTP code to send
    * @param expiryMinutes - OTP expiry time in minutes (default: 10)
    * @param maxRetries - Maximum retry attempts (default: 2)
+   * @param clinicId - Optional clinic ID for multi-tenant template and provider routing
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendOTP(
     phoneNumber: string,
     otp: string,
     expiryMinutes: number = 10,
-    maxRetries: number = 2
+    maxRetries: number = 2,
+    clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -71,15 +77,33 @@ export class WhatsAppService {
       try {
         const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-        await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.otpTemplateId, [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: otp },
-              { type: 'text', text: `${expiryMinutes}` },
-            ],
-          },
-        ]);
+        // Get clinic name and template ID if clinicId provided
+        let clinicName = 'Healthcare App';
+        let templateId = this.whatsAppConfig.otpTemplateId;
+
+        if (clinicId) {
+          const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+          if (clinicData) {
+            clinicName = clinicData.clinicName;
+            templateId = clinicData.templateIds.otp || this.whatsAppConfig.otpTemplateId;
+          }
+        }
+
+        await this.sendTemplateMessage(
+          formattedPhone,
+          templateId,
+          [
+            {
+              type: 'body',
+              parameters: [
+                { type: 'text', text: clinicName },
+                { type: 'text', text: otp },
+                { type: 'text', text: `${expiryMinutes}` },
+              ],
+            },
+          ],
+          clinicId
+        );
 
         void this.loggingService.log(
           LogType.SYSTEM,
@@ -123,12 +147,14 @@ export class WhatsAppService {
    */
   /**
    * Sends appointment reminder via WhatsApp
+   * Supports multi-tenant communication via clinicId
    * @param phoneNumber - Recipient phone number (with country code)
    * @param patientName - Patient name for personalization
    * @param doctorName - Doctor name
    * @param appointmentDate - Appointment date
    * @param appointmentTime - Appointment time
    * @param location - Appointment location
+   * @param clinicId - Optional clinic ID for multi-tenant template and provider routing
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendAppointmentReminder(
@@ -137,9 +163,10 @@ export class WhatsAppService {
     doctorName: string,
     appointmentDate: string,
     appointmentTime: string,
-    location: string
+    location: string,
+    clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -152,18 +179,36 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.appointmentTemplateId, [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: patientName },
-            { type: 'text', text: doctorName },
-            { type: 'text', text: appointmentDate },
-            { type: 'text', text: appointmentTime },
-            { type: 'text', text: location },
-          ],
-        },
-      ]);
+      // Get clinic name and template ID if clinicId provided
+      let clinicName = 'Healthcare Clinic';
+      let templateId = this.whatsAppConfig.appointmentTemplateId;
+
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          clinicName = clinicData.clinicName;
+          templateId = clinicData.templateIds.appointment || this.whatsAppConfig.appointmentTemplateId;
+        }
+      }
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: clinicName },
+              { type: 'text', text: patientName },
+              { type: 'text', text: doctorName },
+              { type: 'text', text: appointmentDate },
+              { type: 'text', text: appointmentTime },
+              { type: 'text', text: location },
+            ],
+          },
+        ],
+        clinicId
+      );
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -195,11 +240,13 @@ export class WhatsAppService {
    */
   /**
    * Sends prescription notification via WhatsApp
+   * Supports multi-tenant communication via clinicId
    * @param phoneNumber - Recipient phone number (with country code)
    * @param patientName - Patient name for personalization
    * @param doctorName - Doctor name who prescribed
    * @param medicationDetails - Details about prescribed medications
    * @param prescriptionUrl - Optional prescription document URL
+   * @param clinicId - Optional clinic ID for multi-tenant template and provider routing
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendPrescriptionNotification(
@@ -207,9 +254,10 @@ export class WhatsAppService {
     patientName: string,
     doctorName: string,
     medicationDetails: string,
-    prescriptionUrl?: string
+    prescriptionUrl?: string,
+    clinicId?: string
   ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled) {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -222,16 +270,34 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
-      await this.sendTemplateMessage(formattedPhone, this.whatsAppConfig.prescriptionTemplateId, [
-        {
-          type: 'body',
-          parameters: [
-            { type: 'text', text: patientName },
-            { type: 'text', text: doctorName },
-            { type: 'text', text: medicationDetails },
-          ],
-        },
-      ]);
+      // Get clinic name and template ID if clinicId provided
+      let clinicName = 'Healthcare Clinic';
+      let templateId = this.whatsAppConfig.prescriptionTemplateId;
+
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          clinicName = clinicData.clinicName;
+          templateId = clinicData.templateIds.prescription || this.whatsAppConfig.prescriptionTemplateId;
+        }
+      }
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: clinicName },
+              { type: 'text', text: patientName },
+              { type: 'text', text: doctorName },
+              { type: 'text', text: medicationDetails },
+            ],
+          },
+        ],
+        clinicId
+      );
 
       // If prescription URL is provided, send the document
       if (prescriptionUrl) {
@@ -378,9 +444,11 @@ export class WhatsAppService {
    */
   /**
    * Sends a template message via WhatsApp Business API
+   * Supports multi-tenant communication via clinicId
    * @param to - Recipient phone number
    * @param templateName - Template name to use
    * @param components - Template components with parameters
+   * @param clinicId - Optional clinic ID for multi-tenant provider routing
    * @returns Promise resolving to API response
    * @private
    */
@@ -390,9 +458,58 @@ export class WhatsAppService {
     components: Array<{
       type: string;
       parameters: Array<{ type: string; text: string }>;
-    }>
+    }>,
+    clinicId?: string
   ): Promise<unknown> {
     try {
+      // If clinicId is provided, use multi-tenant provider adapter
+      if (clinicId) {
+        try {
+          const adapter = await this.providerFactory.getWhatsAppProviderWithFallback(clinicId);
+          if (adapter) {
+            const result = await adapter.send({
+              to,
+              templateId: templateName,
+              templateParams: components[0]?.parameters.reduce(
+                (acc, param, index) => {
+                  acc[`${index}`] = param.text;
+                  return acc;
+                },
+                {} as Record<string, string>
+              ),
+              language: 'en',
+            });
+
+            if (result.success) {
+              return result;
+            } else {
+              void this.loggingService.log(
+                LogType.SYSTEM,
+                LogLevel.WARN,
+                `Failed to send template via clinic adapter, falling back to global: ${result.error}`,
+                'WhatsAppService',
+                { clinicId, templateName }
+              );
+              // Fall through to global provider
+            }
+          }
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to use clinic-specific WhatsApp provider, falling back to global: ${error instanceof Error ? error.message : String(error)}`,
+            'WhatsAppService',
+            { clinicId, templateName }
+          );
+          // Fall through to global provider
+        }
+      }
+
+      // Fallback to global provider (existing behavior)
+      if (!this.whatsAppConfig.enabled) {
+        throw new Error('WhatsApp service is disabled');
+      }
+
       const response = await this.httpService.post(
         `${this.whatsAppConfig.apiUrl}/${this.whatsAppConfig.phoneNumberId}/messages`,
         {
@@ -423,7 +540,7 @@ export class WhatsAppService {
         LogLevel.ERROR,
         `WhatsApp template message error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
-        { stack: (error as Error)?.stack }
+        { stack: (error as Error)?.stack, clinicId, templateName }
       );
       throw error;
     }

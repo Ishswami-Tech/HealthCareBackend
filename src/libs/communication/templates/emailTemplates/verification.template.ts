@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { VerificationEmailContext } from '@core/types/common.types';
+import type { VerificationEmailContext } from '@core/types';
 
 /**
  * Generates email verification template

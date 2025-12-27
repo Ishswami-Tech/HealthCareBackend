@@ -7,8 +7,8 @@ import { isCacheEnabled } from '@config/cache.config';
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
 import { getEnvWithDefault } from '../../../../config/environment/utils';
-// Import BillingModule for InvoicePDFService (optional dependency)
-import { BillingModule } from '@services/billing/billing.module';
+// Note: BillingModule is imported dynamically via forwardRef to avoid circular dependency
+// InvoicePDFService is injected via token in QueueProcessor
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -148,7 +148,8 @@ export class QueueModule {
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
-        forwardRef(() => BillingModule), // Import BillingModule for InvoicePDFService (optional, uses forwardRef to avoid circular dependency)
+        // Note: BillingModule NOT imported here to avoid circular dependency
+        // InvoicePDFService is optional in QueueProcessor and will be null if BillingModule is not available
         BullModule.forRootAsync({
           imports: [forwardRef(() => ConfigModule)],
           useFactory: (configService: ConfigService) => {
@@ -182,7 +183,8 @@ export class QueueModule {
               connection: {
                 ...redisConfig,
                 // Enterprise connection settings for 1M users
-                maxRetriesPerRequest: 5,
+                // BullMQ requires maxRetriesPerRequest to be null
+                maxRetriesPerRequest: null,
                 retryDelayOnFailover: 50,
                 enableReadyCheck: true,
                 connectTimeout: 30000,
@@ -401,7 +403,8 @@ export class QueueModule {
                           connection: {
                             ...workerRedisConfig,
                             // Enhanced worker connection settings
-                            maxRetriesPerRequest: 3,
+                            // BullMQ requires maxRetriesPerRequest to be null
+                            maxRetriesPerRequest: null,
                             retryDelayOnFailover: 100,
                             connectTimeout: 60000,
                             commandTimeout: 30000,

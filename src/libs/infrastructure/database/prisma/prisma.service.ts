@@ -1817,8 +1817,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
     const delegate = (this as unknown as { rbacRole: RbacRoleDelegate })['rbacRole'];
+    // Explicitly handle null clinicId for system roles
     const result = await delegate.findFirst({
-      where: { name, domain: 'healthcare', clinicId },
+      where: { name, domain: 'healthcare', clinicId: clinicId ?? null },
     } as PrismaDelegateArgs);
     return result as RbacRoleEntity | null;
   }

@@ -304,37 +304,103 @@ export class AppointmentNotificationService {
 
   /**
    * Send WhatsApp notification
+   * Supports multi-tenant communication via clinicId
    */
   private async sendWhatsAppNotification(
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    const { templateData, type } = notificationData;
+    const { templateData, type, patientId, clinicId } = notificationData;
 
-    // Get patient phone from notificationData or fetch from database
-    const patientPhone = '+1234567890'; // This should be fetched from user data
+    // Fetch patient phone number from database
+    let patientPhone: string | null = null;
+    if (patientId) {
+      try {
+        const patient = await this.databaseService.executeHealthcareRead(async prisma => {
+          return await prisma.patient.findUnique({
+            where: { id: patientId },
+            select: {
+              user: {
+                select: {
+                  phoneNumber: true,
+                },
+              },
+            },
+          });
+        });
 
-    if (type === 'reminder') {
-      await this.whatsAppService.sendAppointmentReminder(
-        patientPhone,
-        templateData.patientName,
-        templateData.doctorName,
-        templateData.appointmentDate,
-        templateData.appointmentTime,
-        templateData.location
-      );
+        patientPhone = patient?.user?.phoneNumber || null;
+      } catch (error) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to fetch patient phone number: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'AppointmentNotificationService',
+          { patientId, notificationId }
+        );
+      }
     }
 
-    await this.loggingService.log(
-      LogType.NOTIFICATION,
-      LogLevel.INFO,
-      `WhatsApp notification sent`,
-      'AppointmentNotificationService',
-      {
-        notificationId,
-        patientPhone,
+    if (!patientPhone) {
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.WARN,
+        `Skipping WhatsApp notification - no phone number found`,
+        'AppointmentNotificationService',
+        { notificationId, patientId }
+      );
+      return;
+    }
+
+    try {
+      // Send based on notification type
+      if (type === 'reminder' || type === 'created' || type === 'updated') {
+        await this.whatsAppService.sendAppointmentReminder(
+          patientPhone,
+          templateData.patientName,
+          templateData.doctorName,
+          templateData.appointmentDate,
+          templateData.appointmentTime,
+          templateData.location,
+          clinicId // Pass clinicId for multi-tenant support
+        );
+      } else if (type === 'prescription') {
+        await this.whatsAppService.sendPrescriptionNotification(
+          patientPhone,
+          templateData.patientName,
+          templateData.doctorName,
+          templateData['medicationDetails'] as string || 'Prescription ready',
+          templateData['prescriptionUrl'] as string | undefined,
+          clinicId // Pass clinicId for multi-tenant support
+        );
       }
-    );
+
+      await this.loggingService.log(
+        LogType.NOTIFICATION,
+        LogLevel.INFO,
+        `WhatsApp notification sent`,
+        'AppointmentNotificationService',
+        {
+          notificationId,
+          patientPhone,
+          type,
+          clinicId,
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to send WhatsApp notification: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'AppointmentNotificationService',
+        {
+          notificationId,
+          patientPhone,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      throw error;
+    }
   }
 
   /**

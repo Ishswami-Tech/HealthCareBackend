@@ -50,10 +50,10 @@ export class CacheWarmingService implements OnModuleInit {
   }
 
   /**
-   * Warm popular caches every 6 hours
-   * Runs at: 00:06,12,18 hours
+   * Warm popular caches every 3 hours (increased frequency for better hit rates)
+   * Runs at: 00:03,06,09,12,15,18,21 hours
    */
-  @Cron('0 */6 * * *', {
+  @Cron('0 */3 * * *', {
     name: 'warm-popular-caches',
     timeZone: 'UTC',
   })
@@ -95,6 +95,9 @@ export class CacheWarmingService implements OnModuleInit {
         // Wait for batch to complete before starting next batch
         await Promise.allSettled(batchPromises);
       }
+
+      // Also warm frequently accessed data: user permissions, roles, and system data
+      await this.warmFrequentlyAccessedData();
 
       // Option 2: Queue-based warming (asynchronous, non-blocking) - Use QueueService if available
       // This offloads heavy warming operations to background workers
@@ -303,7 +306,7 @@ export class CacheWarmingService implements OnModuleInit {
       const keyFactory = this.cacheService.getKeyFactory();
       const doctorsKey = keyFactory.clinic(clinicId, 'doctors');
 
-      // Fetch and cache doctors list
+      // Fetch and cache doctors list (Doctor uses many-to-many relation with clinics via DoctorClinic)
       const doctors = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
@@ -313,8 +316,12 @@ export class CacheWarmingService implements OnModuleInit {
           }
         ).doctor.findMany({
           where: {
-            clinicId,
-            isActive: true,
+            clinics: {
+              some: {
+                clinicId,
+              },
+            },
+            isAvailable: true,
           },
           select: {
             id: true,
@@ -328,7 +335,7 @@ export class CacheWarmingService implements OnModuleInit {
       await this.cacheService.set(
         doctorsKey,
         doctors,
-        3600 // Default TTL for doctor profiles
+        14400 // Increased TTL to 4 hours for doctor profiles (better hit rate)
       );
 
       // Warm clinic locations
@@ -356,7 +363,7 @@ export class CacheWarmingService implements OnModuleInit {
       await this.cacheService.set(
         locationsKey,
         locations,
-        3600 // Default TTL for clinic data
+        28800 // Increased TTL to 8 hours for clinic data (better hit rate)
       );
     } catch (error) {
       await this.loggingService.log(
@@ -426,8 +433,8 @@ export class CacheWarmingService implements OnModuleInit {
         });
       });
 
-      // Cache for 6 hours (matches cron interval)
-      await this.cacheService.set(cacheKey, appointments, 21600);
+      // Cache for 3 hours (matches cron interval) - increased from 6 hours to match new warming frequency
+      await this.cacheService.set(cacheKey, appointments, 10800);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -494,7 +501,7 @@ export class CacheWarmingService implements OnModuleInit {
           }
         ).doctor.findMany({
           where: {
-            isActive: true,
+            isAvailable: true,
           },
           select: {
             id: true,
@@ -515,6 +522,95 @@ export class CacheWarmingService implements OnModuleInit {
         }
       );
       return [];
+    }
+  }
+
+  /**
+   * Warm frequently accessed data (user permissions, roles, system data)
+   * This improves cache hit rates for RBAC and system lookups
+   */
+  private async warmFrequentlyAccessedData(): Promise<void> {
+    try {
+      const keyFactory = this.cacheService.getKeyFactory();
+
+      // Warm system roles and permissions (critical for RBAC performance)
+      const roles = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            rbacRole: {
+              findMany: <T>(args: T) => Promise<Array<{ id: string; name: string }>>;
+            };
+          }
+        ).rbacRole.findMany({
+          where: {
+            isActive: true,
+            isSystemRole: true,
+          },
+          select: {
+            id: true,
+            name: true,
+          },
+          take: 50, // Limit to system roles
+        });
+      });
+
+      // Warm role permissions cache for each system role
+      for (const role of roles) {
+        // Fetch and cache role permissions (this will be cached by RbacService.getRolePermissions)
+        // We just trigger the cache by accessing it
+        try {
+          // This will populate the cache via RbacService
+          await this.databaseService.findRolePermissionsSafe([role.id]);
+        } catch {
+          // Ignore errors - cache warming is best effort
+        }
+      }
+
+      // Warm system permissions list
+      const permissionsKey = keyFactory.fromTemplate('rbac:permissions:all', {});
+      const permissions = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            permission: {
+              findMany: <T>(args: T) => Promise<unknown[]>;
+            };
+          }
+        ).permission.findMany({
+          where: {
+            isActive: true,
+          },
+          select: {
+            id: true,
+            name: true,
+            resource: true,
+            action: true,
+          },
+          take: 200, // Limit to most common permissions
+        });
+      });
+
+      await this.cacheService.set(permissionsKey, permissions, 14400); // 4 hours TTL
+
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.INFO,
+        'Frequently accessed data cache warming completed',
+        this.serviceName,
+        {
+          rolesWarmed: roles.length,
+          permissionsWarmed: permissions.length,
+        }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to warm frequently accessed data',
+        this.serviceName,
+        {
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
     }
   }
 

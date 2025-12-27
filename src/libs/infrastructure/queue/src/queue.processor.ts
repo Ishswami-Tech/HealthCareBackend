@@ -3,7 +3,8 @@ import { Inject, Optional } from '@nestjs/common';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
-import { DatabaseService } from '@infrastructure/database';
+// Use direct import to avoid circular dependency with barrel exports
+import { DatabaseService } from '@infrastructure/database/database.service';
 
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
@@ -55,18 +56,18 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing create job ${String(job.id)} for resource ${String(job.data['id'])}`,
+        `Processing create job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { jobId: String(job.id), resourceId: String(job.data['id']) }
+        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
       );
       // Ensure this handler is idempotent!
       // ... job logic ...
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Job ${String(job.id)} processed successfully`,
+        `Job ${safeStringify(job.id)} processed successfully`,
         'QueueProcessor',
-        { jobId: String(job.id) }
+        { jobId: safeStringify(job.id) }
       );
       return { success: true };
     } catch (_error) {
@@ -76,8 +77,8 @@ export class QueueProcessor {
         `Error processing create job`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: _error instanceof Error ? _error.message : String(_error),
+          jobId: safeStringify(job.id),
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -95,9 +96,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing update job ${String(job.id)} for resource ${String(job.data['id'])}`,
+        `Processing update job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { jobId: String(job.id), resourceId: String(job.data['id']) }
+        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
       );
 
       // Generic processing logic for service-queue
@@ -106,9 +107,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Job ${String(job.id)} processed successfully`,
+        `Job ${safeStringify(job.id)} processed successfully`,
         'QueueProcessor',
-        { jobId: String(job.id) }
+        { jobId: safeStringify(job.id) }
       );
       return { success: true };
     } catch (_error) {
@@ -118,8 +119,8 @@ export class QueueProcessor {
         `Error processing update job`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: _error instanceof Error ? _error.message : String(_error),
+          jobId: safeStringify(job.id),
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -132,9 +133,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing confirm job ${String(job.id)} for resource ${String(job.data['id'])}`,
+        `Processing confirm job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { jobId: String(job.id), resourceId: String(job.data['id']) }
+        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
       );
 
       // Generic processing logic for service-queue
@@ -143,9 +144,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Job ${String(job.id)} processed successfully`,
+        `Job ${safeStringify(job.id)} processed successfully`,
         'QueueProcessor',
-        { jobId: String(job.id) }
+        { jobId: safeStringify(job.id) }
       );
       return { success: true };
     } catch (_error) {
@@ -155,8 +156,8 @@ export class QueueProcessor {
         `Error processing confirm job`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: _error instanceof Error ? _error.message : String(_error),
+          jobId: safeStringify(job.id),
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -169,9 +170,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing complete job ${String(job.id)} for resource ${String(job.data['id'])}`,
+        `Processing complete job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { jobId: String(job.id), resourceId: String(job.data['id']) }
+        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
       );
 
       // Generic processing logic for service-queue
@@ -180,9 +181,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Job ${String(job.id)} processed successfully`,
+        `Job ${safeStringify(job.id)} processed successfully`,
         'QueueProcessor',
-        { jobId: String(job.id) }
+        { jobId: safeStringify(job.id) }
       );
       return { success: true };
     } catch (_error) {
@@ -192,8 +193,8 @@ export class QueueProcessor {
         `Error processing complete job`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: _error instanceof Error ? _error.message : String(_error),
+          jobId: safeStringify(job.id),
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -206,18 +207,18 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Processing notification job ${String(job.id)} for resource ${String(job.data['id'])}`,
+        `Processing notification job ${safeStringify(job.id)} for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { jobId: String(job.id), resourceId: String(job.data['id']) }
+        { jobId: safeStringify(job.id), resourceId: safeStringify(job.data['id']) }
       );
 
       // Send notification logic for service-queue
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Sending notification for resource ${String(job.data['id'])} to user ${String(job.data['userId'])}`,
+        `Sending notification for resource ${safeStringify(job.data['id'])} to user ${safeStringify(job.data['userId'])}`,
         'QueueProcessor',
-        { resourceId: String(job.data['id']), userId: String(job.data['userId']) }
+        { resourceId: safeStringify(job.data['id']), userId: safeStringify(job.data['userId']) }
       );
 
       // Example of FCM notification (would need to be implemented)
@@ -231,9 +232,9 @@ export class QueueProcessor {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Notification sent for resource ${String(job.data['id'])}`,
+        `Notification sent for resource ${safeStringify(job.data['id'])}`,
         'QueueProcessor',
-        { resourceId: String(job.data['id']) }
+        { resourceId: safeStringify(job.data['id']) }
       );
       return { success: true };
     } catch (_error) {
@@ -243,8 +244,8 @@ export class QueueProcessor {
         `Error processing notification job`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: _error instanceof Error ? _error.message : String(_error),
+          jobId: safeStringify(job.id),
+          error: _error instanceof Error ? _error.message : safeStringify(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
@@ -367,8 +368,8 @@ export class QueueProcessor {
         `Error processing lab report`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -483,8 +484,8 @@ export class QueueProcessor {
         `Error processing imaging report`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -550,7 +551,7 @@ export class QueueProcessor {
             {
               importId,
               batchIndex: i,
-              error: batchError instanceof Error ? batchError.message : String(batchError),
+              error: batchError instanceof Error ? batchError.message : safeStringify(batchError),
             }
           );
         }
@@ -574,8 +575,8 @@ export class QueueProcessor {
         `Error processing bulk EHR import`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -707,8 +708,8 @@ export class QueueProcessor {
         `Error processing invoice PDF`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -823,7 +824,10 @@ export class QueueProcessor {
               {
                 batchId,
                 invoiceIndex: i + batch.indexOf(invoiceData),
-                error: invoiceError instanceof Error ? invoiceError.message : String(invoiceError),
+                error:
+                  invoiceError instanceof Error
+                    ? invoiceError.message
+                    : safeStringify(invoiceError),
               }
             );
           }
@@ -845,8 +849,8 @@ export class QueueProcessor {
         `Error processing bulk invoices`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -972,8 +976,8 @@ export class QueueProcessor {
         `Error processing payment reconciliation`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -1086,7 +1090,7 @@ export class QueueProcessor {
           userRole: 'system',
           clinicId:
             (metadataTyped && 'clinicId' in metadataTyped
-              ? String(metadataTyped['clinicId'])
+              ? safeStringify(metadataTyped['clinicId'])
               : '') || '',
           operation: 'PROCESS_VIDEO_RECORDING',
           resourceType: 'VIDEO_RECORDING',
@@ -1115,8 +1119,8 @@ export class QueueProcessor {
         `Error processing video recording`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -1266,8 +1270,8 @@ export class QueueProcessor {
         `Error processing video transcoding`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -1395,8 +1399,8 @@ export class QueueProcessor {
         `Error processing video analytics`,
         'QueueProcessor',
         {
-          jobId: String(job.id),
-          error: error instanceof Error ? error.message : String(error),
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
