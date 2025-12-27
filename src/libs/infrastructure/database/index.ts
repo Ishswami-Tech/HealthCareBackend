@@ -48,7 +48,8 @@ export { DatabaseModule } from './database.module';
 // DO NOT import or use any other database components directly
 
 // ONLY PUBLIC EXPORT: DatabaseService
-export { DatabaseService } from './database.service';
+// Use separate export file to avoid circular dependency issues
+export { DatabaseService } from './database-service.export';
 
 // Type exports for the unified service (re-export from @core/types)
 export type {

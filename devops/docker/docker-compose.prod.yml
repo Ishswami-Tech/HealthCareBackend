@@ -1,5 +1,6 @@
 services:
   api:
+    image: healthcare-backend:latest
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile
@@ -21,8 +22,11 @@ services:
       NODE_ENV: production
       DEV_MODE: "false"
       DOCKER_ENV: "true"
-      CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in"
-      FRONTEND_URL: https://ishswami.in
+      # Disable HTTP/2 for testing compatibility (enable in real production with proper HTTP/2 clients)
+      ENABLE_HTTP2: "false"
+      # For local testing, allow localhost. In real production, use production domains
+      CORS_ORIGIN: "http://localhost:3000,http://localhost:8088,https://ishswami.in,https://www.ishswami.in"
+      FRONTEND_URL: http://localhost:3000
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
@@ -45,12 +49,13 @@ services:
       SOCKET_HOST: 0.0.0.0
       SOCKET_PORT: ${API_PORT:-8088}
       NPM_CONFIG_LOGLEVEL: error
-      API_URL: https://api.ishswami.in
+      # For local testing, use localhost. In real production, use production domains
+      API_URL: http://localhost:8088
       SWAGGER_URL: /docs
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket.io
       LOGGER_URL: /logger
-      BASE_URL: https://api.ishswami.in
+      BASE_URL: http://localhost:8088
       API_PREFIX: /api/v1
       MAIN_DOMAIN: ishswami.in
       API_DOMAIN: api.ishswami.in
@@ -82,6 +87,12 @@ services:
       HEAVY_RATE_LIMIT: 50
       USER_RATE_LIMIT: 500
       HEALTH_RATE_LIMIT: 2000
+      # Video Configuration
+      VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
+      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
+      OPENVIDU_URL: http://openvidu-server:4443
+      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
     expose:
       - "${API_PORT:-8088}"
     networks:
@@ -94,10 +105,14 @@ services:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
+      - "openvidu-server:172.18.0.7"
+      - "coturn:172.18.0.8"
     depends_on:
       postgres:
         condition: service_healthy
       dragonfly:
+        condition: service_healthy
+      coturn:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -116,19 +131,14 @@ services:
         reservations:
           cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
           memory: 2G       # Minimum guaranteed (works on 12GB server)
-    command: >
-      sh -c "
-        pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
-        pnpm exec prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
-        node dist/main.js
-      "
+    command: ["node", "dist/main.js"]
     labels:
       - "com.docker.compose.service=api"
       - "app.component=backend"
       - "app.type=api"
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16
     container_name: latest-postgres
     hostname: postgres
     ports:
@@ -249,14 +259,7 @@ services:
       - "app.healthcheck=enabled"
 
   worker:
-    build:
-      context: ../..
-      dockerfile: devops/docker/Dockerfile
-      target: production
-      args:
-        - BUILDKIT_INLINE_CACHE=1
-      cache_from:
-        - type=registry,ref=node:20-slim
+    image: healthcare-backend:latest
     container_name: latest-worker
     hostname: worker
     env_file:
@@ -312,6 +315,8 @@ services:
       - "worker:172.18.0.6"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
+      - "openvidu-server:172.18.0.7"
+      - "coturn:172.18.0.8"
     depends_on:
       postgres:
         condition: service_healthy
@@ -336,21 +341,120 @@ services:
         reservations:
           cpus: "0.5"       # Minimum guaranteed (works on 6 vCPU server)
           memory: 512M      # Minimum guaranteed (works on 12GB server)
-    command: >
-      sh -c "
-        pnpm exec prisma generate --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma &&
-        node dist/worker-bootstrap.js
-      "
+    command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"
       - "app.component=worker"
       - "app.type=worker"
+
+  # OpenVidu Services
+  openvidu-server:
+    image: openvidu/openvidu-server-kms:latest
+    container_name: latest-openvidu-server
+    hostname: openvidu-server
+    ports:
+      - "4443:4443"
+      - "50000-50050:50000-50050/udp"
+      - "50000-50050:50000-50050/tcp"
+    environment:
+      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://video.ishswami.in}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - OPENVIDU_EDITION=ce
+      - OPENVIDU_CDR=false
+      - SERVER_PORT=4443
+      - SERVER_SSL_ENABLED=false
+      - HTTPS_PORT=4443
+      - HTTP_PORT=5443
+      - server.port=4443
+      - server.address=0.0.0.0
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
+      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
+      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
+      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
+      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
+      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
+      - OPENVIDU_RECORDING=false
+      - COTURN_IP=coturn
+      - OPENVIDU_LOGS_LEVEL=WARN
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - TZ=UTC
+    volumes:
+      - openvidu_recordings:/opt/openvidu/recordings
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      coturn:
+        condition: service_healthy
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.7
+        aliases:
+          - openvidu-server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  coturn:
+    image: coturn/coturn:latest
+    container_name: latest-coturn
+    hostname: coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
+    environment:
+      - TZ=UTC
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-ip=0.0.0.0
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=openvidu:openvidu
+      - --realm=openvidu
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.8
+        aliases:
+          - coturn
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:
     name: latest_postgres_data
   dragonfly_data:
     name: latest_dragonfly_data
+  openvidu_recordings:
+    name: latest_openvidu_recordings
 
 networks:
   app-network:

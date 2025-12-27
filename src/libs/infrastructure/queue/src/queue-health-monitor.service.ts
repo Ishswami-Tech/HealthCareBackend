@@ -216,20 +216,45 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
       }
 
       // Check for worker errors if SharedWorkerService is available
+      // Only fail health check for persistent errors (errors in last 5 minutes), not transient ones
       if (
         this.sharedWorkerService &&
         typeof this.sharedWorkerService.getWorkerErrorSummary === 'function'
       ) {
         try {
           const workerErrorSummary = this.sharedWorkerService.getWorkerErrorSummary();
-          if (workerErrorSummary.totalErrors > 0) {
-            const errorQueues = workerErrorSummary.queuesWithErrors.slice(0, 5); // Show first 5 queues with errors
+          const now = Date.now();
+          const PERSISTENT_ERROR_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+          const MIN_ERROR_COUNT_FOR_FAILURE = 3; // Require at least 3 errors to consider it persistent
+
+          // Filter for persistent errors (errors in last 5 minutes with multiple occurrences)
+          const persistentErrors = workerErrorSummary.errorDetails.filter(
+            errorDetail =>
+              errorDetail.count >= MIN_ERROR_COUNT_FOR_FAILURE &&
+              now - errorDetail.lastError.getTime() < PERSISTENT_ERROR_THRESHOLD_MS
+          );
+
+          if (persistentErrors.length > 0) {
+            const errorQueues = persistentErrors.slice(0, 5).map(e => e.queueName); // Show first 5 queues with persistent errors
+            const persistentErrorCount = persistentErrors.reduce((sum, e) => sum + e.count, 0);
             const errorMessage =
-              workerErrorSummary.totalErrors === 1
-                ? `Worker error on queue: ${errorQueues[0]}`
-                : `Worker errors on ${workerErrorSummary.totalErrors} queue(s): ${errorQueues.join(', ')}${workerErrorSummary.queuesWithErrors.length > 5 ? ` (+${workerErrorSummary.queuesWithErrors.length - 5} more)` : ''}`;
+              persistentErrors.length === 1
+                ? `Persistent worker errors on queue: ${errorQueues[0]} (${persistentErrorCount} errors in last 5 minutes)`
+                : `Persistent worker errors on ${persistentErrors.length} queue(s): ${errorQueues.join(', ')}${persistentErrors.length > 5 ? ` (+${persistentErrors.length - 5} more)` : ''} (${persistentErrorCount} total errors in last 5 minutes)`;
             issues.push(errorMessage);
             status.healthy = false;
+          } else if (workerErrorSummary.totalErrors > 0) {
+            // Log transient errors but don't fail health check
+            void this.loggingService?.log(
+              LogType.SYSTEM,
+              LogLevel.DEBUG,
+              'Transient worker errors detected (not affecting health)',
+              this.serviceName,
+              {
+                totalErrors: workerErrorSummary.totalErrors,
+                queuesWithErrors: workerErrorSummary.queuesWithErrors,
+              }
+            );
           }
         } catch (workerError) {
           // Don't fail health check if worker error check fails

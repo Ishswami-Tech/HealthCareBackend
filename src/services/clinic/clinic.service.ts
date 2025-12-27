@@ -56,11 +56,63 @@ export class ClinicService {
     }
   }
 
+  /**
+   * Generate next sequential clinic ID in format CL0001, CL0002, etc.
+   */
+  private async generateNextClinicId(): Promise<string> {
+    try {
+      // Get all existing clinic IDs
+      const existingClinics = await this.databaseService.executeHealthcareRead<
+        Array<{ clinicId: string }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const clinics = await typedClient.clinic.findMany({
+          select: {
+            clinicId: true,
+          },
+          orderBy: {
+            clinicId: 'desc',
+          },
+        } as PrismaDelegateArgs);
+        return (clinics as unknown as Array<{ clinicId: string }>).map(c => ({
+          clinicId: c.clinicId,
+        }));
+      });
+
+      // Extract numeric part from existing clinic IDs (format: CL0001, CL0002, etc.)
+      let maxNumber = 0;
+      for (const clinic of existingClinics) {
+        const match = clinic.clinicId.match(/^CL(\d+)$/);
+        if (match && match[1]) {
+          const number = parseInt(match[1], 10);
+          if (!Number.isNaN(number) && number > maxNumber) {
+            maxNumber = number;
+          }
+        }
+      }
+
+      // Generate next sequential ID
+      const nextNumber = maxNumber + 1;
+      return `CL${String(nextNumber).padStart(4, '0')}`;
+    } catch (error) {
+      // If error occurs, fallback to timestamp-based ID but log the error
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to generate sequential clinic ID, using fallback: ${(error as Error).message}`,
+        'ClinicService',
+        { error: (error as Error).stack }
+      );
+      // Fallback: Use timestamp-based ID if sequential generation fails
+      return `CL${String(Date.now()).slice(-4).padStart(4, '0')}`;
+    }
+  }
+
   async createClinic(data: ClinicCreateInput): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareWrite for clinic creation with full optimization layers
-      // Generate clinicId and ensure required fields are present
-      const clinicId = `CLINIC-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      // Generate clinicId in format CL0001, CL0002, etc.
+      const clinicId = await this.generateNextClinicId();
       const dataWithDefaults = data as ClinicCreateInput & {
         db_connection_string?: string;
         databaseName?: string;

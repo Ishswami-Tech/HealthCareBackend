@@ -157,7 +157,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       emergencyDataTTL: getConfig('CACHE_EMERGENCY_DATA_TTL', 300),
       enableCompression: getConfig('CACHE_ENABLE_COMPRESSION', true),
       enableMetrics: getConfig('CACHE_ENABLE_METRICS', true),
-      defaultTTL: getConfig('CACHE_DEFAULT_TTL', 3600),
+      defaultTTL: getConfig('CACHE_DEFAULT_TTL', 7200), // Increased from 3600 to 7200 (2 hours) for better hit rate
       maxCacheSize: getConfig('CACHE_MAX_SIZE_MB', 1024),
       enableBatchOperations: getConfig('CACHE_ENABLE_BATCH', true),
       compressionThreshold: getConfig('CACHE_COMPRESSION_THRESHOLD', 1024),

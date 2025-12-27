@@ -156,7 +156,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get current provider (with automatic fallback)
+   * Get current provider (OpenVidu only - no fallback)
    */
   private async getProvider(): Promise<IVideoProvider> {
     // Check if primary provider is healthy
@@ -165,21 +165,19 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return this.provider;
     }
 
-    // Fallback to Jitsi if primary is unhealthy
-    if (this.provider.providerName !== this.fallbackProvider.providerName) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        `Primary video provider (${this.provider.providerName}) unhealthy, using fallback (${this.fallbackProvider.providerName})`,
-        'VideoService.getProvider',
-        {
-          primaryProvider: this.provider.providerName,
-          fallbackProvider: this.fallbackProvider.providerName,
-        }
-      );
-    }
+    // No fallback provider - OpenVidu only configuration
+    // Log warning and return primary provider anyway (let caller handle errors)
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      `Video provider (${this.provider.providerName}) health check failed, but no fallback available`,
+      'VideoService.getProvider',
+      {
+        provider: this.provider.providerName,
+      }
+    );
 
-    return this.fallbackProvider;
+    return this.provider;
   }
 
   // ============================================================================
@@ -203,43 +201,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const provider = await this.getProvider();
       return await provider.generateMeetingToken(appointmentId, userId, userRole, userInfo);
     } catch (error) {
-      // Try fallback if primary fails
-      if (this.provider.providerName !== this.fallbackProvider.providerName) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Primary provider failed, trying fallback: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          'VideoService.generateMeetingToken',
-          {
-            appointmentId,
-            primaryProvider: this.provider.providerName,
-            fallbackProvider: this.fallbackProvider.providerName,
-          }
-        );
-
-        try {
-          return await this.fallbackProvider.generateMeetingToken(
-            appointmentId,
-            userId,
-            userRole,
-            userInfo
-          );
-        } catch (fallbackError) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `Both primary and fallback providers failed: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`,
-            'VideoService.generateMeetingToken',
-            {
-              appointmentId,
-              primaryError: error instanceof Error ? error.message : String(error),
-              fallbackError:
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-            }
-          );
-          throw fallbackError;
+      // No fallback provider - OpenVidu only configuration
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.generateMeetingToken',
+        {
+          appointmentId,
+          provider: this.provider?.providerName ?? 'unknown',
+          error: error instanceof Error ? error.message : String(error),
         }
-      }
+      );
       throw error;
     }
   }
@@ -276,63 +249,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       return session;
     } catch (error) {
-      // Try fallback if primary fails
-      if (this.provider.providerName !== this.fallbackProvider.providerName) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Primary provider failed, trying fallback: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          'VideoService.startConsultation',
-          {
-            appointmentId,
-            primaryProvider: this.provider.providerName,
-            fallbackProvider: this.fallbackProvider.providerName,
-          }
-        );
-
-        try {
-          const session = await this.fallbackProvider.startConsultation(
-            appointmentId,
-            userId,
-            userRole
-          );
-
-          // Emit event with fallback provider
-          await this.eventService.emitEnterprise('video.consultation.started', {
-            eventId: `video-consultation-started-${appointmentId}-${Date.now()}`,
-            eventType: 'video.consultation.started',
-            category: EventCategory.SYSTEM,
-            priority: EventPriority.HIGH,
-            timestamp: new Date().toISOString(),
-            source: 'VideoService',
-            version: '1.0.0',
-            payload: {
-              appointmentId,
-              sessionId: session.id,
-              userId,
-              userRole,
-              provider: this.fallbackProvider.providerName,
-              fallbackUsed: true,
-            },
-          });
-
-          return session;
-        } catch (fallbackError) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `Both primary and fallback providers failed: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`,
-            'VideoService.startConsultation',
-            {
-              appointmentId,
-              primaryError: error instanceof Error ? error.message : String(error),
-              fallbackError:
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-            }
-          );
-          throw fallbackError;
+      // No fallback provider - OpenVidu only configuration
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.startConsultation',
+        {
+          appointmentId,
+          provider: this.provider?.providerName ?? 'unknown',
+          error: error instanceof Error ? error.message : String(error),
         }
-      }
+      );
       throw error;
     }
   }
@@ -381,56 +309,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       return session;
     } catch (error) {
-      // Try fallback if primary fails
-      if (this.provider.providerName !== this.fallbackProvider.providerName) {
-        try {
-          const session = await this.fallbackProvider.endConsultation(
-            appointmentId,
-            userId,
-            userRole
-          );
-
-          // Calculate duration
-          const duration =
-            session.startTime && session.endTime
-              ? Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 1000)
-              : undefined;
-
-          // Emit event with fallback provider
-          await this.eventService.emitEnterprise('video.consultation.ended', {
-            eventId: `video-consultation-ended-${appointmentId}-${Date.now()}`,
-            eventType: 'video.consultation.ended',
-            category: EventCategory.SYSTEM,
-            priority: EventPriority.HIGH,
-            timestamp: new Date().toISOString(),
-            source: 'VideoService',
-            version: '1.0.0',
-            payload: {
-              appointmentId,
-              sessionId: session.id,
-              duration,
-              provider: this.fallbackProvider.providerName,
-              fallbackUsed: true,
-            },
-          });
-
-          return session;
-        } catch (fallbackError) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `Both primary and fallback providers failed: ${fallbackError instanceof Error ? fallbackError.message : 'Unknown error'}`,
-            'VideoService.endConsultation',
-            {
-              appointmentId,
-              primaryError: error instanceof Error ? error.message : String(error),
-              fallbackError:
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-            }
-          );
-          throw fallbackError;
+      // No fallback provider - OpenVidu only configuration
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.endConsultation',
+        {
+          appointmentId,
+          provider: this.provider?.providerName ?? 'unknown',
+          error: error instanceof Error ? error.message : String(error),
         }
-      }
+      );
       throw error;
     }
   }
@@ -443,14 +333,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const provider = await this.getProvider();
       return await provider.getConsultationSession(appointmentId);
     } catch (_error) {
-      // Try fallback if primary fails
-      if (this.provider.providerName !== this.fallbackProvider.providerName) {
-        try {
-          return await this.fallbackProvider.getConsultationSession(appointmentId);
-        } catch {
-          return null;
-        }
-      }
+      // No fallback provider - OpenVidu only configuration
       return null;
     }
   }

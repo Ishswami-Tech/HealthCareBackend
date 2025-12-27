@@ -447,6 +447,442 @@ CommunicationService (orchestrator)
 
 ---
 
+---
+
+## WhatsApp & Multi-Tenant Implementation
+
+### Overview
+
+The communication system is fully integrated with WhatsApp as a primary channel alongside Email, with complete multi-tenant support. Each clinic can configure its own WhatsApp provider (Meta Business API or Twilio) with clinic-specific templates and dynamic clinic names.
+
+### Channel Priority Configuration
+
+**Primary Channels (Always Sent):**
+- **Email** - Primary communication channel
+- **WhatsApp** - Primary communication channel
+- **Push Notifications** - In-house channel (FCM primary, SNS fallback)
+- **Socket (WebSocket)** - In-house real-time channel
+
+**Secondary Channel (Opt-in Only):**
+- **SMS** - Only sent when user explicitly enables it (`smsEnabled: true`)
+
+### Category Channel Mapping
+
+| Category | Default Channels | Notes |
+|----------|------------------|-------|
+| **LOGIN** | `email`, `whatsapp` | Auth: Only email + WhatsApp (no push/socket for security) |
+| **EHR_RECORD** | `socket`, `push`, `email`, `whatsapp` | Required: socket |
+| **APPOINTMENT** | `socket`, `push`, `email`, `whatsapp` | All primary channels |
+| **REMINDER** | `push`, `email`, `whatsapp`, `socket` | Scheduled delivery |
+| **BILLING** | `push`, `email`, `whatsapp`, `socket` | Queued delivery |
+| **CRITICAL** | `socket`, `push`, `email`, `whatsapp` | Required: socket, push. Fallback: SMS (if enabled) |
+| **SYSTEM** | `socket`, `email`, `whatsapp` | System notifications |
+| **USER_ACTIVITY** | `socket`, `email`, `whatsapp` | User activity tracking |
+| **PRESCRIPTION** | `push`, `email`, `whatsapp`, `socket` | Prescription ready notifications |
+| **CHAT** | `socket`, `email`, `whatsapp` | Chat notifications |
+
+### Multi-Tenant WhatsApp Features
+
+#### 1. Clinic-Specific Templates
+
+Each clinic can configure its own WhatsApp template IDs:
+
+```typescript
+// Clinic configuration
+{
+  clinicId: "clinic-abc-123",
+  whatsapp: {
+    primary: {
+      provider: "meta",
+      templates: {
+        otp: "clinic_otp_template_id",
+        appointment: "clinic_appointment_template_id",
+        reminder: "clinic_reminder_template_id",
+        prescription: "clinic_prescription_template_id"
+      }
+    }
+  }
+}
+```
+
+#### 2. Dynamic Clinic Names
+
+Clinic names are dynamically injected into all WhatsApp templates:
+
+```typescript
+// OTP Template Parameters
+[
+  { type: 'text', text: clinicName },  // "City Medical Center"
+  { type: 'text', text: otp },          // "123456"
+  { type: 'text', text: expiryMinutes } // "10"
+]
+
+// Appointment Template Parameters
+[
+  { type: 'text', text: clinicName },     // "City Medical Center"
+  { type: 'text', text: patientName },    // "John Doe"
+  { type: 'text', text: doctorName },     // "Dr. Smith"
+  { type: 'text', text: appointmentDate }, // "2024-01-15"
+  { type: 'text', text: appointmentTime }, // "10:00 AM"
+  { type: 'text', text: location }        // "Main Clinic"
+]
+```
+
+#### 3. Provider Routing
+
+Each clinic can use its own WhatsApp provider:
+
+```typescript
+// Clinic uses Meta Business API
+await whatsAppService.sendOTP(
+  phoneNumber,
+  otp,
+  10, // expiry minutes
+  2,  // max retries
+  'clinic-abc-123' // Routes to clinic's Meta WhatsApp account
+);
+
+// Falls back to global provider if clinic provider fails
+// Falls back to fallback provider if primary fails
+```
+
+### Recipient Enrichment
+
+The system automatically enriches recipients with missing contact information:
+
+```typescript
+// Before enrichment
+recipients: [
+  { userId: 'user123' } // Only userId provided
+]
+
+// After enrichment (automatic)
+recipients: [
+  {
+    userId: 'user123',
+    email: 'patient@example.com',    // Fetched from database
+    phoneNumber: '+1234567890'       // Fetched from database
+  }
+]
+```
+
+**Enrichment Process:**
+1. Check if `email` or `phoneNumber` already provided
+2. If missing and `userId` provided, fetch from database
+3. Cache results to avoid repeated database queries
+4. Gracefully skip channels if contact info unavailable
+
+### Channel Validation
+
+Channels are validated before sending to prevent errors:
+
+```typescript
+// Automatic validation
+canSendChannel('email', recipient)      // Requires: recipient.email
+canSendChannel('whatsapp', recipient)  // Requires: recipient.phoneNumber
+canSendChannel('sms', recipient)        // Requires: recipient.phoneNumber
+canSendChannel('push', recipient)      // Requires: recipient.deviceToken or userId
+canSendChannel('socket', recipient)    // Requires: recipient.socketRoom or userId
+```
+
+**Behavior:**
+- Missing contact info → Channel skipped (no error)
+- Logged at DEBUG level with reason
+- Other channels continue to send
+
+### WhatsApp Integration Points
+
+#### 1. OTP Authentication
+
+```typescript
+// AuthService.requestOtp() sends OTP via both channels
+await authService.requestOtp({
+  identifier: 'patient@example.com',
+  clinicId: 'clinic-abc-123' // Optional, uses user's primary clinic if not provided
+});
+
+// Sends:
+// 1. Email OTP (primary)
+// 2. WhatsApp OTP (if phone number available)
+```
+
+#### 2. Appointment Notifications
+
+```typescript
+// Automatic WhatsApp notifications for:
+// - Appointment created
+// - Appointment updated
+// - Appointment cancelled
+// - Appointment rescheduled
+
+// Uses clinic-specific templates with dynamic clinic names
+```
+
+#### 3. Appointment Reminders
+
+```typescript
+// Scheduled reminders include WhatsApp
+// Channels: push, email, whatsapp, socket
+// Uses clinic-specific reminder template
+```
+
+#### 4. Prescription Notifications
+
+```typescript
+// Prescription ready notifications via WhatsApp
+await whatsAppService.sendPrescriptionNotification(
+  phoneNumber,
+  patientName,
+  doctorName,
+  medicationDetails,
+  prescriptionUrl,
+  clinicId // Uses clinic-specific template
+);
+```
+
+### SMS Opt-in Mechanism
+
+SMS is a **secondary channel** that requires explicit user opt-in:
+
+```typescript
+// User must enable SMS in preferences
+{
+  userId: 'user123',
+  smsEnabled: true, // REQUIRED for SMS
+  // ... other preferences
+}
+
+// SMS is filtered out if:
+// 1. User hasn't enabled it (smsEnabled !== true)
+// 2. No userId provided (can't check preference)
+// 3. Category doesn't allow SMS (unless in fallbackChannels)
+```
+
+**SMS Usage:**
+- Only sent when `smsEnabled: true` in user preferences
+- Checked in `filterChannelsByPreferences()`
+- Double-checked in `sendSMS()` for safety
+- Used as fallback for CRITICAL category only
+
+### Error Handling & Resilience
+
+#### 1. Provider Fallback Chain
+
+```typescript
+// WhatsApp Provider Selection:
+// 1. Try clinic-specific primary provider
+// 2. If fails → Try clinic fallback providers
+// 3. If all fail → Fall back to global provider
+// 4. If global fails → Log error, return failure
+
+// Email Provider Selection:
+// Similar fallback chain with SMTP → SES → SendGrid
+```
+
+#### 2. Channel Failure Isolation
+
+```typescript
+// Each channel sends independently
+// WhatsApp failure doesn't block Email
+// Email failure doesn't block Push
+// All failures logged, but other channels continue
+```
+
+#### 3. Retry Logic
+
+```typescript
+// WhatsApp OTP retry with exponential backoff
+// Max retries: 2 (configurable)
+// Backoff: 1s, 2s, 4s
+// Rate limit errors: double delay
+```
+
+#### 4. Graceful Degradation
+
+```typescript
+// Missing clinic config → Uses default clinic name
+// Missing template ID → Uses global template ID
+// Missing phone number → Skips WhatsApp, sends Email
+// Missing email → Skips Email, sends WhatsApp
+// All channels fail → Returns failure, logs error
+```
+
+### Clinic Template Service
+
+The `ClinicTemplateService` provides clinic-specific data:
+
+```typescript
+// Get complete clinic template data
+const clinicData = await clinicTemplateService.getClinicTemplateData(clinicId);
+// Returns:
+// {
+//   clinicId: "clinic-abc-123",
+//   clinicName: "City Medical Center",
+//   clinicLogo: "https://...",
+//   clinicPhone: "+1234567890",
+//   templateIds: {
+//     otp: "clinic_otp_template",
+//     appointment: "clinic_appointment_template",
+//     reminder: "clinic_reminder_template",
+//     prescription: "clinic_prescription_template"
+//   }
+// }
+
+// Lightweight: Get clinic name only
+const clinicName = await clinicTemplateService.getClinicName(clinicId);
+// Returns: "City Medical Center" or "Healthcare Clinic" (fallback)
+```
+
+**Caching:**
+- Clinic template data cached for 1 hour
+- Cache key: `clinic_template_data:{clinicId}`
+- Cache invalidation on clinic update
+
+### Implementation Checklist
+
+✅ **Multi-Tenant Support**
+- Clinic-specific WhatsApp providers
+- Clinic-specific template IDs
+- Dynamic clinic names in templates
+- Provider fallback chains
+
+✅ **Channel Configuration**
+- Email + WhatsApp as primary channels
+- Push + Socket as in-house channels
+- SMS as secondary (opt-in only)
+- Category-based channel routing
+
+✅ **Recipient Enrichment**
+- Automatic phone number fetching
+- Automatic email fetching
+- Graceful handling of missing data
+
+✅ **Channel Validation**
+- Pre-send validation of required contact info
+- Automatic channel skipping when data missing
+- Comprehensive logging
+
+✅ **WhatsApp Integration**
+- OTP via WhatsApp
+- Appointment notifications
+- Appointment reminders
+- Prescription notifications
+
+✅ **Error Handling**
+- Provider fallback chains
+- Channel failure isolation
+- Retry logic with exponential backoff
+- Graceful degradation
+
+✅ **User Preferences**
+- SMS opt-in mechanism
+- Preference checking before sending
+- Category-specific preferences
+- Quiet hours support
+
+### Usage Examples
+
+#### Send OTP with Multi-Tenant Support
+
+```typescript
+// AuthService automatically handles this
+await authService.requestOtp({
+  identifier: 'patient@example.com',
+  clinicId: 'clinic-abc-123' // Optional
+});
+
+// Sends:
+// 1. Email OTP with clinic-specific email provider
+// 2. WhatsApp OTP with clinic-specific WhatsApp provider
+//    - Uses clinic's OTP template ID
+//    - Includes clinic name in template
+```
+
+#### Send Appointment Notification
+
+```typescript
+await communicationService.send({
+  category: CommunicationCategory.APPOINTMENT,
+  title: 'Appointment Scheduled',
+  body: 'Your appointment is confirmed',
+  recipients: [
+    { userId: 'user123' } // Email & phone fetched automatically
+  ],
+  metadata: {
+    clinicId: 'clinic-abc-123' // Routes to clinic providers
+  }
+});
+
+// Sends via:
+// - Socket (real-time)
+// - Push (FCM)
+// - Email (clinic's email provider)
+// - WhatsApp (clinic's WhatsApp provider with clinic template)
+```
+
+#### Send SMS (Opt-in Only)
+
+```typescript
+// Only sent if user has smsEnabled: true
+await communicationService.send({
+  category: CommunicationCategory.CRITICAL,
+  title: 'Critical Alert',
+  body: 'Urgent notification',
+  recipients: [
+    { userId: 'user123' } // Must have smsEnabled: true
+  ],
+  channels: ['sms'] // Explicitly request SMS
+});
+```
+
+### Troubleshooting
+
+**Issue: WhatsApp messages not sending**
+```typescript
+// 1. Check clinic configuration
+const config = await communicationConfigService.getClinicConfig(clinicId);
+console.log(config.whatsapp);
+
+// 2. Check provider health
+const adapter = await providerFactory.getWhatsAppProviderWithFallback(clinicId);
+const health = await adapter.getHealthStatus();
+
+// 3. Check phone number format
+// Must be E.164 format: +1234567890
+
+// 4. Check template approval
+// WhatsApp templates must be approved by Meta before use
+```
+
+**Issue: Clinic name not appearing in templates**
+```typescript
+// 1. Verify clinic exists
+const clinic = await databaseService.findClinicByIdSafe(clinicId);
+
+// 2. Check cache
+const clinicData = await clinicTemplateService.getClinicTemplateData(clinicId);
+
+// 3. Invalidate cache if needed
+await clinicTemplateService.invalidateCache(clinicId);
+```
+
+**Issue: SMS not sending even when enabled**
+```typescript
+// 1. Verify user preference
+const prefs = await databaseService.findNotificationPreferenceByUserIdSafe(userId);
+console.log(prefs.smsEnabled); // Must be true
+
+// 2. Check category allows SMS
+// SMS only in fallbackChannels for CRITICAL category
+// Or explicitly requested in channels array
+
+// 3. Verify phone number
+const user = await databaseService.findUserByIdSafe(userId);
+console.log(user.phoneNumber); // Must be present
+```
+
+---
+
 ## Related Documentation
 
 - [Event Integration](../../docs/architecture/EVENT_INTEGRATION.md)
