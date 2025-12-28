@@ -1088,7 +1088,8 @@ export interface NotificationData {
     | 'reschedule'
     | 'follow_up'
     | 'created'
-    | 'updated';
+    | 'updated'
+    | 'prescription';
   scheduledFor?: Date;
   priority: 'low' | 'normal' | 'high' | 'urgent';
   channels: ('email' | 'sms' | 'whatsapp' | 'push' | 'socket')[];
@@ -1102,6 +1103,8 @@ export interface NotificationData {
     appointmentType?: string;
     notes?: string;
     rescheduleUrl?: string;
+    medicationDetails?: string;
+    prescriptionUrl?: string;
     cancelUrl?: string;
     changes?: Record<string, unknown>;
   };

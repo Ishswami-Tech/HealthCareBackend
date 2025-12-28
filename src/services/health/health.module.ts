@@ -13,6 +13,7 @@ import { ErrorsModule } from '@core/errors';
 import { CacheModule } from '@infrastructure/cache';
 import { QueueModule } from '@infrastructure/queue';
 import { CommunicationModule } from '@communication/communication.module';
+import { VideoModule } from '@services/video/video.module';
 // Health indicators
 import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
 import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
@@ -34,9 +35,9 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
     SocketModule,
     EmailModule,
     ErrorsModule,
-    // Note: VideoModule is not imported here to avoid circular dependency
-    // VideoHealthIndicator uses Optional injection, so VideoService will be available
-    // if VideoModule is imported in the application root or other modules
+    // VideoModule imported with forwardRef to break circular dependency
+    // This ensures VideoService is available for VideoHealthIndicator
+    forwardRef(() => VideoModule),
   ],
   controllers: [HealthController],
   providers: [

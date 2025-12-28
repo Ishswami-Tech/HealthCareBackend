@@ -52,7 +52,7 @@ export class EmailController {
 
     const result = await this.emailService.sendEmail({
       to: 'aadeshbhujba1@gmail.com', // Your email address
-      subject: 'Healthcare App - Email Test',
+      subject: `${this.configService.getEnv('APP_NAME', 'Healthcare App')} - Email Test`,
       template: EmailTemplate.VERIFICATION,
       context: {
         verificationUrl: `${frontendUrl}/verify`,
@@ -148,7 +148,7 @@ export class EmailController {
 
     const result = await this.emailService.sendEmail({
       to: dto.to,
-      subject: `Healthcare App - ${template} Test`,
+      subject: `${this.configService.getEnv('APP_NAME', 'Healthcare App')} - ${template} Test`,
       template: template,
       context: context,
     });

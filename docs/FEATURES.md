@@ -61,7 +61,9 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 }
 ```
 
-**Documentation:** See [Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
+**Documentation:**
+- [Communication System Complete Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) - Complete guide (merged all documentation)
+- [Email Integration Guide](../guides/EMAIL_INTEGRATION_GUIDE.md) - Email system details
 
 ---
 
@@ -408,4 +410,5 @@ PUT /api/v1/billing/config
 
 **Last Updated:** January 2025  
 **Status:** ✅ **All Features Production Ready**
+
 

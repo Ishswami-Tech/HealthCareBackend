@@ -34,7 +34,8 @@ import { PrismaService } from '@infrastructure/database';
 // Core and communication
 import { JwtAuthGuard } from '@core/guards';
 import { SessionService } from '@core/session';
-import { SocketGateway } from '@communication/socket';
+import { CommunicationService } from '@communication/communication.service';
+import { SocketService } from '@communication/channels/socket';
 
 // Types and DTOs
 import type { RequestContext, User } from '@types';

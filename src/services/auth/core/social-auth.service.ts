@@ -202,13 +202,14 @@ export class SocialAuthService {
         // Send welcome email
         await this.emailService.sendEmail({
           to: user.email,
-          subject: 'Welcome to HealthCare App',
+          subject: `Welcome to ${this.configService.getEnv('APP_NAME', 'Healthcare App')}`,
           template: EmailTemplate.WELCOME,
           context: {
             name: `${user.firstName} ${user.lastName}`,
             role: user.role,
             isGoogleAccount: socialUser.provider === 'google',
           },
+          ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
         });
 
         this.logger.log(`New social user created: ${user.email} via ${socialUser.provider}`);

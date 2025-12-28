@@ -266,10 +266,45 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    const { templateData, type } = notificationData;
+    const { templateData, type, clinicId, patientId } = notificationData;
 
-    // Get patient email from notificationData or fetch from database
-    const patientEmail = 'patient@example.com'; // This should be fetched from user data
+    // Fetch patient email from database
+    let patientEmail: string | undefined;
+    try {
+      const user = await this.databaseService.executeHealthcareRead(async prisma => {
+        return await prisma.user.findUnique({
+          where: { id: patientId },
+          select: { email: true },
+        });
+      });
+      patientEmail = user?.email || undefined;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to fetch patient email for notification`,
+        'AppointmentNotificationService.sendEmailNotification',
+        {
+          notificationId,
+          patientId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+
+    if (!patientEmail) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Skipping email notification - patient email not found`,
+        'AppointmentNotificationService.sendEmailNotification',
+        {
+          notificationId,
+          patientId,
+        }
+      );
+      return;
+    }
 
     const subject = this.getEmailSubject(type, templateData);
     const body = this.getEmailBody(type, templateData);
@@ -288,6 +323,7 @@ export class AppointmentNotificationService {
       },
       text: body,
       html: body,
+      ...(clinicId && { clinicId }), // Pass clinicId for multi-tenant email routing
     });
 
     await this.loggingService.log(
@@ -320,16 +356,21 @@ export class AppointmentNotificationService {
           return await prisma.patient.findUnique({
             where: { id: patientId },
             select: {
-              user: {
-                select: {
-                  phoneNumber: true,
-                },
-              },
+              userId: true,
             },
           });
         });
 
-        patientPhone = patient?.user?.phoneNumber || null;
+        // Fetch phone from user if patient found
+        if (patient?.userId) {
+          const user = await this.databaseService.executeHealthcareRead(async prisma => {
+            return await prisma.user.findUnique({
+              where: { id: patient.userId },
+              select: { phone: true },
+            });
+          });
+          patientPhone = user?.phone || null;
+        }
       } catch (error) {
         await this.loggingService.log(
           LogType.ERROR,
@@ -369,8 +410,8 @@ export class AppointmentNotificationService {
           patientPhone,
           templateData.patientName,
           templateData.doctorName,
-          templateData['medicationDetails'] as string || 'Prescription ready',
-          templateData['prescriptionUrl'] as string | undefined,
+          templateData.medicationDetails || 'Prescription ready',
+          templateData.prescriptionUrl,
           clinicId // Pass clinicId for multi-tenant support
         );
       }
@@ -410,10 +451,48 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    const { templateData, type } = notificationData;
+    const { templateData, type, patientId } = notificationData;
 
-    // Get patient device tokens from notificationData or fetch from database
-    const deviceTokens = ['device_token_1', 'device_token_2']; // This should be fetched from user data
+    // Fetch patient device tokens from database
+    let deviceTokens: string[] = [];
+    try {
+      const tokens = await this.databaseService.executeHealthcareRead(async prisma => {
+        return await prisma.deviceToken.findMany({
+          where: {
+            userId: patientId,
+            isActive: true,
+          },
+          select: { token: true },
+        });
+      });
+      deviceTokens = tokens.map(t => t.token);
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to fetch device tokens for push notification`,
+        'AppointmentNotificationService.sendPushNotification',
+        {
+          notificationId,
+          patientId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+
+    if (deviceTokens.length === 0) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Skipping push notification - no device tokens found`,
+        'AppointmentNotificationService.sendPushNotification',
+        {
+          notificationId,
+          patientId,
+        }
+      );
+      return;
+    }
 
     const title = this.getPushTitle(type, templateData);
     const body = this.getPushBody(type, templateData);

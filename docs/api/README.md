@@ -5,9 +5,11 @@ This folder contains all API-related documentation and testing resources for the
 ## 📁 Contents
 
 ### 🧪 Testing Resources
-- **[Postman Collection](postman_collection.json)** - Complete API collection with all endpoints
+- **[Postman Collection](postman_collection.json)** ✅ **COMPLETE** - All 235+ endpoints included
 - **[Postman Environment](postman_environment.json)** - Environment variables for testing
-- **[Multi-Tenant Communication](../features/MULTI_TENANT_COMMUNICATION.md)** - WhatsApp and email integration guide
+- **[Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** - WhatsApp and email integration guide (includes multi-tenant communication)
+
+**Postman Collection Status**: ✅ **100% Coverage** - All 235+ endpoints from [ACTUAL_API_INVENTORY.md](../ACTUAL_API_INVENTORY.md) are included
 
 ### 📚 API Documentation
 - **[Swagger/OpenAPI Documentation](http://localhost:8088/api)** - Interactive API documentation (when server is running)
@@ -72,6 +74,39 @@ The environment file includes:
 | DELETE | `/appointments/:id` | Cancel appointment | Yes |
 | GET | `/appointments/doctor/:doctorId/availability` | Check doctor availability | Yes |
 | GET | `/appointments/user/:userId/upcoming` | Get user's upcoming appointments | Yes |
+| GET | `/appointments/my-appointments` | Get current user's appointments | Yes |
+| POST | `/appointments/:id/start` | Start consultation | Yes |
+| POST | `/appointments/:id/complete` | Complete appointment | Yes |
+| POST | `/appointments/:id/check-in` | Manual check-in | Yes |
+| POST | `/appointments/:id/check-in/force` | Force check-in (staff) | Yes |
+| POST | `/appointments/check-in/scan-qr` | **QR code check-in** | Yes |
+| GET | `/appointments/check-in/locations` | List check-in locations | Yes |
+| POST | `/appointments/check-in/locations` | Create check-in location | Yes |
+| PUT | `/appointments/check-in/locations/:locationId` | Update location | Yes |
+| DELETE | `/appointments/check-in/locations/:locationId` | Delete location | Yes |
+| GET | `/appointments/locations/:locationId/qr-code` | Get QR code image | Yes |
+| POST | `/appointments/:id/video/create-room` | Create video room | Yes |
+| POST | `/appointments/:id/video/join-token` | Generate join token | Yes |
+| POST | `/appointments/:id/video/start` | Start video consultation | Yes |
+| POST | `/appointments/:id/video/end` | End video consultation | Yes |
+| GET | `/appointments/:id/video/status` | Get video status | Yes |
+| POST | `/appointments/:id/video/report-issue` | Report technical issue | Yes |
+| POST | `/appointments/:id/follow-up` | Create follow-up plan | Yes |
+| GET | `/appointments/:id/chain` | Get appointment chain | Yes |
+| GET | `/appointments/patients/:patientId/follow-up-plans` | Get follow-up plans | Yes |
+| POST | `/appointments/follow-up-plans/:id/schedule` | Schedule follow-up | Yes |
+| GET | `/appointments/:id/follow-ups` | Get follow-up appointments | Yes |
+| PUT | `/appointments/follow-up-plans/:id` | Update follow-up plan | Yes |
+| DELETE | `/appointments/follow-up-plans/:id` | Delete follow-up plan | Yes |
+| POST | `/appointments/recurring` | Create recurring appointment | Yes |
+| GET | `/appointments/series/:id` | Get recurring series | Yes |
+| PUT | `/appointments/series/:id` | Update recurring series | Yes |
+| DELETE | `/appointments/series/:id` | Delete recurring series | Yes |
+| GET | `/appointments/analytics/wait-times` | Wait time analytics (admin) | Yes |
+| GET | `/appointments/analytics/check-in-patterns` | Check-in patterns (admin) | Yes |
+| GET | `/appointments/analytics/no-show-correlation` | No-show correlation (admin) | Yes |
+
+**✅ Note**: All endpoints are included in the Postman collection. See [ACTUAL_API_INVENTORY.md](../ACTUAL_API_INVENTORY.md) for complete endpoint list.
 
 ### Clinic Management (`/clinics`)
 | Method | Endpoint | Description | Auth Required |
@@ -84,6 +119,17 @@ The environment file includes:
 | GET | `/clinics/:id/doctors` | List clinic doctors | Yes |
 | GET | `/clinics/:id/patients` | List clinic patients | Yes |
 | GET | `/clinics/my-clinic` | Get current user's clinic | Yes |
+
+### Communication Endpoints (`/communication`)
+| Method | Endpoint | Description | Auth Required |
+|--------|----------|-------------|---------------|
+| POST | `/communication/send` | Unified send (all channels) | Yes |
+| POST | `/communication/push` | Send push notification | Yes |
+| POST | `/communication/email` | Send email | Yes |
+| GET | `/communication/stats` | Get statistics | Yes |
+| GET | `/communication/health` | Health check | Yes |
+
+**⚠️ Note**: All deprecated `/notifications/*` endpoints have been removed. Use `/communication/*` endpoints only.
 
 ### Health Monitoring (`/health`)
 | Method | Endpoint | Description | Auth Required |
@@ -270,3 +316,14 @@ POST /auth/request-otp
 ---
 
 **Note**: This API documentation is automatically generated and updated. For the most current information, always refer to the live Swagger documentation at `/api` when the server is running.
+
+**✅ Postman Collection**: Complete with all 235+ endpoints  
+**📋 Complete Endpoint List**: See [ACTUAL_API_INVENTORY.md](../ACTUAL_API_INVENTORY.md) for all 235+ endpoints with full details
+
+---
+
+## 📚 Additional Resources
+
+- **[ACTUAL_API_INVENTORY.md](../ACTUAL_API_INVENTORY.md)** - Complete list of all 235+ endpoints from actual code
+- **[Swagger/OpenAPI](http://localhost:8088/api)** - Interactive API documentation (when server is running)
+- **[Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** - Communication integration guide

@@ -382,4 +382,60 @@ export class ClinicCommunicationController {
   ): Promise<{ success: boolean; message: string; error?: string }> {
     return await this.communicationConfigService.testEmailConfig(clinicId, dto.testEmail);
   }
+
+  @Post('test-whatsapp')
+  @Roles('SUPER_ADMIN', 'CLINIC_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Test clinic WhatsApp configuration',
+    description:
+      'Sends a test WhatsApp message to verify the clinic WhatsApp configuration is working correctly',
+  })
+  @ApiParam({
+    name: 'clinicId',
+    description: 'Clinic ID',
+    type: String,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Test WhatsApp message sent successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Test WhatsApp message failed',
+  })
+  async testWhatsAppConfig(
+    @Param('clinicId') clinicId: string,
+    @Body() dto: { phoneNumber: string }
+  ): Promise<{ success: boolean; message: string; error?: string }> {
+    return await this.communicationConfigService.testWhatsAppConfig(clinicId, dto.phoneNumber);
+  }
+
+  @Post('test-sms')
+  @Roles('SUPER_ADMIN', 'CLINIC_ADMIN')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Test clinic SMS configuration',
+    description: 'Sends a test SMS to verify the clinic SMS configuration is working correctly',
+  })
+  @ApiParam({
+    name: 'clinicId',
+    description: 'Clinic ID',
+    type: String,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Test SMS sent successfully',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Test SMS failed',
+  })
+  async testSMSConfig(
+    @Param('clinicId') clinicId: string,
+    @Body() dto: { phoneNumber: string }
+  ): Promise<{ success: boolean; message: string; error?: string }> {
+    const result = await this.communicationConfigService.testSMSConfig(clinicId, dto.phoneNumber);
+    return result;
+  }
 }

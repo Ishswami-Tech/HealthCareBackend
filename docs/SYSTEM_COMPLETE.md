@@ -547,7 +547,8 @@ POST /billing/subscriptions/:id/book-appointment/:appointmentId
 - **Role Permissions**: `docs/ROLE_PERMISSIONS_COMPLETE.md`
 - **Location System**: `docs/architecture/LOCATION_SYSTEM_COMPLETE.md`
 - **Infrastructure**: `docs/INFRASTRUCTURE_DOCUMENTATION.md`
-- **Verification Report**: `docs/DOCUMENTATION_VERIFICATION_REPORT.md`
+- **Documentation Analysis**: `docs/DOCUMENTATION_INDEX.md` (includes analysis & missing items checklist)
+- **API Inventory**: `docs/ACTUAL_API_INVENTORY.md`
 
 ---
 

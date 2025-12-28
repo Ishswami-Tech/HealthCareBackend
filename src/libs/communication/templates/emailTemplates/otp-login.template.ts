@@ -26,7 +26,7 @@ export function generateOTPLoginTemplate(context: OTPEmailContext): string {
         <p>If you didn't request this code, please ignore this email and secure your account.</p>
       </div>
       
-      <p>Best regards,<br>The Healthcare App Security Team</p>
+      <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Security Team</p>
       <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;">
         <p>This is an automated security message, please do not reply to this email.</p>
       </div>

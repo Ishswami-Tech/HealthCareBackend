@@ -20,7 +20,7 @@ export function generateSuspiciousActivityTemplate(
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
       <h2 style="color: #ff9800;">Suspicious Activity Detected</h2>
       <p>Hello ${context.name || 'there'},</p>
-      <p>We've detected unusual activity on your Healthcare App account that requires additional verification.</p>
+      <p>We've detected unusual activity on your ${context['appName'] || 'Healthcare App'} account that requires additional verification.</p>
       
       <div style="background-color: #fff3e0; padding: 15px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #ff9800;">
         <p><strong>Detection Time:</strong> ${context.time}</p>
@@ -32,7 +32,7 @@ export function generateSuspiciousActivityTemplate(
       
       <p>If you believe this is an error or have questions, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
       
-      <p>Best regards,<br>The Healthcare App Security Team</p>
+      <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Security Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;"><p>This is an automated security notification. Please do not reply to this email.</p></div>'}
     </div>
   `;

@@ -199,7 +199,7 @@ export default {
 
 **Using cURL**:
 ```bash
-curl -X POST http://localhost:8088/api/notifications/push \
+curl -X POST http://localhost:8088/api/v1/communication/push \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   -d '{
@@ -264,7 +264,7 @@ FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
 ### 6.1 Check Health Endpoint
 
 ```bash
-curl http://localhost:8088/api/notifications/health
+curl http://localhost:8088/api/v1/communication/health
 ```
 
 Expected response:
