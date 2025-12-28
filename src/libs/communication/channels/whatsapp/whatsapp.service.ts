@@ -78,7 +78,10 @@ export class WhatsAppService {
         const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
         // Get clinic name and template ID if clinicId provided
-        let clinicName = 'Healthcare App';
+        let clinicName =
+          this.configService.getEnv('APP_NAME') ||
+          this.configService.getEnv('DEFAULT_FROM_NAME') ||
+          'Healthcare App';
         let templateId = this.whatsAppConfig.otpTemplateId;
 
         if (clinicId) {
@@ -187,7 +190,8 @@ export class WhatsAppService {
         const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
         if (clinicData) {
           clinicName = clinicData.clinicName;
-          templateId = clinicData.templateIds.appointment || this.whatsAppConfig.appointmentTemplateId;
+          templateId =
+            clinicData.templateIds.appointment || this.whatsAppConfig.appointmentTemplateId;
         }
       }
 
@@ -278,7 +282,8 @@ export class WhatsAppService {
         const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
         if (clinicData) {
           clinicName = clinicData.clinicName;
-          templateId = clinicData.templateIds.prescription || this.whatsAppConfig.prescriptionTemplateId;
+          templateId =
+            clinicData.templateIds.prescription || this.whatsAppConfig.prescriptionTemplateId;
         }
       }
 
@@ -470,13 +475,14 @@ export class WhatsAppService {
             const result = await adapter.send({
               to,
               templateId: templateName,
-              templateParams: components[0]?.parameters.reduce(
-                (acc, param, index) => {
-                  acc[`${index}`] = param.text;
-                  return acc;
-                },
-                {} as Record<string, string>
-              ),
+              templateParams:
+                components[0]?.parameters?.reduce(
+                  (acc, param, index) => {
+                    acc[`${index}`] = param.text;
+                    return acc;
+                  },
+                  {} as Record<string, string>
+                ) ?? {},
               language: 'en',
             });
 

@@ -1255,15 +1255,15 @@ export class UsersService {
 
     switch (role) {
       case Role.PATIENT: {
-        // Get clinicId from context or user's primary clinic
+        // Get clinicId from context or user's primary clinic (for audit purposes only)
         const targetClinicId = createUserDto.clinicId || clinicId || user.primaryClinicId;
+        // Patient model only has userId field, clinic association is through User model
         await this.databaseService.executeHealthcareWrite<Patient>(
           async client => {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
             return await typedClient.patient.create({
               data: {
                 userId: id,
-                ...(targetClinicId && { clinicId: targetClinicId }),
               } as PrismaDelegateArgs,
             } as PrismaDelegateArgs);
           },

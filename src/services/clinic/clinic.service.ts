@@ -24,6 +24,12 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
+import {
+  CommunicationConfigService,
+  type ClinicCommunicationConfig,
+  EmailProvider,
+  type ProviderConfig,
+} from '@communication/config';
 
 @Injectable()
 export class ClinicService {
@@ -39,7 +45,10 @@ export class ClinicService {
     eventService?: unknown,
     @Optional()
     @Inject(forwardRef(() => ConfigService))
-    private readonly configService?: ConfigService
+    private readonly configService?: ConfigService,
+    @Optional()
+    @Inject(forwardRef(() => CommunicationConfigService))
+    private readonly communicationConfigService?: CommunicationConfigService
   ) {
     // Type guard ensures type safety when using the service
     if (eventService && isEventService(eventService)) {
@@ -108,7 +117,59 @@ export class ClinicService {
     }
   }
 
-  async createClinic(data: ClinicCreateInput): Promise<ClinicResponseDto> {
+  async createClinic(
+    data: ClinicCreateInput & {
+      settings?: Record<string, unknown>;
+      communicationConfig?: {
+        email?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultFrom?: string;
+          defaultFromName?: string;
+        };
+        whatsapp?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultNumber?: string;
+        };
+        sms?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultNumber?: string;
+        };
+      };
+    }
+  ): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareWrite for clinic creation with full optimization layers
       // Generate clinicId in format CL0001, CL0002, etc.
@@ -147,6 +208,7 @@ export class ClinicService {
               language: data.language,
               createdBy: data.createdBy,
               isActive: data.isActive ?? true,
+              ...(data.settings && { settings: data.settings as never }),
             } as PrismaDelegateArgs,
             include: {
               locations: {
@@ -174,6 +236,171 @@ export class ClinicService {
         'ClinicService',
         { clinicId: clinic.id }
       );
+
+      // Save communication configuration if provided
+      const dataWithCommConfig = data as ClinicCreateInput & {
+        communicationConfig?: {
+          email?: {
+            primary?: {
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            };
+            fallback?: Array<{
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            }>;
+            defaultFrom?: string;
+            defaultFromName?: string;
+          };
+          whatsapp?: {
+            primary?: {
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            };
+            fallback?: Array<{
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            }>;
+            defaultNumber?: string;
+          };
+          sms?: {
+            primary?: {
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            };
+            fallback?: Array<{
+              provider?: string;
+              enabled?: boolean;
+              credentials?: Record<string, string>;
+              priority?: number;
+            }>;
+            defaultNumber?: string;
+          };
+        };
+      };
+
+      if (dataWithCommConfig.communicationConfig && this.communicationConfigService) {
+        try {
+          const commConfig: ClinicCommunicationConfig = {
+            clinicId: clinic.id,
+            email: dataWithCommConfig.communicationConfig.email
+              ? {
+                  ...(dataWithCommConfig.communicationConfig.email.primary &&
+                    dataWithCommConfig.communicationConfig.email.primary.provider && {
+                      primary: {
+                        provider: dataWithCommConfig.communicationConfig.email.primary
+                          .provider as EmailProvider,
+                        enabled:
+                          dataWithCommConfig.communicationConfig.email.primary.enabled ?? true,
+                        credentials:
+                          dataWithCommConfig.communicationConfig.email.primary.credentials ?? {},
+                        ...(dataWithCommConfig.communicationConfig.email.primary.priority !==
+                          undefined && {
+                          priority: dataWithCommConfig.communicationConfig.email.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(dataWithCommConfig.communicationConfig.email.fallback && {
+                    fallback: dataWithCommConfig.communicationConfig.email
+                      .fallback as ProviderConfig[],
+                  }),
+                  ...(dataWithCommConfig.communicationConfig.email.defaultFrom && {
+                    defaultFrom: dataWithCommConfig.communicationConfig.email.defaultFrom,
+                  }),
+                  ...(dataWithCommConfig.communicationConfig.email.defaultFromName && {
+                    defaultFromName: dataWithCommConfig.communicationConfig.email.defaultFromName,
+                  }),
+                }
+              : {},
+            whatsapp: dataWithCommConfig.communicationConfig.whatsapp
+              ? {
+                  ...(dataWithCommConfig.communicationConfig.whatsapp.primary &&
+                    dataWithCommConfig.communicationConfig.whatsapp.primary.provider && {
+                      primary: {
+                        provider: dataWithCommConfig.communicationConfig.whatsapp.primary
+                          .provider as ProviderConfig['provider'],
+                        enabled:
+                          dataWithCommConfig.communicationConfig.whatsapp.primary.enabled ?? true,
+                        credentials:
+                          dataWithCommConfig.communicationConfig.whatsapp.primary.credentials ?? {},
+                        ...(dataWithCommConfig.communicationConfig.whatsapp.primary.priority !==
+                          undefined && {
+                          priority:
+                            dataWithCommConfig.communicationConfig.whatsapp.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(dataWithCommConfig.communicationConfig.whatsapp.fallback && {
+                    fallback: dataWithCommConfig.communicationConfig.whatsapp
+                      .fallback as ProviderConfig[],
+                  }),
+                  ...(dataWithCommConfig.communicationConfig.whatsapp.defaultNumber && {
+                    defaultNumber: dataWithCommConfig.communicationConfig.whatsapp.defaultNumber,
+                  }),
+                }
+              : {},
+            sms: dataWithCommConfig.communicationConfig.sms
+              ? {
+                  ...(dataWithCommConfig.communicationConfig.sms.primary &&
+                    dataWithCommConfig.communicationConfig.sms.primary.provider && {
+                      primary: {
+                        provider: dataWithCommConfig.communicationConfig.sms.primary
+                          .provider as ProviderConfig['provider'],
+                        enabled: dataWithCommConfig.communicationConfig.sms.primary.enabled ?? true,
+                        credentials:
+                          dataWithCommConfig.communicationConfig.sms.primary.credentials ?? {},
+                        ...(dataWithCommConfig.communicationConfig.sms.primary.priority !==
+                          undefined && {
+                          priority: dataWithCommConfig.communicationConfig.sms.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(dataWithCommConfig.communicationConfig.sms.fallback && {
+                    fallback: dataWithCommConfig.communicationConfig.sms
+                      .fallback as ProviderConfig[],
+                  }),
+                  ...(dataWithCommConfig.communicationConfig.sms.defaultNumber && {
+                    defaultNumber: dataWithCommConfig.communicationConfig.sms.defaultNumber,
+                  }),
+                }
+              : {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          };
+
+          await this.communicationConfigService.saveClinicConfig(commConfig);
+
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `Communication configuration saved for clinic: ${clinic.id}`,
+            'ClinicService',
+            { clinicId: clinic.id }
+          );
+        } catch (commError) {
+          // Log error but don't fail clinic creation
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            `Failed to save communication config during clinic creation: ${commError instanceof Error ? commError.message : String(commError)}`,
+            'ClinicService',
+            {
+              clinicId: clinic.id,
+              error: commError instanceof Error ? commError.stack : undefined,
+            }
+          );
+        }
+      }
 
       // Emit clinic lifecycle event
       void this.eventService.emitEnterprise('clinic.created', {
@@ -253,8 +480,64 @@ export class ClinicService {
     }
   }
 
-  async updateClinic(id: string, data: ClinicUpdateInput): Promise<ClinicResponseDto> {
+  async updateClinic(
+    id: string,
+    data: ClinicUpdateInput & {
+      settings?: Record<string, unknown>;
+      communicationConfig?: {
+        email?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultFrom?: string;
+          defaultFromName?: string;
+        };
+        whatsapp?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultNumber?: string;
+        };
+        sms?: {
+          primary?: {
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          };
+          fallback?: Array<{
+            provider?: string;
+            enabled?: boolean;
+            credentials?: Record<string, string>;
+            priority?: number;
+          }>;
+          defaultNumber?: string;
+        };
+      };
+    }
+  ): Promise<ClinicResponseDto> {
     try {
+      // Extract communicationConfig from data
+      const { communicationConfig, ...clinicUpdateData } = data;
+
       // Use executeHealthcareWrite for update with full optimization layers
       const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
         async client => {
@@ -262,7 +545,8 @@ export class ClinicService {
           return await typedClient.clinic.update({
             where: { id } as PrismaDelegateArgs,
             data: {
-              ...data,
+              ...clinicUpdateData,
+              ...(clinicUpdateData.settings && { settings: clinicUpdateData.settings as never }),
               updatedAt: new Date(),
             } as PrismaDelegateArgs,
             include: {
@@ -283,6 +567,109 @@ export class ClinicService {
           details: { updateFields: Object.keys(data) },
         }
       );
+
+      // Update communication configuration if provided
+      if (communicationConfig && this.communicationConfigService) {
+        try {
+          const existingConfig = await this.communicationConfigService.getClinicConfig(id);
+
+          const commConfig: ClinicCommunicationConfig = {
+            clinicId: id,
+            email: communicationConfig.email
+              ? {
+                  ...(communicationConfig.email.primary &&
+                    communicationConfig.email.primary.provider && {
+                      primary: {
+                        provider: communicationConfig.email.primary.provider as EmailProvider,
+                        enabled: communicationConfig.email.primary.enabled ?? true,
+                        credentials: communicationConfig.email.primary.credentials ?? {},
+                        ...(communicationConfig.email.primary.priority !== undefined && {
+                          priority: communicationConfig.email.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(communicationConfig.email.fallback && {
+                    fallback: communicationConfig.email.fallback as ProviderConfig[],
+                  }),
+                  ...(communicationConfig.email.defaultFrom && {
+                    defaultFrom: communicationConfig.email.defaultFrom,
+                  }),
+                  ...(communicationConfig.email.defaultFromName && {
+                    defaultFromName: communicationConfig.email.defaultFromName,
+                  }),
+                }
+              : (existingConfig?.email ?? {}),
+            whatsapp: communicationConfig.whatsapp
+              ? {
+                  ...(communicationConfig.whatsapp.primary &&
+                    communicationConfig.whatsapp.primary.provider && {
+                      primary: {
+                        provider: communicationConfig.whatsapp.primary
+                          .provider as ProviderConfig['provider'],
+                        enabled: communicationConfig.whatsapp.primary.enabled ?? true,
+                        credentials: communicationConfig.whatsapp.primary.credentials ?? {},
+                        ...(communicationConfig.whatsapp.primary.priority !== undefined && {
+                          priority: communicationConfig.whatsapp.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(communicationConfig.whatsapp.fallback && {
+                    fallback: communicationConfig.whatsapp.fallback as ProviderConfig[],
+                  }),
+                  ...(communicationConfig.whatsapp.defaultNumber && {
+                    defaultNumber: communicationConfig.whatsapp.defaultNumber,
+                  }),
+                }
+              : (existingConfig?.whatsapp ?? {}),
+            sms: communicationConfig.sms
+              ? {
+                  ...(communicationConfig.sms.primary &&
+                    communicationConfig.sms.primary.provider && {
+                      primary: {
+                        provider: communicationConfig.sms.primary
+                          .provider as ProviderConfig['provider'],
+                        enabled: communicationConfig.sms.primary.enabled ?? true,
+                        credentials: communicationConfig.sms.primary.credentials ?? {},
+                        ...(communicationConfig.sms.primary.priority !== undefined && {
+                          priority: communicationConfig.sms.primary.priority,
+                        }),
+                      } as ProviderConfig,
+                    }),
+                  ...(communicationConfig.sms.fallback && {
+                    fallback: communicationConfig.sms.fallback as ProviderConfig[],
+                  }),
+                  ...(communicationConfig.sms.defaultNumber && {
+                    defaultNumber: communicationConfig.sms.defaultNumber,
+                  }),
+                }
+              : (existingConfig?.sms ?? {}),
+            createdAt: existingConfig?.createdAt ?? new Date(),
+            updatedAt: new Date(),
+          };
+
+          await this.communicationConfigService.saveClinicConfig(commConfig);
+
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `Communication configuration updated for clinic: ${clinic.id}`,
+            'ClinicService',
+            { clinicId: clinic.id }
+          );
+        } catch (commError) {
+          // Log error but don't fail clinic update
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            `Failed to update communication config during clinic update: ${commError instanceof Error ? commError.message : String(commError)}`,
+            'ClinicService',
+            {
+              clinicId: clinic.id,
+              error: commError instanceof Error ? commError.stack : undefined,
+            }
+          );
+        }
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -307,7 +694,8 @@ export class ClinicService {
           name: clinic.name,
           subdomain: (clinic as { subdomain?: string }).subdomain,
           appName: (clinic as { app_name?: string }).app_name,
-          updateFields: Object.keys(data),
+          updateFields: Object.keys(clinicUpdateData),
+          ...(communicationConfig && { communicationConfigUpdated: true }),
         },
       });
 
@@ -826,8 +1214,8 @@ export class ClinicService {
         throw new Error('userId is required');
       }
 
-      // Generate unique health identification automatically
-      const uniqueHealthIdentification = await this.generateUniqueHealthIdentification(clinicId);
+      // Patient model only has userId field, clinic association is through User model
+      // uniqueHealthIdentification is not a field in Patient model
 
       const patient = await this.databaseService.executeHealthcareWrite<PatientWithUser>(
         async client => {
@@ -835,8 +1223,6 @@ export class ClinicService {
           const result = await typedClient.patient.create({
             data: {
               userId,
-              clinicId,
-              uniqueHealthIdentification,
             } as PrismaDelegateArgs,
             include: { user: true } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
@@ -849,7 +1235,7 @@ export class ClinicService {
           operation: 'CREATE',
           resourceId: '',
           userRole: 'system',
-          details: { userId, clinicId, uniqueHealthIdentification },
+          details: { userId, clinicId },
         }
       );
       return patient;

@@ -21,8 +21,10 @@ import { RbacModule } from '@core/rbac/rbac.module';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CommunicationModule } from '@communication/communication.module';
-import { HealthModule } from '@services/health/health.module';
 import { QueueModule } from '@queue/src/queue.module';
+// Note: HealthModule is imported with forwardRef to break circular dependency
+// since HealthModule also imports VideoModule with forwardRef
+import { HealthModule } from '@services/health/health.module';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
@@ -33,8 +35,9 @@ import { JitsiVideoProvider } from './providers/jitsi-video.provider';
 // Webhook handlers (optimized architecture)
 import { OpenViduWebhookController } from './webhooks/openvidu-webhook.controller';
 import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
-// Note: VideoHealthIndicator is provided by HealthModule (imported above)
-// It's exported from HealthModule and available for injection in controllers
+// Note: HealthModule and VideoModule have a circular dependency.
+// Both use forwardRef to break the cycle. HealthModule provides VideoHealthIndicator
+// which is injected into VideoController for health check endpoints.
 
 @Module({
   imports: [
@@ -47,7 +50,9 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
     LoggingModule,
     DatabaseModule, // Required for database operations
     CommunicationModule, // Required for CommunicationHealthIndicator
-    HealthModule, // Central health module with shared health indicators
+    // HealthModule imported with forwardRef to break circular dependency
+    // Provides VideoHealthIndicator and other health indicators for VideoController
+    forwardRef(() => HealthModule),
     SocketModule,
     GuardsModule,
     RbacModule,
@@ -71,8 +76,6 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
     VideoConsultationTracker,
     // Webhook service (processes OpenVidu webhooks and forwards to Socket.IO)
     OpenViduWebhookService,
-    // Note: VideoHealthIndicator is provided by HealthModule (imported above)
-    // It's exported from HealthModule and available for injection
   ],
   exports: [
     // Export video service for other modules to use

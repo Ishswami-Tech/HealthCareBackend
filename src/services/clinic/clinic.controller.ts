@@ -122,6 +122,7 @@ export class ClinicController {
     @Req() req: ClinicAuthenticatedRequest
   ): Promise<{
     id: string;
+    clinicId: string;
     name: string;
     address: string;
     phone: string;
@@ -176,8 +177,12 @@ export class ClinicController {
         timezone: createClinicDto.timezone || 'UTC',
         currency: createClinicDto.currency || 'USD',
         language: createClinicDto.language || 'en',
+        ...(createClinicDto.communicationConfig && {
+          communicationConfig: createClinicDto.communicationConfig,
+        }),
       })) as {
         id: string;
+        clinicId: string;
         name: string;
         address: string;
         phone: string;
@@ -424,7 +429,12 @@ export class ClinicController {
 
       this.logger.log(`Updating clinic ${id} by user ${userId}`);
 
-      const result = await this.clinicService.updateClinic(id, updateClinicDto);
+      const result = await this.clinicService.updateClinic(id, {
+        ...updateClinicDto,
+        ...(updateClinicDto.communicationConfig && {
+          communicationConfig: updateClinicDto.communicationConfig,
+        }),
+      });
 
       this.logger.log(`Clinic ${id} updated successfully`);
       return result;

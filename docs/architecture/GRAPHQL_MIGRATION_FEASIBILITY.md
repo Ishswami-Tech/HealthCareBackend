@@ -18,7 +18,7 @@ Your Healthcare Backend can be migrated to GraphQL, but it requires careful plan
   - `BillingController` - Subscription & payment management
   - `ClinicController` - Multi-tenant clinic management
   - `UsersController` - User management
-  - `NotificationController` - Real-time notifications
+  - `CommunicationController` - Unified communication API at `/communication/*`
   - And more...
 
 ### Key Architectural Features

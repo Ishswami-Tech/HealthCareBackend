@@ -13,7 +13,7 @@ import type { VerificationEmailContext } from '@core/types';
 export function generateVerificationTemplate(context: VerificationEmailContext): string {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-      <h2 style="color: #4a4a4a;">Welcome to Healthcare App!</h2>
+      <h2 style="color: #4a4a4a;">Welcome to ${context['appName'] || 'Healthcare App'}!</h2>
       <p>Thank you for signing up. Please verify your email address to complete your registration.</p>
       
       <div style="text-align: center; margin: 30px 0;">
@@ -28,7 +28,7 @@ export function generateVerificationTemplate(context: VerificationEmailContext):
       
       <p>If you did not create an account with us, please ignore this email.</p>
       
-      <p>Best regards,<br>The Healthcare App Team</p>
+      <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Team</p>
       <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;">
         <p>This is an automated message, please do not reply to this email.</p>
       </div>
