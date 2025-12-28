@@ -449,6 +449,8 @@ import { NestFastifyApplication } from '@nestjs/platform-fastify';
 ### **Functionality Preservation (MANDATORY)**
 ### **API Versioning & Deprecation**
 - Use semantic API versioning and emit deprecation headers for sunset endpoints with migration links.
+- **Communication Endpoints**: All communication endpoints are at `/api/v1/communication/*`
+- **Deprecated Endpoints**: All `/notifications/*` endpoints have been removed - use `/communication/*` only
 
 ### **Import & Layer Boundaries**
 - Enforce path aliases and module boundaries; forbid cross-layer relative imports.

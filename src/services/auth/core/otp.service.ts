@@ -41,7 +41,8 @@ export class OtpService {
   async sendOtpEmail(
     email: string,
     name: string,
-    purpose: string = 'verification'
+    purpose: string = 'verification',
+    clinicId?: string
   ): Promise<OtpResult> {
     try {
       // Check cooldown
@@ -85,6 +86,7 @@ export class OtpService {
           name,
           otp,
         },
+        ...(clinicId && { clinicId }),
       });
 
       this.logger.log(`OTP sent to ${email} for ${purpose}`);

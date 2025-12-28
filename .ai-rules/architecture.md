@@ -21,15 +21,22 @@
 ```
 libs/
 ├── communication/             # Communication layer
-│   ├── messaging/            # Multi-channel messaging
-│   │   ├── chat/            # Chat message backup
-│   │   ├── email/           # Email via AWS SES
-│   │   ├── push/            # Push notifications (Firebase, SNS)
-│   │   └── whatsapp/        # WhatsApp Business API
-│   └── socket/              # WebSocket implementation
-│       ├── base-socket.ts   # Base socket gateway
-│       ├── event-socket.broadcaster.ts  # Event broadcasting
-│       └── socket-auth.middleware.ts    # Socket authentication
+│   ├── channels/             # Channel implementations
+│   │   ├── email/           # Email service (ZeptoMail primary, AWS SES/SMTP fallback)
+│   │   ├── whatsapp/        # WhatsApp service (Meta Business API, Twilio)
+│   │   ├── push/            # Push notifications (Firebase FCM, AWS SNS)
+│   │   ├── socket/          # WebSocket implementation (Socket.IO)
+│   │   └── chat/            # Chat message backup
+│   ├── adapters/            # Provider adapters
+│   │   ├── email/           # Email adapters (ZeptoMail, AWS SES, SMTP)
+│   │   ├── whatsapp/        # WhatsApp adapters (Meta, Twilio)
+│   │   └── factories/       # Provider factory for multi-tenant routing
+│   ├── config/              # Communication configuration service
+│   ├── services/            # Communication services
+│   ├── listeners/           # Event listeners for automatic notifications
+│   ├── communication.service.ts  # Unified communication orchestration
+│   ├── communication.controller.ts  # REST API endpoints at /communication/*
+│   └── communication-health-monitor.service.ts  # Health monitoring
 ├── core/                     # Core framework components
 │   ├── business-rules/      # Business rule engine
 │   ├── decorators/          # Custom decorators
@@ -111,7 +118,7 @@ services/
 │   ├── controllers/        # EHR endpoints
 │   └── dto/                # EHR DTOs
 ├── health/                 # Health monitoring service
-├── notification/           # Notification service
+├── notification/           # Notification preferences service (legacy NotificationController removed)
 └── users/                  # User management
     ├── controllers/        # User endpoints
     └── core/               # User core logic

@@ -1036,6 +1036,723 @@
             },
             "description": "Get upcoming appointments for a specific user"
           }
+        },
+        {
+          "name": "Get My Appointments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/my-appointments",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "my-appointments"]
+            },
+            "description": "Get current user's appointments"
+          }
+        },
+        {
+          "name": "Complete Appointment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/complete",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "complete"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Mark appointment as completed",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Start Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "start"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Start appointment consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Scan QR Code Check-In",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/check-in/scan-qr",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "check-in", "scan-qr"]
+            },
+            "description": "Check in using QR code scan",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"qrCode\": \"CHK-clinic-location-1234567890-abc\",\n  \"coordinates\": {\n    \"lat\": 18.5204,\n    \"lng\": 73.8567\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Manual Check-In",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/check-in",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "check-in"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Manual check-in for appointment",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Force Check-In",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/check-in/force",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "check-in", "force"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Force check-in (staff only)",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "List Check-In Locations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/check-in/locations",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "check-in", "locations"]
+            },
+            "description": "Get all check-in locations"
+          }
+        },
+        {
+          "name": "Create Check-In Location",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/check-in/locations",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "check-in", "locations"]
+            },
+            "description": "Create new check-in location",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"clinicId\": \"{{clinicId}}\",\n  \"locationName\": \"Main Branch - Reception\",\n  \"coordinates\": {\n    \"lat\": 18.5204,\n    \"lng\": 73.8567\n  },\n  \"radius\": 50\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update Check-In Location",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/check-in/locations/:locationId",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "check-in", "locations", ":locationId"],
+              "variable": [
+                {
+                  "key": "locationId",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Update check-in location",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"locationName\": \"Updated Location Name\",\n  \"coordinates\": {\n    \"lat\": 18.5204,\n    \"lng\": 73.8567\n  },\n  \"radius\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Check-In Location",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/check-in/locations/:locationId",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "check-in", "locations", ":locationId"],
+              "variable": [
+                {
+                  "key": "locationId",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Delete check-in location"
+          }
+        },
+        {
+          "name": "Get Location QR Code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/locations/:locationId/qr-code",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "locations", ":locationId", "qr-code"],
+              "variable": [
+                {
+                  "key": "locationId",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Get QR code image for location"
+          }
+        },
+        {
+          "name": "Create Video Room",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/create-room",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "create-room"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Create video consultation room",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Generate Video Join Token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/join-token",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "join-token"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Generate token to join video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Start Video Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "start"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Start video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "End Video Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "end"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "End video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Video Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "status"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get video consultation status"
+          }
+        },
+        {
+          "name": "Report Video Issue",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/video/report-issue",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "video", "report-issue"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Report technical issue with video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"issue\": \"Audio not working\",\n  \"description\": \"Cannot hear the other participant\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create Follow-Up Plan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/follow-up",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "follow-up"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Create follow-up appointment plan",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intervalDays\": 30,\n  \"notes\": \"Follow-up after 30 days\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Appointment Chain",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/chain",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "chain"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get appointment chain/history"
+          }
+        },
+        {
+          "name": "Get Follow-Up Plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/patients/:patientId/follow-up-plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "patients", ":patientId", "follow-up-plans"],
+              "variable": [
+                {
+                  "key": "patientId",
+                  "value": "{{userId}}",
+                  "description": "ID of the patient"
+                }
+              ]
+            },
+            "description": "Get all follow-up plans for patient"
+          }
+        },
+        {
+          "name": "Schedule Follow-Up",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/follow-up-plans/:id/schedule",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "follow-up-plans", ":id", "schedule"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the follow-up plan"
+                }
+              ]
+            },
+            "description": "Schedule follow-up appointment",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"date\": \"2024-05-19\",\n  \"time\": \"10:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Follow-Ups",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/:appointmentId/follow-ups",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", ":appointmentId", "follow-ups"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get follow-up appointments"
+          }
+        },
+        {
+          "name": "Update Follow-Up Plan",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/follow-up-plans/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "follow-up-plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the follow-up plan"
+                }
+              ]
+            },
+            "description": "Update follow-up plan",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intervalDays\": 45,\n  \"notes\": \"Updated follow-up interval\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Follow-Up Plan",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/follow-up-plans/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "follow-up-plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the follow-up plan"
+                }
+              ]
+            },
+            "description": "Delete follow-up plan"
+          }
+        },
+        {
+          "name": "Create Recurring Appointment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/recurring",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "recurring"]
+            },
+            "description": "Create recurring appointment series",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"{{userId}}\",\n  \"doctorId\": \"{{doctorId}}\",\n  \"startDate\": \"2024-05-01\",\n  \"endDate\": \"2024-12-31\",\n  \"intervalDays\": 7,\n  \"time\": \"10:00\",\n  \"duration\": 30\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Recurring Series",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/series/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "series", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the recurring series"
+                }
+              ]
+            },
+            "description": "Get recurring appointment series"
+          }
+        },
+        {
+          "name": "Update Recurring Series",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/series/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "series", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the recurring series"
+                }
+              ]
+            },
+            "description": "Update recurring appointment series",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"intervalDays\": 14,\n  \"time\": \"11:00\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Recurring Series",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/series/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "series", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the recurring series"
+                }
+              ]
+            },
+            "description": "Delete recurring appointment series"
+          }
+        },
+        {
+          "name": "Get Wait Time Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/analytics/wait-times",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "analytics", "wait-times"]
+            },
+            "description": "Get wait time analytics (admin)"
+          }
+        },
+        {
+          "name": "Get Check-In Pattern Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/analytics/check-in-patterns",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "analytics", "check-in-patterns"]
+            },
+            "description": "Get check-in pattern analytics (admin)"
+          }
+        },
+        {
+          "name": "Get No-Show Correlation Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/appointments/analytics/no-show-correlation",
+              "host": ["{{baseUrl}}"],
+              "path": ["appointments", "analytics", "no-show-correlation"]
+            },
+            "description": "Get no-show correlation analytics (admin)"
+          }
         }
       ]
     },
@@ -1232,6 +1949,3463 @@
       ]
     },
     {
+      "name": "Billing",
+      "description": "Billing and subscription management endpoints for plans, subscriptions, invoices, and payments.",
+      "item": [
+        {
+          "name": "Get Subscription Plans",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "plans"]
+            },
+            "description": "List all subscription plans"
+          }
+        },
+        {
+          "name": "Get Subscription Plan by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/plans/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription plan"
+                }
+              ]
+            },
+            "description": "Get subscription plan by ID"
+          }
+        },
+        {
+          "name": "Create Subscription Plan",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/plans",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "plans"]
+            },
+            "description": "Create new subscription plan",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Basic Plan\",\n  \"price\": 99.99,\n  \"billingInterval\": \"MONTHLY\",\n  \"appointmentsIncluded\": 10,\n  \"isUnlimitedAppointments\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update Subscription Plan",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/plans/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription plan"
+                }
+              ]
+            },
+            "description": "Update subscription plan",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Plan Name\",\n  \"price\": 149.99\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Subscription Plan",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/plans/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "plans", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription plan"
+                }
+              ]
+            },
+            "description": "Delete subscription plan"
+          }
+        },
+        {
+          "name": "Create Subscription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions"]
+            },
+            "description": "Create new subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"planId\": \"plan-id\",\n  \"startDate\": \"2024-05-01\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get User Subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/user/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", "user", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get all subscriptions for a user"
+          }
+        },
+        {
+          "name": "Get Subscription by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Get subscription by ID"
+          }
+        },
+        {
+          "name": "Update Subscription",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Update subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"ACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cancel Subscription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/cancel",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "cancel"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Cancel subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Renew Subscription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/renew",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "renew"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Renew subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Subscription Coverage",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/coverage",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "coverage"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Get subscription coverage details"
+          }
+        },
+        {
+          "name": "Book Appointment with Subscription",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:subscriptionId/book-appointment/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":subscriptionId", "book-appointment", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "subscriptionId",
+                  "value": "",
+                  "description": "ID of the subscription"
+                },
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Book appointment using subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Active Subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/user/:userId/active",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", "user", ":userId", "active"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get active subscriptions for user"
+          }
+        },
+        {
+          "name": "Get Subscription Usage Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/usage-stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "usage-stats"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Get subscription usage statistics"
+          }
+        },
+        {
+          "name": "Reset Subscription Quota",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/reset-quota",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "reset-quota"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Reset subscription quota",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Subscription Confirmation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/send-confirmation",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "send-confirmation"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Send subscription confirmation email",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Process Subscription Payment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/subscriptions/:id/process-payment",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "subscriptions", ":id", "process-payment"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the subscription"
+                }
+              ]
+            },
+            "description": "Process payment for subscription",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethodId\": \"payment-method-id\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Create Invoice",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices"]
+            },
+            "description": "Create new invoice",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"amount\": 99.99,\n  \"description\": \"Monthly subscription\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get User Invoices",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/user/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", "user", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get all invoices for a user"
+          }
+        },
+        {
+          "name": "Get Invoice by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the invoice"
+                }
+              ]
+            },
+            "description": "Get invoice by ID"
+          }
+        },
+        {
+          "name": "Update Invoice",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the invoice"
+                }
+              ]
+            },
+            "description": "Update invoice",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"PAID\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Mark Invoice as Paid",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/:id/mark-paid",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", ":id", "mark-paid"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the invoice"
+                }
+              ]
+            },
+            "description": "Mark invoice as paid",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Generate Invoice PDF",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/:id/generate-pdf",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", ":id", "generate-pdf"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the invoice"
+                }
+              ]
+            },
+            "description": "Generate PDF for invoice",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Invoice via WhatsApp",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/:id/send-whatsapp",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", ":id", "send-whatsapp"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the invoice"
+                }
+              ]
+            },
+            "description": "Send invoice via WhatsApp",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Download Invoice",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/invoices/download/:fileName",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "invoices", "download", ":fileName"],
+              "variable": [
+                {
+                  "key": "fileName",
+                  "value": "",
+                  "description": "Name of the invoice file"
+                }
+              ]
+            },
+            "description": "Download invoice file"
+          }
+        },
+        {
+          "name": "Create Payment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/payments",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "payments"]
+            },
+            "description": "Create new payment",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"invoiceId\": \"invoice-id\",\n  \"amount\": 99.99,\n  \"paymentMethod\": \"RAZORPAY\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get User Payments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/payments/user/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "payments", "user", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get all payments for a user"
+          }
+        },
+        {
+          "name": "Get Payment by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/payments/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "payments", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the payment"
+                }
+              ]
+            },
+            "description": "Get payment by ID"
+          }
+        },
+        {
+          "name": "Update Payment",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/payments/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "payments", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the payment"
+                }
+              ]
+            },
+            "description": "Update payment",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"COMPLETED\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Process Payment Refund",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/payments/:id/refund",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "payments", ":id", "refund"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the payment"
+                }
+              ]
+            },
+            "description": "Process payment refund",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 99.99,\n  \"reason\": \"Customer request\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Revenue Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/analytics/revenue",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "analytics", "revenue"]
+            },
+            "description": "Get revenue analytics (admin)"
+          }
+        },
+        {
+          "name": "Get Subscription Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/analytics/subscriptions",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "analytics", "subscriptions"]
+            },
+            "description": "Get subscription analytics (admin)"
+          }
+        },
+        {
+          "name": "Cancel Subscription for Appointment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/appointments/:appointmentId/cancel-subscription",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "appointments", ":appointmentId", "cancel-subscription"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Cancel subscription for appointment",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Process Payment for Appointment",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/billing/appointments/:id/process-payment",
+              "host": ["{{baseUrl}}"],
+              "path": ["billing", "appointments", ":id", "process-payment"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Process payment for appointment",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentMethod\": \"RAZORPAY\",\n  \"amount\": 500.00\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "EHR",
+      "description": "Electronic Health Records management endpoints for medical history, lab reports, vitals, and health data.",
+      "item": [
+        {
+          "name": "Get Comprehensive EHR",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/comprehensive/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "comprehensive", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get comprehensive EHR for user"
+          }
+        },
+        {
+          "name": "Create Medical History",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medical-history",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medical-history"]
+            },
+            "description": "Create medical history record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"condition\": \"Hypertension\",\n  \"diagnosisDate\": \"2024-01-15\",\n  \"notes\": \"Controlled with medication\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Medical History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medical-history/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medical-history", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get medical history for user"
+          }
+        },
+        {
+          "name": "Update Medical History",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medical-history/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medical-history", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the medical history record"
+                }
+              ]
+            },
+            "description": "Update medical history record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"condition\": \"Updated condition\",\n  \"notes\": \"Updated notes\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Medical History",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medical-history/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medical-history", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the medical history record"
+                }
+              ]
+            },
+            "description": "Delete medical history record"
+          }
+        },
+        {
+          "name": "Create Lab Report",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/lab-reports",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "lab-reports"]
+            },
+            "description": "Create lab report",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"testName\": \"Blood Test\",\n  \"testDate\": \"2024-04-15\",\n  \"results\": \"Normal\",\n  \"fileUrl\": \"https://example.com/report.pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Lab Reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/lab-reports/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "lab-reports", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get lab reports for user"
+          }
+        },
+        {
+          "name": "Update Lab Report",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/lab-reports/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "lab-reports", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the lab report"
+                }
+              ]
+            },
+            "description": "Update lab report",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"results\": \"Updated results\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Lab Report",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/lab-reports/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "lab-reports", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the lab report"
+                }
+              ]
+            },
+            "description": "Delete lab report"
+          }
+        },
+        {
+          "name": "Create Radiology Report",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/radiology-reports",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "radiology-reports"]
+            },
+            "description": "Create radiology report",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"testName\": \"X-Ray Chest\",\n  \"testDate\": \"2024-04-15\",\n  \"findings\": \"Normal\",\n  \"fileUrl\": \"https://example.com/xray.pdf\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Radiology Reports",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/radiology-reports/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "radiology-reports", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get radiology reports for user"
+          }
+        },
+        {
+          "name": "Update Radiology Report",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/radiology-reports/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "radiology-reports", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the radiology report"
+                }
+              ]
+            },
+            "description": "Update radiology report",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"findings\": \"Updated findings\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Radiology Report",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/radiology-reports/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "radiology-reports", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the radiology report"
+                }
+              ]
+            },
+            "description": "Delete radiology report"
+          }
+        },
+        {
+          "name": "Create Surgical Record",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/surgical-records",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "surgical-records"]
+            },
+            "description": "Create surgical record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"procedureName\": \"Appendectomy\",\n  \"surgeryDate\": \"2024-03-10\",\n  \"surgeon\": \"Dr. Smith\",\n  \"notes\": \"Successful procedure\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Surgical Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/surgical-records/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "surgical-records", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get surgical records for user"
+          }
+        },
+        {
+          "name": "Update Surgical Record",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/surgical-records/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "surgical-records", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the surgical record"
+                }
+              ]
+            },
+            "description": "Update surgical record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"notes\": \"Updated notes\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Surgical Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/surgical-records/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "surgical-records", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the surgical record"
+                }
+              ]
+            },
+            "description": "Delete surgical record"
+          }
+        },
+        {
+          "name": "Create Vitals Record",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/vitals",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "vitals"]
+            },
+            "description": "Create vitals record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"recordedAt\": \"2024-04-19T10:00:00Z\",\n  \"bloodPressure\": \"120/80\",\n  \"heartRate\": 72,\n  \"temperature\": 98.6,\n  \"weight\": 70,\n  \"height\": 175\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Vitals Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/vitals/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "vitals", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get vitals records for user"
+          }
+        },
+        {
+          "name": "Update Vitals Record",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/vitals/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "vitals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the vitals record"
+                }
+              ]
+            },
+            "description": "Update vitals record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"bloodPressure\": \"125/82\",\n  \"heartRate\": 75\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Vitals Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/vitals/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "vitals", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the vitals record"
+                }
+              ]
+            },
+            "description": "Delete vitals record"
+          }
+        },
+        {
+          "name": "Create Allergy Record",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/allergies",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "allergies"]
+            },
+            "description": "Create allergy record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"allergen\": \"Penicillin\",\n  \"severity\": \"SEVERE\",\n  \"reaction\": \"Anaphylaxis\",\n  \"diagnosedDate\": \"2020-01-15\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Allergy Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/allergies/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "allergies", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get allergy records for user"
+          }
+        },
+        {
+          "name": "Update Allergy Record",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/allergies/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "allergies", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the allergy record"
+                }
+              ]
+            },
+            "description": "Update allergy record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"severity\": \"MODERATE\",\n  \"reaction\": \"Updated reaction\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Allergy Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/allergies/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "allergies", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the allergy record"
+                }
+              ]
+            },
+            "description": "Delete allergy record"
+          }
+        },
+        {
+          "name": "Create Medication Record",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medications",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medications"]
+            },
+            "description": "Create medication record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"medicationName\": \"Aspirin\",\n  \"dosage\": \"100mg\",\n  \"frequency\": \"Once daily\",\n  \"startDate\": \"2024-01-01\",\n  \"endDate\": \"2024-12-31\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Medication Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medications/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medications", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get medication records for user"
+          }
+        },
+        {
+          "name": "Update Medication Record",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medications/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medications", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the medication record"
+                }
+              ]
+            },
+            "description": "Update medication record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dosage\": \"200mg\",\n  \"frequency\": \"Twice daily\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Medication Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/medications/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "medications", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the medication record"
+                }
+              ]
+            },
+            "description": "Delete medication record"
+          }
+        },
+        {
+          "name": "Create Immunization Record",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/immunizations",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "immunizations"]
+            },
+            "description": "Create immunization record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"vaccineName\": \"COVID-19 Vaccine\",\n  \"vaccinationDate\": \"2024-01-15\",\n  \"doseNumber\": 1,\n  \"manufacturer\": \"Pfizer\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Immunization Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/immunizations/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "immunizations", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get immunization records for user"
+          }
+        },
+        {
+          "name": "Update Immunization Record",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/immunizations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "immunizations", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the immunization record"
+                }
+              ]
+            },
+            "description": "Update immunization record",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"doseNumber\": 2\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Immunization Record",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/immunizations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "immunizations", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": "ID of the immunization record"
+                }
+              ]
+            },
+            "description": "Delete immunization record"
+          }
+        },
+        {
+          "name": "Get Health Trends Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/analytics/health-trends/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "analytics", "health-trends", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get health trends analytics for user"
+          }
+        },
+        {
+          "name": "Get Medication Adherence Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/analytics/medication-adherence/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "analytics", "medication-adherence", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get medication adherence analytics for user"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Video",
+      "description": "Video consultation endpoints for managing video calls, recordings, and participant management.",
+      "item": [
+        {
+          "name": "Generate Video Token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "token"]
+            },
+            "description": "Generate video consultation token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"role\": \"PATIENT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Start Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/consultation/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "consultation", "start"]
+            },
+            "description": "Start video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "End Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/consultation/end",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "consultation", "end"]
+            },
+            "description": "End video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Consultation Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/consultation/:appointmentId/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "consultation", ":appointmentId", "status"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get video consultation status"
+          }
+        },
+        {
+          "name": "Report Consultation Issue",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/consultation/:appointmentId/report",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "consultation", ":appointmentId", "report"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Report issue with video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"issue\": \"Audio not working\",\n  \"description\": \"Cannot hear the other participant\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Consultation History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/history",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "history"]
+            },
+            "description": "Get video consultation history"
+          }
+        },
+        {
+          "name": "Share Image in Consultation",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/consultation/:appointmentId/share-image",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "consultation", ":appointmentId", "share-image"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Share image in video consultation",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageUrl\": \"https://example.com/image.jpg\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Video Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "health"]
+            },
+            "description": "Check video service health"
+          }
+        },
+        {
+          "name": "Start Recording",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/recording/start",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "recording", "start"]
+            },
+            "description": "Start video consultation recording",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Stop Recording",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/recording/stop",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "recording", "stop"]
+            },
+            "description": "Stop video consultation recording",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Recording",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/recording/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "recording", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get video consultation recording"
+          }
+        },
+        {
+          "name": "Manage Participants",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/participant/manage",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "participant", "manage"]
+            },
+            "description": "Manage video consultation participants",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"action\": \"mute\",\n  \"participantId\": \"participant-id\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Participants",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/participants/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "participants", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get video consultation participants"
+          }
+        },
+        {
+          "name": "Get Video Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/video/analytics/:appointmentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["video", "analytics", ":appointmentId"],
+              "variable": [
+                {
+                  "key": "appointmentId",
+                  "value": "{{appointmentId}}",
+                  "description": "ID of the appointment"
+                }
+              ]
+            },
+            "description": "Get video consultation analytics"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Communication",
+      "description": "Unified communication endpoints for push notifications, email, chat, and messaging.",
+      "item": [
+        {
+          "name": "Send Unified Communication",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/send",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "send"]
+            },
+            "description": "Send unified communication via multiple channels",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"BOTH\",\n  \"title\": \"Appointment Reminder\",\n  \"body\": \"Your appointment is tomorrow at 10:00 AM\",\n  \"deviceToken\": \"device-token\",\n  \"email\": \"user@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Appointment Reminder",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/appointment/reminder",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "appointment", "reminder"]
+            },
+            "description": "Send appointment reminder notification",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"reminderTime\": \"1h\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Prescription Ready Notification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/prescription/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "prescription", "ready"]
+            },
+            "description": "Send prescription ready notification",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"appointmentId\": \"{{appointmentId}}\",\n  \"prescriptionId\": \"prescription-id\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Push Notification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push"]
+            },
+            "description": "Send push notification",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"device-token\",\n  \"title\": \"New Message\",\n  \"body\": \"You have a new message\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Multiple Push Notifications",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push/multiple",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push", "multiple"]
+            },
+            "description": "Send push notifications to multiple devices",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceTokens\": [\"token1\", \"token2\"],\n  \"title\": \"Broadcast\",\n  \"body\": \"Important announcement\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Topic Notification",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push/topic",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push", "topic"]
+            },
+            "description": "Send push notification to topic",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topic\": \"all-users\",\n  \"title\": \"System Update\",\n  \"body\": \"System maintenance scheduled\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Subscribe to Topic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push/subscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push", "subscribe"]
+            },
+            "description": "Subscribe device to topic",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"device-token\",\n  \"topic\": \"appointments\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unsubscribe from Topic",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push/unsubscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push", "unsubscribe"]
+            },
+            "description": "Unsubscribe device from topic",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"device-token\",\n  \"topic\": \"appointments\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Register Device Token",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/push/device-token",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "push", "device-token"]
+            },
+            "description": "Register device token for push notifications",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"device-token\",\n  \"platform\": \"ios\",\n  \"userId\": \"{{userId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Send Email",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/email",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "email"]
+            },
+            "description": "Send email",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"user@example.com\",\n  \"subject\": \"Appointment Confirmation\",\n  \"body\": \"Your appointment is confirmed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Chat Backup",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/chat/backup",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "chat", "backup"]
+            },
+            "description": "Backup chat messages",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"messages\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Chat History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/chat/history/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "chat", "history", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get chat history for user"
+          }
+        },
+        {
+          "name": "Get Communication Statistics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "stats"]
+            },
+            "description": "Get communication statistics"
+          }
+        },
+        {
+          "name": "Get Communication Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/analytics",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "analytics"]
+            },
+            "description": "Get communication analytics"
+          }
+        },
+        {
+          "name": "Communication Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "health"]
+            },
+            "description": "Check communication service health"
+          }
+        },
+        {
+          "name": "Get Communication Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/dashboard",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "dashboard"]
+            },
+            "description": "Get communication dashboard data"
+          }
+        },
+        {
+          "name": "Get Communication Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/alerts",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "alerts"]
+            },
+            "description": "Get communication alerts"
+          }
+        },
+        {
+          "name": "Get Chat Statistics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/chat/stats",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "chat", "stats"]
+            },
+            "description": "Get chat statistics"
+          }
+        },
+        {
+          "name": "Test Communication System",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/communication/test",
+              "host": ["{{baseUrl}}"],
+              "path": ["communication", "test"]
+            },
+            "description": "Test communication system",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"email\",\n  \"recipient\": \"test@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clinic Locations",
+      "description": "Clinic location management endpoints for managing physical clinic locations.",
+      "item": [
+        {
+          "name": "Create Location",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/locations",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "locations"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Create new clinic location",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Main Branch\",\n  \"address\": \"123 Main St\",\n  \"city\": \"Pune\",\n  \"state\": \"Maharashtra\",\n  \"zipCode\": \"411004\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get All Locations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/locations",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "locations"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get all locations for a clinic"
+          }
+        },
+        {
+          "name": "Get Location by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/locations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "locations", ":id"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                },
+                {
+                  "key": "id",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Get location by ID"
+          }
+        },
+        {
+          "name": "Update Location",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/locations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "locations", ":id"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                },
+                {
+                  "key": "id",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Update clinic location",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Updated Location Name\",\n  \"address\": \"456 New St\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Location",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/locations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "locations", ":id"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                },
+                {
+                  "key": "id",
+                  "value": "{{locationId}}",
+                  "description": "ID of the location"
+                }
+              ]
+            },
+            "description": "Delete clinic location"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clinic Communication",
+      "description": "Clinic communication configuration endpoints for managing email, WhatsApp, and SMS providers.",
+      "item": [
+        {
+          "name": "Get Communication Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "config"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get clinic communication configuration"
+          }
+        },
+        {
+          "name": "Update Communication Config",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "config"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Update clinic communication configuration",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailProvider\": \"ZEPTOMAIL\",\n  \"whatsappProvider\": \"META_BUSINESS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update SES Config",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/ses",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "ses"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Update AWS SES configuration for clinic",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"accessKeyId\": \"AKIA...\",\n  \"secretAccessKey\": \"secret...\",\n  \"region\": \"us-east-1\",\n  \"fromEmail\": \"noreply@clinic.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Test Email Config",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/test-email",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "test-email"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Test email configuration",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"test@example.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Test WhatsApp Config",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/test-whatsapp",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "test-whatsapp"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Test WhatsApp configuration",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"+1234567890\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Test SMS Config",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/clinics/:clinicId/communication/test-sms",
+              "host": ["{{baseUrl}}"],
+              "path": ["clinics", ":clinicId", "communication", "test-sms"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Test SMS configuration",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"to\": \"+1234567890\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notification Preferences",
+      "description": "Notification preference management endpoints for user notification settings.",
+      "item": [
+        {
+          "name": "Get My Preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", "me"]
+            },
+            "description": "Get current user's notification preferences"
+          }
+        },
+        {
+          "name": "Get User Preferences",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get notification preferences for user"
+          }
+        },
+        {
+          "name": "Create Preferences",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences"]
+            },
+            "description": "Create notification preferences",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"userId\": \"{{userId}}\",\n  \"emailEnabled\": true,\n  \"pushEnabled\": true,\n  \"smsEnabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update My Preferences",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", "me"]
+            },
+            "description": "Update current user's notification preferences",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailEnabled\": false,\n  \"pushEnabled\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Update User Preferences",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Update notification preferences for user",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailEnabled\": true,\n  \"pushEnabled\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete My Preferences",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", "me"]
+            },
+            "description": "Delete current user's notification preferences"
+          }
+        },
+        {
+          "name": "Delete User Preferences",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notification-preferences/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["notification-preferences", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Delete notification preferences for user"
+          }
+        }
+      ]
+    },
+    {
+      "name": "EHR Clinic",
+      "description": "Clinic-wide EHR endpoints for accessing patient records across the clinic.",
+      "item": [
+        {
+          "name": "Get Comprehensive EHR",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/comprehensive/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", "comprehensive", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "{{userId}}",
+                  "description": "ID of the user"
+                }
+              ]
+            },
+            "description": "Get comprehensive EHR for user (clinic-wide)"
+          }
+        },
+        {
+          "name": "Get Clinic Patient Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/:clinicId/patients/records",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", ":clinicId", "patients", "records"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get all patient records for clinic"
+          }
+        },
+        {
+          "name": "Get Clinic Analytics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/:clinicId/analytics",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", ":clinicId", "analytics"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get clinic-wide EHR analytics"
+          }
+        },
+        {
+          "name": "Get Patients Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/:clinicId/patients/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", ":clinicId", "patients", "summary"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get patients summary for clinic"
+          }
+        },
+        {
+          "name": "Search Records",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/:clinicId/search",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", ":clinicId", "search"],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "search term",
+                  "description": "Search query"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Search EHR records in clinic"
+          }
+        },
+        {
+          "name": "Get Critical Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ehr/clinic/:clinicId/alerts/critical",
+              "host": ["{{baseUrl}}"],
+              "path": ["ehr", "clinic", ":clinicId", "alerts", "critical"],
+              "variable": [
+                {
+                  "key": "clinicId",
+                  "value": "{{clinicId}}",
+                  "description": "ID of the clinic"
+                }
+              ]
+            },
+            "description": "Get critical health alerts for clinic"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Plugins",
+      "description": "Appointment plugin system endpoints for managing and executing plugins.",
+      "item": [
+        {
+          "name": "Get Plugin Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/info",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "info"]
+            },
+            "description": "Get plugin system information"
+          }
+        },
+        {
+          "name": "Get Plugins by Domain",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/domain/:domain",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "domain", ":domain"],
+              "variable": [
+                {
+                  "key": "domain",
+                  "value": "checkin",
+                  "description": "Plugin domain"
+                }
+              ]
+            },
+            "description": "Get plugins by domain"
+          }
+        },
+        {
+          "name": "Get Plugin Features",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/domain/:domain/features",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "domain", ":domain", "features"],
+              "variable": [
+                {
+                  "key": "domain",
+                  "value": "checkin",
+                  "description": "Plugin domain"
+                }
+              ]
+            },
+            "description": "Get plugin features for domain"
+          }
+        },
+        {
+          "name": "Execute Plugin",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/execute",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "execute"]
+            },
+            "description": "Execute plugin",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pluginName\": \"checkin-plugin\",\n  \"domain\": \"checkin\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Execute Batch Plugins",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/execute-batch",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "execute-batch"]
+            },
+            "description": "Execute multiple plugins in batch",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plugins\": [\n    {\n      \"pluginName\": \"plugin1\",\n      \"data\": {}\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Plugin Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "health"]
+            },
+            "description": "Check plugin system health"
+          }
+        },
+        {
+          "name": "Get Plugin Health Metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/health/metrics",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "health", "metrics"]
+            },
+            "description": "Get plugin health metrics"
+          }
+        },
+        {
+          "name": "Get Domain Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/health/domain/:domain",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "health", "domain", ":domain"],
+              "variable": [
+                {
+                  "key": "domain",
+                  "value": "checkin",
+                  "description": "Plugin domain"
+                }
+              ]
+            },
+            "description": "Get health status for plugin domain"
+          }
+        },
+        {
+          "name": "Get Plugin Health Alerts",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/health/alerts",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "health", "alerts"]
+            },
+            "description": "Get plugin health alerts"
+          }
+        },
+        {
+          "name": "Get Plugin Config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "config"]
+            },
+            "description": "Get plugin configuration"
+          }
+        },
+        {
+          "name": "Get Plugin Config by Name",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/config/:pluginName",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "config", ":pluginName"],
+              "variable": [
+                {
+                  "key": "pluginName",
+                  "value": "checkin-plugin",
+                  "description": "Name of the plugin"
+                }
+              ]
+            },
+            "description": "Get plugin configuration by name"
+          }
+        },
+        {
+          "name": "Update Plugin Config",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/appointments/plugins/config/:pluginName",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "appointments", "plugins", "config", ":pluginName"],
+              "variable": [
+                {
+                  "key": "pluginName",
+                  "value": "checkin-plugin",
+                  "description": "Name of the plugin"
+                }
+              ]
+            },
+            "description": "Update plugin configuration",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"enabled\": true,\n  \"settings\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "description": "Payment webhook endpoints for processing payment callbacks from payment providers.",
+      "item": [
+        {
+          "name": "Razorpay Webhook",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/razorpay/webhook",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "razorpay", "webhook"]
+            },
+            "description": "Handle Razorpay payment webhook",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.captured\",\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "PhonePe Webhook",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/phonepe/webhook",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "phonepe", "webhook"]
+            },
+            "description": "Handle PhonePe payment webhook",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"payment.success\",\n  \"data\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Payment Callback",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/payments/callback",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "payments", "callback"]
+            },
+            "description": "Handle payment callback",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentId\": \"payment-id\",\n  \"status\": \"success\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Email Unsubscribe",
+      "description": "Email unsubscribe endpoints for managing email preferences and unsubscribing from emails.",
+      "item": [
+        {
+          "name": "Get Unsubscribe Page",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/email/unsubscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["email", "unsubscribe"]
+            },
+            "description": "Get unsubscribe page"
+          }
+        },
+        {
+          "name": "Process Unsubscribe",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/email/unsubscribe",
+              "host": ["{{baseUrl}}"],
+              "path": ["email", "unsubscribe"]
+            },
+            "description": "Process email unsubscribe",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"user@example.com\",\n  \"token\": \"unsubscribe-token\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Verify Unsubscribe Token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/email/unsubscribe/:token",
+              "host": ["{{baseUrl}}"],
+              "path": ["email", "unsubscribe", ":token"],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "",
+                  "description": "Unsubscribe token"
+                }
+              ]
+            },
+            "description": "Verify unsubscribe token"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "description": "Webhook endpoints for receiving notifications from external services.",
+      "item": [
+        {
+          "name": "AWS SES Webhook",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/ses",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "ses"]
+            },
+            "description": "Handle AWS SES webhook (bounce/complaint notifications)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Type\": \"Notification\",\n  \"Message\": \"{}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cache",
+      "description": "Cache management endpoints for viewing and managing cache operations.",
+      "item": [
+        {
+          "name": "Get Cache Information",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cache",
+              "host": ["{{baseUrl}}"],
+              "path": ["cache"]
+            },
+            "description": "Get cache information and statistics"
+          }
+        },
+        {
+          "name": "Clear Cache",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cache",
+              "host": ["{{baseUrl}}"],
+              "path": ["cache"]
+            },
+            "description": "Clear cache entries",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pattern\": \"*\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Configure Cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cache/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["cache", "config"]
+            },
+            "description": "Configure cache settings",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ttl\": 3600,\n  \"maxSize\": 1000\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Cache Benchmark",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/cache/benchmark",
+              "host": ["{{baseUrl}}"],
+              "path": ["cache", "benchmark"]
+            },
+            "description": "Benchmark cache performance"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Logging",
+      "description": "Logging and monitoring endpoints for viewing system logs and events.",
+      "item": [
+        {
+          "name": "Get Logging Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger"]
+            },
+            "description": "Get logging dashboard"
+          }
+        },
+        {
+          "name": "Get Events",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger/events",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger", "events"]
+            },
+            "description": "Get system events"
+          }
+        },
+        {
+          "name": "Get Log Data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger/logs/data",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger", "logs", "data"]
+            },
+            "description": "Get log data"
+          }
+        },
+        {
+          "name": "Get Event Data",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger/events/data",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger", "events", "data"]
+            },
+            "description": "Get event data"
+          }
+        },
+        {
+          "name": "Clear Logs",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger/logs/clear",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger", "logs", "clear"]
+            },
+            "description": "Clear logs",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Clear Events",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/logger/events/clear",
+              "host": ["{{baseUrl}}"],
+              "path": ["logger", "events", "clear"]
+            },
+            "description": "Clear events",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Health",
       "description": "System health check endpoints for monitoring service status.",
       "item": [
@@ -1246,6 +5420,19 @@
               "path": ["health"]
             },
             "description": "Check the health status of the API and its dependencies"
+          }
+        },
+        {
+          "name": "Detailed Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health/detailed",
+              "host": ["{{baseUrl}}"],
+              "path": ["health", "detailed"]
+            },
+            "description": "Get detailed system health information"
           }
         }
       ]

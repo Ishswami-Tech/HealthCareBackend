@@ -371,7 +371,8 @@ export class CommunicationService implements OnModuleInit {
         for (const recipient of request.recipients) {
           // Validate channel can be sent to this recipient (skip if missing required contact info)
           if (!this.canSendChannel(channel, recipient)) {
-            const recipientId = recipient.userId || recipient.email || recipient.phoneNumber || 'unknown';
+            const recipientId =
+              recipient.userId || recipient.email || recipient.phoneNumber || 'unknown';
             await this.loggingService.log(
               LogType.NOTIFICATION,
               LogLevel.DEBUG,
@@ -548,20 +549,21 @@ export class CommunicationService implements OnModuleInit {
           try {
             const user = await this.databaseService.executeHealthcareRead(async prisma => {
               return await prisma.user.findUnique({
-                where: { id: recipient.userId },
+                where: { id: recipient.userId! },
                 select: {
                   email: true,
-                  phoneNumber: true,
+                  phone: true,
                 },
               });
             });
 
             if (user) {
+              const phoneNumber = recipient.phoneNumber ?? user.phone;
               return {
                 ...recipient,
                 // Only add if not already provided
-                ...(recipient.email ? {} : { email: user.email || undefined }),
-                ...(recipient.phoneNumber ? {} : { phoneNumber: user.phoneNumber || undefined }),
+                email: recipient.email ?? user.email,
+                ...(phoneNumber && { phoneNumber }),
               };
             }
           } catch (error) {
@@ -628,10 +630,7 @@ export class CommunicationService implements OnModuleInit {
     // Check category-specific SMS preference
     if (category && userPrefs.categoryPreferences) {
       const categoryKey = category.toLowerCase();
-      const categoryChannels = this.getCategoryChannels(
-        userPrefs.categoryPreferences,
-        categoryKey
-      );
+      const categoryChannels = this.getCategoryChannels(userPrefs.categoryPreferences, categoryKey);
       // If category preferences exist and SMS is not included, don't send
       if (categoryChannels && categoryChannels.length > 0 && !categoryChannels.includes('sms')) {
         return false;
@@ -691,9 +690,7 @@ export class CommunicationService implements OnModuleInit {
           if (userPrefs) {
             // Special handling for SMS: Only send if user explicitly enabled
             if (channel === 'sms') {
-              if (
-                !this.shouldSendSMS(channel, recipient.userId, preferences, category)
-              ) {
+              if (!this.shouldSendSMS(channel, recipient.userId, preferences, category)) {
                 shouldInclude = false;
                 break;
               }

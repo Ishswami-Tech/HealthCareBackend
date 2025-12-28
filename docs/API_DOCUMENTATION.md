@@ -63,7 +63,7 @@
 6. **EHRController** (`/ehr`) - 30+ endpoints
 7. **CommunicationController** (`/communication`) - 20+ endpoints
 8. **VideoController** (`/video`) - 10+ endpoints
-9. **NotificationController** (`/notifications`) - 15 endpoints (DEPRECATED)
+9. **CommunicationController** (`/communication`) - Unified communication API (all deprecated `/notifications/*` removed)
 10. **LoggingController** (`/logger`) - 6 endpoints (Admin only)
 11. **CacheController** (`/cache`) - 4 endpoints (Admin only)
 12. **HealthController** (`/health`) - 3 endpoints
@@ -110,8 +110,9 @@
 
 ### ✅ Optimization Complete
 
-**Deprecated Endpoints**: 15 endpoints
-- All NotificationController endpoints marked as deprecated
+**Communication Endpoints**: All at `/api/v1/communication/*`
+- All deprecated `/notifications/*` endpoints have been removed
+- Use `/communication/*` endpoints only
 - Alternative endpoints documented in headers
 - Sunset dates set for removal
 
@@ -206,6 +207,9 @@
 
 **Last Updated**: 2024  
 **Status**: ✅ **COMPREHENSIVE API DOCUMENTATION**
+
+
+
 
 
 

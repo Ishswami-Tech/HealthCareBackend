@@ -257,20 +257,17 @@ export class AuthService {
       // For PATIENT role, create Patient record linked to clinic
       if ((registerDto.role || 'PATIENT') === 'PATIENT') {
         try {
-          // Create patient record directly
+          // Create patient record directly (Patient model only has userId, not clinicId)
           await this.databaseService.executeHealthcareWrite(
             async client => {
               const typedClient = client as unknown as {
                 patient: {
-                  create: (args: {
-                    data: { userId: string; clinicId: string };
-                  }) => Promise<{ id: string }>;
+                  create: (args: { data: { userId: string } }) => Promise<{ id: string }>;
                 };
               };
               await typedClient.patient.create({
                 data: {
                   userId: user.id,
-                  clinicId: registerDto.clinicId,
                 },
               });
             },
@@ -318,14 +315,16 @@ export class AuthService {
       const tokens = await this.generateTokens(userForTokens, session.sessionId);
 
       // Send welcome email
+      // Use clinicId from registration for multi-tenant email routing
       await this.emailService.sendEmail({
         to: user.email,
-        subject: 'Welcome to Healthcare App',
+        subject: `Welcome to ${this.configService.getEnv('APP_NAME', 'Healthcare App')}`,
         template: EmailTemplate.WELCOME,
         context: {
           name: `${user.firstName} ${user.lastName}`,
           role: user.role,
         },
+        ...(registerDto.clinicId && { clinicId: registerDto.clinicId }),
       });
 
       // Invalidate clinic cache if user is associated with a clinic
@@ -624,14 +623,16 @@ export class AuthService {
       );
 
       // Send reset email
+      // Use user's primary clinic for multi-tenant email routing
       await this.emailService.sendEmail({
         to: user.email,
         subject: 'Password Reset Request',
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.getUrlsConfig().frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000'}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.getUrlsConfig()?.frontend ?? this.configService.getEnv('FRONTEND_URL') ?? (this.configService.getEnv('BASE_URL') ?? 'http://localhost:8088').replace(':8088', ':3000')}/reset-password?token=${resetToken}`,
         },
+        ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
       });
 
       // Emit password reset requested event
@@ -877,14 +878,14 @@ export class AuthService {
           name: `${user.firstName} ${user.lastName}`,
           otp,
         },
-        clinicId, // Pass clinicId for multi-tenant email routing
+        ...(clinicId && { clinicId }),
       });
 
       // Send OTP via WhatsApp if phone number is available
-      if (user.phoneNumber) {
+      if (user.phone) {
         try {
           await this.whatsAppService.sendOTP(
-            user.phoneNumber,
+            user.phone,
             otp,
             10, // 10 minutes expiry
             2, // max retries
@@ -900,7 +901,7 @@ export class AuthService {
             'AuthService.requestOtp',
             {
               userId: user.id,
-              phoneNumber: user.phoneNumber,
+              phone: user.phone,
               error: whatsappError instanceof Error ? whatsappError.message : String(whatsappError),
             }
           );
@@ -911,16 +912,21 @@ export class AuthService {
       await this.eventService.emit('user.otp_requested', {
         userId: user.id,
         email: user.email,
-        ...(user.phoneNumber && { phoneNumber: user.phoneNumber }),
+        ...(user.phone && { phone: user.phone }),
         ...(clinicId && { clinicId }),
       });
 
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `OTP sent to: ${user.email}${user.phoneNumber ? ` and ${user.phoneNumber}` : ''}`,
+        `OTP sent to: ${user.email}${user.phone ? ` and ${user.phone}` : ''}`,
         'AuthService.requestOtp',
-        { userId: user.id, email: user.email, ...(user.phoneNumber && { phoneNumber: user.phoneNumber }), ...(clinicId && { clinicId }) }
+        {
+          userId: user.id,
+          email: user.email,
+          ...(user.phone && { phone: user.phone }),
+          ...(clinicId && { clinicId }),
+        }
       );
 
       return {

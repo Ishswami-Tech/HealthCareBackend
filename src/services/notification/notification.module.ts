@@ -5,7 +5,6 @@ import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database';
 import { CacheModule } from '@infrastructure/cache';
 import { EventsModule } from '@infrastructure/events';
-import { NotificationController } from './notification.controller';
 import { NotificationPreferenceController } from './notification-preference.controller';
 import { NotificationPreferenceService } from './notification-preference.service';
 import { CommunicationModule } from '@communication/communication.module';
@@ -48,7 +47,7 @@ import { ChatModule } from '@communication/channels/chat';
     ChatModule, // Chat backup service
     forwardRef(() => CommunicationModule), // Unified communication service
   ],
-  controllers: [NotificationController, NotificationPreferenceController],
+  controllers: [NotificationPreferenceController],
   providers: [NotificationPreferenceService],
   exports: [NotificationPreferenceService],
 })

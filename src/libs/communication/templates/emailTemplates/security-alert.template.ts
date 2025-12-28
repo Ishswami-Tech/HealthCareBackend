@@ -20,7 +20,7 @@ export function generateSecurityAlertTemplate(
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
       <h2 style="color: #d32f2f;">Security Alert</h2>
       <p>Hello ${context.name || 'there'},</p>
-      <p>We detected a security concern with your Healthcare App account.</p>
+      <p>We detected a security concern with your ${context['appName'] || 'Healthcare App'} account.</p>
       
       <div style="background-color: #ffebee; padding: 15px; border-radius: 4px; margin: 20px 0; border-left: 4px solid #d32f2f;">
         <p><strong>Alert Time:</strong> ${context.time}</p>
@@ -36,7 +36,7 @@ export function generateSecurityAlertTemplate(
       
       <p>If you have any questions or concerns, please contact our support team immediately.</p>
       
-      <p>Best regards,<br>The Healthcare App Security Team</p>
+      <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Security Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;"><p>This is an important security notification. Please do not ignore this message.</p></div>'}
     </div>
   `;

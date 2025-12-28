@@ -54,10 +54,10 @@ interface ZeptoMailRequest {
       name?: string;
     };
   }>;
-  reply_to?: {
+  reply_to?: Array<{
     address: string;
     name?: string;
-  };
+  }>;
   attachments?: Array<{
     filename: string;
     content: string; // Base64 encoded
@@ -124,8 +124,13 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
     }
 
     const credentials = config.credentials as Record<string, string>;
-    const sendMailToken =
+    let sendMailToken =
       credentials['sendMailToken'] || credentials['send_mail_token'] || credentials['apiKey'];
+
+    // If token includes "Zoho-enczapikey" prefix, remove it (adapter adds it automatically in Authorization header)
+    if (sendMailToken && sendMailToken.includes('Zoho-enczapikey')) {
+      sendMailToken = sendMailToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
+    }
 
     if (!sendMailToken) {
       throw new Error('ZeptoMail Send Mail Token is required');
@@ -334,9 +339,9 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
         }));
       }
 
-      // Add reply-to if provided
+      // Add reply-to if provided (ZeptoMail API expects array)
       if (options.replyTo) {
-        payload.reply_to = this.formatEmailAddress(options.replyTo);
+        payload.reply_to = [this.formatEmailAddress(options.replyTo)];
       }
 
       // Add attachments if provided

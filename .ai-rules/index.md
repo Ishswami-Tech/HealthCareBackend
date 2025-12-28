@@ -75,8 +75,10 @@ import { NotificationService } from '@services/notification';
 import { AppointmentService } from '@services/appointments';
 
 // 5. Internal imports - Communication
-import { WhatsAppService } from '@communication/messaging/whatsapp';
-import { EmailService } from '@communication/messaging/email';
+import { CommunicationService } from '@communication/communication.service';
+import { EmailService } from '@communication/channels/email';
+import { WhatsAppService } from '@communication/channels/whatsapp';
+import { PushNotificationService } from '@communication/channels/push';
 
 // 6. Internal imports - DTOs & Types
 import { CreateUserDto, UpdateUserDto } from '@dtos';
@@ -172,7 +174,11 @@ Checklist:
 - **Caching**: Redis 6.x with distributed partitioning (16 partitions for 1M+ users)
 - **Queue**: BullMQ with 19 specialized queues + Bull Board dashboard
 - **Real-time**: WebSocket (Socket.IO 4.x) with Redis adapter for horizontal scaling
-- **Communication**: Multi-channel (Email/AWS SES, SMS, WhatsApp Business API, Push/Firebase+SNS)
+- **Communication**: Multi-channel (Email/ZeptoMail primary, AWS SES/SMTP fallback, WhatsApp/Meta Business API, Push/Firebase FCM, Socket.IO)
+  - **API Endpoints**: All endpoints at `/api/v1/communication/*` (deprecated `/notifications/*` removed)
+  - **Multi-Tenant**: Clinic-specific provider routing via `clinicId`
+  - **Provider Fallback**: Automatic failover between providers
+  - **Health Monitoring**: Enhanced analytics, dashboard, and alerting
 - **Logging**: Custom `LoggingService` from `@infrastructure/logging` (HIPAA-compliant, structured JSON)
 - **Security**: JWT + Redis sessions, progressive lockout, device fingerprinting
 - **Monitoring**: Health checks, metrics, Redis Commander, Prisma Studio, custom logger dashboard
@@ -189,7 +195,11 @@ Checklist:
   - WebSocket JWT authentication
   - Redis-based rate limiting (sliding window algorithm)
 - **Audit Logging**: HIPAA-compliant with `LoggingService` + AuditLog model + Redis security events (30-day retention)
-- **Notification System**: Multi-channel delivery (email, SMS, WhatsApp, push) with fallback mechanisms
+- **Communication System**: Unified multi-channel delivery (email, WhatsApp, push, socket, SMS) with fallback mechanisms
+  - **Unified API**: Single `CommunicationService` for all channels
+  - **Event-Driven**: Automatic notifications via `NotificationEventListener`
+  - **Category-Based**: Automatic channel selection based on communication category
+  - **Endpoints**: `/api/v1/communication/*` (all deprecated `/notifications/*` endpoints removed)
 - **Queue System**: 19 specialized queues for appointments, notifications, billing, EHR, Ayurveda treatments
 - **Caching Strategy**: Multi-level with SWR (Stale-While-Revalidate) + Redis Sorted Sets for rate limiting
 - **Resilience**: Circuit breakers, retry logic, graceful degradation, fail-open on Redis errors
@@ -216,7 +226,7 @@ services/
 │   ├── controllers/
 │   └── dto/
 ├── health/         # Health monitoring & metrics
-├── notification/   # Multi-channel notification orchestration
+├── notification/   # Notification preferences (legacy NotificationController removed)
 └── users/          # User management with RBAC
     ├── controllers/
     └── core/

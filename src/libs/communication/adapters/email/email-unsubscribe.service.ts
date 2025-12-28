@@ -311,7 +311,10 @@ export class EmailUnsubscribeService {
    */
   generateUnsubscribeUrl(email: string, userId?: string): string {
     const token = this.generateUnsubscribeToken(email, userId);
-    const baseUrl = this.configService.getEnv('BASE_URL', 'http://localhost:8088');
+    const baseUrl =
+      this.configService.getEnv('BASE_URL') ||
+      this.configService.getEnv('API_URL') ||
+      'http://localhost:8088';
     return `${baseUrl}/api/v1/email/unsubscribe?token=${token}`;
   }
 }

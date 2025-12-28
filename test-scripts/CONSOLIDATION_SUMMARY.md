@@ -16,7 +16,7 @@ All old test files have been successfully consolidated into the new role-based t
 - ✅ `run-all.ps1` - Updated to use new appointment test structure
 
 ### 3. Updated Documentation
-- ✅ `TEST_APPOINTMENT_INSTRUCTIONS.md` - Completely rewritten for new structure
+- ✅ `TEST_APPOINTMENT_INSTRUCTIONS.md` → Moved to `docs/guides/TESTING_APPOINTMENT_ENDPOINTS.md` - Completely rewritten for new structure
 - ✅ `test-scripts/archive/README.md` - Migration guide created
 
 ## New Test Structure

@@ -133,7 +133,12 @@ export class EmailService implements OnModuleInit {
           secure: emailConfigData.secure || false,
           user: emailConfigData.user || '',
           password: emailConfigData.password || '',
-          from: emailConfigData.from || 'noreply@healthcare.com',
+          from:
+            emailConfigData.from ||
+            this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+            this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+            this.configService.getEnv('EMAIL_FROM') ||
+            'noreply@healthcare.com',
         } as EmailConfig;
       }
 
@@ -227,10 +232,41 @@ export class EmailService implements OnModuleInit {
 
   /**
    * Sends an email using the configured provider
+   * Supports multi-tenant routing when clinicId is provided
    * @param options - Email options including template and context
    * @returns Promise resolving to true if email was sent successfully
    */
   async sendEmail(options: EmailOptions): Promise<boolean> {
+    // If clinicId is provided, use multi-tenant system (sendSimpleEmail)
+    const providedClinicId = options.clinicId;
+    if (providedClinicId) {
+      try {
+        // Generate email body from template
+        const emailBody = this.getEmailTemplate(options.template, options.context);
+        const result = await this.sendSimpleEmail(
+          {
+            to: options.to,
+            subject: options.subject,
+            body: options.html || emailBody,
+            isHtml: true,
+            ...(options.text && !options.html && { body: options.text, isHtml: false }),
+          },
+          providedClinicId
+        );
+        return result.success;
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.EMAIL,
+          LogLevel.WARN,
+          `Failed to send email via multi-tenant system, falling back to legacy: ${error instanceof Error ? error.message : String(error)}`,
+          'EmailService',
+          { clinicId: providedClinicId }
+        );
+        // Fall through to legacy system
+      }
+    }
+
+    // Legacy system (when clinicId is not provided or multi-tenant failed)
     if (!this.isInitialized) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -320,9 +356,23 @@ export class EmailService implements OnModuleInit {
         try {
           const adapter = await this.providerFactory.getEmailProviderWithFallback(clinicId);
           if (adapter) {
+            // Get fromEmail and fromName from adapter's config (provider-specific)
             const clinicConfig = await this.communicationConfigService.getClinicConfig(clinicId);
-            const defaultFrom = clinicConfig?.email?.defaultFrom || 'noreply@healthcare.com';
-            const defaultFromName = clinicConfig?.email?.defaultFromName || 'Healthcare App';
+            const providerConfig = clinicConfig?.email?.primary;
+            const credentials = providerConfig?.credentials as Record<string, string> | undefined;
+            const defaultFrom =
+              credentials?.['fromEmail'] ||
+              credentials?.['from'] ||
+              this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+              this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+              this.configService.getEnv('EMAIL_FROM') ||
+              'noreply@healthcare.com';
+            const defaultFromName =
+              credentials?.['fromName'] ||
+              this.configService.getEnv('DEFAULT_FROM_NAME') ||
+              this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
+              this.configService.getEnv('APP_NAME') ||
+              'Healthcare App';
 
             // Send to all recipients
             // Use adapter's EmailOptions interface
@@ -535,11 +585,21 @@ export class EmailService implements OnModuleInit {
           secure: emailConfigData.secure || false,
           user: emailConfigData.user || '',
           password: emailConfigData.password || '',
-          from: emailConfigData.from || 'noreply@healthcare.com',
+          from:
+            emailConfigData.from ||
+            this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+            this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+            this.configService.getEnv('EMAIL_FROM') ||
+            'noreply@healthcare.com',
         } as EmailConfig;
       }
       const mailOptions = {
-        from: emailConfig?.from || 'noreply@healthcare.com',
+        from:
+          emailConfig?.from ||
+          this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+          this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+          this.configService.getEnv('EMAIL_FROM') ||
+          'noreply@healthcare.com',
         to: options.to,
         subject: options.subject,
         html: options.html || this.getEmailTemplate(options.template, options.context),
@@ -581,17 +641,40 @@ export class EmailService implements OnModuleInit {
         fromName?: string;
         category?: string;
       };
-      const fromEmail = extendedOptions.from || 'noreply@healthcare.com';
-      const fromName = extendedOptions.fromName || 'Healthcare App';
-      const category = extendedOptions.category || 'Notification';
-      await this.mailtrap.send({
+      const fromEmail =
+        extendedOptions.from ||
+        this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+        this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+        this.configService.getEnv('EMAIL_FROM') ||
+        'noreply@healthcare.com';
+      const fromName =
+        extendedOptions.fromName ||
+        this.configService.getEnv('DEFAULT_FROM_NAME') ||
+        this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
+        this.configService.getEnv('APP_NAME') ||
+        'Healthcare App';
+      const category =
+        extendedOptions.category || this.configService.getEnv('EMAIL_CATEGORY', 'Notification');
+      const mailOptions: {
+        from: { email: string; name: string };
+        to: { email: string }[];
+        subject: string;
+        text?: string;
+        html: string;
+        category?: string;
+      } = {
         from: { email: fromEmail, name: fromName },
         to: [{ email: options.to }],
         subject: options.subject,
-        text: options.text,
         html: options.html || this.getEmailTemplate(options.template, options.context),
-        category,
-      });
+      };
+      if (options.text) {
+        mailOptions.text = options.text;
+      }
+      if (category) {
+        mailOptions.category = category;
+      }
+      await this.mailtrap.send(mailOptions);
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
@@ -633,35 +716,54 @@ export class EmailService implements OnModuleInit {
    * @private
    */
   private getEmailTemplate(template: EmailTemplate, context: EmailContext): string {
+    // Add app name and support email to context if not present
+    const appName =
+      (context['appName'] as string | undefined) ||
+      this.configService.getEnv('APP_NAME') ||
+      'Healthcare App';
+    const supportEmail =
+      (context['supportEmail'] as string | undefined) ||
+      this.configService.getEnv('SUPPORT_EMAIL') ||
+      this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+      'support@healthcareapp.com';
+
+    const enrichedContext: EmailContext = {
+      ...context,
+      appName,
+      supportEmail,
+    };
+
     switch (template) {
       case EmailTemplate.VERIFICATION:
-        return generateVerificationTemplate(context as VerificationEmailContext);
+        return generateVerificationTemplate(enrichedContext as VerificationEmailContext);
       case EmailTemplate.PASSWORD_RESET:
-        return generatePasswordResetRequestTemplate(context as PasswordResetEmailContext);
+        return generatePasswordResetRequestTemplate(enrichedContext as PasswordResetEmailContext);
       case EmailTemplate.PASSWORD_RESET_CONFIRMATION: {
         // Use ConfigService (which uses dotenv) for environment variable access
-        const fallbackLoginUrl = this.configService.getEnv(
-          'APP_LOGIN_URL',
-          'https://app.healthcare/login'
-        );
-        const loginUrl = context['loginUrl'] as string | undefined;
+        const fallbackLoginUrl =
+          this.configService.getEnv('APP_LOGIN_URL') ||
+          (this.configService.getEnv('FRONTEND_URL') || '') + '/login' ||
+          'https://app.healthcare/login';
+        const loginUrl = (enrichedContext['loginUrl'] as string | undefined) || fallbackLoginUrl;
         return generatePasswordResetConfirmationTemplate(
-          context as PasswordResetEmailContext,
-          loginUrl || fallbackLoginUrl
+          enrichedContext as PasswordResetEmailContext,
+          loginUrl
         );
       }
       case EmailTemplate.OTP_LOGIN:
-        return generateOTPLoginTemplate(context as OTPEmailContext);
+        return generateOTPLoginTemplate(enrichedContext as OTPEmailContext);
       case EmailTemplate.MAGIC_LINK:
-        return generateMagicLinkTemplate(context as MagicLinkEmailContext);
+        return generateMagicLinkTemplate(enrichedContext as MagicLinkEmailContext);
       case EmailTemplate.WELCOME:
-        return generateWelcomeTemplate(context as WelcomeEmailContext);
+        return generateWelcomeTemplate(enrichedContext as WelcomeEmailContext);
       case EmailTemplate.LOGIN_NOTIFICATION:
-        return generateLoginNotificationTemplate(context as LoginNotificationEmailContext);
+        return generateLoginNotificationTemplate(enrichedContext as LoginNotificationEmailContext);
       case EmailTemplate.SECURITY_ALERT:
-        return generateSecurityAlertTemplate(context as SecurityAlertEmailContext);
+        return generateSecurityAlertTemplate(enrichedContext as SecurityAlertEmailContext);
       case EmailTemplate.SUSPICIOUS_ACTIVITY:
-        return generateSuspiciousActivityTemplate(context as SuspiciousActivityEmailContext);
+        return generateSuspiciousActivityTemplate(
+          enrichedContext as SuspiciousActivityEmailContext
+        );
       default:
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,

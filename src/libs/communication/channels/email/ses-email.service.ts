@@ -62,10 +62,17 @@ export class SESEmailService implements OnModuleInit {
       const awsAccessKeyId = this.configService.getEnv('AWS_ACCESS_KEY_ID');
       const awsSecretAccessKey = this.configService.getEnv('AWS_SECRET_ACCESS_KEY');
       this.fromEmail =
-        this.configService.getEnv('AWS_SES_FROM_EMAIL', 'noreply@healthcare.com') ||
+        this.configService.getEnv('AWS_SES_FROM_EMAIL') ||
+        this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+        this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+        this.configService.getEnv('EMAIL_FROM') ||
         'noreply@healthcare.com';
       this.fromName =
-        this.configService.getEnv('AWS_SES_FROM_NAME', 'Healthcare App') || 'Healthcare App';
+        this.configService.getEnv('AWS_SES_FROM_NAME') ||
+        this.configService.getEnv('DEFAULT_FROM_NAME') ||
+        this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
+        this.configService.getEnv('APP_NAME') ||
+        'Healthcare App';
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
         void this.loggingService.log(

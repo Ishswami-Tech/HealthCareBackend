@@ -21,6 +21,7 @@ import { CommunicationConfigModule } from './config/communication-config.module'
 import { CommunicationAdaptersModule } from './adapters/adapters.module';
 import { EmailServicesModule } from './adapters/email/email-services.module';
 import { ClinicTemplateService } from './services/clinic-template.service';
+import { CommunicationAlertingService } from './services/communication-alerting.service';
 
 /**
  * Unified Communication Module
@@ -71,7 +72,12 @@ import { ClinicTemplateService } from './services/clinic-template.service';
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
   controllers: [CommunicationController],
-  providers: [CommunicationService, CommunicationHealthMonitorService, ClinicTemplateService],
+  providers: [
+    CommunicationService,
+    CommunicationHealthMonitorService,
+    ClinicTemplateService,
+    CommunicationAlertingService,
+  ],
   exports: [
     EmailModule,
     WhatsAppModule,
@@ -85,6 +91,7 @@ import { ClinicTemplateService } from './services/clinic-template.service';
     // Export health monitor for HealthService
     CommunicationHealthMonitorService,
     ClinicTemplateService, // Clinic template data service
+    CommunicationAlertingService, // Alerting service
   ],
 })
 export class CommunicationModule {}

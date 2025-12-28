@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { ClinicLocationService } from './services/clinic-location.service';
 import { ClinicUserService } from './services/clinic-user.service';
@@ -10,6 +10,7 @@ import { LoggingModule } from '@infrastructure/logging/logging.module';
 import { GuardsModule } from '@core/guards';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { EventsModule } from '@infrastructure/events/events.module';
+import { CommunicationConfigModule } from '@communication/config/communication-config.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { EventsModule } from '@infrastructure/events/events.module';
     CacheModule,
     EventsModule,
     ClinicCommunicationModule,
+    forwardRef(() => CommunicationConfigModule), // For CommunicationConfigService injection
   ],
   providers: [ClinicService, ClinicLocationService, ClinicUserService],
   controllers: [ClinicController, ClinicLocationController],

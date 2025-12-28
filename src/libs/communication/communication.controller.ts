@@ -26,6 +26,9 @@ import { CommunicationService } from './communication.service';
 import { PushNotificationService } from './channels/push/push.service';
 import { DeviceTokenService } from './channels/push/device-token.service';
 import { ChatBackupService } from './channels/chat/chat-backup.service';
+import { CommunicationAlertingService } from './services/communication-alerting.service';
+import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { CommunicationCategory, CommunicationPriority, CommunicationChannel } from '@core/types';
 import {
   SendPushNotificationDto,
@@ -71,7 +74,10 @@ export class CommunicationController {
     private readonly communicationService: CommunicationService,
     private readonly pushService: PushNotificationService,
     private readonly deviceTokenService: DeviceTokenService,
-    private readonly chatBackupService: ChatBackupService
+    private readonly chatBackupService: ChatBackupService,
+    private readonly alertingService: CommunicationAlertingService,
+    private readonly healthMonitor: CommunicationHealthMonitorService,
+    private readonly databaseService: DatabaseService
   ) {}
 
   /**
@@ -166,8 +172,8 @@ export class CommunicationController {
     @Body() appointmentDto: AppointmentReminderDto
   ): Promise<NotificationResponseDto> {
     const channels: CommunicationChannel[] = appointmentDto.deviceToken
-      ? ['push', 'email']
-      : ['email'];
+      ? ['push', 'email', 'whatsapp', 'socket']
+      : ['email', 'whatsapp'];
 
     const result = await this.communicationService.send({
       category: CommunicationCategory.APPOINTMENT,
@@ -216,8 +222,8 @@ export class CommunicationController {
     @Body() prescriptionDto: PrescriptionNotificationDto
   ): Promise<NotificationResponseDto> {
     const channels: CommunicationChannel[] = prescriptionDto.deviceToken
-      ? ['push', 'email']
-      : ['email'];
+      ? ['push', 'email', 'whatsapp', 'socket']
+      : ['email', 'whatsapp'];
 
     const result = await this.communicationService.send({
       category: CommunicationCategory.PRESCRIPTION,
@@ -638,7 +644,7 @@ export class CommunicationController {
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('notifications', 'read')
   @Cache({
-    keyTemplate: 'communication:analytics',
+    keyTemplate: 'communication:analytics:{clinicId}:{period}',
     ttl: 300, // 5 minutes
     tags: ['communication', 'analytics'],
     enableSWR: true,
@@ -648,15 +654,31 @@ export class CommunicationController {
     description:
       'Retrieve detailed communication analytics including bounce rates, complaint rates, and per-provider metrics. Cached for performance.',
   })
+  @ApiQuery({
+    name: 'clinicId',
+    required: false,
+    description: 'Filter by clinic ID',
+  })
+  @ApiQuery({
+    name: 'provider',
+    required: false,
+    description: 'Filter by provider',
+  })
+  @ApiQuery({
+    name: 'period',
+    required: false,
+    description: 'Time period (1h, 24h, 7d, 30d)',
+    enum: ['1h', '24h', '7d', '30d'],
+  })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Analytics retrieved successfully',
   })
-  getAnalytics(
-    @Query('clinicId') _clinicId?: string,
-    @Query('provider') _provider?: string,
-    @Query('period') _period: '1h' | '24h' | '7d' | '30d' = '24h'
-  ): {
+  async getAnalytics(
+    @Query('clinicId') clinicId?: string,
+    @Query('provider') provider?: string,
+    @Query('period') period: '1h' | '24h' | '7d' | '30d' = '24h'
+  ): Promise<{
     metrics: {
       email: {
         sent: number;
@@ -666,57 +688,185 @@ export class CommunicationController {
         bounceRate: number;
         complaintRate: number;
         deliveryRate: number;
-        providers: Record<string, unknown>;
+        providers: Record<string, { sent: number; delivered: number; failed: number }>;
       };
       whatsapp: {
         sent: number;
         delivered: number;
         failed: number;
         deliveryRate: number;
-        providers: Record<string, unknown>;
+        providers: Record<string, { sent: number; delivered: number; failed: number }>;
+      };
+      push: {
+        sent: number;
+        delivered: number;
+        failed: number;
+        deliveryRate: number;
+      };
+      socket: {
+        sent: number;
+        delivered: number;
+        failed: number;
+        deliveryRate: number;
+      };
+      sms: {
+        sent: number;
+        delivered: number;
+        failed: number;
+        deliveryRate: number;
       };
     };
+    period: string;
     timestamp: string;
-  } {
-    // Get basic metrics from communication service
-    const metrics = this.communicationService.getMetrics();
+  }> {
+    // Calculate time window
+    const periodMs: Record<string, number> = {
+      '1h': 60 * 60 * 1000,
+      '24h': 24 * 60 * 60 * 1000,
+      '7d': 7 * 24 * 60 * 60 * 1000,
+      '30d': 30 * 24 * 60 * 60 * 1000,
+    };
+    const periodDuration = periodMs[period];
+    if (!periodDuration) {
+      throw new Error(`Invalid period: ${period}`);
+    }
+    const since = new Date(Date.now() - periodDuration);
 
-    // For now, return basic metrics
-    // TODO: Inject EmailRateMonitoringService via constructor when module structure is finalized
-    // The rate monitoring service will provide detailed bounce/complaint rates per provider
+    // Get detailed metrics from database
+    const deliveryLogs = await this.databaseService.executeHealthcareRead(async client => {
+      const notificationClient = client as unknown as {
+        notificationDeliveryLog: {
+          findMany: (args: {
+            where: {
+              createdAt: { gte: Date };
+              clinicId?: string;
+            };
+            select: {
+              channel: true;
+              status: true;
+              providerResponse: true;
+            };
+          }) => Promise<
+            Array<{
+              channel: string;
+              status: string;
+              providerResponse: unknown;
+            }>
+          >;
+        };
+      };
+      return await notificationClient.notificationDeliveryLog.findMany({
+        where: {
+          createdAt: { gte: since },
+          ...(clinicId && { clinicId }),
+        },
+        select: {
+          channel: true,
+          status: true,
+          providerResponse: true,
+        },
+      });
+    });
+
+    // Calculate metrics per channel
+    const calculateChannelMetrics = (channel: string) => {
+      const channelLogs = deliveryLogs.filter(
+        (log: { channel: string }) => log.channel === channel
+      );
+      const sent = channelLogs.length;
+      const delivered = channelLogs.filter(
+        (log: { status: string }) => log.status === 'DELIVERED'
+      ).length;
+      const failed = channelLogs.filter(
+        (log: { status: string }) => log.status === 'FAILED' || log.status === 'BOUNCED'
+      ).length;
+      const bounced = channelLogs.filter(
+        (log: { status: string }) => log.status === 'BOUNCED'
+      ).length;
+      const complained = channelLogs.filter(
+        (log: { status: string }) => log.status === 'COMPLAINED'
+      ).length;
+
+      return {
+        sent,
+        delivered,
+        failed,
+        bounced,
+        complained,
+        deliveryRate: sent > 0 ? (delivered / sent) * 100 : 0,
+        bounceRate: sent > 0 ? (bounced / sent) * 100 : 0,
+        complaintRate: sent > 0 ? (complained / sent) * 100 : 0,
+      };
+    };
+
+    // Calculate provider-specific metrics
+    const calculateProviderMetrics = (channel: string) => {
+      const channelLogs = deliveryLogs.filter(
+        (log: { channel: string }) => log.channel === channel
+      );
+      const providers: Record<string, { sent: number; delivered: number; failed: number }> = {};
+
+      for (const log of channelLogs) {
+        const providerName = (log.providerResponse as { provider?: string })?.provider || 'unknown';
+        if (!providers[providerName]) {
+          providers[providerName] = { sent: 0, delivered: 0, failed: 0 };
+        }
+        providers[providerName].sent++;
+        if (log.status === 'DELIVERED') {
+          providers[providerName].delivered++;
+        } else if (log.status === 'FAILED' || log.status === 'BOUNCED') {
+          providers[providerName].failed++;
+        }
+      }
+
+      return providers;
+    };
+
+    const emailMetrics = calculateChannelMetrics('email');
+    const whatsappMetrics = calculateChannelMetrics('whatsapp');
+    const pushMetrics = calculateChannelMetrics('push');
+    const socketMetrics = calculateChannelMetrics('socket');
+    const smsMetrics = calculateChannelMetrics('sms');
+
     return {
       metrics: {
         email: {
-          sent: metrics.channelMetrics.email.sent,
-          delivered: 0, // TODO: Calculate from delivery logs via EmailRateMonitoringService
-          bounced: 0, // TODO: Calculate from suppression list via EmailRateMonitoringService
-          complained: 0, // TODO: Calculate from suppression list via EmailRateMonitoringService
-          bounceRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
-          complaintRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
-          deliveryRate: 0, // TODO: Get from EmailRateMonitoringService.getRateMetrics()
-          providers: {
-            zeptomail: { sent: 0 },
-            aws_ses: { sent: 0 },
-            smtp: { sent: 0 },
-          },
+          ...emailMetrics,
+          providers: calculateProviderMetrics('email'),
         },
         whatsapp: {
-          sent: metrics.channelMetrics.whatsapp.sent,
-          delivered: 0, // TODO: Calculate from delivery logs
-          failed: metrics.channelMetrics.whatsapp.failed,
-          deliveryRate: 0, // TODO: Calculate from delivery logs
-          providers: {
-            meta: { sent: 0 },
-            twilio: { sent: 0 },
-          },
+          sent: whatsappMetrics.sent,
+          delivered: whatsappMetrics.delivered,
+          failed: whatsappMetrics.failed,
+          deliveryRate: whatsappMetrics.deliveryRate,
+          providers: calculateProviderMetrics('whatsapp'),
+        },
+        push: {
+          sent: pushMetrics.sent,
+          delivered: pushMetrics.delivered,
+          failed: pushMetrics.failed,
+          deliveryRate: pushMetrics.deliveryRate,
+        },
+        socket: {
+          sent: socketMetrics.sent,
+          delivered: socketMetrics.delivered,
+          failed: socketMetrics.failed,
+          deliveryRate: socketMetrics.deliveryRate,
+        },
+        sms: {
+          sent: smsMetrics.sent,
+          delivered: smsMetrics.delivered,
+          failed: smsMetrics.failed,
+          deliveryRate: smsMetrics.deliveryRate,
         },
       },
+      period,
       timestamp: new Date().toISOString(),
     };
   }
 
   @Get('health')
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @Cache({
     keyTemplate: 'communication:health',
     ttl: 60, // 1 minute (health checks should be recent)
@@ -731,22 +881,153 @@ export class CommunicationController {
     status: HttpStatus.OK,
     description: 'Health status retrieved successfully',
   })
-  getHealthStatus(): NotificationHealthStatusResponse {
+  async getHealthStatus(): Promise<NotificationHealthStatusResponse> {
     const metrics = this.communicationService.getMetrics();
+    const healthStatus = await this.healthMonitor.getHealthStatus();
     const services: NotificationServiceHealthStatus = {
-      firebase: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
-      zeptomail:
-        metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0,
-      awsSes: metrics.channelMetrics.email.successful > 0 || metrics.channelMetrics.email.sent > 0, // Legacy/fallback
-      awsSns: metrics.channelMetrics.push.successful > 0 || metrics.channelMetrics.push.sent > 0,
+      firebase: healthStatus.push?.connected || metrics.channelMetrics.push.successful > 0,
+      zeptomail: healthStatus.email?.connected || metrics.channelMetrics.email.successful > 0,
+      awsSes: metrics.channelMetrics.email.successful > 0, // Legacy/fallback
+      awsSns: metrics.channelMetrics.push.successful > 0,
       firebaseDatabase:
-        metrics.channelMetrics.socket.successful > 0 || metrics.channelMetrics.socket.sent > 0,
+        healthStatus.socket?.connected || metrics.channelMetrics.socket.successful > 0,
     };
-    const healthy = Object.values(services).some(status => status);
+    const healthy = healthStatus.healthy && Object.values(services).some(status => status);
 
     return {
       healthy,
       services,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('dashboard')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
+  @Cache({
+    keyTemplate: 'communication:dashboard:{clinicId}',
+    ttl: 60, // 1 minute
+    tags: ['communication', 'dashboard'],
+    enableSWR: true,
+  })
+  @ApiOperation({
+    summary: 'Get communication health dashboard',
+    description:
+      'Get comprehensive dashboard with health status, metrics, alerts, and recent activity. Cached for performance.',
+  })
+  @ApiQuery({
+    name: 'clinicId',
+    required: false,
+    description: 'Filter by clinic ID',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Dashboard data retrieved successfully',
+  })
+  async getDashboard(@Query('clinicId') clinicId?: string): Promise<{
+    health: NotificationHealthStatusResponse;
+    metrics: ReturnType<CommunicationService['getMetrics']>;
+    alerts: Awaited<ReturnType<CommunicationAlertingService['getActiveAlerts']>>;
+    recentActivity: {
+      totalRequests: number;
+      successfulRequests: number;
+      failedRequests: number;
+      successRate: number;
+    };
+    timestamp: string;
+  }> {
+    const health = await this.getHealthStatus();
+    const metrics = this.communicationService.getMetrics();
+    const alerts = await this.alertingService.getActiveAlerts();
+
+    // Get recent activity (last 1 hour)
+    const since = new Date(Date.now() - 60 * 60 * 1000);
+    const recentLogs = await this.databaseService.executeHealthcareRead(async client => {
+      const notificationClient = client as unknown as {
+        notificationDeliveryLog: {
+          findMany: (args: {
+            where: {
+              createdAt: { gte: Date };
+              clinicId?: string;
+            };
+            select: {
+              status: true;
+            };
+          }) => Promise<Array<{ status: string }>>;
+        };
+      };
+      return await notificationClient.notificationDeliveryLog.findMany({
+        where: {
+          createdAt: { gte: since },
+          ...(clinicId && { clinicId }),
+        },
+        select: {
+          status: true,
+        },
+      });
+    });
+
+    const totalRequests = recentLogs.length;
+    const successfulRequests = recentLogs.filter(
+      (log: { status: string }) => log.status === 'DELIVERED'
+    ).length;
+    const failedRequests = recentLogs.filter(
+      (log: { status: string }) => log.status === 'FAILED' || log.status === 'BOUNCED'
+    ).length;
+    const successRate = totalRequests > 0 ? (successfulRequests / totalRequests) * 100 : 100;
+
+    return {
+      health,
+      metrics,
+      alerts,
+      recentActivity: {
+        totalRequests,
+        successfulRequests,
+        failedRequests,
+        successRate,
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('alerts')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
+  @Cache({
+    keyTemplate: 'communication:alerts',
+    ttl: 30, // 30 seconds (alerts change frequently)
+    tags: ['communication', 'alerts'],
+    enableSWR: true,
+  })
+  @ApiOperation({
+    summary: 'Get active communication alerts',
+    description:
+      'Get all active alerts for delivery failures and system issues. Cached for 30 seconds.',
+  })
+  @ApiQuery({
+    name: 'channel',
+    required: false,
+    description: 'Filter by channel',
+    enum: ['email', 'whatsapp', 'push', 'socket', 'sms'],
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Alerts retrieved successfully',
+  })
+  async getAlerts(
+    @Query('channel') channel?: 'email' | 'whatsapp' | 'push' | 'socket' | 'sms'
+  ): Promise<{
+    alerts: Awaited<ReturnType<CommunicationAlertingService['getActiveAlerts']>>;
+    alertConfig: ReturnType<CommunicationAlertingService['getAlertConfig']>;
+    timestamp: string;
+  }> {
+    const allAlerts = await this.alertingService.getActiveAlerts();
+    const alerts = channel ? allAlerts.filter(alert => alert.channel === channel) : allAlerts;
+    const alertConfig = this.alertingService.getAlertConfig();
+
+    return {
+      alerts,
+      alertConfig,
       timestamp: new Date().toISOString(),
     };
   }

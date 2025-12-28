@@ -331,6 +331,102 @@ export class CreateClinicDto {
   @IsOptional()
   @IsObject()
   settings?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Clinic description',
+    example: 'A comprehensive healthcare facility providing quality medical services',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({
+    description: 'Communication configuration (Email, WhatsApp, SMS credentials)',
+    example: {
+      email: {
+        primary: {
+          provider: 'zeptomail',
+          enabled: true,
+          credentials: {
+            sendMailToken: 'token_here',
+            fromEmail: 'noreply@clinic.com',
+            fromName: 'Clinic Name',
+          },
+        },
+      },
+      whatsapp: {
+        primary: {
+          provider: 'meta_business',
+          enabled: true,
+          credentials: {
+            apiKey: 'whatsapp_key',
+            phoneNumberId: 'phone_id',
+          },
+        },
+      },
+      sms: {
+        primary: {
+          provider: 'twilio',
+          enabled: true,
+          credentials: {
+            apiKey: 'sms_key',
+            apiSecret: 'sms_secret',
+            fromNumber: '+1234567890',
+          },
+        },
+      },
+    },
+  })
+  @IsOptional()
+  @IsObject()
+  communicationConfig?: {
+    email?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultFrom?: string;
+      defaultFromName?: string;
+    };
+    whatsapp?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultNumber?: string;
+    };
+    sms?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultNumber?: string;
+    };
+  };
 }
 
 /**
@@ -462,6 +558,122 @@ export class UpdateClinicDto {
   @IsOptional()
   @IsEnum(ClinicStatus, { message: 'Status must be a valid clinic status' })
   status?: ClinicStatus;
+
+  @ApiPropertyOptional({
+    description: 'Clinic description',
+    example: 'A comprehensive healthcare facility providing quality medical services',
+  })
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clinic logo URL',
+    example: 'https://clinic.com/logo.png',
+  })
+  @IsOptional()
+  @IsString()
+  @IsUrl()
+  logo?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clinic timezone',
+    example: 'Asia/Kolkata',
+  })
+  @IsOptional()
+  @IsString()
+  timezone?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clinic currency',
+    example: 'INR',
+  })
+  @IsOptional()
+  @IsString()
+  currency?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clinic language',
+    example: 'en',
+  })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clinic settings as JSON object',
+    example: { theme: 'dark', notifications: true },
+  })
+  @IsOptional()
+  @IsObject()
+  settings?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Communication configuration (Email, WhatsApp, SMS credentials)',
+    example: {
+      email: {
+        primary: {
+          provider: 'zeptomail',
+          enabled: true,
+          credentials: {
+            sendMailToken: 'token_here',
+            fromEmail: 'noreply@clinic.com',
+            fromName: 'Clinic Name',
+          },
+        },
+      },
+    },
+  })
+  @IsOptional()
+  @IsObject()
+  communicationConfig?: {
+    email?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultFrom?: string;
+      defaultFromName?: string;
+    };
+    whatsapp?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultNumber?: string;
+    };
+    sms?: {
+      primary?: {
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      };
+      fallback?: Array<{
+        provider?: string;
+        enabled?: boolean;
+        credentials?: Record<string, string>;
+        priority?: number;
+      }>;
+      defaultNumber?: string;
+    };
+  };
 }
 
 /**

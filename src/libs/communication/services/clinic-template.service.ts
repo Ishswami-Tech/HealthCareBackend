@@ -14,7 +14,6 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
-import type { ClinicCommunicationConfig } from '@communication/config';
 
 /**
  * Clinic template data structure
@@ -91,20 +90,26 @@ export class ClinicTemplateService {
 
       // Fetch WhatsApp template IDs from communication config
       const commConfig = await this.communicationConfigService.getClinicConfig(clinicId);
-      const whatsappTemplates = commConfig?.whatsapp?.primary?.templates as
-        | Record<string, string>
+      // Access templates via type assertion since the ProviderConfig type may not include templates
+      const whatsappPrimary = commConfig?.whatsapp?.primary as
+        | (Record<string, unknown> & { templates?: Record<string, string> })
         | undefined;
+      const whatsappTemplates = whatsappPrimary?.templates;
 
       const templateData: ClinicTemplateData = {
         clinicId: clinic.id,
         clinicName: clinic.name || 'Healthcare Clinic',
-        clinicLogo: clinic.logo || undefined,
-        clinicPhone: clinic.phone || undefined,
+        ...(clinic.logo && { clinicLogo: clinic.logo }),
+        ...(clinic.phone && { clinicPhone: clinic.phone }),
         templateIds: {
-          otp: whatsappTemplates?.['otp'] || undefined,
-          appointment: whatsappTemplates?.['appointment'] || undefined,
-          reminder: whatsappTemplates?.['reminder'] || undefined,
-          prescription: whatsappTemplates?.['prescription'] || undefined,
+          ...(whatsappTemplates?.['otp'] && { otp: whatsappTemplates['otp'] }),
+          ...(whatsappTemplates?.['appointment'] && {
+            appointment: whatsappTemplates['appointment'],
+          }),
+          ...(whatsappTemplates?.['reminder'] && { reminder: whatsappTemplates['reminder'] }),
+          ...(whatsappTemplates?.['prescription'] && {
+            prescription: whatsappTemplates['prescription'],
+          }),
         },
       };
 
@@ -185,12 +190,8 @@ export class ClinicTemplateService {
    * Invalidate clinic template cache
    */
   async invalidateCache(clinicId: string): Promise<void> {
-    const cacheKeys = [
-      `clinic_template_data:${clinicId}`,
-      `clinic_name:${clinicId}`,
-    ];
+    const cacheKeys = [`clinic_template_data:${clinicId}`, `clinic_name:${clinicId}`];
 
     await Promise.all(cacheKeys.map(key => this.cacheService.del(key)));
   }
 }
-

@@ -134,6 +134,7 @@ class TestContext {
     const defaultHeaders = {
       'X-API-Version': '1',
       'User-Agent': 'healthcare-api-test',
+      'Accept': 'application/json',
       ...(authHeader && { Authorization: authHeader }),
       ...(this.clinicId && { 'X-Clinic-ID': this.clinicId }),
       ...(body ? { 'Content-Type': 'application/json' } : {}),

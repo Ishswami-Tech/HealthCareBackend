@@ -56,7 +56,7 @@ export class NotificationEventListener implements OnModuleInit {
       eventPattern:
         /^ehr\.(medical_history|lab_report|radiology_report|surgical_record|vital|allergy|medication|immunization)\.created$/,
       category: CommunicationCategory.EHR_RECORD,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
       template: 'ehr_record_created',
       recipients: payload => {
@@ -87,7 +87,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^ehr\.vital\.created$/,
       category: CommunicationCategory.EHR_RECORD,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.CRITICAL,
       template: 'vital_critical_alert',
       recipients: payload => {
@@ -124,7 +124,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^ehr\.allergy\.created$/,
       category: CommunicationCategory.EHR_RECORD,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.CRITICAL,
       template: 'allergy_critical_alert',
       recipients: payload => {
@@ -163,7 +163,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^ehr\.surgical_record\.created$/,
       category: CommunicationCategory.EHR_RECORD,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
       template: 'surgical_record_created',
       recipients: payload => {
@@ -193,7 +193,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^ehr\.immunization\.created$/,
       category: CommunicationCategory.EHR_RECORD,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.NORMAL,
       template: 'immunization_record_created',
       recipients: payload => {
@@ -217,7 +217,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^user\.created$/,
       category: CommunicationCategory.USER_ACTIVITY,
-      channels: ['email'],
+      channels: ['email', 'whatsapp'],
       priority: CommunicationPriority.NORMAL,
       template: 'user_welcome',
       recipients: payload => {
@@ -231,7 +231,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^user\.updated$/,
       category: CommunicationCategory.USER_ACTIVITY,
-      channels: ['socket', 'push', 'email'],
+      channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.NORMAL,
       template: 'user_updated',
       recipients: payload => {
@@ -261,13 +261,16 @@ export class NotificationEventListener implements OnModuleInit {
           deviceToken?: string;
           socketRoom?: string;
         }> = [];
-        if (payload.userId) {
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        if (patientId) {
           recipients.push({
-            userId: payload.userId,
-            socketRoom: `user:${payload.userId}`,
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
           }); // Patient
         }
-        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -291,13 +294,16 @@ export class NotificationEventListener implements OnModuleInit {
           deviceToken?: string;
           socketRoom?: string;
         }> = [];
-        if (payload.userId) {
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        if (patientId) {
           recipients.push({
-            userId: payload.userId,
-            socketRoom: `user:${payload.userId}`,
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
           });
         }
-        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -308,11 +314,89 @@ export class NotificationEventListener implements OnModuleInit {
       },
       shouldNotify: () => true,
     },
+    {
+      eventPattern: /^appointment\.(completed|updated)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'appointment_updated',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    {
+      eventPattern: /^appointment\.(checked_in|consultation_started)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'], // Real-time + Email + WhatsApp
+      priority: CommunicationPriority.NORMAL,
+      template: 'appointment_status',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Get appointmentId to find patient and doctor
+        const appointmentId = payload.metadata?.['appointmentId'] as string | undefined || (payload as Record<string, unknown>)?.['appointmentId'] as string | undefined;
+        if (appointmentId) {
+          recipients.push({
+            socketRoom: `appointment:${appointmentId}`,
+          });
+        }
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined);
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        // Add clinic room for staff monitoring
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
     // Queue Position Updates
     {
       eventPattern: /^appointment\.queue\.(position\.updated|updated|reordered)$/,
       category: CommunicationCategory.APPOINTMENT,
-      channels: ['socket', 'push'], // Real-time only, no email
+      channels: ['socket', 'push', 'email', 'whatsapp'], // Real-time + Email + WhatsApp for important updates
       priority: CommunicationPriority.NORMAL,
       template: 'queue_position_update',
       recipients: payload => {
@@ -356,11 +440,144 @@ export class NotificationEventListener implements OnModuleInit {
         return true;
       },
     },
+    // Follow-up Appointment Events
+    {
+      eventPattern: /^appointment\.followup\.(plan\.created|scheduled)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'followup_scheduled',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    {
+      eventPattern: /^appointment\.followup\.plan\.(updated|cancelled)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'followup_updated',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Recurring Appointment Series Events
+    {
+      eventPattern: /^appointment\.series\.(created|updated)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'recurring_appointment',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    // Video Consultation Events
+    {
+      eventPattern: /^video\.consultation\.(started|ended)$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'], // Real-time + Email + WhatsApp
+      priority: CommunicationPriority.HIGH,
+      template: 'video_consultation',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        // Get appointmentId from metadata
+        const appointmentId = payload.metadata?.['appointmentId'] as string | undefined || (payload as Record<string, unknown>)?.['appointmentId'] as string | undefined;
+        if (appointmentId) {
+          recipients.push({
+            socketRoom: `appointment:${appointmentId}`,
+          });
+        }
+        // Handle both enterprise event format (userId) and simple format (patientId)
+        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined);
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
+        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
     // Billing Events
     {
       eventPattern: /^billing\.(payment|invoice)\.(created|paid)$/,
       category: CommunicationCategory.BILLING,
-      channels: ['push', 'email'],
+      channels: ['push', 'email', 'whatsapp', 'socket'],
       priority: CommunicationPriority.NORMAL,
       template: 'billing_notification',
       recipients: payload => {
@@ -574,13 +791,27 @@ export class NotificationEventListener implements OnModuleInit {
       version: '1.0.0',
       metadata: plain,
     };
-    const userId = plain['userId'];
+    // Handle userId - can be userId, patientId, or in payload.userId
+    const userId = plain['userId'] || plain['patientId'] || (plain['payload'] as Record<string, unknown>)?.['userId'] as string | undefined;
     if (userId && typeof userId === 'string') {
       result.userId = userId;
     }
-    const clinicId = plain['clinicId'];
+    // Handle clinicId - can be clinicId or in payload.clinicId
+    const clinicId = plain['clinicId'] || (plain['payload'] as Record<string, unknown>)?.['clinicId'] as string | undefined;
     if (clinicId && typeof clinicId === 'string') {
       result.clinicId = clinicId;
+    }
+    // Ensure metadata contains doctorId and patientId for appointment events
+    if (!result.metadata) {
+      result.metadata = {};
+    }
+    const doctorId = plain['doctorId'] || (plain['payload'] as Record<string, unknown>)?.['doctorId'] as string | undefined;
+    if (doctorId && typeof doctorId === 'string') {
+      result.metadata['doctorId'] = doctorId;
+    }
+    if (userId && typeof userId === 'string') {
+      result.metadata['patientId'] = userId;
+      result.metadata['userId'] = userId;
     }
     return result;
   }

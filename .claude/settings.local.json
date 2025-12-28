@@ -40,7 +40,14 @@
       "Bash(pnpm prisma:db:push:*)",
       "Bash(pnpm seed:dev:*)",
       "Bash(cross-env DATABASE_URL=postgresql://postgres:postgres@localhost:5432/userdb NODE_ENV=development ts-node:*)",
-      "Bash(pnpm exec cross-env:*)"
+      "Bash(pnpm exec cross-env:*)",
+      "Bash(pnpm lint:check:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm format:*)",
+      "Bash(pnpm prisma:generate:*)",
+      "Bash(pnpm exec prettier:*)",
+      "Bash(pnpm exec eslint:*)",
+      "Bash(del /f .eslintcache)"
     ],
     "deny": [],
     "ask": []

@@ -1,80 +1,90 @@
-# 📚 Communication System Guides
+# 📖 Guides - Quick Reference
 
-> **Essential guides for the Healthcare Backend communication system**
-
-## 🎯 Quick Start
-
-**Primary Email Provider:** ✅ **ZeptoMail** (Configured)
-
-## 📖 Essential Guides
-
-### ⭐ Main Guide
-
-1. **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)**
-   - **START HERE** - Complete overview
-   - ZeptoMail setup (Primary)
-   - All providers and features
-   - Testing & troubleshooting
-   - Quick reference
-
-### 📧 Provider Setup
-
-2. **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)**
-   - AWS SES setup (Fallback provider)
-   - Multi-tenant configuration
-   - SNS topic setup
-   - HIPAA compliance
-
-3. **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)**
-   - Firebase Cloud Messaging setup
-   - Push notifications
-   - iOS/Android/Web configuration
-
-### 💾 Infrastructure
-
-4. **[Storage Configuration](./STORAGE_CONFIGURATION.md)**
-   - Contabo S3 setup
-   - Local storage fallback
-   - Kubernetes configuration
+**Purpose:** Essential guides for setting up and configuring the Healthcare Backend system
 
 ---
 
-## 🚀 Quick Setup
+## 🎯 Quick Navigation
 
-### 1. Configure ZeptoMail (Primary)
+### Communication & Notifications
+- **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** ⭐ **START HERE**
+  - Comprehensive overview of all communication channels
+  - Email, push notifications, WhatsApp, SMS
+  - Multi-tenant configuration
+  - Event-driven integration
 
-```bash
-PUT /api/v1/clinics/{clinicId}/communication/config
-{
-  "email": {
-    "primary": {
-      "provider": "zeptomail",
-      "credentials": {
-        "sendMailToken": "your_token",
-        "fromEmail": "noreply@clinic.com"
-      }
-    }
-  }
-}
-```
+- **[Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md)**
+  - Detailed email provider setup
+  - ZeptoMail, AWS SES, SMTP configuration
+  - Multi-tenant email configuration
+  - Troubleshooting
 
-### 2. Test Configuration
+- **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)**
+  - AWS SES specific setup
+  - Domain verification
+  - Production access
+  - Multi-tenant configuration
+  - Best practices
 
-```bash
-POST /api/v1/clinics/{clinicId}/communication/test-email
-```
+**Note:** AWS SES best practices and compliance audit is now in [AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md#best-practices--compliance-audit).
+
+- **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)**
+  - Push notification setup
+  - Firebase Cloud Messaging
+  - Web push configuration
+
+### System Configuration
+- **[Storage Configuration](./STORAGE_CONFIGURATION.md)**
+  - File storage setup
+  - S3 configuration
+  - Local storage
+
+- **[Superadmin Clinic Management](./SUPERADMIN_CLINIC_MANAGEMENT.md)**
+  - Clinic creation and management
+  - Communication configuration
+  - Credential management
+
+**Note:** Enhanced monitoring and migration information is now in [Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md#health-monitoring--metrics).
+
+### Testing
+- **[Testing Appointment Endpoints](./TESTING_APPOINTMENT_ENDPOINTS.md)**
+  - Role-based testing
+  - Automated test scripts
+  - API testing guide
 
 ---
 
-## ✅ System Status
+## 📋 Guide Selection
 
-- ✅ **ZeptoMail** - Primary Email (Configured)
-- ✅ **AWS SES** - Fallback Email
-- ✅ **Firebase FCM** - Primary Push
-- ✅ **AWS SNS** - Fallback Push
+### Setting up Communication System
+1. Start with **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** for overview
+2. Use **[Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md)** for detailed email setup
+3. Use **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** if using AWS SES as fallback
+4. Use **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)** for push notifications
+
+### Setting up Email Only
+1. Use **[Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md)** for all email providers
+2. Use **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** for AWS SES specific setup
+
+### Setting up Push Notifications
+1. Use **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)**
+2. See push notification section in **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)**
 
 ---
 
-**Last Updated:** January 2025  
-**Primary Email Provider:** ✅ **ZeptoMail**
+## ✅ All Guides (7 files)
+
+1. ✅ Communication System Complete Guide
+2. ✅ Email Integration Guide
+3. ✅ AWS SES Complete Guide (includes Best Practices & Compliance Audit)
+4. ✅ FCM Integration Guide
+5. ✅ Storage Configuration
+6. ✅ Superadmin Clinic Management
+7. ✅ Testing Appointment Endpoints
+
+---
+
+**Last Updated:** January 2025
+
+
 

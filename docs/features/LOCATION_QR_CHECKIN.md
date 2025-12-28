@@ -219,7 +219,7 @@ Response:
 }
 
 # 2. Download QR Image
-GET /api/appointments/check-in/locations/pune-loc-id/qr-code
+GET /api/appointments/locations/pune-loc-id/qr-code
 
 Response:
 {
@@ -436,7 +436,9 @@ model CheckIn {
 
 ### 2. Get Location QR Image
 
-**Endpoint**: `GET /api/appointments/check-in/locations/:locationId/qr-code`
+**Endpoint**: `GET /api/appointments/locations/:locationId/qr-code`
+
+**Note**: The endpoint path is `/appointments/locations/:locationId/qr-code` (not `/appointments/check-in/locations/:locationId/qr-code`) to maintain consistency with the controller routing structure.
 
 **Auth**: Required - Admin/Receptionist/Doctor
 
@@ -564,7 +566,7 @@ curl -X POST http://localhost:8088/api/appointments/check-in/locations \
 
 ```bash
 # Get QR image
-curl http://localhost:8088/api/appointments/check-in/locations/LOCATION_ID/qr-code \
+curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
   -H "Authorization: Bearer ADMIN_TOKEN" \
   > qr-code.json
 
@@ -732,7 +734,7 @@ curl -X POST http://localhost:8088/api/appointments/check-in/locations \
   -d '{"clinicId":"test","locationName":"Test Loc","coordinates":{"lat":18,"lng":73},"radius":50}'
 
 # 2. Get QR code
-curl http://localhost:8088/api/appointments/check-in/locations/LOCATION_ID/qr-code \
+curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
   -H "Authorization: Bearer ADMIN_TOKEN"
 
 # 3. Scan QR (as patient)
@@ -741,6 +743,10 @@ curl -X POST http://localhost:8088/api/appointments/check-in/scan-qr \
   -H "X-Clinic-ID: test" \
   -H "Content-Type: application/json" \
   -d '{"qrCode":"CHK-test-..."}'
+
+# 4. Get QR code image (as admin)
+curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
+  -H "Authorization: Bearer ADMIN_TOKEN"
 ```
 
 ---

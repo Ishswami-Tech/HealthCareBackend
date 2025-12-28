@@ -18,9 +18,9 @@ export function generateWelcomeTemplate(
 ): string {
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-      <h2 style="color: #4a4a4a;">Welcome to Healthcare App!</h2>
+      <h2 style="color: #4a4a4a;">Welcome to ${context['appName'] || 'Healthcare App'}!</h2>
       <p>Hello ${context.name || 'there'},</p>
-      <p>Thank you for joining Healthcare App. We're excited to have you on board as a ${context.role || 'user'}!</p>
+      <p>Thank you for joining ${context['appName'] || 'Healthcare App'}. We're excited to have you on board as a ${context.role || 'user'}!</p>
       
       ${
         context.isGoogleAccount
@@ -42,7 +42,7 @@ export function generateWelcomeTemplate(
       
       <p>If you have any questions or need assistance, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
       
-      <p>Best regards,<br>The Healthcare App Team</p>
+      <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : ''}
     </div>
   `;

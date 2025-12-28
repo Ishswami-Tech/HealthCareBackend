@@ -282,7 +282,7 @@ Tests report:
 
 ## 📚 Additional Documentation
 
-- **TEST_APPOINTMENT_INSTRUCTIONS.md** - Detailed appointment testing guide
+- **[Testing Appointment Endpoints](../docs/guides/TESTING_APPOINTMENT_ENDPOINTS.md)** - Detailed appointment testing guide
 - **CONSOLIDATION_SUMMARY.md** - History of test structure consolidation
 
 ## 🎉 Status

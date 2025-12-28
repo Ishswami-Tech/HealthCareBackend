@@ -322,6 +322,8 @@ export interface EmailOptions {
   readonly text?: string;
   /** Optional HTML content */
   readonly html?: string;
+  /** Optional clinic ID for multi-tenant email routing */
+  readonly clinicId?: string;
 }
 
 // ============================================================================

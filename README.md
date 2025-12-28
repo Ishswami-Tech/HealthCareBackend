@@ -132,11 +132,14 @@ make k8s-local-access   # Access at localhost:8088
 - [Subscription Appointments](docs/features/SUBSCRIPTION_APPOINTMENTS.md) - Subscription-based appointments system
 - [Invoice PDF & WhatsApp](docs/features/INVOICE_PDF_WHATSAPP_FEATURE.md) - Invoice generation & delivery
 - [Notification System](docs/features/NOTIFICATION_SYSTEM_IMPLEMENTATION.md) - Multi-channel notifications
+- [Location QR Check-In](docs/features/LOCATION_QR_CHECKIN.md) - Static location-based QR code check-in system
 
 ### Implementation Guides
 - [Notification Setup Guide](docs/guides/NOTIFICATION_IMPLEMENTATION_GUIDE.md) - Step-by-step setup
 - [Notification Strategy](docs/guides/NOTIFICATION_STRATEGY.md) - Architecture & cost planning
 - [AI Implementation Prompts](docs/guides/AI_IMPLEMENTATION_PROMPT.md) - AI-assisted development
+- [Testing Appointment Endpoints](docs/guides/TESTING_APPOINTMENT_ENDPOINTS.md) - Role-based testing guide
+- [AWS SES Best Practices Audit](docs/guides/AWS_SES_BEST_PRACTICES_AUDIT.md) - SES compliance audit
 
 ### Service Documentation
 - [Error Handling System](src/libs/core/errors/README.md) - Healthcare error system

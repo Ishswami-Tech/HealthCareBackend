@@ -122,6 +122,7 @@ export class CommunicationConfigService implements OnModuleInit {
 
   /**
    * Get clinic communication configuration
+   * Priority: Database config > Clinic-specific env vars > Global env vars
    */
   async getClinicConfig(clinicId: string): Promise<ClinicCommunicationConfig | null> {
     const cacheKey = `communication:config:${clinicId}`;
@@ -138,8 +139,8 @@ export class CommunicationConfigService implements OnModuleInit {
       // Fetch from database
       const config = await this.fetchFromDatabase(clinicId);
       if (!config) {
-        // Return default config if none exists
-        return this.getDefaultConfig(clinicId);
+        // Return default config with clinic-specific env vars if none exists
+        return await this.getDefaultConfig(clinicId);
       }
 
       // Decrypt credentials
@@ -162,7 +163,7 @@ export class CommunicationConfigService implements OnModuleInit {
       );
 
       // Return default config on error
-      return this.getDefaultConfig(clinicId);
+      return await this.getDefaultConfig(clinicId);
     }
   }
 
@@ -207,32 +208,239 @@ export class CommunicationConfigService implements OnModuleInit {
   }
 
   /**
-   * Get default configuration (fallback)
+   * Get clinic information (name, app_name, subdomain) for env var lookup
    */
-  private getDefaultConfig(clinicId: string): ClinicCommunicationConfig {
+  private async getClinicInfo(clinicId: string): Promise<{
+    name: string;
+    appName: string;
+    subdomain: string | null;
+  } | null> {
+    try {
+      const clinic = await this.databaseService.executeHealthcareRead(async client => {
+        return await client.clinic.findUnique({
+          where: { id: clinicId },
+          select: {
+            name: true,
+            app_name: true,
+            subdomain: true,
+          },
+        });
+      });
+
+      if (!clinic) {
+        return null;
+      }
+
+      return {
+        name: clinic.name,
+        appName: clinic.app_name,
+        subdomain: clinic.subdomain,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to fetch clinic info for env var lookup: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService.getClinicInfo',
+        { clinicId }
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Sanitize clinic identifier for environment variable key
+   * Converts to uppercase and replaces spaces/special chars with underscores
+   */
+  private sanitizeForEnvVar(identifier: string): string {
+    return identifier
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+  }
+
+  /**
+   * Get environment variable with clinic-specific fallback
+   * Priority: Clinic-specific (by name) > Clinic-specific (by app_name) > Clinic-specific (by subdomain) > Global
+   */
+  private getEnvVarWithClinicFallback(
+    baseKey: string,
+    clinicInfo: { name: string; appName: string; subdomain: string | null } | null
+  ): string {
+    // Try clinic-specific env vars first
+    if (clinicInfo) {
+      // Try by sanitized clinic name
+      const nameKey = `CLINIC_${this.sanitizeForEnvVar(clinicInfo.name)}_${baseKey}`;
+      const nameValue = process.env[nameKey];
+      if (nameValue) {
+        return nameValue;
+      }
+
+      // Try by app_name
+      const appNameKey = `CLINIC_${this.sanitizeForEnvVar(clinicInfo.appName)}_${baseKey}`;
+      const appNameValue = process.env[appNameKey];
+      if (appNameValue) {
+        return appNameValue;
+      }
+
+      // Try by subdomain if available
+      if (clinicInfo.subdomain) {
+        const subdomainKey = `CLINIC_${this.sanitizeForEnvVar(clinicInfo.subdomain)}_${baseKey}`;
+        const subdomainValue = process.env[subdomainKey];
+        if (subdomainValue) {
+          return subdomainValue;
+        }
+      }
+    }
+
+    // Fallback to global env var
+    return process.env[baseKey] || '';
+  }
+
+  /**
+   * Get default configuration (fallback)
+   * Loads from clinic-specific environment variables first, then global env vars
+   * Supports patterns like:
+   * - CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN
+   * - CLINIC_AADESH_AYURVEDALAY_ZEPTOMAIL_SEND_MAIL_TOKEN (by app_name)
+   * - CLINIC_AADESH_ZEPTOMAIL_SEND_MAIL_TOKEN (by subdomain)
+   * - ZEPTOMAIL_SEND_MAIL_TOKEN (global fallback)
+   */
+  private async getDefaultConfig(clinicId: string): Promise<ClinicCommunicationConfig> {
+    // Get clinic info for clinic-specific env var lookup
+    const clinicInfo = await this.getClinicInfo(clinicId);
+
+    // Load ZeptoMail credentials with clinic-specific fallback
+    const zeptoMailToken = this.getEnvVarWithClinicFallback(
+      'ZEPTOMAIL_SEND_MAIL_TOKEN',
+      clinicInfo
+    );
+    const zeptoMailFromEmail = this.getEnvVarWithClinicFallback('ZEPTOMAIL_FROM_EMAIL', clinicInfo);
+    const zeptoMailFromName = this.getEnvVarWithClinicFallback('ZEPTOMAIL_FROM_NAME', clinicInfo);
+    const zeptoMailBounceAddress = this.getEnvVarWithClinicFallback(
+      'ZEPTOMAIL_BOUNCE_ADDRESS',
+      clinicInfo
+    );
+
+    // Load WhatsApp credentials with clinic-specific fallback
+    const whatsappApiKey = this.getEnvVarWithClinicFallback('WHATSAPP_API_KEY', clinicInfo);
+    const whatsappPhoneNumberId = this.getEnvVarWithClinicFallback(
+      'WHATSAPP_PHONE_NUMBER_ID',
+      clinicInfo
+    );
+    const whatsappBusinessAccountId = this.getEnvVarWithClinicFallback(
+      'WHATSAPP_BUSINESS_ACCOUNT_ID',
+      clinicInfo
+    );
+
+    // Load SMS credentials with clinic-specific fallback
+    const smsApiKey = this.getEnvVarWithClinicFallback('SMS_API_KEY', clinicInfo);
+    const smsApiSecret = this.getEnvVarWithClinicFallback('SMS_API_SECRET', clinicInfo);
+    const smsFromNumber = this.getEnvVarWithClinicFallback('SMS_FROM_NUMBER', clinicInfo);
+
+    // Load AWS SES credentials with clinic-specific fallback
+    const awsSesFromEmail = this.getEnvVarWithClinicFallback('AWS_SES_FROM_EMAIL', clinicInfo);
+    const awsSesFromName = this.getEnvVarWithClinicFallback('AWS_SES_FROM_NAME', clinicInfo);
+    const awsAccessKeyId = this.getEnvVarWithClinicFallback('AWS_ACCESS_KEY_ID', clinicInfo);
+    const awsSecretAccessKey = this.getEnvVarWithClinicFallback(
+      'AWS_SECRET_ACCESS_KEY',
+      clinicInfo
+    );
+    const awsRegion = this.getEnvVarWithClinicFallback('AWS_REGION', clinicInfo);
+
+    // Clean token if it includes "Zoho-enczapikey" prefix
+    const cleanToken = zeptoMailToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
+
+    // Determine email provider based on available credentials
+    let emailProvider = EmailProvider.ZEPTOMAIL;
+    let emailCredentials: Record<string, string> = {};
+
+    if (cleanToken && zeptoMailFromEmail) {
+      // ZeptoMail is available
+      emailProvider = EmailProvider.ZEPTOMAIL;
+      emailCredentials = {
+        sendMailToken: cleanToken,
+        fromEmail: zeptoMailFromEmail,
+        fromName:
+          zeptoMailFromName ||
+          this.configService.getEnv('APP_NAME') ||
+          this.configService.getEnv('DEFAULT_FROM_NAME') ||
+          'Healthcare App',
+        bounceAddress: zeptoMailBounceAddress,
+      };
+    } else if (awsAccessKeyId && awsSecretAccessKey && awsSesFromEmail) {
+      // AWS SES is available
+      emailProvider = EmailProvider.AWS_SES;
+      emailCredentials = {
+        accessKeyId: awsAccessKeyId,
+        secretAccessKey: awsSecretAccessKey,
+        region: awsRegion || 'us-east-1',
+        fromEmail: awsSesFromEmail,
+        fromName:
+          awsSesFromName ||
+          this.configService.getEnv('APP_NAME') ||
+          this.configService.getEnv('DEFAULT_FROM_NAME') ||
+          'Healthcare App',
+      };
+    }
+
+    // Determine WhatsApp provider
+    let whatsappProvider = WhatsAppProvider.META_BUSINESS;
+    let whatsappCredentials: Record<string, string> = {};
+
+    if (whatsappApiKey && whatsappPhoneNumberId) {
+      whatsappProvider = WhatsAppProvider.META_BUSINESS;
+      whatsappCredentials = {
+        apiKey: whatsappApiKey,
+        phoneNumberId: whatsappPhoneNumberId,
+        businessAccountId: whatsappBusinessAccountId,
+      };
+    }
+
+    // Determine SMS provider
+    let smsProvider = SMSProvider.AWS_SNS;
+    let smsCredentials: Record<string, string> = {};
+
+    if (smsApiKey && smsApiSecret) {
+      smsProvider = SMSProvider.TWILIO; // Assuming Twilio if API key/secret provided
+      smsCredentials = {
+        apiKey: smsApiKey,
+        apiSecret: smsApiSecret,
+        fromNumber: smsFromNumber,
+      };
+    } else if (awsAccessKeyId && awsSecretAccessKey) {
+      smsProvider = SMSProvider.AWS_SNS;
+      smsCredentials = {
+        accessKeyId: awsAccessKeyId,
+        secretAccessKey: awsSecretAccessKey,
+        region: awsRegion || 'us-east-1',
+      };
+    }
+
     return {
       clinicId,
       email: {
         primary: {
-          provider: EmailProvider.ZEPTOMAIL,
-          enabled: true,
-          credentials: {},
+          provider: emailProvider,
+          enabled: Object.keys(emailCredentials).length > 0,
+          credentials: emailCredentials,
           priority: 1,
         },
       },
       whatsapp: {
         primary: {
-          provider: WhatsAppProvider.META_BUSINESS,
-          enabled: true,
-          credentials: {},
+          provider: whatsappProvider,
+          enabled: Object.keys(whatsappCredentials).length > 0,
+          credentials: whatsappCredentials,
           priority: 1,
         },
       },
       sms: {
         primary: {
-          provider: SMSProvider.AWS_SNS,
-          enabled: true,
-          credentials: {},
+          provider: smsProvider,
+          enabled: Object.keys(smsCredentials).length > 0,
+          credentials: smsCredentials,
           priority: 1,
         },
       },
@@ -615,6 +823,114 @@ export class CommunicationConfigService implements OnModuleInit {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to test WhatsApp config: ${error instanceof Error ? error.message : String(error)}`,
+        'CommunicationConfigService',
+        {
+          clinicId,
+          testPhone,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+
+      return {
+        success: false,
+        message: 'Test failed',
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Test SMS configuration
+   * Validates SMS provider configuration
+   */
+  async testSMSConfig(
+    clinicId: string,
+    testPhone: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    error?: string;
+  }> {
+    try {
+      const config = await this.getClinicConfig(clinicId);
+      if (!config || !config.sms.primary) {
+        return {
+          success: false,
+          message: 'No SMS configuration found for clinic',
+          error: 'Configuration not found',
+        };
+      }
+
+      // Validate credentials format
+      const credentials = config.sms.primary.credentials;
+      if (!credentials || typeof credentials !== 'object') {
+        return {
+          success: false,
+          message: 'Invalid SMS credentials',
+          error: 'Credentials missing or invalid',
+        };
+      }
+
+      // Check if credentials are encrypted (should be decrypted by getClinicConfig)
+      if ('encrypted' in credentials) {
+        return {
+          success: false,
+          message: 'SMS credentials are encrypted',
+          error: 'Credentials need to be decrypted first',
+        };
+      }
+
+      const provider = config.sms.primary.provider;
+      const providerString = String(provider).toLowerCase();
+
+      // Access credentials safely (already checked for encrypted above)
+      const getCredential = (key: string): string | undefined => {
+        if ('encrypted' in credentials) {
+          return undefined;
+        }
+        const creds = credentials;
+        return (
+          creds[key] ||
+          creds[key.toLowerCase()] ||
+          creds[key.replace(/([A-Z])/g, '_$1').toLowerCase()]
+        );
+      };
+
+      // Validate provider-specific credentials
+      if (providerString === 'twilio') {
+        const apiKey = getCredential('apiKey') || getCredential('api_key');
+        const apiSecret = getCredential('apiSecret') || getCredential('api_secret');
+        if (!apiKey || !apiSecret) {
+          return {
+            success: false,
+            message: 'Twilio credentials incomplete',
+            error: 'Missing apiKey or apiSecret',
+          };
+        }
+      } else if (providerString === 'aws_sns') {
+        const accessKeyId = getCredential('accessKeyId') || getCredential('access_key_id');
+        const secretAccessKey =
+          getCredential('secretAccessKey') || getCredential('secret_access_key');
+        if (!accessKeyId || !secretAccessKey) {
+          return {
+            success: false,
+            message: 'AWS SNS credentials incomplete',
+            error: 'Missing accessKeyId or secretAccessKey',
+          };
+        }
+      }
+
+      // Basic validation passed
+      return {
+        success: true,
+        message:
+          'SMS configuration validated successfully (Note: SMS service implementation pending)',
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to test SMS config: ${error instanceof Error ? error.message : String(error)}`,
         'CommunicationConfigService',
         {
           clinicId,

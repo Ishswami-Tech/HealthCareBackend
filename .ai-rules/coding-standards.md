@@ -81,10 +81,11 @@ import { RbacService } from '@core/rbac';
 import { SessionService } from '@core/session';
 import type { RequestContext } from '@types';
 
-import { WhatsAppService } from '@communication/messaging/whatsapp';
-import { EmailService } from '@communication/messaging/email';
-import { PushNotificationService } from '@communication/messaging/push';
-import { SocketGateway } from '@communication/socket';
+import { CommunicationService } from '@communication/communication.service';
+import { EmailService } from '@communication/channels/email';
+import { WhatsAppService } from '@communication/channels/whatsapp';
+import { PushNotificationService } from '@communication/channels/push';
+import { SocketService } from '@communication/channels/socket';
 
 import { RateLimitService } from '@security/rate-limit';
 

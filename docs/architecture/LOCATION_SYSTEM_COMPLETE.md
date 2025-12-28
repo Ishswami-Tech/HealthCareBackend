@@ -6,13 +6,12 @@
 > **Scale**: Optimized for 10M+ users with distributed architecture and shared cache layer
 
 > **📚 Related Documentation**:
+> - **Location QR Check-In**: `../features/LOCATION_QR_CHECKIN.md` - Complete QR code check-in system guide
 > - **Frontend Integration**: `FRONTEND_CLINIC_LOCATION_IMPLEMENTATION.md` - Frontend integration guide
 > - **Role Permissions**: `../ROLE_PERMISSIONS_COMPLETE.md` - Complete RBAC and permissions guide
 > - **System Architecture**: `SYSTEM_ARCHITECTURE.md` - Overall system architecture
 > 
 > **Note**: This document includes all authentication, data access, and clinic ID requirements (previously in separate files, now consolidated here).
-> - **Role Permissions**: `../ROLE_PERMISSIONS_COMPLETE.md` - Complete RBAC and permissions guide
-> - **System Architecture**: `SYSTEM_ARCHITECTURE.md` - Overall system architecture
 
 ---
 

@@ -39,10 +39,14 @@ docs/
 ├── ENVIRONMENT_VARIABLES.md         # Configuration
 ├── SYSTEM_COMPLETE.md                # System overview
 │
+├── features/                         # Feature documentation
+│   └── LOCATION_QR_CHECKIN.md       # Location QR check-in system
+│
 ├── guides/                           # Detailed guides
 │   ├── README.md                     # Guide index
 │   ├── COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md  # Main communication guide
-│   ├── AWS_SES_COMPLETE_GUIDE.md    # AWS SES setup (fallback)
+│   ├── AWS_SES_COMPLETE_GUIDE.md    # AWS SES setup (includes best practices & compliance audit)
+│   ├── TESTING_APPOINTMENT_ENDPOINTS.md  # Appointment testing guide
 │   ├── FCM_INTEGRATION_GUIDE.md     # Push notifications
 │   └── STORAGE_CONFIGURATION.md     # Storage setup
 │
@@ -91,11 +95,16 @@ docs/
 ## 🔗 Important Links
 
 - **Features:** [FEATURES.md](./FEATURES.md)
+- **Location QR Check-In:** [Location QR Check-In](./features/LOCATION_QR_CHECKIN.md) ⭐ **NEW**
 - **Communication:** [Communication Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
+- **Testing:** [Testing Appointment Endpoints](./guides/TESTING_APPOINTMENT_ENDPOINTS.md)
 - **API:** [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
+- **API Inventory:** [Actual API Inventory](./ACTUAL_API_INVENTORY.md) ⭐ **COMPLETE ENDPOINT LIST** - All 235+ endpoints from actual code
 - **Setup:** [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)
 
 ---
 
 **Last Updated:** January 2025  
 **Status:** ✅ **Production Ready**
+
+**⚠️ Documentation Gaps**: See [Documentation Index - Analysis & Missing Items](./DOCUMENTATION_INDEX.md#-documentation-analysis--missing-implementation-checklist) for missing feature documentation and implementation checklist
