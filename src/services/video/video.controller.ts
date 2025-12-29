@@ -11,6 +11,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -54,6 +55,15 @@ import type { VideoTokenResponse, VideoConsultationSession } from '@core/types/v
 // 4. Internal imports - Configuration
 import { ValidationPipeConfig } from '@config/validation-pipe.config';
 
+// 5. Internal imports - Services
+import { VideoChatService } from './services/video-chat.service';
+import { VideoWaitingRoomService } from './services/video-waiting-room.service';
+import { VideoMedicalNotesService } from './services/video-medical-notes.service';
+import { VideoAnnotationService } from './services/video-annotation.service';
+import { VideoTranscriptionService } from './services/video-transcription.service';
+import { VideoQualityService } from './services/video-quality.service';
+import { VideoVirtualBackgroundService } from './services/video-virtual-background.service';
+
 // 5. Internal imports - DTOs
 import {
   VideoTokenResponseDto,
@@ -67,6 +77,10 @@ import {
   ReportTechnicalIssueDto,
   ShareMedicalImageDto,
   ShareMedicalImageResponseDto,
+  VideoMessageType,
+  VideoNoteType,
+  VideoAnnotationType,
+  WaitingRoomStatus,
   SuccessResponseDto,
   StartRecordingDto,
   StopRecordingDto,
@@ -75,6 +89,26 @@ import {
   RecordingListResponseDto,
   ParticipantListResponseDto,
   SessionAnalyticsResponseDto,
+  // New feature DTOs
+  SendChatMessageDto,
+  ChatMessageResponseDto,
+  UpdateTypingIndicatorDto,
+  JoinWaitingRoomDto,
+  AdmitPatientDto,
+  WaitingRoomEntryResponseDto,
+  CreateMedicalNoteDto,
+  MedicalNoteResponseDto,
+  SaveNoteToEHRDto,
+  CreateAnnotationDto,
+  AnnotationResponseDto,
+  DeleteAnnotationDto,
+  CreateTranscriptionDto,
+  TranscriptionResponseDto,
+  SaveTranscriptToEHRDto,
+  UpdateQualityMetricsDto,
+  QualityMetricsResponseDto,
+  VirtualBackgroundSettingsDto,
+  BackgroundPresetResponseDto,
 } from '@dtos';
 
 // 6. Local imports (same directory)
@@ -83,7 +117,6 @@ import { VideoService } from './video.service';
 import {
   DatabaseHealthIndicator,
   CacheHealthIndicator,
-  CommunicationHealthIndicator,
   VideoHealthIndicator,
 } from '@services/health/health-indicators';
 
@@ -95,12 +128,18 @@ import {
 export class VideoController {
   constructor(
     private readonly videoService: VideoService,
+    private readonly chatService: VideoChatService,
+    private readonly waitingRoomService: VideoWaitingRoomService,
+    private readonly medicalNotesService: VideoMedicalNotesService,
+    private readonly annotationService: VideoAnnotationService,
+    private readonly transcriptionService: VideoTranscriptionService,
+    private readonly qualityService: VideoQualityService,
+    private readonly virtualBackgroundService: VideoVirtualBackgroundService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly errors: HealthcareErrorsService,
     private readonly health: HealthCheckService,
     private readonly videoHealthIndicator: VideoHealthIndicator,
-    private readonly communicationHealthIndicator: CommunicationHealthIndicator,
     private readonly databaseHealthIndicator: DatabaseHealthIndicator,
     private readonly cacheHealthIndicator: CacheHealthIndicator
   ) {}
@@ -1216,7 +1255,6 @@ export class VideoController {
   async healthCheck() {
     return await this.health.check([
       () => this.videoHealthIndicator.check('video'),
-      () => this.communicationHealthIndicator.check('communication'),
       () => this.databaseHealthIndicator.check('database'),
       () => this.cacheHealthIndicator.check('cache'),
     ]);
@@ -1555,6 +1593,530 @@ export class VideoController {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getSessionAnalytics');
+    }
+  }
+
+  // ============================================================================
+  // CHAT/MESSAGING ENDPOINTS
+  // ============================================================================
+
+  @Post('chat/send')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Send chat message',
+    description: 'Send a real-time chat message during video consultation',
+  })
+  @ApiResponse({ status: 201, type: ChatMessageResponseDto })
+  async sendChatMessage(
+    @Body() dto: SendChatMessageDto,
+    @Request() _req: ClinicAuthenticatedRequest
+  ): Promise<ChatMessageResponseDto> {
+    try {
+      const message = await this.chatService.sendMessage(dto);
+      return {
+        id: message.id,
+        consultationId: message.consultationId,
+        userId: message.userId,
+        message: message.message,
+        messageType: message.messageType as VideoMessageType,
+        ...(message.fileUrl && { fileUrl: message.fileUrl }),
+        ...(message.fileName && { fileName: message.fileName }),
+        ...(message.fileSize !== undefined && { fileSize: message.fileSize }),
+        ...(message.fileType && { fileType: message.fileType }),
+        isEdited: message.isEdited,
+        isDeleted: message.isDeleted,
+        ...(message.replyToId && { replyToId: message.replyToId }),
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+        ...(message.user && { user: message.user }),
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.sendChatMessage');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.sendChatMessage');
+    }
+  }
+
+  @Get('chat/:consultationId/history')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get chat message history',
+    description: 'Get chat message history for a video consultation',
+  })
+  @ApiParam({ name: 'consultationId', type: String })
+  async getChatHistory(
+    @Param('consultationId') consultationId: string,
+    @Query('limit') limit?: string,
+    @Query('before') before?: string
+  ) {
+    try {
+      return await this.chatService.getMessageHistory(
+        consultationId,
+        limit ? Number.parseInt(limit, 10) : 50,
+        before
+      );
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getChatHistory');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getChatHistory');
+    }
+  }
+
+  @Post('chat/typing')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Update typing indicator',
+    description: 'Update typing indicator for chat',
+  })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  updateTypingIndicator(@Body() dto: UpdateTypingIndicatorDto): SuccessResponseDto {
+    try {
+      this.chatService.updateTypingIndicator(dto.consultationId, dto.userId, dto.isTyping);
+      return new SuccessResponseDto('Typing indicator updated');
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.updateTypingIndicator');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.updateTypingIndicator');
+    }
+  }
+
+  // ============================================================================
+  // WAITING ROOM ENDPOINTS
+  // ============================================================================
+
+  @Post('waiting-room/join')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Join waiting room',
+    description: 'Join the waiting room for a video consultation',
+  })
+  @ApiResponse({ status: 201, type: WaitingRoomEntryResponseDto })
+  async joinWaitingRoom(@Body() dto: JoinWaitingRoomDto): Promise<WaitingRoomEntryResponseDto> {
+    try {
+      const entry = await this.waitingRoomService.joinWaitingRoom(dto);
+      return {
+        id: entry.id,
+        consultationId: entry.consultationId,
+        userId: entry.userId,
+        status: entry.status as WaitingRoomStatus,
+        position: entry.position,
+        ...(entry.estimatedWaitTime !== undefined && {
+          estimatedWaitTime: entry.estimatedWaitTime,
+        }),
+        ...(entry.admittedAt && { admittedAt: entry.admittedAt }),
+        ...(entry.notifiedAt && { notifiedAt: entry.notifiedAt }),
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        ...(entry.user && { user: entry.user }),
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.joinWaitingRoom');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.joinWaitingRoom');
+    }
+  }
+
+  @Post('waiting-room/admit')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Admit patient from waiting room',
+    description: 'Doctor admits a patient from the waiting room',
+  })
+  @ApiResponse({ status: 200, type: WaitingRoomEntryResponseDto })
+  async admitPatient(@Body() dto: AdmitPatientDto): Promise<WaitingRoomEntryResponseDto> {
+    try {
+      const entry = await this.waitingRoomService.admitPatient(dto);
+      return {
+        id: entry.id,
+        consultationId: entry.consultationId,
+        userId: entry.userId,
+        status: entry.status as WaitingRoomStatus,
+        position: entry.position,
+        ...(entry.estimatedWaitTime !== undefined && {
+          estimatedWaitTime: entry.estimatedWaitTime,
+        }),
+        ...(entry.admittedAt && { admittedAt: entry.admittedAt }),
+        ...(entry.notifiedAt && { notifiedAt: entry.notifiedAt }),
+        createdAt: entry.createdAt,
+        updatedAt: entry.updatedAt,
+        ...(entry.user && { user: entry.user }),
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.admitPatient');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.admitPatient');
+    }
+  }
+
+  @Get('waiting-room/:consultationId/queue')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get waiting room queue',
+    description: 'Get the current waiting room queue for a consultation',
+  })
+  async getWaitingRoomQueue(@Param('consultationId') consultationId: string) {
+    try {
+      return await this.waitingRoomService.getWaitingRoomQueue(consultationId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getWaitingRoomQueue');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getWaitingRoomQueue');
+    }
+  }
+
+  // ============================================================================
+  // MEDICAL NOTES ENDPOINTS
+  // ============================================================================
+
+  @Post('notes')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Create medical note',
+    description: 'Create a medical note during video consultation',
+  })
+  @ApiResponse({ status: 201, type: MedicalNoteResponseDto })
+  async createMedicalNote(@Body() dto: CreateMedicalNoteDto): Promise<MedicalNoteResponseDto> {
+    try {
+      const note = await this.medicalNotesService.createNote(dto);
+      return {
+        id: note.id,
+        consultationId: note.consultationId,
+        userId: note.userId,
+        noteType: note.noteType as VideoNoteType,
+        ...(note.title && { title: note.title }),
+        content: note.content,
+        ...(note.prescription && { prescription: note.prescription }),
+        ...(note.symptoms && { symptoms: note.symptoms }),
+        ...(note.treatmentPlan && { treatmentPlan: note.treatmentPlan }),
+        isAutoSaved: note.isAutoSaved,
+        savedToEHR: note.savedToEHR,
+        ...(note.ehrRecordId && { ehrRecordId: note.ehrRecordId }),
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.createMedicalNote');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.createMedicalNote');
+    }
+  }
+
+  @Get('notes/:consultationId')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get medical notes',
+    description: 'Get all medical notes for a consultation',
+  })
+  async getMedicalNotes(@Param('consultationId') consultationId: string) {
+    try {
+      return await this.medicalNotesService.getNotes(consultationId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getMedicalNotes');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getMedicalNotes');
+    }
+  }
+
+  @Post('notes/:noteId/save-to-ehr')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Save note to EHR',
+    description: 'Save a medical note to Electronic Health Records',
+  })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  async saveNoteToEHR(
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @Body() dto: SaveNoteToEHRDto
+  ): Promise<{ ehrRecordId: string }> {
+    try {
+      return await this.medicalNotesService.saveToEHR(noteId, dto.userId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.saveNoteToEHR');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.saveNoteToEHR');
+    }
+  }
+
+  // ============================================================================
+  // ANNOTATION ENDPOINTS
+  // ============================================================================
+
+  @Post('annotations')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Create annotation',
+    description: 'Create a screen annotation during video consultation',
+  })
+  @ApiResponse({ status: 201, type: AnnotationResponseDto })
+  async createAnnotation(@Body() dto: CreateAnnotationDto): Promise<AnnotationResponseDto> {
+    try {
+      const annotation = await this.annotationService.createAnnotation(dto);
+      return {
+        id: annotation.id,
+        consultationId: annotation.consultationId,
+        userId: annotation.userId,
+        annotationType: annotation.annotationType as VideoAnnotationType,
+        data: annotation.data,
+        ...(annotation.position && { position: annotation.position }),
+        ...(annotation.color && { color: annotation.color }),
+        ...(annotation.thickness !== undefined && { thickness: annotation.thickness }),
+        isVisible: annotation.isVisible,
+        createdAt: annotation.createdAt,
+        updatedAt: annotation.updatedAt,
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.createAnnotation');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.createAnnotation');
+    }
+  }
+
+  @Get('annotations/:consultationId')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get annotations',
+    description: 'Get all annotations for a consultation',
+  })
+  async getAnnotations(@Param('consultationId') consultationId: string) {
+    try {
+      return await this.annotationService.getAnnotations(consultationId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getAnnotations');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getAnnotations');
+    }
+  }
+
+  @Delete('annotations/:annotationId')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'delete')
+  @ApiOperation({
+    summary: 'Delete annotation',
+    description: 'Delete a screen annotation',
+  })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  async deleteAnnotation(
+    @Param('annotationId', ParseUUIDPipe) annotationId: string,
+    @Body() dto: DeleteAnnotationDto
+  ): Promise<SuccessResponseDto> {
+    try {
+      await this.annotationService.deleteAnnotation(annotationId, dto.userId);
+      return new SuccessResponseDto('Annotation deleted successfully');
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.deleteAnnotation');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.deleteAnnotation');
+    }
+  }
+
+  // ============================================================================
+  // TRANSCRIPTION ENDPOINTS
+  // ============================================================================
+
+  @Post('transcription')
+  @HttpCode(HttpStatus.CREATED)
+  @RequireResourcePermission('video', 'create')
+  @ApiOperation({
+    summary: 'Create transcription',
+    description: 'Create a transcription segment for video consultation',
+  })
+  @ApiResponse({ status: 201, type: TranscriptionResponseDto })
+  async createTranscription(
+    @Body() dto: CreateTranscriptionDto
+  ): Promise<TranscriptionResponseDto> {
+    try {
+      return await this.transcriptionService.createTranscription(dto);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.createTranscription');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.createTranscription');
+    }
+  }
+
+  @Get('transcription/:consultationId')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get transcript',
+    description: 'Get full transcript for a video consultation',
+  })
+  async getTranscript(@Param('consultationId') consultationId: string) {
+    try {
+      return await this.transcriptionService.getTranscript(consultationId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getTranscript');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getTranscript');
+    }
+  }
+
+  @Get('transcription/:consultationId/search')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Search transcript',
+    description: 'Search the transcript for specific text',
+  })
+  async searchTranscript(
+    @Param('consultationId') consultationId: string,
+    @Query('q') query: string
+  ) {
+    try {
+      return await this.transcriptionService.searchTranscript(consultationId, query);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.searchTranscript');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.searchTranscript');
+    }
+  }
+
+  @Post('transcription/:consultationId/save-to-ehr')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Save transcript to EHR',
+    description: 'Save the full transcript to Electronic Health Records',
+  })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  async saveTranscriptToEHR(
+    @Param('consultationId', ParseUUIDPipe) consultationId: string,
+    @Body() dto: SaveTranscriptToEHRDto
+  ): Promise<{ ehrRecordId: string }> {
+    try {
+      return await this.transcriptionService.saveToEHR(consultationId, dto.userId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.saveTranscriptToEHR');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.saveTranscriptToEHR');
+    }
+  }
+
+  // ============================================================================
+  // QUALITY MONITORING ENDPOINTS
+  // ============================================================================
+
+  @Post('quality/update')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Update quality metrics',
+    description: 'Update call quality metrics (network, video, audio)',
+  })
+  @ApiResponse({ status: 200, type: QualityMetricsResponseDto })
+  async updateQualityMetrics(
+    @Body() dto: UpdateQualityMetricsDto
+  ): Promise<QualityMetricsResponseDto> {
+    try {
+      return await this.qualityService.updateQualityMetrics(dto);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.updateQualityMetrics');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.updateQualityMetrics');
+    }
+  }
+
+  @Get('quality/:consultationId/:userId')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get quality metrics',
+    description: 'Get quality metrics for a participant',
+  })
+  async getQualityMetrics(
+    @Param('consultationId') consultationId: string,
+    @Param('userId') userId: string
+  ) {
+    try {
+      return await this.qualityService.getQualityMetrics(consultationId, userId);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getQualityMetrics');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getQualityMetrics');
+    }
+  }
+
+  // ============================================================================
+  // VIRTUAL BACKGROUND ENDPOINTS
+  // ============================================================================
+
+  @Post('virtual-background')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Update virtual background',
+    description: 'Update virtual background settings (blur, custom image, etc.)',
+  })
+  @ApiResponse({ status: 200, type: VirtualBackgroundSettingsDto })
+  async updateVirtualBackground(
+    @Body() dto: VirtualBackgroundSettingsDto
+  ): Promise<VirtualBackgroundSettingsDto> {
+    try {
+      return await this.virtualBackgroundService.updateBackgroundSettings(dto);
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.updateVirtualBackground');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.updateVirtualBackground');
+    }
+  }
+
+  @Get('virtual-background/presets')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get background presets',
+    description: 'Get available virtual background presets',
+  })
+  @ApiResponse({ status: 200, type: [BackgroundPresetResponseDto] })
+  getBackgroundPresets(): BackgroundPresetResponseDto[] {
+    try {
+      return this.virtualBackgroundService.getBackgroundPresets();
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getBackgroundPresets');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getBackgroundPresets');
     }
   }
 }

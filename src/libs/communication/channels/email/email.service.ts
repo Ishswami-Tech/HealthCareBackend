@@ -165,12 +165,41 @@ export class EmailService implements OnModuleInit {
           rejectUnauthorized: false,
         },
       });
-      await this.transporter.verify();
+
+      // Try to verify connection, but don't fail initialization if it fails
+      // In production/Docker, SMTP servers may not be immediately accessible
+      // The service will still be marked as initialized and can attempt to send emails
+      try {
+        await Promise.race([
+          this.transporter.verify(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('SMTP verification timeout')), 5000)
+          ),
+        ]);
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'SMTP email server is ready and verified',
+          'EmailService'
+        );
+      } catch (verifyError) {
+        // Log warning but still mark as initialized
+        // In production, SMTP verification may fail due to network/firewall issues
+        // but the service can still send emails when needed
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `SMTP verification failed but service will remain available: ${verifyError instanceof Error ? verifyError.message : 'Unknown error'}`,
+          'EmailService',
+          { stack: verifyError instanceof Error ? verifyError.stack : undefined }
+        );
+      }
+
       this.isInitialized = true;
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'SMTP email server is ready',
+        'SMTP email server initialized (ready to send emails)',
         'EmailService'
       );
     } catch (error) {
@@ -186,43 +215,56 @@ export class EmailService implements OnModuleInit {
   }
 
   /**
-   * Initializes Mailtrap API client
+   * Initializes API-based email client (ZeptoMail or Mailtrap)
    * @private
    */
   private initAPI(): void {
     try {
-      // Safely get token with fallback to process.env
-      let token: string | undefined;
-      try {
-        token = this.configService.getEnv('MAILTRAP_API_TOKEN');
-      } catch {
-        // Use ConfigService (which uses dotenv) for environment variable access
-        token = this.configService.getEnv('MAILTRAP_API_TOKEN');
-      }
+      // Check for ZeptoMail token first (primary API provider)
+      // Use ConfigService (which uses dotenv) for environment variable access
+      const zeptoMailToken = this.configService.getEnv('ZEPTOMAIL_SEND_MAIL_TOKEN');
+      const mailtrapToken = this.configService.getEnv('MAILTRAP_API_TOKEN');
 
-      if (!token) {
+      // ZeptoMail is the primary API provider - if token exists, mark as initialized
+      // The actual sending will be handled by ZeptoMailEmailAdapter via ProviderFactory
+      // This legacy EmailService is mainly for backward compatibility
+      if (zeptoMailToken) {
+        this.isInitialized = true;
         void this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.WARN,
-          'Mailtrap API token not set, email service disabled.',
+          LogLevel.INFO,
+          'ZeptoMail API configured - email service initialized (using ZeptoMail adapter)',
           'EmailService'
         );
-        this.isInitialized = false;
         return;
       }
-      this.mailtrap = new MailtrapClient({ token });
-      this.isInitialized = true;
+
+      // Fallback to Mailtrap if ZeptoMail is not configured
+      if (mailtrapToken) {
+        this.mailtrap = new MailtrapClient({ token: mailtrapToken });
+        this.isInitialized = true;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Mailtrap API client initialized',
+          'EmailService'
+        );
+        return;
+      }
+
+      // No API token found
       void this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.INFO,
-        'Mailtrap API client initialized',
+        LogLevel.WARN,
+        'No API email provider token found (ZEPTOMAIL_SEND_MAIL_TOKEN or MAILTRAP_API_TOKEN), email service disabled.',
         'EmailService'
       );
+      this.isInitialized = false;
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to initialize Mailtrap API: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to initialize API email service: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'EmailService',
         { stack: (error as Error)?.stack }
       );

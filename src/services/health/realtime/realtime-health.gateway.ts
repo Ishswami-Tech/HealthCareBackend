@@ -1,0 +1,407 @@
+/**
+ * Realtime Health Gateway
+ * Socket.IO gateway for real-time health status broadcasting
+ */
+
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  OnGatewayInit,
+  SubscribeMessage,
+  ConnectedSocket,
+  MessageBody,
+} from '@nestjs/websockets';
+import { Injectable, Optional, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Server, Socket } from 'socket.io';
+import {
+  SocketAuthMiddleware,
+  type AuthenticatedUser,
+} from '@communication/channels/socket/socket-auth.middleware';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
+import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
+import { HealthBroadcasterService } from './services/health-broadcaster.service';
+import { HealthCacheService } from './services/health-cache.service';
+import { ConfigService } from '@config/config.service';
+import type {
+  AggregatedHealthStatus,
+  RealtimeHealthStatusPayload,
+} from '@core/types/realtime-health.types';
+
+interface SubscribePayload {
+  room?: string;
+}
+
+interface SubscribeResponse {
+  success: boolean;
+  message?: string;
+  status?: RealtimeHealthStatusPayload;
+}
+
+/**
+ * Realtime Health Gateway
+ * Provides real-time health status via Socket.IO
+ */
+@Injectable()
+@WebSocketGateway({
+  namespace: '/health',
+  cors: {
+    origin: ['*'], // Will be overridden in afterInit using ConfigService
+    credentials: true,
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  connectTimeout: 45000,
+  maxHttpBufferSize: 1e6,
+})
+export class RealtimeHealthGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleInit
+{
+  @WebSocketServer()
+  server!: Server;
+
+  private readonly ROOM_ALL = 'health:all';
+  private readonly MAX_CONNECTIONS_PER_IP = 3;
+  private readonly connectionsByIP = new Map<string, number>();
+  private readonly clientMetadata = new Map<string, AuthenticatedUser>();
+
+  constructor(
+    private readonly broadcaster: HealthBroadcasterService,
+    private readonly cache: HealthCacheService,
+    @Optional()
+    @Inject('SOCKET_AUTH_MIDDLEWARE')
+    private readonly authMiddleware?: SocketAuthMiddleware,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService?: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService?: ConfigService
+  ) {}
+
+  onModuleInit() {
+    // Socket server will be initialized in afterInit
+  }
+
+  afterInit(server: Server): void {
+    try {
+      // CORS is configured via WebSocketGateway decorator
+      // No need to modify server.engine.cors as it's not a valid property
+
+      safeLog(
+        this.loggingService,
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Realtime Health Gateway initialized',
+        'RealtimeHealthGateway',
+        { namespace: '/health' }
+      );
+
+      // Set server in broadcaster
+      this.broadcaster.setSocketServer(server);
+
+      // Apply authentication middleware if available
+      if (this.authMiddleware?.validateConnection) {
+        const authMiddleware = this.authMiddleware;
+        server.use((socket, next) => {
+          void (async () => {
+            try {
+              const user = await authMiddleware.validateConnection(socket);
+              (socket as Socket & { user: AuthenticatedUser }).user = user;
+              next();
+            } catch (error) {
+              safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+                clientId: socket.id,
+                operation: 'authentication',
+              });
+              const socketError = error instanceof Error ? error : new Error(String(error));
+              next(socketError);
+            }
+          })();
+        });
+      }
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+        operation: 'afterInit',
+      });
+    }
+  }
+
+  async handleConnection(client: Socket): Promise<void> {
+    try {
+      const clientId = client.id;
+      const clientIP = this.getClientIP(client);
+
+      // Rate limiting: Check connections per IP
+      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
+      if (ipConnections >= this.MAX_CONNECTIONS_PER_IP) {
+        safeLog(
+          this.loggingService,
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Connection rejected: Too many connections from IP ${clientIP}`,
+          'RealtimeHealthGateway',
+          { clientId, clientIP, connections: ipConnections }
+        );
+        client.disconnect();
+        return;
+      }
+
+      // Increment connection count
+      this.connectionsByIP.set(clientIP, ipConnections + 1);
+
+      // Store user metadata if authenticated
+      const user = (client as Socket & { user?: AuthenticatedUser }).user;
+      if (user) {
+        this.clientMetadata.set(clientId, user);
+      }
+
+      // Auto-join to health:all room
+      await client.join(this.ROOM_ALL);
+
+      // Send initial health status (cached)
+      const cachedStatus: unknown = await this.cache.getCachedStatus();
+      const validated = this.validateAndGetAggregatedHealthStatus(cachedStatus);
+      if (validated) {
+        const endpointsKeys = Object.keys(validated.endpoints);
+        const hasSystem = validated.system && typeof validated.system === 'object';
+        const realtimeStatus: RealtimeHealthStatusPayload = {
+          t: validated.timestamp,
+          o: validated.overall,
+          s: validated.services,
+          ...(endpointsKeys.length > 0 && { e: validated.endpoints }),
+          ...(hasSystem && { sys: validated.system }),
+          u: validated.uptime,
+        };
+
+        client.emit('health:status', realtimeStatus);
+      } else {
+        // Send default status if no cache
+        const defaultStatus: RealtimeHealthStatusPayload = {
+          t: new Date().toISOString(),
+          o: 'healthy',
+          s: {},
+          u: 0,
+        };
+        client.emit('health:status', defaultStatus);
+      }
+
+      safeLog(
+        this.loggingService,
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client connected to health gateway: ${clientId}`,
+        'RealtimeHealthGateway',
+        { clientId, clientIP, userId: user?.userId }
+      );
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+        operation: 'handleConnection',
+        clientId: client.id,
+      });
+      client.disconnect();
+    }
+  }
+
+  handleDisconnect(client: Socket): void {
+    try {
+      const clientId = client.id;
+      const clientIP = this.getClientIP(client);
+
+      // Decrement connection count
+      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
+      if (ipConnections > 0) {
+        this.connectionsByIP.set(clientIP, ipConnections - 1);
+      }
+
+      // Remove client metadata
+      this.clientMetadata.delete(clientId);
+
+      safeLog(
+        this.loggingService,
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Client disconnected from health gateway: ${clientId}`,
+        'RealtimeHealthGateway',
+        { clientId, clientIP }
+      );
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+        operation: 'handleDisconnect',
+        clientId: client.id,
+      });
+    }
+  }
+
+  /**
+   * Handle subscribe message (client subscribes to health updates)
+   */
+  @SubscribeMessage('health:subscribe')
+  async handleSubscribe(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload?: SubscribePayload
+  ): Promise<SubscribeResponse> {
+    try {
+      // Client is already in health:all room (joined on connection)
+      // Optionally join additional room if specified
+      if (payload?.room) {
+        await client.join(payload.room);
+      }
+
+      // Send current cached status
+      const cachedStatus: unknown = await this.cache.getCachedStatus();
+      const validated = this.validateAndGetAggregatedHealthStatus(cachedStatus);
+      if (validated) {
+        const endpointsKeys = Object.keys(validated.endpoints);
+        const hasSystem = validated.system && typeof validated.system === 'object';
+        const realtimeStatus: RealtimeHealthStatusPayload = {
+          t: validated.timestamp,
+          o: validated.overall,
+          s: validated.services,
+          ...(endpointsKeys.length > 0 && { e: validated.endpoints }),
+          ...(hasSystem && { sys: validated.system }),
+          u: validated.uptime,
+        };
+
+        // Create response with validated status
+        // Use helper to create response safely
+        return this.createSubscribeResponse(realtimeStatus);
+      }
+
+      return {
+        success: true,
+        message: 'Subscribed to health updates',
+      };
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+        operation: 'handleSubscribe',
+        clientId: client.id,
+      });
+
+      return {
+        success: false,
+        message: error instanceof Error ? error.message : 'Subscription failed',
+      };
+    }
+  }
+
+  /**
+   * Handle unsubscribe message
+   */
+  @SubscribeMessage('health:unsubscribe')
+  async handleUnsubscribe(@ConnectedSocket() client: Socket): Promise<{ success: boolean }> {
+    try {
+      await client.leave(this.ROOM_ALL);
+      return { success: true };
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
+        operation: 'handleUnsubscribe',
+        clientId: client.id,
+      });
+
+      return { success: false };
+    }
+  }
+
+  /**
+   * Get client IP address
+   */
+  private getClientIP(client: Socket): string {
+    return (
+      (client.handshake.headers['x-forwarded-for'] as string)?.split(',')[0] ||
+      client.handshake.address ||
+      client.conn.remoteAddress ||
+      'unknown'
+    );
+  }
+
+  /**
+   * Type guard to validate AggregatedHealthStatus
+   */
+  private isValidAggregatedHealthStatus(value: unknown): value is AggregatedHealthStatus {
+    if (!value || typeof value !== 'object') {
+      return false;
+    }
+
+    const obj = value as Record<string, unknown>;
+
+    // Check required properties
+    if (
+      !('overall' in obj) ||
+      !('services' in obj) ||
+      !('system' in obj) ||
+      !('uptime' in obj) ||
+      !('timestamp' in obj)
+    ) {
+      return false;
+    }
+
+    // Validate overall status
+    const overall = obj['overall'];
+    if (
+      typeof overall !== 'string' ||
+      (overall !== 'healthy' && overall !== 'degraded' && overall !== 'unhealthy')
+    ) {
+      return false;
+    }
+
+    // Validate services is an object
+    if (!obj['services'] || typeof obj['services'] !== 'object') {
+      return false;
+    }
+
+    // Validate system is an object
+    if (!obj['system'] || typeof obj['system'] !== 'object') {
+      return false;
+    }
+
+    // Validate uptime is a number
+    if (typeof obj['uptime'] !== 'number') {
+      return false;
+    }
+
+    // Validate timestamp is a string
+    if (typeof obj['timestamp'] !== 'string') {
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Validate and get AggregatedHealthStatus from cached value
+   * Returns validated status or undefined if invalid
+   */
+  private validateAndGetAggregatedHealthStatus(value: unknown): AggregatedHealthStatus | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    if (this.isValidAggregatedHealthStatus(value)) {
+      // Type guard ensures value is AggregatedHealthStatus
+      return value;
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Create SubscribeResponse with validated status
+   */
+  private createSubscribeResponse(status: RealtimeHealthStatusPayload): SubscribeResponse {
+    // Create response object with all required fields
+    const response: {
+      success: boolean;
+      message: string;
+      status: RealtimeHealthStatusPayload;
+    } = {
+      success: true,
+      message: 'Subscribed to health updates',
+      status,
+    };
+    return response;
+  }
+}

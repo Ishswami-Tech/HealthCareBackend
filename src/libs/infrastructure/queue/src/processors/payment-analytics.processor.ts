@@ -1,5 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
-import { Job } from 'bull';
+// NOTE: This processor is not currently registered in QueueModule
+// BullMQ processors in NestJS use @Processor() and @Process() decorators
+// However, @nestjs/bullmq doesn't export Process decorator in all versions
+// This file is kept for reference but is not actively used
+// To use processors, register them in QueueModule and ensure decorators are available
+
+// import { Processor, Process } from '@nestjs/bullmq';
+import type { Job } from 'bullmq';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -10,11 +16,11 @@ import type { PaymentData, PaymentDto, QueuePerformanceMetrics, FraudData } from
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
 
-@Processor('payment-analytics')
+// @Processor('payment-analytics')
 export class PaymentAnalyticsProcessor {
   constructor(private readonly loggingService: LoggingService) {}
 
-  @Process('payment-analytics')
+  // @Process('payment-analytics')
   handlePaymentAnalytics(
     job: Job<{
       payment: PaymentData;
@@ -57,7 +63,7 @@ export class PaymentAnalyticsProcessor {
     }
   }
 
-  @Process('error-analysis')
+  // @Process('error-analysis')
   handleErrorAnalysis(
     job: Job<{
       _error: Error;
@@ -99,7 +105,7 @@ export class PaymentAnalyticsProcessor {
     }
   }
 
-  @Process('performance-metrics')
+  // @Process('performance-metrics')
   handlePerformanceMetrics(
     job: Job<{
       metrics: QueuePerformanceMetrics;
@@ -140,7 +146,7 @@ export class PaymentAnalyticsProcessor {
     }
   }
 
-  @Process('fraud-analytics')
+  // @Process('fraud-analytics')
   handleFraudAnalytics(
     job: Job<{
       fraudData: FraudData;

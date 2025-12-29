@@ -1,5 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
-import { Job } from 'bull';
+// NOTE: This processor is not currently registered in QueueModule
+// BullMQ processors in NestJS use @Processor() and @Process() decorators
+// However, @nestjs/bullmq doesn't export Process decorator in all versions
+// This file is kept for reference but is not actively used
+// To use processors, register them in QueueModule and ensure decorators are available
+
+// import { Processor, Process } from '@nestjs/bullmq';
+import type { Job } from 'bullmq';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -12,11 +18,11 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
-@Processor('payment-notifications')
+// @Processor('payment-notifications')
 export class PaymentNotificationsProcessor {
   constructor(private readonly loggingService: LoggingService) {}
 
-  @Process('payment-notification')
+  // @Process('payment-notification')
   handlePaymentNotification(
     job: Job<{
       payment: PaymentData;
@@ -59,7 +65,7 @@ export class PaymentNotificationsProcessor {
     }
   }
 
-  @Process('webhook-notification')
+  // @Process('webhook-notification')
   async handleWebhookNotification(
     job: Job<{
       payment: PaymentData;
@@ -119,7 +125,7 @@ export class PaymentNotificationsProcessor {
     }
   }
 
-  @Process('alert-notification')
+  // @Process('alert-notification')
   handleAlertNotification(
     job: Job<{
       alertType: 'security' | 'performance' | 'system' | 'compliance';

@@ -27,6 +27,8 @@ import { ConfigModule } from '@config/config.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
 import { ResilienceModule } from '@core/resilience';
 // LoggingModule, DatabaseModule, CacheModule are @Global()
+// Note: CommunicationModule is NOT imported here to avoid circular dependency
+// CommunicationService is injected via forwardRef in EmailRateMonitoringService
 
 @Module({
   imports: [

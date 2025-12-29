@@ -65,10 +65,13 @@ export interface VideoRecordingDbModel {
  */
 export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
   findUnique: (args: {
-    where: { appointmentId: string };
+    where: { appointmentId: string } | { id: string };
   }) => Promise<VideoConsultationDbModel | null>;
   findFirst: (args: {
-    where: { OR: Array<{ roomId: string } | { appointmentId: string }> };
+    where: {
+      OR?: Array<{ roomId: string } | { appointmentId: string } | { id: string }>;
+      id?: string;
+    };
     include?: { participants: boolean };
   }) => Promise<VideoConsultationWithParticipants | null>;
   findMany: (args: {
@@ -99,10 +102,13 @@ export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
     client as unknown as {
       videoConsultation: {
         findUnique: (args: {
-          where: { appointmentId: string };
+          where: { appointmentId: string } | { id: string };
         }) => Promise<VideoConsultationDbModel | null>;
         findFirst: (args: {
-          where: { OR: Array<{ roomId: string } | { appointmentId: string }> };
+          where: {
+            OR?: Array<{ roomId: string } | { appointmentId: string } | { id: string }>;
+            id?: string;
+          };
           include?: { participants: boolean };
         }) => Promise<VideoConsultationWithParticipants | null>;
         findMany: (args: {
@@ -160,4 +166,204 @@ export function getVideoRecordingDelegate(client: PrismaTransactionClient): {
       };
     }
   ).videoRecording;
+}
+
+/**
+ * Type-safe accessor for videoChatMessage delegate
+ */
+export function getVideoChatMessageDelegate(client: PrismaTransactionClient): {
+  create: (args: { data: unknown; include?: unknown }) => Promise<unknown>;
+  findMany: (args: {
+    where: unknown;
+    include?: unknown;
+    orderBy?: unknown;
+    take?: number;
+  }) => Promise<unknown[]>;
+  findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+  findFirst: (args: { where: unknown }) => Promise<unknown>;
+  update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('videoChatMessage' in client) ||
+    typeof (client as { videoChatMessage: unknown }).videoChatMessage !== 'object'
+  ) {
+    throw new Error('Prisma client does not have videoChatMessage delegate');
+  }
+  return (client as unknown as { videoChatMessage: unknown }).videoChatMessage as {
+    create: (args: { data: unknown; include?: unknown }) => Promise<unknown>;
+    findMany: (args: {
+      where: unknown;
+      include?: unknown;
+      orderBy?: unknown;
+      take?: number;
+    }) => Promise<unknown[]>;
+    findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+    findFirst: (args: { where: unknown }) => Promise<unknown>;
+    update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Type-safe accessor for videoConsultationNote delegate
+ */
+export function getVideoConsultationNoteDelegate(client: PrismaTransactionClient): {
+  create: (args: { data: unknown }) => Promise<unknown>;
+  findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+  findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+  update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+  updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('videoConsultationNote' in client) ||
+    typeof (client as { videoConsultationNote: unknown }).videoConsultationNote !== 'object'
+  ) {
+    throw new Error('Prisma client does not have videoConsultationNote delegate');
+  }
+  return (client as unknown as { videoConsultationNote: unknown }).videoConsultationNote as {
+    create: (args: { data: unknown }) => Promise<unknown>;
+    findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+    findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+    update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+    updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Type-safe accessor for videoAnnotation delegate
+ */
+export function getVideoAnnotationDelegate(client: PrismaTransactionClient): {
+  create: (args: { data: unknown }) => Promise<unknown>;
+  findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+  findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+  update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+  updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('videoAnnotation' in client) ||
+    typeof (client as { videoAnnotation: unknown }).videoAnnotation !== 'object'
+  ) {
+    throw new Error('Prisma client does not have videoAnnotation delegate');
+  }
+  return (client as unknown as { videoAnnotation: unknown }).videoAnnotation as {
+    create: (args: { data: unknown }) => Promise<unknown>;
+    findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+    findUnique: (args: { where: { id: string } }) => Promise<unknown>;
+    update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+    updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+  };
+}
+
+/**
+ * Type-safe accessor for videoTranscription delegate
+ */
+export function getVideoTranscriptionDelegate(client: PrismaTransactionClient): {
+  create: (args: { data: unknown }) => Promise<unknown>;
+  findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+  updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('videoTranscription' in client) ||
+    typeof (client as { videoTranscription: unknown }).videoTranscription !== 'object'
+  ) {
+    throw new Error('Prisma client does not have videoTranscription delegate');
+  }
+  return (client as unknown as { videoTranscription: unknown }).videoTranscription as {
+    create: (args: { data: unknown }) => Promise<unknown>;
+    findMany: (args: { where: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+    updateMany: (args: { where: unknown; data: unknown }) => Promise<unknown>;
+  };
+}
+
+/**
+ * VideoParticipant database model structure
+ */
+export interface VideoParticipantDbModel {
+  id: string;
+  consultationId: string;
+  userId: string;
+  role: string;
+  status: string;
+  joinedAt: Date | null;
+  leftAt: Date | null;
+  duration: number | null;
+  peerId: string | null;
+  connectionId: string | null;
+  isAudioEnabled: boolean;
+  isVideoEnabled: boolean;
+  isScreenSharing: boolean;
+  audioQuality: number | null;
+  videoQuality: number | null;
+  connectionQuality: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Type-safe accessor for videoParticipant delegate
+ */
+export function getVideoParticipantDelegate(client: PrismaTransactionClient): {
+  findFirst: (args: {
+    where: {
+      consultationId?: string;
+      userId?: string;
+    };
+  }) => Promise<VideoParticipantDbModel | null>;
+  update: (args: { where: { id: string }; data: unknown }) => Promise<VideoParticipantDbModel>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('videoParticipant' in client) ||
+    typeof (client as { videoParticipant: unknown }).videoParticipant !== 'object'
+  ) {
+    throw new Error('Prisma client does not have videoParticipant delegate');
+  }
+  return (client as unknown as { videoParticipant: unknown }).videoParticipant as {
+    findFirst: (args: {
+      where: {
+        consultationId?: string;
+        userId?: string;
+      };
+    }) => Promise<VideoParticipantDbModel | null>;
+    update: (args: { where: { id: string }; data: unknown }) => Promise<VideoParticipantDbModel>;
+  };
+}
+
+/**
+ * Type-safe accessor for waitingRoomEntry delegate
+ */
+export function getWaitingRoomEntryDelegate(client: PrismaTransactionClient): {
+  create: (args: { data: unknown; include?: unknown }) => Promise<unknown>;
+  findMany: (args: { where: unknown; include?: unknown; orderBy?: unknown }) => Promise<unknown[]>;
+  findFirst: (args: { where: unknown; include?: unknown }) => Promise<unknown>;
+  count: (args: { where: unknown }) => Promise<number>;
+  update: (args: { where: { id: string }; data: unknown; include?: unknown }) => Promise<unknown>;
+} {
+  if (
+    typeof client !== 'object' ||
+    client === null ||
+    !('waitingRoomEntry' in client) ||
+    typeof (client as { waitingRoomEntry: unknown }).waitingRoomEntry !== 'object'
+  ) {
+    throw new Error('Prisma client does not have waitingRoomEntry delegate');
+  }
+  return (client as unknown as { waitingRoomEntry: unknown }).waitingRoomEntry as {
+    create: (args: { data: unknown; include?: unknown }) => Promise<unknown>;
+    findMany: (args: {
+      where: unknown;
+      include?: unknown;
+      orderBy?: unknown;
+    }) => Promise<unknown[]>;
+    findFirst: (args: { where: unknown; include?: unknown }) => Promise<unknown>;
+    count: (args: { where: unknown }) => Promise<number>;
+    update: (args: { where: { id: string }; data: unknown; include?: unknown }) => Promise<unknown>;
+  };
 }

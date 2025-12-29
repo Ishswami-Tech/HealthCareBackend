@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+export const COMMUNICATION_SERVICE_TOKEN = 'COMMUNICATION_SERVICE';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { HttpModule } from '@infrastructure/http';
 import { TerminusModule } from '@nestjs/terminus';
@@ -74,6 +75,10 @@ import { CommunicationAlertingService } from './services/communication-alerting.
   controllers: [CommunicationController],
   providers: [
     CommunicationService,
+    {
+      provide: COMMUNICATION_SERVICE_TOKEN,
+      useExisting: CommunicationService,
+    },
     CommunicationHealthMonitorService,
     ClinicTemplateService,
     CommunicationAlertingService,

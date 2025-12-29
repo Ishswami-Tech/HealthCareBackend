@@ -1,8 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@config';
-import { ConfigService } from '@config/config.service';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { BullModule } from '@nestjs/bull';
 
 // Infrastructure Services
 import { LoggingModule } from '@infrastructure/logging';
@@ -109,7 +107,7 @@ import { CommunicationModule } from '@communication/communication.module';
     EventsModule,
     CacheModule, // Provides LocationCacheService
     RbacModule,
-    QueueModule.forRoot(),
+    QueueModule.forRoot(), // BullMQ queue system - provides QueueService with standard queues
     AuthModule, // AuthModule already provides JwtModule with proper configuration
     // RateLimitModule,
     GuardsModule,
@@ -120,56 +118,14 @@ import { CommunicationModule } from '@communication/communication.module';
     QrModule,
     // Video Module (provides VideoService and video providers)
     VideoModule,
-    // Note: QueueModule.forRoot() registers standard queues (appointment-queue, notification-queue, etc.) using BullMQ
-    // But appointment services use clinic-specific queue names (clinic-appointment, clinic-notification, etc.) with Bull
-    // These clinic-specific queues need Bull (not BullMQ) to be initialized first
-    // TODO: Migrate appointment services to use BullMQ and standard queue constants from @infrastructure/queue
-    // Only register BullModule if cache is enabled (Bull requires Redis/Dragonfly)
-    // Cache check will be done in useFactory via ConfigService
-    BullModule.forRootAsync({
-      imports: [ConfigModule],
-      useFactory: (configService: ConfigService) => {
-        // Use ConfigService for all cache configuration (single source of truth)
-        if (!configService.isCacheEnabled()) {
-          throw new Error('Cache is disabled but BullModule requires cache');
-        }
-
-        const cacheHost = configService.getCacheHost();
-        const cachePort = configService.getCachePort();
-        const cachePassword = configService.getCachePassword();
-
-        return {
-          redis: {
-            host: cacheHost,
-            port: cachePort,
-            ...(cachePassword?.trim() && {
-              password: cachePassword.trim(),
-            }),
-            db: configService.getEnvNumber('REDIS_DB', 0),
-          },
-          defaultJobOptions: {
-            removeOnComplete: 1000,
-            removeOnFail: 500,
-            attempts: 5,
-            timeout: 60000,
-          },
-          settings: {
-            stalledInterval: 30000,
-            maxStalledCount: 1,
-          },
-        };
-      },
-      inject: [ConfigService],
-    }),
-    BullModule.registerQueue(
-      { name: 'clinic-appointment' },
-      { name: 'clinic-notification' },
-      { name: 'clinic-payment' },
-      { name: 'clinic-video-call' },
-      { name: 'clinic-analytics' },
-      { name: 'clinic-reminder' },
-      { name: 'clinic-followup' }
-    ),
+    // QueueModule.forRoot() registers standard queues using BullMQ:
+    // - APPOINTMENT_QUEUE (appointment-queue)
+    // - NOTIFICATION_QUEUE (notification-queue)
+    // - ANALYTICS_QUEUE (analytics-queue)
+    // - REMINDER_QUEUE (reminder-queue)
+    // - FOLLOW_UP_QUEUE (follow-up-queue)
+    // - PAYMENT_PROCESSING_QUEUE (payment-processing-queue)
+    // All appointment services now use QueueService from @infrastructure/queue
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
   controllers: [AppointmentsController, AppointmentPluginController],
