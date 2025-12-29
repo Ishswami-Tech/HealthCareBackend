@@ -114,7 +114,7 @@ spec:
             cpu: "2000m"
         livenessProbe:
           httpGet:
-            path: /health/api
+            path: /health
             port: 8088
           initialDelaySeconds: 60
           periodSeconds: 10
@@ -123,7 +123,7 @@ spec:
           failureThreshold: 5
         readinessProbe:
           httpGet:
-            path: /health/api
+            path: /health
             port: 8088
           initialDelaySeconds: 30
           periodSeconds: 10
@@ -132,7 +132,7 @@ spec:
           failureThreshold: 3
         startupProbe:
           httpGet:
-            path: /health/api
+            path: /health
             port: 8088
           initialDelaySeconds: 120
           periodSeconds: 10

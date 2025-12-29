@@ -66,7 +66,7 @@ When you run the startup script, the following containers are created:
 
 | Container | Description | Ports | Health Check |
 |-----------|-------------|-------|--------------|
-| **healthcare-api** | Main API service | 8088, 5555 | `/health` |
+| **healthcare-api** | Main API service | 8088, 5555 | `/health` (Terminus-based), Socket.IO `/health` namespace |
 | **healthcare-postgres** | PostgreSQL database | 5432 | `pg_isready` |
 | **healthcare-dragonfly** | Dragonfly cache (default) | 6380 | `redis-cli ping` |
 | **healthcare-redis** | Redis cache (fallback) | 6379 | `redis-cli ping` |

@@ -139,13 +139,13 @@ QUEUE_RATE_LIMIT=100            # Jobs per minute
 ## Creating Workers
 
 ```typescript
-import { Processor, Process } from '@nestjs/bull';
-import { Job } from 'bull';
+import { Processor, Process } from '@nestjs/bullmq';
+import type { Job } from 'bullmq';
 
 @Processor('email')
 export class EmailWorker {
   @Process()
-  async handleEmailJob(job: Job) {
+  async handleEmailJob(job: Job<{ to: string; subject: string; template: string; data: unknown }>) {
     const { to, subject, template, data } = job.data;
 
     // Send email
@@ -160,7 +160,7 @@ export class EmailWorker {
   }
 
   @Process('bulk-send')
-  async handleBulkEmail(job: Job) {
+  async handleBulkEmail(job: Job<{ emails: string[]; template: string; data: unknown }>) {
     // Handle bulk email sending
   }
 }

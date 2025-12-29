@@ -52,7 +52,7 @@ function isCacheEnabledSafe(): boolean {
     forwardRef(() => CommunicationConfigModule), // Communication config service
     forwardRef(() => EmailServicesModule), // Email services (suppression list, unsubscribe, webhooks)
     // QueueModule is already imported globally via AppModule.forRoot()
-    // Only register queue if cache is enabled (Bull requires Redis/Dragonfly)
+    // Only register queue if cache is enabled (BullMQ requires Redis/Dragonfly)
     // Use direct environment variable check to avoid module loading issues
     ...(isCacheEnabledSafe()
       ? [

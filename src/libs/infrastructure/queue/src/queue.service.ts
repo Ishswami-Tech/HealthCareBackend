@@ -1379,8 +1379,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   // Helper methods for appointment queues
-  private getAppointmentQueueName(domain: string): string {
-    return domain === 'clinic' ? 'clinic-appointment-queue' : 'appointment-queue';
+  private getAppointmentQueueName(_domain: string): string {
+    // Use standard queue name from QueueService constants
+    // All domains use the same appointment queue
+    return APPOINTMENT_QUEUE_CONST;
   }
 
   private calculateEstimatedWaitTime(position: number, domain: string): number {

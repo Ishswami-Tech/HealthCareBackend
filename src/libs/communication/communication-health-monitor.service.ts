@@ -226,9 +226,26 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       // Only mark as unhealthy if service exists AND is initialized but not healthy
       if (this.emailService) {
         // Check if email service is actually initialized/enabled
+        // Support multiple providers: SMTP, ZeptoMail (API), Mailtrap (API)
         // Use ConfigService (which uses dotenv) for environment variable access
         const emailConfig = this.configService.getEmailConfig();
-        const isEmailEnabled = emailConfig.host && emailConfig.host !== '';
+        const emailProviderValue = this.configService.getEnv('EMAIL_PROVIDER', 'smtp');
+        const emailProvider = emailProviderValue ? emailProviderValue.toLowerCase() : 'smtp';
+
+        // Check if email is enabled based on provider type
+        let isEmailEnabled = false;
+        if (emailProvider === 'smtp') {
+          // SMTP provider: check for host
+          isEmailEnabled = !!(emailConfig?.host && emailConfig.host !== '');
+        } else if (emailProvider === 'api') {
+          // API provider: check for ZeptoMail token or Mailtrap token
+          const zeptoMailToken = this.configService.getEnv('ZEPTOMAIL_SEND_MAIL_TOKEN');
+          const mailtrapToken = this.configService.getEnv('MAILTRAP_API_TOKEN');
+          isEmailEnabled = !!(zeptoMailToken || mailtrapToken);
+        } else {
+          // Unknown provider, check if service is initialized
+          isEmailEnabled = this.emailService.isHealthy();
+        }
 
         if (isEmailEnabled) {
           configuredServices.push('email');
@@ -237,9 +254,21 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
           if (emailHealth.connected) {
             healthyServices.push('email');
           } else {
-            // Service is enabled but not healthy - this is a real issue
-            issues.push('Email service enabled but not healthy');
-            status.healthy = false;
+            // Service is enabled but not healthy - check if it's just not initialized yet
+            // In production/Docker, services may take time to initialize
+            // If service is configured but not yet healthy, mark as degraded but not completely unhealthy
+            if (this.emailService && this.emailService.isHealthy()) {
+              // Service is actually healthy, just the health check timed out
+              healthyServices.push('email');
+              status.email = {
+                connected: true,
+                ...(emailHealth.latency !== undefined && { latency: emailHealth.latency }),
+              };
+            } else {
+              // Service is enabled but not healthy - this is a real issue
+              issues.push('Email service enabled but not healthy');
+              status.healthy = false;
+            }
           }
         } else {
           // Service exists but not enabled - not an issue

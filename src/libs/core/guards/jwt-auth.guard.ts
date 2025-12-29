@@ -21,7 +21,7 @@ import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
 import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
 import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
-// Rate limiting service intentionally not injected here; rate limits enforced at gateway/middleware level
+import { RateLimitService } from '@security/rate-limit/rate-limit.service';
 
 /**
  * JWT Authentication Guard for Healthcare Applications
@@ -144,7 +144,9 @@ export class JwtAuthGuard implements CanActivate {
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
-    @Inject(ConfigService) private readonly configService: ConfigService
+    @Inject(ConfigService) private readonly configService: ConfigService,
+    @Inject(forwardRef(() => RateLimitService))
+    private readonly rateLimitService?: RateLimitService
   ) {}
 
   /**
@@ -193,29 +195,38 @@ export class JwtAuthGuard implements CanActivate {
       // Get client info
       const clientIp = request.ip || (request.headers['x-forwarded-for'] as string) || 'unknown';
 
-      // Rate limiting disabled for development stage
-      // TODO: Enable rate limiting in production
-      /*
-      // Check rate limits (enabled for production security)
-      if (!this.cacheService.isDevelopmentMode()) {
-        const rateLimitResult = await this.rateLimitService.isRateLimited(
-          `${clientIp}:${path}`,
-          'auth'
-        );
+      // Rate limiting enabled for production security
+      if (this.rateLimitService && !this.configService.isDevelopment()) {
+        const rateLimitResult = await this.rateLimitService.checkRateLimit(`${clientIp}:${path}`, {
+          windowMs: 60000, // 1 minute window
+          max: 5, // 5 requests per minute for auth endpoints
+        });
 
-        if (rateLimitResult.limited) {
+        if (!rateLimitResult.allowed) {
+          void this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            'Rate limit exceeded for authentication endpoint',
+            'JwtAuthGuard',
+            {
+              clientIp,
+              path,
+              remaining: rateLimitResult.remaining,
+              resetTime: rateLimitResult.resetTime,
+            }
+          );
+
           throw new HttpException(
             {
               _error: 'Too Many Requests',
               message: 'Rate limit exceeded. Please try again later.',
-              retryAfter: 60, // Standard retry after 60 seconds
-              remaining: rateLimitResult.remaining
+              retryAfter: Math.ceil((rateLimitResult.resetTime.getTime() - Date.now()) / 1000),
+              remaining: rateLimitResult.remaining,
             },
             HttpStatus.TOO_MANY_REQUESTS
           );
         }
       }
-      */
 
       // Lockout mechanism disabled for development stage
       // TODO: Enable lockout protection in production

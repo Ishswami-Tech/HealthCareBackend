@@ -7,7 +7,7 @@ import { FastifyReply } from 'fastify';
 import { HealthService } from './services/health/health.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import type { DetailedHealthCheckResponse, ServiceHealth } from '@core/types/common.types';
+import type { ServiceHealth, DetailedHealthCheckResponse } from '@core/types/common.types';
 
 // Local types for dashboard
 interface ServiceInfo {
@@ -100,16 +100,14 @@ export class AppController {
       const baseUrl = appConfig.apiUrl || appConfig.baseUrl;
       const isProduction = appConfig.environment === 'production';
 
-      // Get real-time service status from health service with comprehensive error handling
-      // HealthService is now independent and always returns a valid response
+      // Get real-time service status using Terminus health checks
       let healthData;
       try {
-        // Add timeout to prevent hanging - HealthService should respond quickly
-        // Check if healthService is available before calling
-        if (!this.healthService) {
-          throw new Error('HealthService is not available');
-        }
-        const healthCheckPromise = this.healthService.getDetailedHealth();
+        // Use HealthService for health checks (standardized, reliable, includes realtime status)
+        const healthCheckPromise = this.healthService.getDetailedHealth().then(healthResult => {
+          // HealthService already returns the correct format with realtime status
+          return healthResult;
+        });
         const timeoutPromise = new Promise<DetailedHealthCheckResponse>(resolve => {
           setTimeout(() => {
             resolve({
@@ -421,10 +419,7 @@ export class AppController {
           description: isDragonflyProvider
             ? 'Dragonfly cache management interface (Redis-compatible).'
             : 'Redis database management interface.',
-          url:
-            urlsConfig.redisCommander ||
-            this.configService.getEnv('REDIS_COMMANDER_URL') ||
-            'http://localhost:8082',
+          url: urlsConfig.redisCommander || this.configService.getEnv('REDIS_COMMANDER_URL') || '',
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -435,10 +430,7 @@ export class AppController {
         allServices.push({
           name: 'Redis Commander',
           description: 'Redis database management interface.',
-          url:
-            urlsConfig.redisCommander ||
-            this.configService.getEnv('REDIS_COMMANDER_URL') ||
-            'http://localhost:8082',
+          url: urlsConfig.redisCommander || this.configService.getEnv('REDIS_COMMANDER_URL') || '',
           active: isRedisCommanderRunning,
           category: 'Database',
           credentials: 'Username: admin, Password: admin',
@@ -450,10 +442,7 @@ export class AppController {
         allServices.push({
           name: 'Prisma Studio',
           description: 'PostgreSQL database management through Prisma.',
-          url:
-            urlsConfig.prismaStudio ||
-            this.configService.getEnv('PRISMA_STUDIO_URL') ||
-            'http://localhost:5555',
+          url: urlsConfig.prismaStudio || this.configService.getEnv('PRISMA_STUDIO_URL') || '',
           active: isPrismaStudioRunning, // Active if Prisma Studio health check passes
           category: 'Database',
           devOnly: !isProduction,
@@ -554,7 +543,8 @@ export class AppController {
         services,
         recentLogs,
         isProduction,
-        dashboardData
+        dashboardData,
+        baseUrl
       );
 
       res.header('Content-Type', 'text/html');
@@ -603,12 +593,17 @@ export class AppController {
   })
   async getSocketTestPage(@Res() res: FastifyReply) {
     const appConfig = this.configService.getAppConfig();
+    // Get baseUrl from ConfigService - NO HARDCODED FALLBACKS
     const baseUrl: string =
       appConfig.apiUrl ||
       appConfig.baseUrl ||
       this.configService.getEnv('API_URL') ||
       this.configService.getEnv('BASE_URL') ||
-      'http://localhost:8088';
+      '';
+
+    if (!baseUrl) {
+      throw new Error('API_URL or BASE_URL must be configured in environment variables or config');
+    }
 
     const html = `
 <!DOCTYPE html>
@@ -721,7 +716,7 @@ export class AppController {
         </div>
     </div>
     
-    <script src="${baseUrl}/socket.io/socket.io.js"></script>
+    <script src="${String(baseUrl)}/socket.io/socket.io.js"></script>
     <script>
         let socket;
         const statusEl = document.getElementById('status');
@@ -882,7 +877,8 @@ export class AppController {
     services: ServiceInfo[],
     recentLogs: DashboardLogEntry[],
     isProduction: boolean,
-    healthData: DashboardData
+    healthData: DashboardData,
+    baseUrl: string
   ): string {
     // Add this helper function at the beginning of generateDashboardHtml
     const formatDateTime = (dateString: string) => {
@@ -903,14 +899,8 @@ export class AppController {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="10">
     <title>${title}</title>
-    <script>
-        // Auto-refresh dashboard every 10 seconds for real-time updates
-        setTimeout(function() {
-            location.reload();
-        }, 10000);
-    </script>
+    <script src="${String(baseUrl)}/socket.io/socket.io.js"></script>
     <style>
         /* Base styles */
         * {
@@ -1486,7 +1476,7 @@ export class AppController {
                       lastChecked: string;
                       metrics: Record<string, unknown>;
                     }) => `
-                    <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}">
+                    <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}" data-service="${service.id}">
                         <div class="service-header">
                             <div class="service-header-content">
                                 <div class="service-status-indicator ${service.isHealthy ? 'indicator-healthy' : 'indicator-unhealthy'}"></div>
@@ -1661,12 +1651,232 @@ export class AppController {
     </div>
 
     <script>
-        // Optimized real-time dashboard updates using AJAX (no page reload)
-        // Prevents excessive health checks and improves performance for 10M+ users
-        let updateInterval;
+        // Real-time health monitoring via Socket.IO
+        // Connects to /health namespace for push-based updates (no polling)
+        let healthSocket = null;
+        let updateInterval = null;
         let isUpdating = false;
         let lastUpdateTime = 0;
-        const MIN_UPDATE_INTERVAL_MS = 20000; // Minimum 20 seconds between updates (matches cache TTL)
+        const MIN_UPDATE_INTERVAL_MS = 20000; // Fallback AJAX interval (if Socket.IO fails)
+        const BASE_URL = '${String(baseUrl)}';
+        
+        // Initialize Socket.IO connection to realtime health gateway
+        function initRealtimeHealth() {
+            try {
+                if (typeof io === 'undefined') {
+                    console.warn('Socket.IO not loaded, falling back to AJAX polling');
+                    startAjaxPolling();
+                    return;
+                }
+                
+                // Connect to /health namespace for real-time health updates
+                healthSocket = io(BASE_URL + '/health', {
+                    transports: ['websocket', 'polling'],
+                    reconnection: true,
+                    reconnectionAttempts: 5,
+                    reconnectionDelay: 1000,
+                    timeout: 5000,
+                });
+                
+                // Subscribe to health updates
+                healthSocket.on('connect', () => {
+                    console.log('Connected to realtime health gateway');
+                    healthSocket.emit('health:subscribe');
+                });
+                
+                // Handle full health status updates
+                healthSocket.on('health:status', (status) => {
+                    updateDashboardFromRealtimeStatus(status);
+                });
+                
+                // Handle incremental service updates
+                healthSocket.on('health:service:update', (update) => {
+                    updateServiceFromRealtimeUpdate(update);
+                });
+                
+                // Handle heartbeat (lightweight ping)
+                healthSocket.on('health:heartbeat', (heartbeat) => {
+                    updateOverallStatus(heartbeat.o);
+                });
+                
+                // Handle connection errors
+                healthSocket.on('connect_error', (error) => {
+                    console.warn('Health socket connection error:', error);
+                    // Fallback to AJAX polling if Socket.IO fails
+                    if (!updateInterval) {
+                        startAjaxPolling();
+                    }
+                });
+                
+                // Handle disconnection
+                healthSocket.on('disconnect', () => {
+                    console.warn('Disconnected from health gateway, falling back to AJAX');
+                    if (!updateInterval) {
+                        startAjaxPolling();
+                    }
+                });
+                
+            } catch (error) {
+                console.error('Failed to initialize realtime health:', error);
+                startAjaxPolling();
+            }
+        }
+        
+        // Update dashboard from realtime health status
+        function updateDashboardFromRealtimeStatus(status) {
+            if (!status) return;
+            
+            // Update overall status
+            if (status.o) {
+                updateOverallStatus(status.o);
+            }
+            
+            // Update services
+            if (status.s) {
+                Object.entries(status.s).forEach(([serviceName, serviceData]) => {
+                    updateServiceStatus(serviceName, serviceData);
+                });
+            }
+            
+            // Update system metrics if available
+            if (status.sys) {
+                updateSystemMetrics(status.sys);
+            }
+            
+            // Update timestamp
+            if (status.t) {
+                updateLastChecked(status.t);
+            }
+        }
+        
+        // Update service from incremental update
+        function updateServiceFromRealtimeUpdate(update) {
+            if (!update || !update.id || !update.st) return;
+            
+            const serviceName = update.id;
+            const status = update.st;
+            
+            // Find service element and update
+            const serviceElement = document.querySelector('[data-service="' + serviceName + '"]');
+            if (serviceElement) {
+                const isHealthy = status === 'healthy';
+                updateServiceElement(serviceElement, isHealthy, update.rt);
+            }
+        }
+        
+        // Update overall health status
+        function updateOverallStatus(status) {
+            const statusElement = document.querySelector('.health-card-header');
+            const statusCircle = document.querySelector('.status-circle');
+            const statusText = document.querySelector('.health-status-text');
+            
+            if (statusElement) {
+                statusElement.className = \`health-card-header \${status === 'healthy' ? 'healthy' : status === 'degraded' ? 'unhealthy' : 'unhealthy'}\`;
+            }
+            
+            if (statusCircle) {
+                statusCircle.className = \`status-circle \${status === 'healthy' ? 'status-healthy' : 'status-unhealthy'}\`;
+            }
+            
+            if (statusText) {
+                statusText.textContent = status === 'healthy' ? 'All systems operational' : status === 'degraded' ? 'System partially degraded' : 'System unhealthy';
+                statusText.className = \`health-status-text \${status === 'healthy' ? 'status-text-healthy' : 'status-text-unhealthy'}\`;
+            }
+        }
+        
+        // Update service status
+        function updateServiceStatus(serviceName, serviceData) {
+            const serviceElement = document.querySelector('[data-service="' + serviceName + '"]');
+            if (!serviceElement || !serviceData) return;
+            
+            const isHealthy = serviceData.status === 'healthy';
+            const responseTime = serviceData.responseTime || 0;
+            
+            updateServiceElement(serviceElement, isHealthy, responseTime, serviceData);
+        }
+        
+        // Update service element UI
+        function updateServiceElement(element, isHealthy, responseTime, serviceData) {
+            // Update status indicator
+            const indicator = element.querySelector('.service-status-indicator');
+            if (indicator) {
+                const indicatorClass = isHealthy ? 'indicator-healthy' : 'indicator-unhealthy';
+                indicator.className = 'service-status-indicator ' + indicatorClass;
+            }
+            
+            // Update status text
+            const statusText = element.querySelector('.health-status-text, .status-text');
+            if (statusText) {
+                statusText.textContent = isHealthy ? 'Active' : 'Inactive';
+                const textClass = isHealthy ? 'status-text-healthy' : 'status-text-unhealthy';
+                statusText.className = 'health-status-text ' + textClass;
+            }
+            
+            // Update response time
+            if (responseTime !== undefined) {
+                const metrics = element.querySelectorAll('.metric');
+                metrics.forEach(metric => {
+                    const label = metric.querySelector('.metric-label');
+                    if (label && label.textContent.includes('Response Time')) {
+                        const value = metric.querySelector('.metric-value');
+                        if (value) {
+                            value.textContent = responseTime + ' ms';
+                        }
+                    }
+                });
+            }
+            
+            // Update last checked
+            if (serviceData && serviceData.timestamp) {
+                const lastChecked = element.querySelector('.metric-value');
+                // Find last checked metric
+                const metrics = element.querySelectorAll('.metric');
+                metrics.forEach(metric => {
+                    const label = metric.querySelector('.metric-label');
+                    if (label && label.textContent.includes('Last Checked')) {
+                        const value = metric.querySelector('.metric-value');
+                        if (value) {
+                            value.textContent = new Date(serviceData.timestamp).toLocaleString();
+                        }
+                    }
+                });
+            }
+            
+            // Update section class
+            const sectionClass = isHealthy ? 'healthy' : 'unhealthy';
+            element.className = 'service-section ' + sectionClass;
+        }
+        
+        // Update system metrics
+        function updateSystemMetrics(metrics) {
+            // Update CPU if available
+            if (metrics.cpu !== undefined) {
+                const cpuElement = document.querySelector('[data-metric="cpu"]');
+                if (cpuElement) {
+                    cpuElement.textContent = metrics.cpu.toFixed(1) + '%';
+                }
+            }
+            
+            // Update memory if available
+            if (metrics.memory !== undefined) {
+                const memoryElement = document.querySelector('[data-metric="memory"]');
+                if (memoryElement) {
+                    memoryElement.textContent = metrics.memory.toFixed(1) + '%';
+                }
+            }
+        }
+        
+        // Update last checked timestamp
+        function updateLastChecked(timestamp) {
+            const lastCheckedElement = document.querySelector('.health-card-header span');
+            if (lastCheckedElement && timestamp) {
+                lastCheckedElement.textContent = 'Last checked: ' + new Date(timestamp).toLocaleString();
+            }
+        }
+        
+        // Fallback: AJAX polling (if Socket.IO fails)
+        function startAjaxPolling() {
+            console.log('Starting AJAX polling fallback');
         
         // Function to update dashboard data via AJAX
         async function updateDashboard() {
@@ -1796,19 +2006,28 @@ export class AppController {
             return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
         }
         
-        // Start auto-update on page load
-        // Update every 30 seconds (slightly longer than cache TTL to prevent excessive requests)
-        // This ensures we get fresh data without overloading the server with 10M+ users
-        // Health endpoint uses smart caching - returns cached data if fresh (< 20s)
-        updateInterval = setInterval(updateDashboard, 30000); // 30 seconds - optimized for 10M+ users
+            // Start AJAX polling
+            updateInterval = setInterval(updateDashboard, 30000); // 30 seconds fallback
+            setTimeout(updateDashboard, 2000); // Initial update
+        }
         
-        // Initial update after 2 seconds (allow page to fully load, avoid initial burst)
-        setTimeout(updateDashboard, 2000);
+        // Initialize realtime health monitoring on page load
+        // This uses Socket.IO for push-based updates (no polling)
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', initRealtimeHealth);
+        } else {
+            initRealtimeHealth();
+        }
         
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
+            if (healthSocket) {
+                healthSocket.disconnect();
+                healthSocket = null;
+            }
             if (updateInterval) {
                 clearInterval(updateInterval);
+                updateInterval = null;
             }
         });
     </script>

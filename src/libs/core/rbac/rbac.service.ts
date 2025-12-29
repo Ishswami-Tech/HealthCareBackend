@@ -850,20 +850,18 @@ export class RbacService {
 
   /**
    * Check medical record ownership
-   * MedicalRecord model integration - currently using placeholder implementation
+   * Note: MedicalRecord model does not exist in Prisma schema.
+   * MedicalHistory model exists but has different structure.
+   * This placeholder remains until MedicalRecord model is added or MedicalHistory is used.
    */
   private checkMedicalRecordOwnership(_recordId: string, _userId: string): Promise<boolean> {
-    // TODO: Implement when MedicalRecord model is added to Prisma schema
-    // Use: await this.databaseService.executeHealthcareRead(async (client) => {
-    //   const record = await client.medicalRecord.findUnique({ where: { id: recordId } });
-    //   return record ? record.patientId === userId : false;
+    // MedicalRecord model does not exist in Prisma schema
+    // If needed, use MedicalHistory model instead:
+    // await this.databaseService.executeHealthcareRead(async (client) => {
+    //   const history = await client.medicalHistory.findUnique({ where: { id: recordId } });
+    //   return history ? history.patientId === userId : false;
     // });
     // For now, return false as placeholder
-    //   this.logger.error(`Failed to check medical record ownership`, _error instanceof Error ? (_error as Error).stack : 'No stack trace available');
-    //   return false;
-    // }
-
-    // For now, return false as medical records are not implemented
     return Promise.resolve(false);
   }
 

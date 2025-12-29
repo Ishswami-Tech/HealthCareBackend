@@ -10,11 +10,11 @@ import type {
   ClinicMetrics,
   Alert,
   MetricsSnapshot,
-  HealthStatus,
+  DatabaseHealthStatusType as HealthStatus,
   PerformanceTrends,
   DatabasePerformanceReport,
   ClinicSummary,
-} from '@core/types/database.types';
+} from '@core/types';
 
 /**
  * Comprehensive Database Metrics Service

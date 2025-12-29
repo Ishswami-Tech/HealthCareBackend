@@ -2,14 +2,22 @@
  * Video Health Indicator for Health Module
  * @class VideoHealthIndicator
  * @description Health indicator for video service using @nestjs/terminus
+ * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult } from '@nestjs/terminus';
 import { VideoService } from '@services/video/video.service';
+import { BaseHealthIndicator } from './base-health.indicator';
+
+interface VideoHealthStatus {
+  isHealthy: boolean;
+  primaryProvider: string;
+  fallbackProvider: string | null;
+}
 
 @Injectable()
-export class VideoHealthIndicator extends HealthIndicator {
+export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus> {
   constructor(
     @Optional()
     @Inject(forwardRef(() => VideoService))
@@ -18,34 +26,39 @@ export class VideoHealthIndicator extends HealthIndicator {
     super();
   }
 
-  async check(key: string): Promise<HealthIndicatorResult> {
-    try {
-      if (!this.videoService) {
-        return this.getStatus(key, true, {
-          message: 'Video service not available',
-        });
-      }
+  protected isServiceAvailable(): boolean {
+    return this.videoService !== undefined && this.videoService !== null;
+  }
 
-      const isHealthy = await this.videoService.isHealthy();
-      const primaryProvider = this.videoService.getCurrentProvider();
-      const fallbackProvider = this.videoService.getFallbackProvider();
+  protected getServiceName(): string {
+    return 'Video';
+  }
 
-      const result = this.getStatus(key, isHealthy, {
-        primaryProvider,
-        fallbackProvider,
-        isHealthy,
-      });
-
-      if (!isHealthy) {
-        throw new HealthCheckError('Video service is unhealthy', result);
-      }
-
-      return result;
-    } catch (error) {
-      const result = this.getStatus(key, false, {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new HealthCheckError('Video service health check failed', result);
+  protected async getHealthStatus(): Promise<VideoHealthStatus> {
+    if (!this.videoService) {
+      throw new Error('Video service not available');
     }
+
+    const isHealthy = await this.videoService.isHealthy();
+    const primaryProvider = this.videoService.getCurrentProvider();
+    const fallbackProvider = this.videoService.getFallbackProvider();
+
+    return {
+      isHealthy,
+      primaryProvider,
+      fallbackProvider,
+    };
+  }
+
+  protected formatResult(key: string, status: VideoHealthStatus): HealthIndicatorResult {
+    return this.getStatus(key, status.isHealthy, {
+      primaryProvider: status.primaryProvider,
+      fallbackProvider: status.fallbackProvider,
+      isHealthy: status.isHealthy,
+    });
+  }
+
+  protected extractIsHealthy(status: VideoHealthStatus): boolean {
+    return status.isHealthy;
   }
 }

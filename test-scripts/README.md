@@ -125,7 +125,7 @@ node test-scripts/billing/test-doctor-billing.js
 
 ### Services & Endpoints
 
-**Total: ~192 API endpoints** covered with role-based testing across **9 services**!
+**Total: ~250+ API endpoints** covered with role-based testing across **16 services**!
 
 #### ✅ Health (1 endpoint)
 - Health Check Endpoint (Public, no auth required)
@@ -195,6 +195,59 @@ node test-scripts/billing/test-doctor-billing.js
 - Notification Stats (CLINIC_ADMIN only)
 - Chat Stats (CLINIC_ADMIN only)
 - Chat History
+
+#### ✅ Notification Preferences (4-7 endpoints per role)
+- Get My Preferences
+- Create Preferences
+- Update My Preferences
+- Delete My Preferences
+- Get User Preferences (CLINIC_ADMIN only)
+- Update User Preferences (CLINIC_ADMIN only)
+- Delete User Preferences (CLINIC_ADMIN only)
+
+#### ✅ Clinic Communication (6 endpoints - CLINIC_ADMIN only)
+- Get Communication Config
+- Update Communication Config
+- Update SES Config
+- Test Email Config
+- Test WhatsApp Config
+- Test SMS Config
+
+#### ✅ Email Service (3 endpoints - CLINIC_ADMIN only)
+- Get Email Status
+- Test Email Service
+- Test Custom Email
+
+#### ✅ Email Unsubscribe (3 endpoints - Public)
+- Get Unsubscribe Page
+- Post Unsubscribe
+- Get Unsubscribe By Token
+
+#### ✅ Plugin (12 endpoints - CLINIC_ADMIN only)
+- Plugin Information
+- Domain Plugins
+- Domain Features
+- Execute Plugin
+- Execute Batch Plugins
+- Plugin Health
+- Plugin Metrics
+- Plugin Alerts
+- Plugin Configuration
+
+#### ✅ EHR-Clinic (6 endpoints - CLINIC_ADMIN only)
+- Comprehensive Health Record
+- Clinic Patients Records
+- Clinic EHR Analytics
+- Clinic Patients Summary
+- Search Clinic Records
+- Critical Alerts
+
+#### ✅ Clinic-Location (5 endpoints - CLINIC_ADMIN only)
+- Get All Locations
+- Get Location By ID
+- Create Location
+- Update Location
+- Delete Location
 
 ## 👥 Test Users
 

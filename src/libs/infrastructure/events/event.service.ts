@@ -92,11 +92,10 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 
-// Internal imports - Types (EventCategory and EventPriority are used as values)
-import { EventCategory, EventPriority } from '@core/types';
+// Internal imports - Types (EventCategory, EventPriority, and EventStatus are used as values)
+import { EventCategory, EventPriority, EventStatus } from '@core/types';
 import type {
   EnterpriseEventPayload,
-  EventStatus,
   EventResult,
   EventFilter,
   EventMetrics,
@@ -112,6 +111,11 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private processedEvents = 0;
   private failedEvents = 0;
   private totalProcessingTime = 0;
+  // Event metrics tracking
+  private readonly priorityCounts = new Map<EventPriority, number>();
+  private readonly statusCounts = new Map<EventStatus, number>();
+  private readonly errorDistribution = new Map<string, number>();
+  private readonly retryCounts = new Map<string, number>(); // eventId -> retry count
 
   // Performance monitoring
   private performanceInterval!: NodeJS.Timeout;
@@ -645,7 +649,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         eventsByStatus: await this.getEventsByStatus(),
         failureRate:
           this.processedEvents > 0 ? (this.failedEvents / this.processedEvents) * 100 : 0,
-        retryRate: 0, // TODO: Implement retry tracking
+        retryRate: this.calculateRetryRate(),
         errorDistribution: await this.getErrorDistribution(),
       };
 
@@ -763,6 +767,12 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     // Update metrics
     this.processedEvents++;
     this.totalProcessingTime += Date.now() - startTime;
+    // Track priority
+    const currentPriorityCount = this.priorityCounts.get(enrichedPayload.priority) || 0;
+    this.priorityCounts.set(enrichedPayload.priority, currentPriorityCount + 1);
+    // Track status (COMPLETED)
+    const currentStatusCount = this.statusCounts.get(EventStatus.COMPLETED) || 0;
+    this.statusCounts.set(EventStatus.COMPLETED, currentStatusCount + 1);
 
     // Log successful event emission
     void this.loggingService.log(
@@ -849,6 +859,21 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
+
+    // Track error distribution
+    const errorKey = errorMessage.split(':')[0] || 'UnknownError'; // Use first part of error message as key
+    const currentErrorCount = this.errorDistribution.get(errorKey) || 0;
+    this.errorDistribution.set(errorKey, currentErrorCount + 1);
+
+    // Track status (FAILED)
+    const currentStatusCount = this.statusCounts.get(EventStatus.FAILED) || 0;
+    this.statusCounts.set(EventStatus.FAILED, currentStatusCount + 1);
+
+    // Track priority if payload available
+    if (payload) {
+      const currentPriorityCount = this.priorityCounts.get(payload.priority) || 0;
+      this.priorityCounts.set(payload.priority, currentPriorityCount + 1);
+    }
 
     void this.loggingService.log(
       LogType.ERROR,
@@ -1057,18 +1082,27 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getEventsByPriority(): Promise<Record<EventPriority, number>> {
-    // TODO: Implement priority counting
-    return Promise.resolve({} as Record<EventPriority, number>);
+    const priorities = {} as Record<EventPriority, number>;
+    for (const priority of Object.values(EventPriority)) {
+      priorities[priority] = this.priorityCounts.get(priority) || 0;
+    }
+    return Promise.resolve(priorities);
   }
 
   private getEventsByStatus(): Promise<Record<EventStatus, number>> {
-    // TODO: Implement status counting
-    return Promise.resolve({} as Record<EventStatus, number>);
+    const statuses = {} as Record<EventStatus, number>;
+    for (const status of Object.values(EventStatus)) {
+      statuses[status] = this.statusCounts.get(status) || 0;
+    }
+    return Promise.resolve(statuses);
   }
 
   private getErrorDistribution(): Promise<Record<string, number>> {
-    // TODO: Implement error distribution tracking
-    return Promise.resolve({});
+    const distribution: Record<string, number> = {};
+    for (const [error, count] of this.errorDistribution.entries()) {
+      distribution[error] = count;
+    }
+    return Promise.resolve(distribution);
   }
 
   private generateEventId(): string {
@@ -1077,6 +1111,29 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
 
   private generateCorrelationId(): string {
     return `cor_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+
+  /**
+   * Calculate retry rate based on retry counts
+   */
+  private calculateRetryRate(): number {
+    if (this.processedEvents === 0) return 0;
+    const totalRetries = Array.from(this.retryCounts.values()).reduce(
+      (sum, count) => sum + count,
+      0
+    );
+    return (totalRetries / this.processedEvents) * 100;
+  }
+
+  /**
+   * Track event retry
+   */
+  private trackRetry(eventId: string): void {
+    const currentRetryCount = this.retryCounts.get(eventId) || 0;
+    this.retryCounts.set(eventId, currentRetryCount + 1);
+    // Track status (RETRYING)
+    const currentStatusCount = this.statusCounts.get(EventStatus.RETRYING) || 0;
+    this.statusCounts.set(EventStatus.RETRYING, currentStatusCount + 1);
   }
 
   private generateTraceId(): string {
@@ -1172,6 +1229,10 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
     this.failedEvents = 0;
     this.totalProcessingTime = 0;
     this.metricsBuffer = [];
+    this.priorityCounts.clear();
+    this.statusCounts.clear();
+    this.errorDistribution.clear();
+    this.retryCounts.clear();
   }
 
   private async cleanup() {

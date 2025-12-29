@@ -7,9 +7,19 @@
  * @description ZeptoMail webhook handler for email events
  */
 
-import { Controller, Post, Body, HttpCode, HttpStatus, Headers } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Headers,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { ZeptoMailWebhookService } from './zeptomail-webhook.service';
+import { ConfigService } from '@config/config.service';
+import * as crypto from 'crypto';
 
 /**
  * ZeptoMail Webhook Event Structure
@@ -28,7 +38,10 @@ interface ZeptoMailWebhookEvent {
 @ApiTags('Email Webhooks')
 @Controller('webhooks/zeptomail')
 export class ZeptoMailWebhookController {
-  constructor(private readonly zeptoMailWebhookService: ZeptoMailWebhookService) {}
+  constructor(
+    private readonly zeptoMailWebhookService: ZeptoMailWebhookService,
+    private readonly configService: ConfigService
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.OK)
@@ -71,11 +84,29 @@ export class ZeptoMailWebhookController {
   })
   async handleWebhook(
     @Body() event: ZeptoMailWebhookEvent,
-    @Headers('x-zeptomail-signature') _signature?: string
+    @Headers('x-zeptomail-signature') signature?: string
   ): Promise<{ received: boolean; processed: boolean }> {
     try {
-      // TODO: Verify webhook signature if ZeptoMail provides signature verification
-      // For now, process the webhook (in production, add signature verification)
+      // Verify webhook signature if provided (production security)
+      // Note: ZeptoMail may use different signature methods - adjust based on their documentation
+      if (signature && process.env['NODE_ENV'] === 'production') {
+        const webhookSecret = this.configService.getEnv('ZEPTOMAIL_WEBHOOK_SECRET');
+        if (webhookSecret) {
+          // ZeptoMail typically uses HMAC SHA256 for webhook signatures
+          const rawBody = JSON.stringify(event);
+          const expectedSignature = crypto
+            .createHmac('sha256', webhookSecret)
+            .update(rawBody)
+            .digest('hex');
+
+          // Remove any prefix (e.g., "sha256=") if present
+          const providedSignature = signature.replace(/^(sha256=|sha256:)/i, '');
+
+          if (expectedSignature !== providedSignature) {
+            throw new UnauthorizedException('Invalid ZeptoMail webhook signature');
+          }
+        }
+      }
 
       await this.zeptoMailWebhookService.processWebhook(event);
       return { received: true, processed: true };

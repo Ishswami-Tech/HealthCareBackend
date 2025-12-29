@@ -2,45 +2,46 @@
  * Queue Health Indicator for Health Module
  * @class QueueHealthIndicator
  * @description Health indicator for queue service using @nestjs/terminus
+ * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult } from '@nestjs/terminus';
 import { QueueHealthMonitorService } from '@infrastructure/queue';
+import type { QueueHealthMonitorStatus } from '@core/types';
+import { BaseHealthIndicator } from './base-health.indicator';
 
 @Injectable()
-export class QueueHealthIndicator extends HealthIndicator {
+export class QueueHealthIndicator extends BaseHealthIndicator<QueueHealthMonitorStatus> {
   constructor(@Optional() private readonly queueHealthMonitor?: QueueHealthMonitorService) {
     super();
   }
 
-  async check(key: string): Promise<HealthIndicatorResult> {
-    try {
-      if (!this.queueHealthMonitor) {
-        return this.getStatus(key, true, {
-          message: 'Queue health monitor not available',
-        });
-      }
+  protected isServiceAvailable(): boolean {
+    return this.queueHealthMonitor !== undefined && this.queueHealthMonitor !== null;
+  }
 
-      const healthStatus = await this.queueHealthMonitor.getHealthStatus();
+  protected getServiceName(): string {
+    return 'Queue';
+  }
 
-      const result = this.getStatus(key, healthStatus.healthy, {
-        healthy: healthStatus.healthy,
-        connection: healthStatus.connection,
-        metrics: healthStatus.metrics,
-        performance: healthStatus.performance,
-      });
-
-      if (!healthStatus.healthy) {
-        throw new HealthCheckError('Queue service is unhealthy', result);
-      }
-
-      return result;
-    } catch (error) {
-      const result = this.getStatus(key, false, {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new HealthCheckError('Queue service health check failed', result);
+  protected async getHealthStatus(): Promise<QueueHealthMonitorStatus> {
+    if (!this.queueHealthMonitor) {
+      throw new Error('Queue health monitor not available');
     }
+    return await this.queueHealthMonitor.getHealthStatus();
+  }
+
+  protected formatResult(key: string, status: QueueHealthMonitorStatus): HealthIndicatorResult {
+    return this.getStatus(key, status.healthy, {
+      healthy: status.healthy,
+      connection: status.connection,
+      metrics: status.metrics,
+      performance: status.performance,
+    });
+  }
+
+  protected extractIsHealthy(status: QueueHealthMonitorStatus): boolean {
+    return status.healthy;
   }
 }
