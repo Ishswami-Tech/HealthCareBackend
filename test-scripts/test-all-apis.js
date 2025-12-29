@@ -32,6 +32,25 @@ const serviceTests = [
     path: 'notification',
     roles: ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN'],
   },
+  {
+    name: 'NotificationPreferences',
+    path: 'notification-preferences',
+    roles: ['PATIENT', 'DOCTOR', 'RECEPTIONIST', 'CLINIC_ADMIN'],
+  },
+  {
+    name: 'ClinicCommunication',
+    path: 'clinic-communication',
+    roles: ['CLINIC_ADMIN'], // Admin only
+  },
+  {
+    name: 'Email',
+    path: 'email',
+    roles: ['CLINIC_ADMIN'], // Admin only
+  },
+  { name: 'EmailUnsubscribe', path: 'email-unsubscribe', roles: ['ALL'] }, // Public endpoints
+  { name: 'Plugin', path: 'plugin', roles: ['CLINIC_ADMIN'] }, // Admin only
+  { name: 'EHRClinic', path: 'ehr-clinic', roles: ['CLINIC_ADMIN'] }, // Admin only
+  { name: 'ClinicLocation', path: 'clinic-location', roles: ['CLINIC_ADMIN'] }, // Admin only
 ];
 
 function runScript(scriptPath) {
@@ -158,6 +177,8 @@ runAllAPITests().catch(error => {
   console.error('Master test runner failed:', error);
   process.exit(1);
 });
+
+
 
 
 

@@ -6,6 +6,7 @@ import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PushNotificationService } from '@communication/channels/push/push.service';
+import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 import {
   SocketService,
   type SocketEventData,
@@ -13,6 +14,10 @@ import {
 } from '@communication/channels/socket/socket.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailTemplate } from '@core/types';
+import type {
+  PrismaTransactionClientWithDelegates,
+  PrismaDelegateArgs,
+} from '@core/types/prisma.types';
 import type {
   NotificationData,
   NotificationResult,
@@ -35,6 +40,7 @@ export class AppointmentNotificationService {
     private readonly pushService: PushNotificationService,
     private readonly socketService: SocketService,
     private readonly configService: ConfigService,
+    private readonly deviceTokenService: DeviceTokenService,
     private readonly databaseService: DatabaseService
   ) {}
 
@@ -193,11 +199,9 @@ export class AppointmentNotificationService {
 
       // Get templates from database
       // Note: notificationTemplate model doesn't exist in Prisma schema
-      // Using Notification model or returning mock templates for now
-      const templates = await this.databaseService.executeHealthcareRead(_client => {
-        // Return empty array or mock templates until notificationTemplate model is added
-        return Promise.resolve([] as unknown[]);
-      });
+      // Return empty array until notificationTemplate model is added
+      // Using DatabaseService pattern (no direct Prisma client access)
+      const templates: unknown[] = [];
 
       const templateList: NotificationTemplate[] = templates.map((template: unknown) => {
         const templateData = template as Record<string, unknown>;
@@ -268,15 +272,10 @@ export class AppointmentNotificationService {
   ): Promise<void> {
     const { templateData, type, clinicId, patientId } = notificationData;
 
-    // Fetch patient email from database
+    // Fetch patient email using DatabaseService helper method (follows architecture rules)
     let patientEmail: string | undefined;
     try {
-      const user = await this.databaseService.executeHealthcareRead(async prisma => {
-        return await prisma.user.findUnique({
-          where: { id: patientId },
-          select: { email: true },
-        });
-      });
+      const user = await this.databaseService.findUserByIdSafe(patientId);
       patientEmail = user?.email || undefined;
     } catch (error) {
       await this.loggingService.log(
@@ -348,27 +347,26 @@ export class AppointmentNotificationService {
   ): Promise<void> {
     const { templateData, type, patientId, clinicId } = notificationData;
 
-    // Fetch patient phone number from database
+    // Fetch patient phone number using DatabaseService (follows architecture rules)
+    // Use proper typing pattern like ClinicService to avoid direct Prisma client access
     let patientPhone: string | null = null;
     if (patientId) {
       try {
-        const patient = await this.databaseService.executeHealthcareRead(async prisma => {
-          return await prisma.patient.findUnique({
-            where: { id: patientId },
-            select: {
-              userId: true,
-            },
-          });
-        });
+        // First, get patient to find userId using typed client pattern
+        const patient = await this.databaseService.executeHealthcareRead<{ userId: string } | null>(
+          async client => {
+            // Use PrismaTransactionClientWithDelegates pattern to avoid direct Prisma access
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return (await typedClient.patient.findUnique({
+              where: { id: patientId } as PrismaDelegateArgs,
+              select: { userId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs)) as { userId: string } | null;
+          }
+        );
 
-        // Fetch phone from user if patient found
+        // Then get user phone using DatabaseService helper method
         if (patient?.userId) {
-          const user = await this.databaseService.executeHealthcareRead(async prisma => {
-            return await prisma.user.findUnique({
-              where: { id: patient.userId },
-              select: { phone: true },
-            });
-          });
+          const user = await this.databaseService.findUserByIdSafe(patient.userId);
           patientPhone = user?.phone || null;
         }
       } catch (error) {
@@ -453,19 +451,13 @@ export class AppointmentNotificationService {
   ): Promise<void> {
     const { templateData, type, patientId } = notificationData;
 
-    // Fetch patient device tokens from database
+    // Fetch patient device tokens using DeviceTokenService
+    // DeviceTokenService uses in-memory storage (primary) with optional database persistence
+    // This follows the architecture pattern: use service layer, not direct database access
     let deviceTokens: string[] = [];
     try {
-      const tokens = await this.databaseService.executeHealthcareRead(async prisma => {
-        return await prisma.deviceToken.findMany({
-          where: {
-            userId: patientId,
-            isActive: true,
-          },
-          select: { token: true },
-        });
-      });
-      deviceTokens = tokens.map(t => t.token);
+      const tokenData = this.deviceTokenService.getUserTokens(patientId);
+      deviceTokens = tokenData.map(token => token.token);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,

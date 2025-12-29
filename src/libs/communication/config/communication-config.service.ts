@@ -169,16 +169,21 @@ export class CommunicationConfigService implements OnModuleInit {
 
   /**
    * Save clinic communication configuration
+   * @param config - Communication configuration to save
+   * @param userId - Optional user ID for audit trail (defaults to 'system')
    */
-  async saveClinicConfig(config: ClinicCommunicationConfig): Promise<void> {
+  async saveClinicConfig(
+    config: ClinicCommunicationConfig,
+    userId: string = 'system'
+  ): Promise<void> {
     const cacheKey = `communication:config:${config.clinicId}`;
 
     try {
       // Encrypt credentials before saving
       const encryptedConfig = await this.encryptConfig(config);
 
-      // Save to database
-      await this.saveToDatabase(encryptedConfig);
+      // Save to database with userId for audit trail
+      await this.saveToDatabase(encryptedConfig, userId);
 
       // Invalidate cache
       await this.cacheService.delete(cacheKey);
@@ -506,8 +511,13 @@ export class CommunicationConfigService implements OnModuleInit {
    * Save configuration to database
    * Writes to Clinic.settings.communicationSettings (JSONB field)
    * Preserves other settings when updating
+   * @param config - Communication configuration to save
+   * @param userId - Optional user ID for audit trail (defaults to 'system')
    */
-  private async saveToDatabase(config: ClinicCommunicationConfig): Promise<void> {
+  private async saveToDatabase(
+    config: ClinicCommunicationConfig,
+    userId: string = 'system'
+  ): Promise<void> {
     try {
       // Get current clinic settings to preserve other settings
       const currentClinic = await this.databaseService.executeHealthcareRead(async client => {
@@ -546,7 +556,7 @@ export class CommunicationConfigService implements OnModuleInit {
           });
         },
         {
-          userId: 'system', // TODO: Get from context when available
+          userId, // Extracted from context or defaults to 'system'
           userRole: 'SYSTEM',
           clinicId: config.clinicId,
           operation: 'UPDATE_COMMUNICATION_CONFIG',

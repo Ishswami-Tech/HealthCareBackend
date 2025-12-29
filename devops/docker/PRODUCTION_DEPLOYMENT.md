@@ -236,7 +236,11 @@ docker stats
 docker ps --format "table {{.Names}}\t{{.Status}}"
 
 # Check API response time
+# Test basic health endpoint (Terminus-based)
 curl -w "\nTime: %{time_total}s\n" -o /dev/null -s https://api.ishswami.in/health
+
+# Test detailed health endpoint
+curl -w "\nTime: %{time_total}s\n" -o /dev/null -s "https://api.ishswami.in/health?detailed=true"
 
 # Check database connections
 docker exec latest-postgres psql -U postgres -d userdb -c "SELECT count(*) FROM pg_stat_activity;"

@@ -2,45 +2,46 @@
  * Logging Health Indicator for Health Module
  * @class LoggingHealthIndicator
  * @description Health indicator for logging service using @nestjs/terminus
+ * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult } from '@nestjs/terminus';
 import { LoggingHealthMonitorService } from '@infrastructure/logging/logging-health-monitor.service';
+import type { LoggingHealthMonitorStatus } from '@core/types';
+import { BaseHealthIndicator } from './base-health.indicator';
 
 @Injectable()
-export class LoggingHealthIndicator extends HealthIndicator {
+export class LoggingHealthIndicator extends BaseHealthIndicator<LoggingHealthMonitorStatus> {
   constructor(@Optional() private readonly loggingHealthMonitor?: LoggingHealthMonitorService) {
     super();
   }
 
-  async check(key: string): Promise<HealthIndicatorResult> {
-    try {
-      if (!this.loggingHealthMonitor) {
-        return this.getStatus(key, true, {
-          message: 'Logging health monitor not available',
-        });
-      }
+  protected isServiceAvailable(): boolean {
+    return this.loggingHealthMonitor !== undefined && this.loggingHealthMonitor !== null;
+  }
 
-      const healthStatus = await this.loggingHealthMonitor.getHealthStatus();
+  protected getServiceName(): string {
+    return 'Logging';
+  }
 
-      const result = this.getStatus(key, healthStatus.healthy, {
-        healthy: healthStatus.healthy,
-        service: healthStatus.service,
-        endpoint: healthStatus.endpoint,
-        metrics: healthStatus.metrics,
-      });
-
-      if (!healthStatus.healthy) {
-        throw new HealthCheckError('Logging service is unhealthy', result);
-      }
-
-      return result;
-    } catch (error) {
-      const result = this.getStatus(key, false, {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new HealthCheckError('Logging service health check failed', result);
+  protected async getHealthStatus(): Promise<LoggingHealthMonitorStatus> {
+    if (!this.loggingHealthMonitor) {
+      throw new Error('Logging health monitor not available');
     }
+    return await this.loggingHealthMonitor.getHealthStatus();
+  }
+
+  protected formatResult(key: string, status: LoggingHealthMonitorStatus): HealthIndicatorResult {
+    return this.getStatus(key, status.healthy, {
+      healthy: status.healthy,
+      service: status.service,
+      endpoint: status.endpoint,
+      metrics: status.metrics,
+    });
+  }
+
+  protected extractIsHealthy(status: LoggingHealthMonitorStatus): boolean {
+    return status.healthy;
   }
 }

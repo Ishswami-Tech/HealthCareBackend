@@ -68,7 +68,7 @@ export class DeviceTokenService {
    * @param tokenData - Device token data to register
    * @returns True if registration was successful
    */
-  registerDeviceToken(tokenData: DeviceTokenData): Promise<boolean> {
+  async registerDeviceToken(tokenData: DeviceTokenData): Promise<boolean> {
     try {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -94,16 +94,63 @@ export class DeviceTokenService {
       // This allows device tokens to survive service restarts
       if (this.databaseService) {
         try {
-          // TODO: Add device token persistence when DeviceToken model is available
-          // await this.databaseService.executeHealthcareWrite(async (client) => {
-          //   await client.deviceToken.upsert({
-          //     where: { token: tokenData.token },
-          //     update: { ...tokenDataWithTimestamp },
-          //     create: { ...tokenDataWithTimestamp }
-          //   });
-          // }, { userId: 'system', userRole: 'system', clinicId: '', operation: 'REGISTER_DEVICE_TOKEN', ... });
+          // Attempt to persist device token to database
+          // Note: This assumes DeviceToken model exists in Prisma schema
+          // If model doesn't exist, the error will be caught and logged
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              // Use type-safe Prisma client access
+              const deviceTokenDelegate = (client as unknown as { deviceToken?: unknown })
+                .deviceToken as
+                | {
+                    upsert: <T>(args: T) => Promise<unknown>;
+                  }
+                | undefined;
+
+              if (deviceTokenDelegate) {
+                await deviceTokenDelegate.upsert({
+                  where: { token: tokenData.token },
+                  update: {
+                    userId: tokenData.userId,
+                    platform: tokenData.platform,
+                    appVersion: tokenData.appVersion,
+                    deviceModel: tokenData.deviceModel,
+                    osVersion: tokenData.osVersion,
+                    isActive: tokenData.isActive,
+                    lastUsed: tokenDataWithTimestamp.lastUsed,
+                    updatedAt: new Date(),
+                  },
+                  create: {
+                    userId: tokenData.userId,
+                    token: tokenData.token,
+                    platform: tokenData.platform,
+                    appVersion: tokenData.appVersion,
+                    deviceModel: tokenData.deviceModel,
+                    osVersion: tokenData.osVersion,
+                    isActive: tokenData.isActive,
+                    lastUsed: tokenDataWithTimestamp.lastUsed,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  },
+                } as never);
+              }
+            },
+            {
+              userId: tokenData.userId,
+              userRole: 'system',
+              clinicId: '',
+              operation: 'REGISTER_DEVICE_TOKEN',
+              resourceType: 'DEVICE_TOKEN',
+              resourceId: tokenData.token,
+              details: {
+                platform: tokenData.platform,
+                isActive: tokenData.isActive,
+              },
+            }
+          );
         } catch (dbError) {
           // Log but don't fail - in-memory storage is primary
+          // This handles cases where DeviceToken model doesn't exist yet
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
@@ -140,7 +187,7 @@ export class DeviceTokenService {
    * @param updates - Optional additional updates to token data
    * @returns True if update was successful
    */
-  updateDeviceToken(
+  async updateDeviceToken(
     oldToken: string,
     newToken: string,
     updates?: Partial<DeviceTokenData>
@@ -173,13 +220,53 @@ export class DeviceTokenService {
       // Optional: Update in database if DatabaseService is available
       if (this.databaseService) {
         try {
-          // TODO: Add device token update when DeviceToken model is available
-          // await this.databaseService.executeHealthcareWrite(async (client) => {
-          //   await client.deviceToken.updateMany({
-          //     where: { token: oldToken },
-          //     data: { ...updatedData }
-          //   });
-          // }, { userId: 'system', userRole: 'system', clinicId: '', operation: 'UPDATE_DEVICE_TOKEN', ... });
+          // Attempt to update device token in database
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const deviceTokenDelegate = (client as unknown as { deviceToken?: unknown })
+                .deviceToken as
+                | {
+                    updateMany: <T>(args: T) => Promise<unknown>;
+                    delete: <T>(args: T) => Promise<unknown>;
+                    create: <T>(args: T) => Promise<unknown>;
+                  }
+                | undefined;
+
+              if (deviceTokenDelegate) {
+                // Delete old token and create new one (upsert pattern)
+                await deviceTokenDelegate.delete({
+                  where: { token: oldToken },
+                } as never);
+                await deviceTokenDelegate.create({
+                  data: {
+                    userId: updatedData.userId,
+                    token: updatedData.token,
+                    platform: updatedData.platform,
+                    appVersion: updatedData.appVersion,
+                    deviceModel: updatedData.deviceModel,
+                    osVersion: updatedData.osVersion,
+                    isActive: updatedData.isActive,
+                    lastUsed: updatedData.lastUsed,
+                    createdAt: new Date(),
+                    updatedAt: new Date(),
+                  },
+                } as never);
+              }
+            },
+            {
+              userId: existingData.userId,
+              userRole: 'system',
+              clinicId: '',
+              operation: 'UPDATE_DEVICE_TOKEN',
+              resourceType: 'DEVICE_TOKEN',
+              resourceId: newToken,
+              details: {
+                oldToken: this.maskToken(oldToken),
+                newToken: this.maskToken(newToken),
+                platform: updatedData.platform,
+              },
+            }
+          );
         } catch (dbError) {
           // Log but don't fail - in-memory storage is primary
           void this.loggingService.log(
@@ -289,7 +376,7 @@ export class DeviceTokenService {
    * @param token - Device token to deactivate
    * @returns True if deactivation was successful
    */
-  deactivateDeviceToken(token: string): Promise<boolean> {
+  async deactivateDeviceToken(token: string): Promise<boolean> {
     try {
       const tokenData = this.tokenStore.get(token);
 
@@ -312,13 +399,35 @@ export class DeviceTokenService {
       // Optional: Update in database if DatabaseService is available
       if (this.databaseService) {
         try {
-          // TODO: Add device token deactivation when DeviceToken model is available
-          // await this.databaseService.executeHealthcareWrite(async (client) => {
-          //   await client.deviceToken.updateMany({
-          //     where: { token },
-          //     data: { isActive: false }
-          //   });
-          // }, { userId: 'system', userRole: 'system', clinicId: '', operation: 'DEACTIVATE_DEVICE_TOKEN', ... });
+          // Attempt to deactivate device token in database
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const deviceTokenDelegate = (client as unknown as { deviceToken?: unknown })
+                .deviceToken as
+                | {
+                    updateMany: <T>(args: T) => Promise<unknown>;
+                  }
+                | undefined;
+
+              if (deviceTokenDelegate) {
+                await deviceTokenDelegate.updateMany({
+                  where: { token },
+                  data: { isActive: false, updatedAt: new Date() },
+                } as never);
+              }
+            },
+            {
+              userId: tokenData.userId,
+              userRole: 'system',
+              clinicId: '',
+              operation: 'DEACTIVATE_DEVICE_TOKEN',
+              resourceType: 'DEVICE_TOKEN',
+              resourceId: token,
+              details: {
+                platform: tokenData.platform,
+              },
+            }
+          );
         } catch (dbError) {
           // Log but don't fail - in-memory storage is primary
           void this.loggingService.log(

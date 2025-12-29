@@ -2,50 +2,50 @@
  * Database Health Indicator for Health Module
  * @class DatabaseHealthIndicator
  * @description Health indicator for database service using @nestjs/terminus
+ * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult } from '@nestjs/terminus';
 // Use direct import to avoid TDZ issues with barrel exports
 // Import service directly and type from core types
 import { DatabaseService } from '@infrastructure/database/database.service';
 import type { DatabaseHealthStatus } from '@core/types';
+import { BaseHealthIndicator } from './base-health.indicator';
 
 @Injectable()
-export class DatabaseHealthIndicator extends HealthIndicator {
+export class DatabaseHealthIndicator extends BaseHealthIndicator<DatabaseHealthStatus> {
   constructor(@Optional() private readonly databaseService?: DatabaseService) {
     super();
   }
 
-  async check(key: string): Promise<HealthIndicatorResult> {
-    try {
-      if (!this.databaseService) {
-        return this.getStatus(key, true, {
-          message: 'Database service not available',
-        });
-      }
+  protected isServiceAvailable(): boolean {
+    return this.databaseService !== undefined && this.databaseService !== null;
+  }
 
-      const healthStatus: DatabaseHealthStatus = await this.databaseService.getHealthStatus();
+  protected getServiceName(): string {
+    return 'Database';
+  }
 
-      const result = this.getStatus(key, healthStatus.isHealthy, {
-        isHealthy: healthStatus.isHealthy,
-        connectionCount: healthStatus.connectionCount,
-        activeQueries: healthStatus.activeQueries,
-        avgResponseTime: healthStatus.avgResponseTime,
-        lastHealthCheck: healthStatus.lastHealthCheck.toISOString(),
-        errors: healthStatus.errors,
-      });
-
-      if (!healthStatus.isHealthy) {
-        throw new HealthCheckError('Database service is unhealthy', result);
-      }
-
-      return result;
-    } catch (error) {
-      const result = this.getStatus(key, false, {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new HealthCheckError('Database service health check failed', result);
+  protected async getHealthStatus(): Promise<DatabaseHealthStatus> {
+    if (!this.databaseService) {
+      throw new Error('Database service not available');
     }
+    return await this.databaseService.getHealthStatus();
+  }
+
+  protected formatResult(key: string, status: DatabaseHealthStatus): HealthIndicatorResult {
+    return this.getStatus(key, status.isHealthy, {
+      isHealthy: status.isHealthy,
+      connectionCount: status.connectionCount,
+      activeQueries: status.activeQueries,
+      avgResponseTime: status.avgResponseTime,
+      lastHealthCheck: status.lastHealthCheck.toISOString(),
+      errors: status.errors,
+    });
+  }
+
+  protected extractIsHealthy(status: DatabaseHealthStatus): boolean {
+    return status.isHealthy;
   }
 }

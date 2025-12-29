@@ -544,6 +544,165 @@ export class AppointmentEligibilityService {
   }
 
   /**
+   * Update eligibility criteria
+   */
+  async updateEligibilityCriteria(
+    criteriaId: string,
+    updateData: Partial<Omit<EligibilityCriteria, 'id' | 'createdAt' | 'updatedAt'>>
+  ): Promise<EligibilityCriteria> {
+    try {
+      // Use executeHealthcareWrite for update operation
+      const criteria = await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              eligibilityCriteria: {
+                update: <T>(args: T) => Promise<unknown>;
+                findUnique: <T>(args: T) => Promise<unknown>;
+              };
+            }
+          ).eligibilityCriteria.update({
+            where: { id: criteriaId },
+            data: {
+              ...(updateData.name && { name: updateData.name }),
+              ...(updateData.description && { description: updateData.description }),
+              ...(updateData.conditions && { conditions: updateData.conditions }),
+              ...(updateData.isActive !== undefined && { isActive: updateData.isActive }),
+              updatedAt: new Date(),
+            },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId: updateData.clinicId || '',
+          resourceType: 'ELIGIBILITY_CRITERIA',
+          operation: 'UPDATE',
+          resourceId: criteriaId,
+          userRole: 'system',
+          details: { criteriaId, updateFields: Object.keys(updateData) },
+        }
+      );
+
+      const criteriaResult = criteria as {
+        id: string;
+        name: string;
+        description: string;
+        conditions: unknown;
+        isActive: boolean;
+        clinicId: string;
+        createdAt: Date;
+        updatedAt: Date;
+      };
+
+      // Invalidate cache
+      await this.invalidateEligibilityCache(criteriaResult.clinicId);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Updated eligibility criteria ${criteriaId}`,
+        'AppointmentEligibilityService',
+        {
+          criteriaId,
+          clinicId: criteriaResult.clinicId,
+        }
+      );
+
+      return criteriaResult as EligibilityCriteria;
+    } catch (_error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update eligibility criteria`,
+        'AppointmentEligibilityService',
+        {
+          criteriaId,
+          _error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      throw _error;
+    }
+  }
+
+  /**
+   * Delete eligibility criteria
+   */
+  async deleteEligibilityCriteria(criteriaId: string): Promise<boolean> {
+    try {
+      // First get the criteria to get clinicId for cache invalidation
+      const existingCriteria = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            eligibilityCriteria: {
+              findUnique: <T>(args: T) => Promise<unknown>;
+            };
+          }
+        ).eligibilityCriteria.findUnique({
+          where: { id: criteriaId },
+          select: { clinicId: true },
+        } as never);
+      });
+
+      const clinicId =
+        existingCriteria && typeof existingCriteria === 'object' && 'clinicId' in existingCriteria
+          ? (existingCriteria['clinicId'] as string)
+          : '';
+
+      // Use executeHealthcareWrite for delete operation
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          return await (
+            client as unknown as {
+              eligibilityCriteria: {
+                delete: <T>(args: T) => Promise<unknown>;
+              };
+            }
+          ).eligibilityCriteria.delete({
+            where: { id: criteriaId },
+          } as never);
+        },
+        {
+          userId: 'system',
+          clinicId,
+          resourceType: 'ELIGIBILITY_CRITERIA',
+          operation: 'DELETE',
+          resourceId: criteriaId,
+          userRole: 'system',
+          details: { criteriaId },
+        }
+      );
+
+      // Invalidate cache
+      await this.invalidateEligibilityCache(clinicId);
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Deleted eligibility criteria ${criteriaId}`,
+        'AppointmentEligibilityService',
+        {
+          criteriaId,
+          clinicId,
+        }
+      );
+
+      return true;
+    } catch (_error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to delete eligibility criteria`,
+        'AppointmentEligibilityService',
+        {
+          criteriaId,
+          _error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      throw _error;
+    }
+  }
+
+  /**
    * Invalidate eligibility cache for a clinic
    */
   private async invalidateEligibilityCache(clinicId: string): Promise<void> {

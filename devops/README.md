@@ -63,7 +63,9 @@ docker compose -f devops/docker/docker-compose.dev.yml logs -f api
 **Access Points:**
 - **API**: http://localhost:8088
 - **Swagger Docs**: http://localhost:8088/docs
-- **Health Check**: http://localhost:8088/health
+- **Health Check**: http://localhost:8088/health (Terminus-based, includes realtime status)
+- **Detailed Health**: http://localhost:8088/health?detailed=true (includes system metrics)
+- **Realtime Health (Socket.IO)**: Connect to `ws://localhost:8088/health` namespace for push-based updates
 - **Queue Dashboard**: http://localhost:8088/queue-dashboard
 - **Prisma Studio**: http://localhost:5555
 - **PgAdmin**: http://localhost:5050 (admin@admin.com / admin)
@@ -203,9 +205,18 @@ All DevOps operations are now consolidated into unified scripts:
 
 See `devops/scripts/README.md` for detailed usage.
 
+## Health Monitoring
+
+- **REST Endpoints:**
+  - `/health` - Basic health check (Terminus-based, includes realtime status)
+  - `/health?detailed=true` - Detailed health with system metrics
+- **Socket.IO:** `/health` namespace for real-time push-based updates
+- **See:** [Health Monitoring Guide](./HEALTH_MONITORING.md) for complete documentation
+
 ## SSL/TLS & Cloudflare
 - See `devops/nginx/SSL_CERTIFICATES.md` and `devops/nginx/CLOUDFLARE_SETUP.md`
 
 ## Notes
 - Domain/IP remain: `api.ishswami.in` (82.208.20.16)
 - No Prometheus/Loki required; HPAs use CPU/Memory
+- Health monitoring uses Terminus (industry-standard) with Socket.IO for real-time updates

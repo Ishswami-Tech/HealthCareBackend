@@ -83,12 +83,17 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
           );
 
         case 'updateEligibilityCriteria':
-          // TODO: Implement updateEligibilityCriteria method
-          throw new Error('updateEligibilityCriteria method not implemented');
+          return await this.eligibilityService.updateEligibilityCriteria(
+            params['criteriaId'] as string,
+            params['updateData'] as Partial<
+              Omit<EligibilityCriteria, 'id' | 'createdAt' | 'updatedAt'>
+            >
+          );
 
         case 'deleteEligibilityCriteria':
-          // TODO: Implement deleteEligibilityCriteria method
-          throw new Error('deleteEligibilityCriteria method not implemented');
+          return await this.eligibilityService.deleteEligibilityCriteria(
+            params['criteriaId'] as string
+          );
 
         default:
           throw new Error(`Unsupported operation: ${operation}`);

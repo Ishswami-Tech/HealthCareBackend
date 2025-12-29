@@ -1,5 +1,11 @@
-import { Processor, Process } from '@nestjs/bull';
-import { Job } from 'bull';
+// NOTE: This processor is not currently registered in QueueModule
+// BullMQ processors in NestJS use @Processor() and @Process() decorators
+// However, @nestjs/bullmq doesn't export Process decorator in all versions
+// This file is kept for reference but is not actively used
+// To use processors, register them in QueueModule and ensure decorators are available
+
+// import { Processor, Process } from '@nestjs/bullmq';
+import type { Job } from 'bullmq';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -10,11 +16,11 @@ import type { PaymentData, PaymentDto } from '@core/types';
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
 
-@Processor('payment-processing')
+// @Processor('payment-processing')
 export class PaymentProcessingProcessor {
   constructor(private readonly loggingService: LoggingService) {}
 
-  @Process('domain-processing')
+  // @Process('domain-processing')
   handleDomainProcessing(
     job: Job<{
       payment: PaymentData;
@@ -57,7 +63,7 @@ export class PaymentProcessingProcessor {
     }
   }
 
-  @Process('subscription-processing')
+  // @Process('subscription-processing')
   handleSubscriptionProcessing(
     job: Job<{
       payment: PaymentData;
@@ -97,7 +103,7 @@ export class PaymentProcessingProcessor {
     }
   }
 
-  @Process('manual-review')
+  // @Process('manual-review')
   handleManualReview(
     job: Job<{
       paymentDto: PaymentDto;
@@ -138,7 +144,7 @@ export class PaymentProcessingProcessor {
     }
   }
 
-  @Process('payment-reconciliation')
+  // @Process('payment-reconciliation')
   handlePaymentReconciliation(
     job: Job<{
       paymentIds: string[];

@@ -20,6 +20,7 @@ import {
   UsePipes,
   ValidationPipe,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { CommunicationService } from './communication.service';
@@ -509,11 +510,12 @@ export class CommunicationController {
     description: 'Invalid device token or platform',
   })
   async registerDeviceToken(
-    @Body() registerDto: RegisterDeviceTokenDto
+    @Body() registerDto: RegisterDeviceTokenDto,
+    @Request() request: { user?: { id?: string; sub?: string } }
   ): Promise<{ success: boolean; error?: string }> {
-    // Get userId from request context if not provided
-    // TODO: Extract from JWT token or request context
-    const userId = registerDto.userId || 'anonymous';
+    // Extract userId from JWT token (request.user is set by JwtAuthGuard)
+    // Priority: DTO userId > request.user.id > request.user.sub > 'anonymous'
+    const userId = registerDto.userId || request.user?.id || request.user?.sub || 'anonymous';
 
     const success = await this.deviceTokenService.registerDeviceToken({
       userId,

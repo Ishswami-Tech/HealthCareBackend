@@ -262,7 +262,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          (payload.metadata?.['userId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -270,7 +273,7 @@ export class NotificationEventListener implements OnModuleInit {
           }); // Patient
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -295,7 +298,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          (payload.metadata?.['userId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -303,7 +309,7 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -328,7 +334,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload.metadata?.['userId'] as string | undefined);
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          (payload.metadata?.['userId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -336,7 +345,7 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -360,7 +369,11 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Get appointmentId to find patient and doctor
-        const appointmentId = payload.metadata?.['appointmentId'] as string | undefined || (payload as Record<string, unknown>)?.['appointmentId'] as string | undefined;
+        const appointmentId =
+          (payload.metadata?.['appointmentId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['appointmentId'] as
+            | string
+            | undefined);
         if (appointmentId) {
           recipients.push({
             socketRoom: `appointment:${appointmentId}`,
@@ -375,7 +388,7 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined);
+        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -455,7 +468,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['patientId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -463,7 +479,9 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['doctorId'] as string | undefined);
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -488,7 +506,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['patientId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -496,7 +517,9 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['doctorId'] as string | undefined);
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -522,7 +545,10 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Handle both enterprise event format (userId) and simple format (patientId)
-        const patientId = payload.userId || (payload.metadata?.['patientId'] as string | undefined) || (payload as Record<string, unknown>)?.['patientId'] as string | undefined;
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['patientId'] as string | undefined);
         if (patientId) {
           recipients.push({
             userId: patientId,
@@ -547,7 +573,11 @@ export class NotificationEventListener implements OnModuleInit {
           socketRoom?: string;
         }> = [];
         // Get appointmentId from metadata
-        const appointmentId = payload.metadata?.['appointmentId'] as string | undefined || (payload as Record<string, unknown>)?.['appointmentId'] as string | undefined;
+        const appointmentId =
+          (payload.metadata?.['appointmentId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['appointmentId'] as
+            | string
+            | undefined);
         if (appointmentId) {
           recipients.push({
             socketRoom: `appointment:${appointmentId}`,
@@ -562,7 +592,9 @@ export class NotificationEventListener implements OnModuleInit {
           });
         }
         // Handle both enterprise event format (metadata.doctorId) and simple format (doctorId)
-        const doctorId = (payload.metadata?.['doctorId'] as string | undefined) || (payload as Record<string, unknown>)?.['doctorId'] as string | undefined;
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          ((payload as unknown as Record<string, unknown>)?.['doctorId'] as string | undefined);
         if (doctorId) {
           recipients.push({
             userId: doctorId,
@@ -792,12 +824,17 @@ export class NotificationEventListener implements OnModuleInit {
       metadata: plain,
     };
     // Handle userId - can be userId, patientId, or in payload.userId
-    const userId = plain['userId'] || plain['patientId'] || (plain['payload'] as Record<string, unknown>)?.['userId'] as string | undefined;
+    const userId =
+      plain['userId'] ||
+      plain['patientId'] ||
+      ((plain['payload'] as Record<string, unknown>)?.['userId'] as string | undefined);
     if (userId && typeof userId === 'string') {
       result.userId = userId;
     }
     // Handle clinicId - can be clinicId or in payload.clinicId
-    const clinicId = plain['clinicId'] || (plain['payload'] as Record<string, unknown>)?.['clinicId'] as string | undefined;
+    const clinicId =
+      plain['clinicId'] ||
+      ((plain['payload'] as Record<string, unknown>)?.['clinicId'] as string | undefined);
     if (clinicId && typeof clinicId === 'string') {
       result.clinicId = clinicId;
     }
@@ -805,7 +842,9 @@ export class NotificationEventListener implements OnModuleInit {
     if (!result.metadata) {
       result.metadata = {};
     }
-    const doctorId = plain['doctorId'] || (plain['payload'] as Record<string, unknown>)?.['doctorId'] as string | undefined;
+    const doctorId =
+      plain['doctorId'] ||
+      ((plain['payload'] as Record<string, unknown>)?.['doctorId'] as string | undefined);
     if (doctorId && typeof doctorId === 'string') {
       result.metadata['doctorId'] = doctorId;
     }

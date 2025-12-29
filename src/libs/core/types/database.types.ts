@@ -1382,9 +1382,9 @@ export interface MetricsSnapshot {
 }
 
 /**
- * Health Status
+ * Database Health Status (renamed to avoid conflict with realtime-health.types)
  */
-export interface HealthStatus {
+export interface DatabaseHealthStatusType {
   status: 'healthy' | 'warning' | 'critical';
   issues: string[];
   lastCheck: Date;

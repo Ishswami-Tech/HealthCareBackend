@@ -2,15 +2,18 @@
  * Cache Health Indicator for Health Module
  * @class CacheHealthIndicator
  * @description Health indicator for cache service using @nestjs/terminus
+ * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult } from '@nestjs/terminus';
 import { CacheService } from '@infrastructure/cache';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
+import type { CacheHealthMonitorStatus } from '@core/types';
+import { BaseHealthIndicator } from './base-health.indicator';
 
 @Injectable()
-export class CacheHealthIndicator extends HealthIndicator {
+export class CacheHealthIndicator extends BaseHealthIndicator<CacheHealthMonitorStatus> {
   constructor(
     @Optional()
     @Inject(forwardRef(() => CacheService))
@@ -22,33 +25,35 @@ export class CacheHealthIndicator extends HealthIndicator {
     super();
   }
 
-  async check(key: string): Promise<HealthIndicatorResult> {
-    try {
-      if (!this.cacheHealthMonitor) {
-        return this.getStatus(key, true, {
-          message: 'Cache health monitor not available',
-        });
-      }
+  protected isServiceAvailable(): boolean {
+    return this.cacheHealthMonitor !== undefined && this.cacheHealthMonitor !== null;
+  }
 
-      const healthStatus = await this.cacheHealthMonitor.getHealthStatus();
+  protected getServiceName(): string {
+    return 'Cache';
+  }
 
-      const result = this.getStatus(key, healthStatus.healthy, {
-        healthy: healthStatus.healthy,
-        connection: healthStatus.connection,
-        latency: healthStatus.connection.latency,
-        provider: healthStatus.connection.provider,
-      });
+  protected getUnavailableMessage(): string {
+    return 'Cache health monitor not available';
+  }
 
-      if (!healthStatus.healthy) {
-        throw new HealthCheckError('Cache service is unhealthy', result);
-      }
-
-      return result;
-    } catch (error) {
-      const result = this.getStatus(key, false, {
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      throw new HealthCheckError('Cache service health check failed', result);
+  protected async getHealthStatus(): Promise<CacheHealthMonitorStatus> {
+    if (!this.cacheHealthMonitor) {
+      throw new Error('Cache health monitor not available');
     }
+    return await this.cacheHealthMonitor.getHealthStatus();
+  }
+
+  protected formatResult(key: string, status: CacheHealthMonitorStatus): HealthIndicatorResult {
+    return this.getStatus(key, status.healthy, {
+      healthy: status.healthy,
+      connection: status.connection,
+      latency: status.connection.latency,
+      provider: status.connection.provider,
+    });
+  }
+
+  protected extractIsHealthy(status: CacheHealthMonitorStatus): boolean {
+    return status.healthy;
   }
 }

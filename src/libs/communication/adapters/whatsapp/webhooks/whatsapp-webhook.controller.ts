@@ -8,9 +8,20 @@
  * @description WhatsApp webhook handler for message events
  */
 
-import { Controller, Post, Body, HttpCode, HttpStatus, Headers, Query } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  HttpCode,
+  HttpStatus,
+  Headers,
+  Query,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader, ApiQuery } from '@nestjs/swagger';
 import { WhatsAppWebhookService } from './whatsapp-webhook.service';
+import { ConfigService } from '@config/config.service';
+import * as crypto from 'crypto';
 
 /**
  * Meta WhatsApp Webhook Event Structure
@@ -64,7 +75,10 @@ interface TwilioWhatsAppWebhookEvent {
 @ApiTags('WhatsApp Webhooks')
 @Controller('webhooks/whatsapp')
 export class WhatsAppWebhookController {
-  constructor(private readonly whatsAppWebhookService: WhatsAppWebhookService) {}
+  constructor(
+    private readonly whatsAppWebhookService: WhatsAppWebhookService,
+    private readonly configService: ConfigService
+  ) {}
 
   @Post('meta')
   @HttpCode(HttpStatus.OK)
@@ -118,7 +132,7 @@ export class WhatsAppWebhookController {
   })
   async handleMetaWebhook(
     @Body() event: MetaWhatsAppWebhookEvent,
-    @Headers('x-hub-signature-256') _signature?: string,
+    @Headers('x-hub-signature-256') signature?: string,
     @Query('hub.mode') mode?: string,
     @Query('hub.verify_token') verifyToken?: string,
     @Query('hub.challenge') challenge?: string
@@ -126,15 +140,33 @@ export class WhatsAppWebhookController {
     try {
       // Handle webhook verification (Meta requires this for initial setup)
       if (mode === 'subscribe' && verifyToken) {
-        // TODO: Verify token matches configured token
-        // For now, return challenge
+        // Verify token matches configured token
+        const configuredToken = this.configService.getEnv('META_WHATSAPP_WEBHOOK_VERIFY_TOKEN');
+        if (configuredToken && verifyToken !== configuredToken) {
+          throw new UnauthorizedException('Invalid webhook verification token');
+        }
+        // Return challenge for webhook verification
         if (challenge) {
           return challenge;
         }
       }
 
-      // TODO: Verify webhook signature if provided
-      // For now, process the webhook (in production, add signature verification)
+      // Verify webhook signature if provided (production security)
+      if (signature && process.env['NODE_ENV'] === 'production') {
+        const appSecret = this.configService.getEnv('META_WHATSAPP_APP_SECRET');
+        if (appSecret) {
+          const rawBody = JSON.stringify(event);
+          const expectedSignature = crypto
+            .createHmac('sha256', appSecret)
+            .update(rawBody)
+            .digest('hex');
+          const providedSignature = signature.replace('sha256=', '');
+
+          if (expectedSignature !== providedSignature) {
+            throw new UnauthorizedException('Invalid webhook signature');
+          }
+        }
+      }
 
       await this.whatsAppWebhookService.processMetaWebhook(event);
       return { received: true, processed: true };
@@ -183,11 +215,33 @@ export class WhatsAppWebhookController {
   })
   async handleTwilioWebhook(
     @Body() event: TwilioWhatsAppWebhookEvent,
-    @Headers('x-twilio-signature') _signature?: string
+    @Headers('x-twilio-signature') signature?: string,
+    @Headers('host') host?: string,
+    @Headers('x-forwarded-proto') protocol?: string
   ): Promise<{ received: boolean; processed: boolean }> {
     try {
-      // TODO: Verify Twilio webhook signature if provided
-      // For now, process the webhook (in production, add signature verification)
+      // Verify Twilio webhook signature if provided (production security)
+      if (signature && process.env['NODE_ENV'] === 'production') {
+        const authToken = this.configService.getEnv('TWILIO_AUTH_TOKEN');
+        if (authToken) {
+          // Twilio signature verification
+          // Build the URL that Twilio requested
+          const url = `${protocol || 'https'}://${host || ''}/webhooks/whatsapp/twilio`;
+
+          // Create the signature string
+          const signatureString = url + JSON.stringify(event);
+
+          // Create HMAC SHA1 signature
+          const expectedSignature = crypto
+            .createHmac('sha1', authToken)
+            .update(signatureString)
+            .digest('base64');
+
+          if (expectedSignature !== signature) {
+            throw new UnauthorizedException('Invalid Twilio webhook signature');
+          }
+        }
+      }
 
       await this.whatsAppWebhookService.processTwilioWebhook(event);
       return { received: true, processed: true };

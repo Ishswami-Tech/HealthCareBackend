@@ -923,3 +923,855 @@ export class RecordingListResponseDto {
   })
   recordings!: Array<RecordingResponseDto>;
 }
+
+// ============================================================================
+// CHAT/MESSAGING DTOs
+// ============================================================================
+
+export enum VideoMessageType {
+  TEXT = 'TEXT',
+  IMAGE = 'IMAGE',
+  DOCUMENT = 'DOCUMENT',
+  PRESCRIPTION = 'PRESCRIPTION',
+  FILE = 'FILE',
+}
+
+export class SendChatMessageDto {
+  @ApiProperty({
+    example: 'consultation-uuid-123',
+    description: 'Video consultation ID',
+  })
+  @IsUUID('4', { message: 'Consultation ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'Consultation ID is required' })
+  consultationId!: string;
+
+  @ApiProperty({
+    example: 'user-uuid-123',
+    description: 'User ID sending the message',
+  })
+  @IsUUID('4', { message: 'User ID must be a valid UUID' })
+  @IsNotEmpty({ message: 'User ID is required' })
+  userId!: string;
+
+  @ApiProperty({
+    example: 'Hello, how can I help you?',
+    description: 'Message content',
+  })
+  @IsString({ message: 'Message must be a string' })
+  @IsNotEmpty({ message: 'Message is required' })
+  message!: string;
+
+  @ApiPropertyOptional({
+    enum: VideoMessageType,
+    description: 'Message type',
+    default: VideoMessageType.TEXT,
+  })
+  @IsOptional()
+  @IsEnum(VideoMessageType, { message: 'Invalid message type' })
+  messageType?: VideoMessageType;
+
+  @ApiPropertyOptional({
+    example: 'https://example.com/file.pdf',
+    description: 'File URL for file/image/document messages',
+  })
+  @IsOptional()
+  @IsUrl({}, { message: 'File URL must be a valid URL' })
+  fileUrl?: string;
+
+  @ApiPropertyOptional({
+    example: 'document.pdf',
+    description: 'File name',
+  })
+  @IsOptional()
+  @IsString({ message: 'File name must be a string' })
+  fileName?: string;
+
+  @ApiPropertyOptional({
+    example: 1024,
+    description: 'File size in bytes',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'File size must be a number' })
+  @Min(0, { message: 'File size must be positive' })
+  fileSize?: number;
+
+  @ApiPropertyOptional({
+    example: 'application/pdf',
+    description: 'File MIME type',
+  })
+  @IsOptional()
+  @IsString({ message: 'File type must be a string' })
+  fileType?: string;
+
+  @ApiPropertyOptional({
+    example: 'message-uuid-123',
+    description: 'ID of message being replied to',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Reply to ID must be a valid UUID' })
+  replyToId?: string;
+}
+
+export class ChatMessageResponseDto {
+  @ApiProperty({ example: 'message-uuid-123' })
+  id!: string;
+
+  @ApiProperty({ example: 'consultation-uuid-123' })
+  consultationId!: string;
+
+  @ApiProperty({ example: 'user-uuid-123' })
+  userId!: string;
+
+  @ApiProperty({ example: 'Hello, how can I help you?' })
+  message!: string;
+
+  @ApiProperty({ enum: VideoMessageType })
+  messageType!: VideoMessageType;
+
+  @ApiPropertyOptional()
+  fileUrl?: string;
+
+  @ApiPropertyOptional()
+  fileName?: string;
+
+  @ApiPropertyOptional()
+  fileSize?: number;
+
+  @ApiPropertyOptional()
+  fileType?: string;
+
+  @ApiProperty({ default: false })
+  isEdited!: boolean;
+
+  @ApiProperty({ default: false })
+  isDeleted!: boolean;
+
+  @ApiPropertyOptional()
+  replyToId?: string;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+
+  @ApiPropertyOptional()
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+}
+
+export class UpdateTypingIndicatorDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiProperty()
+  @IsBoolean()
+  isTyping!: boolean;
+}
+
+// ============================================================================
+// WAITING ROOM DTOs
+// ============================================================================
+
+export enum WaitingRoomStatus {
+  WAITING = 'WAITING',
+  ADMITTED = 'ADMITTED',
+  LEFT = 'LEFT',
+  CANCELLED = 'CANCELLED',
+}
+
+export class JoinWaitingRoomDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+}
+
+export class AdmitPatientDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  doctorId!: string;
+}
+
+export class WaitingRoomEntryResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  consultationId!: string;
+
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty({ enum: WaitingRoomStatus })
+  status!: WaitingRoomStatus;
+
+  @ApiProperty()
+  position!: number;
+
+  @ApiPropertyOptional()
+  estimatedWaitTime?: number;
+
+  @ApiPropertyOptional()
+  admittedAt?: Date;
+
+  @ApiPropertyOptional()
+  notifiedAt?: Date;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+
+  @ApiPropertyOptional()
+  user?: {
+    id: string;
+    name: string;
+    email: string;
+    avatar?: string;
+  };
+}
+
+// ============================================================================
+// MEDICAL NOTES DTOs
+// ============================================================================
+
+export enum VideoNoteType {
+  GENERAL = 'GENERAL',
+  PRESCRIPTION = 'PRESCRIPTION',
+  SYMPTOM = 'SYMPTOM',
+  TREATMENT_PLAN = 'TREATMENT_PLAN',
+  DIAGNOSIS = 'DIAGNOSIS',
+}
+
+export class MedicationDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  dosage!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  frequency!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  duration!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+}
+
+export class PrescriptionDto {
+  @ApiProperty({ type: [MedicationDto] })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MedicationDto)
+  medications!: MedicationDto[];
+}
+
+export class SymptomDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  symptom!: string;
+
+  @ApiProperty({ enum: ['mild', 'moderate', 'severe'] })
+  @IsEnum(['mild', 'moderate', 'severe'])
+  severity!: 'mild' | 'moderate' | 'severe';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  duration?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class TreatmentPlanDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  diagnosis!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  treatment!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  followUp?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  recommendations?: string[];
+}
+
+export class CreateMedicalNoteDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiProperty({ enum: VideoNoteType })
+  @IsEnum(VideoNoteType)
+  @IsNotEmpty()
+  noteType!: VideoNoteType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  content!: string;
+
+  @ApiPropertyOptional({ type: PrescriptionDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PrescriptionDto)
+  prescription?: PrescriptionDto;
+
+  @ApiPropertyOptional({ type: [SymptomDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SymptomDto)
+  symptoms?: SymptomDto[];
+
+  @ApiPropertyOptional({ type: TreatmentPlanDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TreatmentPlanDto)
+  treatmentPlan?: TreatmentPlanDto;
+}
+
+export class UpdateMedicalNoteDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  noteId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @ApiPropertyOptional({ type: PrescriptionDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PrescriptionDto)
+  prescription?: PrescriptionDto;
+
+  @ApiPropertyOptional({ type: [SymptomDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SymptomDto)
+  symptoms?: SymptomDto[];
+
+  @ApiPropertyOptional({ type: TreatmentPlanDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => TreatmentPlanDto)
+  treatmentPlan?: TreatmentPlanDto;
+}
+
+export class MedicalNoteResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  consultationId!: string;
+
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty({ enum: VideoNoteType })
+  noteType!: VideoNoteType;
+
+  @ApiPropertyOptional()
+  title?: string;
+
+  @ApiProperty()
+  content!: string;
+
+  @ApiPropertyOptional()
+  prescription?: PrescriptionDto;
+
+  @ApiPropertyOptional()
+  symptoms?: SymptomDto[];
+
+  @ApiPropertyOptional()
+  treatmentPlan?: TreatmentPlanDto;
+
+  @ApiProperty()
+  isAutoSaved!: boolean;
+
+  @ApiProperty()
+  savedToEHR!: boolean;
+
+  @ApiPropertyOptional()
+  ehrRecordId?: string;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+}
+
+export class SaveNoteToEHRDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+}
+
+// ============================================================================
+// ANNOTATION DTOs
+// ============================================================================
+
+export enum VideoAnnotationType {
+  DRAWING = 'DRAWING',
+  HIGHLIGHT = 'HIGHLIGHT',
+  ARROW = 'ARROW',
+  TEXT = 'TEXT',
+  SHAPE = 'SHAPE',
+}
+
+export class AnnotationPositionDto {
+  @ApiProperty()
+  @IsNumber()
+  x!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  y!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  width!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  height!: number;
+}
+
+export class CreateAnnotationDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiProperty({ enum: VideoAnnotationType })
+  @IsEnum(VideoAnnotationType)
+  @IsNotEmpty()
+  annotationType!: VideoAnnotationType;
+
+  @ApiProperty({
+    description: 'Annotation data (paths, text, coordinates, etc.)',
+    type: 'object',
+    additionalProperties: true,
+  })
+  @IsObject()
+  @IsNotEmpty()
+  data!: Record<string, unknown>;
+
+  @ApiPropertyOptional({ type: AnnotationPositionDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AnnotationPositionDto)
+  position?: AnnotationPositionDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  color?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  thickness?: number;
+}
+
+export class AnnotationResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  consultationId!: string;
+
+  @ApiProperty()
+  userId!: string;
+
+  @ApiProperty({ enum: VideoAnnotationType })
+  annotationType!: VideoAnnotationType;
+
+  @ApiProperty()
+  data!: Record<string, unknown>;
+
+  @ApiPropertyOptional()
+  position?: AnnotationPositionDto;
+
+  @ApiPropertyOptional()
+  color?: string;
+
+  @ApiPropertyOptional()
+  thickness?: number;
+
+  @ApiProperty()
+  isVisible!: boolean;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+}
+
+export class DeleteAnnotationDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+}
+
+// ============================================================================
+// TRANSCRIPTION DTOs
+// ============================================================================
+
+export class CreateTranscriptionDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  transcript!: string;
+
+  @ApiPropertyOptional({ default: 'en' })
+  @IsOptional()
+  @IsString()
+  language?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  confidence?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  speakerId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  startTime?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  endTime?: number;
+}
+
+export class TranscriptionResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  consultationId!: string;
+
+  @ApiProperty()
+  transcript!: string;
+
+  @ApiProperty()
+  language!: string;
+
+  @ApiPropertyOptional()
+  confidence?: number;
+
+  @ApiPropertyOptional()
+  speakerId?: string;
+
+  @ApiPropertyOptional()
+  startTime?: number;
+
+  @ApiPropertyOptional()
+  endTime?: number;
+
+  @ApiProperty()
+  isProcessed!: boolean;
+
+  @ApiProperty()
+  savedToEHR!: boolean;
+
+  @ApiPropertyOptional()
+  ehrRecordId?: string;
+
+  @ApiProperty()
+  createdAt!: Date;
+
+  @ApiProperty()
+  updatedAt!: Date;
+}
+
+export class SaveTranscriptToEHRDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+}
+
+// ============================================================================
+// QUALITY MONITORING DTOs
+// ============================================================================
+
+export class NetworkMetricsDto {
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  latency!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  bandwidth!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  packetLoss!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  jitter!: number;
+
+  @ApiPropertyOptional({ enum: ['wifi', 'cellular', 'ethernet', 'unknown'] })
+  @IsOptional()
+  @IsEnum(['wifi', 'cellular', 'ethernet', 'unknown'])
+  connectionType?: 'wifi' | 'cellular' | 'ethernet' | 'unknown';
+}
+
+export class VideoQualityDto {
+  @ApiProperty()
+  @IsString()
+  resolution!: string;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  frameRate!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  bitrate!: number;
+
+  @ApiProperty({ enum: ['excellent', 'good', 'fair', 'poor'] })
+  @IsEnum(['excellent', 'good', 'fair', 'poor'])
+  quality!: 'excellent' | 'good' | 'fair' | 'poor';
+}
+
+export class AudioQualityDto {
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  bitrate!: number;
+
+  @ApiProperty()
+  @IsNumber()
+  @Min(0)
+  sampleRate!: number;
+
+  @ApiProperty({ enum: ['excellent', 'good', 'fair', 'poor'] })
+  @IsEnum(['excellent', 'good', 'fair', 'poor'])
+  quality!: 'excellent' | 'good' | 'fair' | 'poor';
+}
+
+export class UpdateQualityMetricsDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiPropertyOptional({ type: NetworkMetricsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => NetworkMetricsDto)
+  networkMetrics?: NetworkMetricsDto;
+
+  @ApiPropertyOptional({ type: VideoQualityDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => VideoQualityDto)
+  videoQuality?: VideoQualityDto;
+
+  @ApiPropertyOptional({ type: AudioQualityDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AudioQualityDto)
+  audioQuality?: AudioQualityDto;
+}
+
+export class QualityMetricsResponseDto {
+  @ApiProperty({ type: VideoQualityDto })
+  videoQuality!: VideoQualityDto;
+
+  @ApiProperty({ type: AudioQualityDto })
+  audioQuality!: AudioQualityDto;
+
+  @ApiProperty({ type: NetworkMetricsDto })
+  networkMetrics!: NetworkMetricsDto;
+
+  @ApiProperty({ enum: ['excellent', 'good', 'fair', 'poor'] })
+  overallQuality!: 'excellent' | 'good' | 'fair' | 'poor';
+}
+
+// ============================================================================
+// VIRTUAL BACKGROUND DTOs
+// ============================================================================
+
+export class VirtualBackgroundSettingsDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId!: string;
+
+  @ApiProperty()
+  @IsBoolean()
+  enabled!: boolean;
+
+  @ApiProperty({ enum: ['blur', 'image', 'video', 'none'] })
+  @IsEnum(['blur', 'image', 'video', 'none'])
+  type!: 'blur' | 'image' | 'video' | 'none';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100)
+  blurIntensity?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUrl({}, { message: 'Image URL must be a valid URL' })
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUrl({}, { message: 'Video URL must be a valid URL' })
+  videoUrl?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  customBackgroundId?: string;
+}
+
+export class BackgroundPresetResponseDto {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiProperty({ enum: ['blur', 'image'] })
+  type!: 'blur' | 'image';
+
+  @ApiPropertyOptional()
+  imageUrl?: string;
+
+  @ApiPropertyOptional()
+  blurIntensity?: number;
+
+  @ApiProperty()
+  isDefault!: boolean;
+}

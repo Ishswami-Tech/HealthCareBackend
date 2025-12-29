@@ -90,6 +90,10 @@ model User {
   createdClinics          Clinic[]                @relation("UserCreatedClinics")
   primaryClinic           Clinic?                 @relation("UserPrimaryClinic", fields: [primaryClinicId], references: [id])
   videoParticipants       VideoParticipant[]
+  videoChatMessages       VideoChatMessage[]
+  videoConsultationNotes  VideoConsultationNote[] @relation("VideoNoteUser")
+  videoAnnotations        VideoAnnotation[]       @relation("VideoAnnotationUser")
+  waitingRoomEntries      WaitingRoomEntry[]      @relation("WaitingRoomUser")
   clinics                 Clinic[]                @relation("UserClinics")
   emailSuppressions       EmailSuppressionList[]
 
@@ -1489,37 +1493,42 @@ model ResourceBooking {
 }
 
 model VideoConsultation {
-  id                   String             @id @default(uuid())
+  id                   String                  @id @default(uuid())
   appointmentId        String
   patientId            String
   doctorId             String
   clinicId             String
-  roomId               String             @unique
+  roomId               String                  @unique
   meetingUrl           String
-  status               VideoCallStatus    @default(SCHEDULED)
+  status               VideoCallStatus         @default(SCHEDULED)
   startTime            DateTime?
   endTime              DateTime?
   duration             Int?
   recordingUrl         String?
   recordingId          String?
-  isRecording          Boolean            @default(false)
-  maxParticipants      Int                @default(2)
-  recordingEnabled     Boolean            @default(true)
-  screenSharingEnabled Boolean            @default(true)
-  chatEnabled          Boolean            @default(true)
-  waitingRoomEnabled   Boolean            @default(true)
-  autoRecord           Boolean            @default(false)
+  isRecording          Boolean                 @default(false)
+  maxParticipants      Int                     @default(2)
+  recordingEnabled     Boolean                 @default(true)
+  screenSharingEnabled Boolean                 @default(true)
+  chatEnabled          Boolean                 @default(true)
+  waitingRoomEnabled   Boolean                 @default(true)
+  autoRecord           Boolean                 @default(false)
   iceServers           Json?
   turnServers          Json?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
   WaitlistEntry        WaitlistEntry[]
-  appointment          Appointment        @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
-  clinic               Clinic             @relation(fields: [clinicId], references: [id], onDelete: Cascade)
-  doctor               Doctor             @relation(fields: [doctorId], references: [id], onDelete: Cascade)
-  patient              Patient            @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  appointment          Appointment             @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  clinic               Clinic                  @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  doctor               Doctor                  @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+  patient              Patient                 @relation(fields: [patientId], references: [id], onDelete: Cascade)
   participants         VideoParticipant[]
   recordings           VideoRecording[]
+  chatMessages         VideoChatMessage[]
+  notes                VideoConsultationNote[]
+  annotations          VideoAnnotation[]
+  transcriptions       VideoTranscription[]
+  waitingRoomEntries   WaitingRoomEntry[]
 
   @@index([appointmentId])
   @@index([patientId])
@@ -1579,6 +1588,154 @@ model VideoRecording {
   @@index([consultationId])
   @@index([isProcessed])
   @@map("video_recordings")
+}
+
+model VideoChatMessage {
+  id             String             @id @default(uuid())
+  consultationId String
+  userId         String
+  message        String
+  messageType    VideoMessageType   @default(TEXT)
+  fileUrl        String?
+  fileName       String?
+  fileSize       Int?
+  fileType       String?
+  isEdited       Boolean            @default(false)
+  isDeleted      Boolean            @default(false)
+  replyToId      String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  consultation   VideoConsultation  @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replyTo        VideoChatMessage?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies        VideoChatMessage[] @relation("MessageReplies")
+
+  @@index([consultationId])
+  @@index([userId])
+  @@index([createdAt])
+  @@index([replyToId])
+  @@map("video_chat_messages")
+}
+
+model VideoConsultationNote {
+  id             String            @id @default(uuid())
+  consultationId String
+  userId         String
+  noteType       VideoNoteType     @default(GENERAL)
+  title          String?
+  content        String
+  prescription   Json?
+  symptoms       Json?
+  treatmentPlan  Json?
+  isAutoSaved    Boolean           @default(false)
+  savedToEHR     Boolean           @default(false)
+  ehrRecordId    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  user           User              @relation("VideoNoteUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([userId])
+  @@index([noteType])
+  @@index([savedToEHR])
+  @@map("video_consultation_notes")
+}
+
+model VideoAnnotation {
+  id             String              @id @default(uuid())
+  consultationId String
+  userId         String
+  annotationType VideoAnnotationType @default(DRAWING)
+  data           Json // Canvas drawing data, coordinates, etc.
+  position       Json? // Position on screen (x, y, width, height)
+  color          String?
+  thickness      Float?
+  isVisible      Boolean             @default(true)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  consultation   VideoConsultation   @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  user           User                @relation("VideoAnnotationUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("video_annotations")
+}
+
+model VideoTranscription {
+  id             String            @id @default(uuid())
+  consultationId String
+  transcript     String
+  language       String            @default("en")
+  confidence     Float?
+  speakerId      String?
+  startTime      Int? // Start time in seconds
+  endTime        Int? // End time in seconds
+  isProcessed    Boolean           @default(false)
+  savedToEHR     Boolean           @default(false)
+  ehrRecordId    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  consultation   VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([language])
+  @@index([isProcessed])
+  @@index([savedToEHR])
+  @@map("video_transcriptions")
+}
+
+model WaitingRoomEntry {
+  id                String            @id @default(uuid())
+  consultationId    String
+  userId            String
+  status            WaitingRoomStatus @default(WAITING)
+  position          Int // Queue position
+  estimatedWaitTime Int? // Estimated wait time in seconds
+  admittedAt        DateTime?
+  notifiedAt        DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  consultation      VideoConsultation @relation(fields: [consultationId], references: [id], onDelete: Cascade)
+  user              User              @relation("WaitingRoomUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([consultationId])
+  @@index([userId])
+  @@index([status])
+  @@index([position])
+  @@map("waiting_room_entries")
+}
+
+enum VideoMessageType {
+  TEXT
+  IMAGE
+  DOCUMENT
+  PRESCRIPTION
+  FILE
+}
+
+enum VideoNoteType {
+  GENERAL
+  PRESCRIPTION
+  SYMPTOM
+  TREATMENT_PLAN
+  DIAGNOSIS
+}
+
+enum VideoAnnotationType {
+  DRAWING
+  HIGHLIGHT
+  ARROW
+  TEXT
+  SHAPE
+}
+
+enum WaitingRoomStatus {
+  WAITING
+  ADMITTED
+  LEFT
+  CANCELLED
 }
 
 model AyurvedicTherapy {

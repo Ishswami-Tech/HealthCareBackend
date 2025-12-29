@@ -228,3 +228,6 @@ export * from './http.types';
 
 // Payment Types (centralized payment provider types)
 export * from './payment.types';
+
+// Realtime Health Types (enterprise-level real-time health monitoring)
+export * from './realtime-health.types';

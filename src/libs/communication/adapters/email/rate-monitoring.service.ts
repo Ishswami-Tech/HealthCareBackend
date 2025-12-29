@@ -8,7 +8,8 @@
  * @description Email bounce/complaint rate monitoring and alerting
  */
 
-import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit, Optional } from '@nestjs/common';
+import { COMMUNICATION_SERVICE_TOKEN } from '@communication/communication.module';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
@@ -53,7 +54,18 @@ export class EmailRateMonitoringService implements OnModuleInit {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Optional()
+    @Inject(COMMUNICATION_SERVICE_TOKEN)
+    private readonly communicationService?: {
+      sendEmail: (options: {
+        to: string;
+        subject: string;
+        html: string;
+        category: string;
+        priority: string;
+      }) => Promise<unknown>;
+    }
   ) {}
 
   onModuleInit(): void {
@@ -347,8 +359,45 @@ export class EmailRateMonitoringService implements OnModuleInit {
       }
     );
 
-    // TODO: Send notification to admins (email, Slack, etc.)
-    // For now, just log the alert
+    // Send notification to admins via CommunicationService if available
+    if (this.communicationService) {
+      try {
+        // Get admin email from environment or use default
+        const adminEmail = process.env['ADMIN_EMAIL'] || process.env['ALERT_EMAIL'];
+        if (adminEmail) {
+          await this.communicationService.sendEmail({
+            to: adminEmail,
+            subject: `[${alert.severity.toUpperCase()}] Email Rate Alert: ${alert.provider} ${alert.metric} rate exceeded`,
+            html: `
+              <h2>Email Rate Alert</h2>
+              <p><strong>Severity:</strong> ${alert.severity.toUpperCase()}</p>
+              <p><strong>Provider:</strong> ${alert.provider}</p>
+              <p><strong>Metric:</strong> ${alert.metric}</p>
+              <p><strong>Current Rate:</strong> ${alert.rate.toFixed(2)}%</p>
+              <p><strong>Threshold:</strong> ${alert.threshold}%</p>
+              <p><strong>Period:</strong> ${alert.period}</p>
+              ${alert.clinicId ? `<p><strong>Clinic ID:</strong> ${alert.clinicId}</p>` : ''}
+              <p><strong>Timestamp:</strong> ${alert.timestamp.toISOString()}</p>
+              <p>Please investigate and take appropriate action.</p>
+            `,
+            category: 'SYSTEM',
+            priority: alert.severity === 'critical' ? 'HIGH' : 'NORMAL',
+          });
+        }
+      } catch (error) {
+        // Log error but don't fail - alert logging is primary
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Failed to send admin notification for rate alert',
+          'EmailRateMonitoringService',
+          {
+            error: error instanceof Error ? error.message : String(error),
+            alert: alert,
+          }
+        );
+      }
+    }
   }
 
   /**

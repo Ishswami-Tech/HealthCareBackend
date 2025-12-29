@@ -22,9 +22,11 @@ import { ErrorsModule } from '@core/errors/errors.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { QueueModule } from '@queue/src/queue.module';
+import { StorageModule } from '@infrastructure/storage';
 // Note: HealthModule is imported with forwardRef to break circular dependency
 // since HealthModule also imports VideoModule with forwardRef
 import { HealthModule } from '@services/health/health.module';
+import { EHRModule } from '@services/ehr/ehr.module';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
@@ -35,6 +37,14 @@ import { JitsiVideoProvider } from './providers/jitsi-video.provider';
 // Webhook handlers (optimized architecture)
 import { OpenViduWebhookController } from './webhooks/openvidu-webhook.controller';
 import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
+// New feature services
+import { VideoChatService } from './services/video-chat.service';
+import { VideoWaitingRoomService } from './services/video-waiting-room.service';
+import { VideoMedicalNotesService } from './services/video-medical-notes.service';
+import { VideoAnnotationService } from './services/video-annotation.service';
+import { VideoTranscriptionService } from './services/video-transcription.service';
+import { VideoQualityService } from './services/video-quality.service';
+import { VideoVirtualBackgroundService } from './services/video-virtual-background.service';
 // Note: HealthModule and VideoModule have a circular dependency.
 // Both use forwardRef to break the cycle. HealthModule provides VideoHealthIndicator
 // which is injected into VideoController for health check endpoints.
@@ -59,6 +69,8 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
     ErrorsModule, // Error handling
     RateLimitModule, // Rate limiting
     QueueModule, // Queue processing for recording processing, transcoding, analytics
+    StorageModule, // File storage for virtual backgrounds and other assets
+    forwardRef(() => EHRModule), // EHR integration for medical notes and transcriptions
   ],
   controllers: [
     VideoController,
@@ -76,12 +88,28 @@ import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
     VideoConsultationTracker,
     // Webhook service (processes OpenVidu webhooks and forwards to Socket.IO)
     OpenViduWebhookService,
+    // New feature services
+    VideoChatService,
+    VideoWaitingRoomService,
+    VideoMedicalNotesService,
+    VideoAnnotationService,
+    VideoTranscriptionService,
+    VideoQualityService,
+    VideoVirtualBackgroundService,
   ],
   exports: [
     // Export video service for other modules to use
     VideoService,
     // Export tracker for advanced use cases
     VideoConsultationTracker,
+    // Export new feature services
+    VideoChatService,
+    VideoWaitingRoomService,
+    VideoMedicalNotesService,
+    VideoAnnotationService,
+    VideoTranscriptionService,
+    VideoQualityService,
+    VideoVirtualBackgroundService,
   ],
 })
 export class VideoModule {}

@@ -1,7 +1,5 @@
-import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import { InjectQueue } from '@nestjs/bull';
-import { Queue } from 'bull';
 
 // Infrastructure Services
 import { CacheService } from '@infrastructure/cache';
@@ -131,6 +129,9 @@ export class AppointmentsService {
     // Infrastructure Services
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
+    // Queue Service - BullMQ-based queue system
+    // Use QueueService from @infrastructure/queue (migrated from Bull to BullMQ)
+    // Standard queue names: QueueService.APPOINTMENT_QUEUE, QueueService.NOTIFICATION_QUEUE, etc.
     private readonly queueService: QueueService,
     private readonly eventService: EventService,
     private readonly configService: ConfigService,
@@ -144,14 +145,7 @@ export class AppointmentsService {
 
     // Error Handling & RBAC
     private readonly errors: HealthcareErrorsService,
-    private readonly rbacService: RbacService,
-
-    // Queue Injections (optional when cache is disabled)
-    @Optional() @InjectQueue('clinic-appointment') private readonly appointmentQueue: Queue | null,
-    @Optional()
-    @InjectQueue('clinic-notification')
-    private readonly notificationQueue: Queue | null,
-    @Optional() @InjectQueue('clinic-analytics') private readonly analyticsQueue: Queue | null
+    private readonly rbacService: RbacService
   ) {}
 
   // Note: Use DatabaseService safe methods instead of direct Prisma access

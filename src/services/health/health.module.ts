@@ -8,19 +8,25 @@ import { HealthService } from './health.service';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { SocketModule } from '@communication/channels/socket';
-import { EmailModule } from '@communication/channels/email';
 import { ErrorsModule } from '@core/errors';
 import { CacheModule } from '@infrastructure/cache';
 import { QueueModule } from '@infrastructure/queue';
-import { CommunicationModule } from '@communication/communication.module';
 import { VideoModule } from '@services/video/video.module';
 // Health indicators
 import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
 import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
 import { QueueHealthIndicator } from './health-indicators/queue-health.indicator';
 import { LoggingHealthIndicator } from './health-indicators/logging-health.indicator';
-import { CommunicationHealthIndicator } from './health-indicators/communication-health.indicator';
 import { VideoHealthIndicator } from './health-indicators/video-health.indicator';
+// Realtime health services
+import { RealtimeHealthGateway } from './realtime/realtime-health.gateway';
+import { SystemHealthChecker } from './realtime/checkers/system-health.checker';
+import { SocketHealthChecker } from './realtime/checkers/socket-health.checker';
+import { HealthAggregatorService } from './realtime/services/health-aggregator.service';
+import { HealthCacheService } from './realtime/services/health-cache.service';
+import { ChangeDetectorService } from './realtime/services/change-detector.service';
+import { HealthSchedulerService } from './realtime/services/health-scheduler.service';
+import { HealthBroadcasterService } from './realtime/services/health-broadcaster.service';
 
 @Module({
   imports: [
@@ -31,9 +37,7 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
     CacheModule,
     QueueModule,
     LoggingModule,
-    CommunicationModule, // Import CommunicationModule to access CommunicationHealthMonitorService
     SocketModule,
-    EmailModule,
     ErrorsModule,
     // VideoModule imported with forwardRef to break circular dependency
     // This ensures VideoService is available for VideoHealthIndicator
@@ -47,8 +51,18 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
     CacheHealthIndicator,
     QueueHealthIndicator,
     LoggingHealthIndicator,
-    CommunicationHealthIndicator,
     VideoHealthIndicator,
+    // Realtime health services
+    RealtimeHealthGateway,
+    // Health checkers (only System and Socket - others use HealthService/Terminus)
+    SystemHealthChecker,
+    SocketHealthChecker,
+    // Core services
+    HealthAggregatorService,
+    HealthCacheService,
+    ChangeDetectorService,
+    HealthSchedulerService,
+    HealthBroadcasterService,
   ],
   exports: [
     HealthService,
@@ -57,8 +71,11 @@ import { VideoHealthIndicator } from './health-indicators/video-health.indicator
     CacheHealthIndicator,
     QueueHealthIndicator,
     LoggingHealthIndicator,
-    CommunicationHealthIndicator,
     VideoHealthIndicator,
+    // Export realtime health services
+    RealtimeHealthGateway,
+    HealthSchedulerService,
+    HealthBroadcasterService,
   ],
 })
 export class HealthModule {}

@@ -102,7 +102,8 @@ This document provides a comprehensive analysis of the Kubernetes production set
 - ✅ **Event logging**: All cluster events logged and queryable
 
 #### Health Endpoints
-- ✅ **Health checks**: `/health/api` endpoint for monitoring
+- ✅ **Health checks**: `/health` endpoint (Terminus-based, HealthService) for monitoring
+- ✅ **Realtime health monitoring**: Socket.IO `/health` namespace for real-time status updates
 - ✅ **Readiness checks**: Separate endpoint for load balancer integration
 
 ### 7. **Configuration Management**
