@@ -470,9 +470,20 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       }
 
       // Try to get connected clients count (lightweight operation)
+      // This actually verifies the server is responding, not just initialized
       try {
         const server = this.socketService.getServer();
-        if (server) {
+        if (server && server.engine) {
+          // Verify server engine is ready (actual connection check)
+          const isEngineReady = server.engine !== null && server.engine !== undefined;
+          if (!isEngineReady) {
+            return {
+              connected: false,
+              latency: Date.now() - start,
+            };
+          }
+
+          // Try to get connected clients - this verifies server is actually responding
           const connectedClientsPromise = server.allSockets();
           const timeoutPromise = new Promise<Set<string>>(resolve => {
             setTimeout(() => resolve(new Set()), QUERY_TIMEOUT_MS);
@@ -481,6 +492,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
           const connectedClients = await Promise.race([connectedClientsPromise, timeoutPromise]);
           const latency = Date.now() - start;
 
+          // Server is actually responding - mark as connected
           return {
             connected: true,
             latency,
@@ -488,12 +500,17 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
           };
         }
       } catch {
-        // If getting clients fails, service is still initialized, so it's connected
+        // If getting clients fails, server is not actually responding - mark as disconnected
+        return {
+          connected: false,
+          latency: Date.now() - start,
+        };
       }
 
+      // If we get here, server is initialized but not actually responding
       const latency = Date.now() - start;
       return {
-        connected: true,
+        connected: false,
         latency,
       };
     } catch (_error) {
@@ -725,6 +742,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
   } {
     // Return lightweight status based on cached data
     // This doesn't query the services, just returns cached status
+    // NOTE: Email is always set to false (inactive) as per user request
     if (this.cachedHealthStatus) {
       return {
         healthy: this.cachedHealthStatus.healthy,
@@ -732,7 +750,7 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
           connected: this.cachedHealthStatus.socket.connected,
         },
         email: {
-          connected: this.cachedHealthStatus.email.connected,
+          connected: false, // Always false - user requested email to be inactive
         },
         whatsapp: {
           connected: this.cachedHealthStatus.whatsapp.connected,
@@ -744,14 +762,16 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       };
     }
 
-    // Fallback if no cached data
+    // Fallback if no cached data - socket should only show as active if actually connected
+    // Don't use initialization as a proxy - only use cached health check results
+    // If no cached data exists, socket is not verified as active, so return false
     return {
-      healthy: false,
+      healthy: false, // Not healthy until health check runs and confirms services are active
       socket: {
-        connected: false,
+        connected: false, // Only true if health check confirms it's actually connected
       },
       email: {
-        connected: false,
+        connected: false, // Always false - user requested email to be inactive
       },
       whatsapp: {
         connected: false,

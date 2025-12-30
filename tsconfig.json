@@ -53,7 +53,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "prisma.config.js",
+    "**/prisma.config.js",
     "**/generated/**",
     "src/libs/infrastructure/database/generated"
     // Note: src/libs/infrastructure/database/prisma/generated is NOT excluded

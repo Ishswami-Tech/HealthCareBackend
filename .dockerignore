@@ -1,61 +1,82 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
 # Dependencies
 node_modules
-npm-debug.log
-pnpm-debug.log
-yarn-error.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+.pnpm-store
 
 # Build outputs
 dist
 build
 *.tsbuildinfo
+.next
+out
 
 # Environment files
 .env
-.env.local
-.env.*.local
-*.env
+.env.*
+!.env.example
+!.env.template
 
-# IDE
+# IDE and editor files
 .vscode
 .idea
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
 # Testing
 coverage
 .nyc_output
-*.test.ts
-*.spec.ts
+*.test.js
+*.spec.js
+test-results
+*.log
 
-# Documentation (optional - uncomment if you want to exclude)
-# docs
+# Documentation
+*.md
+!README.md
+docs
+docs/
 
-# Git
-.git
-.gitignore
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+devops/docker/
 
 # CI/CD
 .github
-
-# Logs
-logs
-*.log
+.gitlab-ci.yml
+.travis.yml
+.circleci
 
 # Temporary files
 tmp
 temp
 *.tmp
+.cache
+.parcel-cache
 
-# Prisma generated (will be regenerated in container)
-# Note: Keep schema.prisma, exclude only generated files
-**/prisma/generated
+# OS files
+Thumbs.db
+.DS_Store
 
-# CRITICAL: .swcrc and nest-cli.json MUST be included for SWC compiler to work
-# These files are NOT excluded and will be copied to Docker images
-# Required for all environments: Windows, Linux (Docker), macOS, Kubernetes
-# The explicit configFile path in nest-cli.json ensures cross-platform compatibility
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.vercel
+.netlify
+.cache

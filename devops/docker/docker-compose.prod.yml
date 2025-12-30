@@ -1,14 +1,14 @@
 services:
   api:
-    image: healthcare-backend:latest
+    # Use image from GitHub Container Registry (for CI/CD deployments)
+    # Or use local build by uncommenting build section below
+    # image: ${DOCKER_IMAGE:-ghcr.io/your-username/your-repo/healthcare-api:latest}
+    # Uncomment below to build locally instead of using registry image
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile
       target: production
-      args:
-        - BUILDKIT_INLINE_CACHE=1
-      cache_from:
-        - type=registry,ref=node:20-slim
+      pull: false
     container_name: latest-api
     hostname: api
     ports:
@@ -25,8 +25,8 @@ services:
       # Disable HTTP/2 for testing compatibility (enable in real production with proper HTTP/2 clients)
       ENABLE_HTTP2: "false"
       # For local testing, allow localhost. In real production, use production domains
-      CORS_ORIGIN: "http://localhost:3000,http://localhost:8088,https://ishswami.in,https://www.ishswami.in"
-      FRONTEND_URL: http://localhost:3000
+      CORS_ORIGIN: "http://localhost:3000,http://localhost:8088,https://www.viddhakarma.com,https://viddhakarma.com,https://api.ishswami.in"
+      FRONTEND_URL: https://www.viddhakarma.com
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
@@ -131,7 +131,8 @@ services:
         reservations:
           cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
           memory: 2G       # Minimum guaranteed (works on 12GB server)
-    command: ["node", "dist/main.js"]
+    # Migrations run automatically via CMD in Dockerfile before starting the app
+    # No need to override command - Dockerfile CMD handles migrations + app start
     labels:
       - "com.docker.compose.service=api"
       - "app.component=backend"
@@ -259,7 +260,13 @@ services:
       - "app.healthcheck=enabled"
 
   worker:
-    image: healthcare-backend:latest
+    # Use same image as API (worker runs from same codebase)
+    # image: ${DOCKER_IMAGE:-ghcr.io/your-username/your-repo/healthcare-api:latest}
+    # Uncomment below to build locally instead of using registry image
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile
+      target: production
     container_name: latest-worker
     hostname: worker
     env_file:
@@ -341,6 +348,7 @@ services:
         reservations:
           cpus: "0.5"       # Minimum guaranteed (works on 6 vCPU server)
           memory: 512M      # Minimum guaranteed (works on 12GB server)
+    # Worker doesn't need migrations - only API container runs them
     command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"

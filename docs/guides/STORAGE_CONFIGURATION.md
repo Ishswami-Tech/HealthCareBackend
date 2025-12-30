@@ -32,12 +32,16 @@ S3_ENDPOINT=https://eu2.contabostorage.com
 # Region (usually eu-central-1 for Contabo)
 S3_REGION=eu-central-1
 
-# Bucket name
-S3_BUCKET=your-bucket-name
+# Bucket name (just the bucket name, not the full URL path)
+S3_BUCKET=healthcaredata
+
+# Note: Contabo bucket URL format: https://eu2.contabostorage.com/{access-key-id}:{bucket-name}
+# Example: https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata
 
 # Access credentials (from Contabo dashboard)
-S3_ACCESS_KEY_ID=your-access-key-id
-S3_SECRET_ACCESS_KEY=your-secret-access-key
+# Access key ID is used in URL path: https://eu2.contabostorage.com/{access-key-id}:{bucket-name}
+S3_ACCESS_KEY_ID=your-contabo-access-key-id
+S3_SECRET_ACCESS_KEY=your-contabo-secret-access-key
 
 # Required for S3-compatible providers
 S3_FORCE_PATH_STYLE=true
@@ -71,11 +75,18 @@ S3_ENABLED=true
 S3_PROVIDER=contabo
 S3_ENDPOINT=https://eu2.contabostorage.com
 S3_REGION=eu-central-1
-S3_BUCKET=healthcare-assets
-S3_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-S3_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+S3_BUCKET=healthcaredata
+S3_ACCESS_KEY_ID=your-contabo-access-key-id
+S3_SECRET_ACCESS_KEY=your-contabo-secret-access-key
 S3_FORCE_PATH_STYLE=true
 ```
+
+**Note**: 
+- **Bucket URL Format**: `https://eu2.contabostorage.com/{access-key-id}:{bucket-name}/{file-key}`
+- **Example Bucket URL**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata`
+- **File URL Example**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata/path/to/file.pdf`
+- The `S3_BUCKET` value should be just `healthcaredata` (bucket name only)
+- The storage service automatically includes the access key ID in public URLs when `S3_PROVIDER=contabo`
 
 ### Example 2: AWS S3
 

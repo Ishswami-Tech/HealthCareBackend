@@ -39,14 +39,15 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
       throw new Error('Video service not available');
     }
 
+    // Real-time health check - verify service is actually healthy
     const isHealthy = await this.videoService.isHealthy();
     const primaryProvider = this.videoService.getCurrentProvider();
     const fallbackProvider = this.videoService.getFallbackProvider();
 
     return {
       isHealthy,
-      primaryProvider,
-      fallbackProvider,
+      primaryProvider: primaryProvider || 'unknown',
+      fallbackProvider: fallbackProvider || null,
     };
   }
 

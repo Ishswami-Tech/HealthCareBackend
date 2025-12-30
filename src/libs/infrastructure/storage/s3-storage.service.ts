@@ -356,8 +356,16 @@ export class S3StorageService implements OnModuleInit {
     // Generate public URL based on provider
     if (this.config.endpoint) {
       // S3-compatible provider (Contabo, Wasabi, etc.)
-      // Contabo format: https://{endpoint}/{bucket}/{key}
+      // Contabo format: https://{endpoint}/{access-key-id}:{bucket}/{key}
+      // Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata/{key}
       const endpointUrl = this.config.endpoint.replace(/\/$/, ''); // Remove trailing slash
+
+      // For Contabo, include access key ID in URL path if available
+      if (this.config.provider === 'contabo' && this.config.accessKeyId) {
+        return `${endpointUrl}/${this.config.accessKeyId}:${this.config.bucket}/${key}`;
+      }
+
+      // Other S3-compatible providers (Wasabi, etc.) use standard format
       return `${endpointUrl}/${this.config.bucket}/${key}`;
     }
 

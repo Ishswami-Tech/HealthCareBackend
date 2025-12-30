@@ -228,11 +228,11 @@ export class JwtAuthGuard implements CanActivate {
         }
       }
 
-      // Lockout mechanism disabled for development stage
-      // TODO: Enable lockout protection in production
-      /*
+      // Lockout mechanism enabled in production for security
       // Check for time-based lockout (enabled for production security)
-      if (!this.cacheService.isDevelopmentMode()) {
+      const isProduction =
+        !this.configService.isDevelopment() && !this.configService.getEnvBoolean('DEV_MODE', false);
+      if (isProduction && this.rateLimitService) {
         const lockoutStatus = await this.checkLockoutStatus(clientIp);
         if (lockoutStatus.isLocked) {
           throw new HttpException(
@@ -240,13 +240,12 @@ export class JwtAuthGuard implements CanActivate {
               _error: 'Account Locked',
               message: `Account temporarily locked due to multiple failed attempts. Try again in ${lockoutStatus.remainingMinutes} minutes.`,
               lockoutMinutes: lockoutStatus.remainingMinutes,
-              retryAfter: lockoutStatus.remainingMinutes * 60
+              retryAfter: lockoutStatus.remainingMinutes * 60,
             },
             HttpStatus.TOO_MANY_REQUESTS
           );
         }
       }
-      */
 
       // Validate security headers and request integrity
       this.validateRequest(request);
