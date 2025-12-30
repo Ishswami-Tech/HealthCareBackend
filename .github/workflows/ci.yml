@@ -25,7 +25,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
   IMAGE_NAME: healthcare-api
-  IMAGE: ghcr.io/${{ github.repository }}/healthcare-api
+  # Note: IMAGE will be set in docker-build job with lowercase conversion
 
 jobs:
   # Code Quality Checks
@@ -72,6 +72,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true  # Don't fail if Advanced Security is not enabled
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -80,44 +81,12 @@ jobs:
           npx audit-ci --moderate
 
   # TypeScript Build
-  build:
-    name: Build Application
-    runs-on: ubuntu-latest
-    needs: [lint]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'yarn'
-
-      - name: Install Yarn
-        run: npm install -g yarn@${{ env.YARN_VERSION }}
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Generate Prisma Client
-        run: yarn prisma:generate
-
-      - name: Build application
-        run: yarn build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
-          retention-days: 1
-
   # Docker Build & Push
+  # Note: Build happens inside Docker, no separate build job needed
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [lint, security]  # Build happens inside Docker, no separate build job needed
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -132,11 +101,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set image name (lowercase)
+        id: image
+        run: |
+          REPO_LOWER=$(echo "${{ env.IMAGE_REPO }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
+          echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "Image name: ${IMAGE_FULL}"
+
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE }}
+          images: ${{ steps.image.outputs.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -421,18 +398,20 @@ jobs:
           SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
           IMAGE_TAG: main-${{ github.sha }}
           REGISTRY: ${{ env.REGISTRY }}
-          IMAGE: ${{ env.IMAGE }}
+          IMAGE_REPO: ${{ env.IMAGE_REPO }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
-            # Set deployment variables
+            # Set deployment variables (convert repo to lowercase for Docker)
+            REPO_LOWER=$(echo "${IMAGE_REPO}" | tr '[:upper:]' '[:lower:]')
             export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
-            export IMAGE="${{ env.IMAGE }}"
+            export IMAGE="ghcr.io/${REPO_LOWER}/${IMAGE_NAME}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
             
@@ -453,14 +432,15 @@ jobs:
       - name: Deployment Success
         run: |
           echo "✅ Deployment completed successfully!"
-          echo "Image: ${{ env.IMAGE }}:main-${{ github.sha }}"
+          REPO_LOWER=$(echo "${{ env.IMAGE_REPO }}" | tr '[:upper:]' '[:lower:]')
+          echo "Image: ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}"
           echo "Server: ${{ secrets.SERVER_HOST }}"
 
   # Summary Report
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, security, build, docker-build]
+    needs: [lint, security, docker-build]  # Build happens inside Docker
     if: success()
     steps:
       - name: Report Success
