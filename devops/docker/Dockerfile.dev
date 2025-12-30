@@ -1,11 +1,13 @@
+# Optimized Development Dockerfile
+# Uses Alpine for smaller image size + Yarn Classic (no symlink issues)
 FROM node:20-alpine AS development
 
 LABEL app.component=backend
 LABEL app.stage=development
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
-
-RUN apk add --no-cache \
+# Install Yarn Classic and dependencies in one layer
+RUN npm install -g yarn@1.22.22 --force 2>/dev/null || yarn --version && \
+    apk add --no-cache \
     postgresql-client \
     redis \
     busybox-extras \
@@ -13,32 +15,28 @@ RUN apk add --no-cache \
     make \
     g++ \
     wget \
-    curl \
-    && rm -rf /var/cache/apk/*
+    curl
 
 WORKDIR /app
 
-# Copy package files first
-COPY package.json pnpm-lock.yaml ./
+# Copy package files first for better caching
+COPY package.json yarn.lock ./
 
-# Install dependencies (skip postinstall since Prisma schema isn't available yet)
-RUN pnpm install --frozen-lockfile --ignore-scripts
+# Install all dependencies
+RUN yarn install --frozen-lockfile --ignore-scripts --network-timeout 100000
 
-# Copy all source files (including Prisma schema and SWC configuration)
-# .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
-# Explicitly verify SWC config files are present (cross-platform compatibility)
+# Copy source files
 COPY . .
-RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration files verified" || (echo "[ERROR] SWC config files missing!" && exit 1)
 
-# Now generate Prisma client (schema is available)
-# Run prisma generate directly (skip the copy script if it doesn't exist)
-RUN pnpm prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma && \
-    (test -f scripts/copy-prisma-to-pnpm.js && node scripts/copy-prisma-to-pnpm.js || echo "Copy script not found, skipping...") || true
+# Verify config files and generate Prisma client
+RUN test -f .swcrc && test -f nest-cli.json || (echo "[ERROR] SWC config files missing!" && exit 1) && \
+    yarn prisma:generate && \
+    mkdir -p /app/node_modules/.prisma/client && \
+    cp -r /app/src/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/ 2>/dev/null || true
 
-ENV NODE_ENV=development
-ENV PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
+ENV NODE_ENV=development \
+    PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma
 
 EXPOSE 8088 5555
 
-CMD ["pnpm", "start:dev"]
-
+CMD ["yarn", "start:dev"]

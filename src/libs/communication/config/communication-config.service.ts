@@ -8,7 +8,7 @@
  * @description Multi-tenant communication configuration service
  */
 
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -105,6 +105,8 @@ export class CommunicationConfigService implements OnModuleInit {
   private readonly logger = new Logger(CommunicationConfigService.name);
   private readonly cacheTTL = 3600; // 1 hour
 
+  private suppressionListService: SuppressionListService | undefined;
+
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
@@ -112,9 +114,24 @@ export class CommunicationConfigService implements OnModuleInit {
     private readonly credentialEncryption: CredentialEncryptionService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Optional()
     @Inject(forwardRef(() => SuppressionListService))
-    private readonly suppressionListService: SuppressionListService
-  ) {}
+    suppressionListService: SuppressionListService | undefined
+  ) {
+    this.suppressionListService = suppressionListService;
+  }
+
+  /**
+   * Lazy getter for SuppressionListService to avoid circular dependency issues
+   */
+  private getSuppressionListService(): SuppressionListService {
+    if (!this.suppressionListService) {
+      throw new Error(
+        'SuppressionListService is not available. Ensure EmailServicesModule is imported.'
+      );
+    }
+    return this.suppressionListService;
+  }
 
   onModuleInit(): void {
     this.logger.log('CommunicationConfigService initialized');
@@ -182,7 +199,7 @@ export class CommunicationConfigService implements OnModuleInit {
       // Encrypt credentials before saving
       const encryptedConfig = await this.encryptConfig(config);
 
-      // Save to database with userId for audit trail
+      // Save to database
       await this.saveToDatabase(encryptedConfig, userId);
 
       // Invalidate cache
@@ -195,6 +212,7 @@ export class CommunicationConfigService implements OnModuleInit {
         'CommunicationConfigService',
         {
           clinicId: config.clinicId,
+          userId, // Include userId in log context
         }
       );
     } catch (error) {
@@ -205,6 +223,7 @@ export class CommunicationConfigService implements OnModuleInit {
         'CommunicationConfigService',
         {
           clinicId: config.clinicId,
+          userId, // Include userId in log context
           error: error instanceof Error ? error.stack : undefined,
         }
       );
@@ -556,7 +575,7 @@ export class CommunicationConfigService implements OnModuleInit {
           });
         },
         {
-          userId, // Extracted from context or defaults to 'system'
+          userId,
           userRole: 'SYSTEM',
           clinicId: config.clinicId,
           operation: 'UPDATE_COMMUNICATION_CONFIG',
@@ -991,7 +1010,7 @@ export class CommunicationConfigService implements OnModuleInit {
               await import('@communication/adapters/email/smtp-email.adapter');
             const smtpAdapter = new SMTPEmailAdapter(
               this.loggingService,
-              this.suppressionListService
+              this.getSuppressionListService()
             );
             smtpAdapter.initialize(providerConfig as ProviderConfig);
             return smtpAdapter;
@@ -1001,7 +1020,7 @@ export class CommunicationConfigService implements OnModuleInit {
               await import('@communication/adapters/email/ses/ses-email.adapter');
             const sesAdapter = new SESEmailAdapter(
               this.loggingService,
-              this.suppressionListService
+              this.getSuppressionListService()
             );
             sesAdapter.initialize(providerConfig as ProviderConfig);
             return sesAdapter;

@@ -544,6 +544,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
   /**
    * Check if provider is healthy
+   * Real-time check: Verifies OpenVidu container is actually running and accessible
    */
   async isHealthy(): Promise<boolean> {
     // Check if OpenVidu is enabled first
@@ -551,50 +552,60 @@ export class OpenViduVideoProvider implements IVideoProvider {
       return false;
     }
 
-    // In development or Docker, be more lenient with health checks
-    // This avoids SSL certificate issues and temporary network issues
-    const isDevelopment =
-      process.env['NODE_ENV'] === 'development' ||
-      process.env['IS_DEV'] === 'true' ||
-      process.env['DOCKER_ENV'] === 'true';
-
-    if (isDevelopment) {
-      // In development/Docker, if OpenVidu is enabled, consider it healthy
-      // The container may be starting up or have temporary network issues
-      return true;
-    }
-
-    // In production, try to verify the API endpoint
-    // But be lenient - if the check fails, still return true if enabled
-    // This prevents false negatives when OpenVidu is running but temporarily unreachable
+    // Real-time health check: Try to verify OpenVidu API is accessible
+    // This ensures the container is actually running and responding
     try {
       const response = await Promise.race([
         this.httpService.get(
           `${this.apiUrl}/openvidu/api/config`,
-          this.getHttpConfig({ timeout: 5000 })
+          this.getHttpConfig({ timeout: 3000 }) // 3 second timeout for real-time check
         ),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Health check timeout')), 5000)
+          setTimeout(() => reject(new Error('Health check timeout')), 3000)
         ),
       ]);
-      return response.status === 200;
+      // If we get a response (even if not 200), OpenVidu is running
+      // Status 200 means fully healthy, other statuses mean it's running but may have issues
+      return response.status >= 200 && response.status < 500;
     } catch (error) {
-      // Log warning but still return true if OpenVidu is enabled
-      // In production, the service may be temporarily unreachable but still functional
-      // The container health check will catch actual failures
+      // Check if error is due to container not running vs other issues
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isConnectionError =
+        errorMessage.includes('ECONNREFUSED') ||
+        errorMessage.includes('ENOTFOUND') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('ETIMEDOUT');
+
+      if (isConnectionError) {
+        // Container is not accessible - mark as unhealthy
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'OpenVidu container is not accessible - health check failed',
+          'OpenViduVideoProvider.isHealthy',
+          {
+            error: errorMessage,
+            apiUrl: this.apiUrl,
+            note: 'OpenVidu container may not be running or network issue',
+          }
+        );
+        return false;
+      }
+
+      // Other errors (SSL, auth, etc.) - container is running but may have config issues
+      // Still mark as healthy since container is accessible
       await this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.WARN,
-        'OpenVidu health check failed but service is enabled - assuming healthy',
+        LogLevel.DEBUG,
+        'OpenVidu health check returned error but container is accessible',
         'OpenViduVideoProvider.isHealthy',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
           apiUrl: this.apiUrl,
-          note: 'Service is enabled and container may be running - health check will retry',
+          note: 'Container is running but may have configuration issues',
         }
       );
-      // Return true if enabled - the container health check will catch actual failures
-      return true;
+      return true; // Container is accessible, mark as healthy
     }
   }
 

@@ -12,7 +12,7 @@ import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, AuditInfo, getWhatsAppSuppressionDelegate } from '@core/types';
 
 export enum WhatsAppSuppressionReason {
   OPT_OUT = 'OPT_OUT',
@@ -60,23 +60,33 @@ export class WhatsAppSuppressionService {
         return false;
       }
 
-      // Check database (using email suppression list model for now)
-      // TODO: Create dedicated WhatsApp suppression list model if needed
-      // For now, we'll use a simple cache-based approach or extend email suppression
-      const suppressed = false; // Placeholder - implement when WhatsApp suppression model exists
+      // Check database using WhatsApp suppression list model
+      const suppressed: boolean = await this.databaseService.executeHealthcareRead(async client => {
+        const whatsappSuppressionDelegate = getWhatsAppSuppressionDelegate(client);
+        const result = await whatsappSuppressionDelegate.findFirst({
+          where: {
+            phoneNumber: normalizedPhone,
+            isActive: true,
+            ...(clinicId ? { clinicId } : { clinicId: null }),
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+          },
+        });
+        return result !== null;
+      });
 
       // Cache result
       await this.cacheService.set(cacheKey, suppressed ? 'true' : 'false', this.cacheTTL);
 
       return suppressed;
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         'Failed to check WhatsApp suppression list',
         'WhatsAppSuppressionService',
         {
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMessage,
           phoneNumber: normalizedPhone,
         }
       );
@@ -100,8 +110,69 @@ export class WhatsAppSuppressionService {
     const normalizedPhone = this.normalizePhoneNumber(phoneNumber);
 
     try {
-      // TODO: Implement database storage when WhatsApp suppression model exists
-      // For now, just cache and log
+      // Store in database
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const whatsappSuppressionDelegate = getWhatsAppSuppressionDelegate(client);
+
+          // Map WhatsApp suppression reason to Prisma enum
+          const prismaReason: 'BOUNCE' | 'COMPLAINT' | 'UNSUBSCRIBE' | 'MANUAL' =
+            this.mapToPrismaReason(reason);
+          const prismaSource: 'SES' | 'ZEPTOMAIL' | 'USER_ACTION' | 'ADMIN' | 'SYSTEM' =
+            this.mapToPrismaSource(source);
+
+          // Check if suppression already exists
+          const existing = await whatsappSuppressionDelegate.findFirst({
+            where: {
+              phoneNumber: normalizedPhone,
+              reason: prismaReason,
+              clinicId: clinicId ?? null,
+            },
+          });
+
+          if (existing) {
+            // Update existing suppression
+            const now: Date = new Date();
+            await whatsappSuppressionDelegate.update({
+              where: { id: existing.id },
+              data: {
+                isActive: true,
+                suppressedAt: now,
+                messageId: messageId ?? null,
+                description: _metadata ? JSON.stringify(_metadata) : null,
+                metadata: _metadata ?? undefined,
+                updatedAt: now,
+              },
+            });
+          } else {
+            // Create new suppression
+            await whatsappSuppressionDelegate.create({
+              data: {
+                phoneNumber: normalizedPhone,
+                reason: prismaReason,
+                source: prismaSource,
+                userId: userId ?? null,
+                clinicId: clinicId ?? null,
+                messageId: messageId ?? null,
+                description: _metadata ? JSON.stringify(_metadata) : null,
+                metadata: _metadata ?? undefined,
+                isActive: true,
+              },
+            });
+          }
+        },
+        {
+          userId: userId ?? 'system',
+          userRole: 'SYSTEM',
+          clinicId: clinicId ?? '',
+          operation: 'CREATE_WHATSAPP_SUPPRESSION',
+          resourceType: 'WHATSAPP_SUPPRESSION',
+          resourceId: normalizedPhone,
+          timestamp: new Date(),
+        } as AuditInfo
+      );
+
+      // Cache the result
       const cacheKey = clinicId
         ? `${this.cachePrefix}${normalizedPhone}:${clinicId}`
         : `${this.cachePrefix}${normalizedPhone}`;
@@ -122,17 +193,19 @@ export class WhatsAppSuppressionService {
           clinicId,
         }
       );
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
-        `Failed to add WhatsApp number to suppression list: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to add WhatsApp number to suppression list: ${errorMessage}`,
         'WhatsAppSuppressionService',
         {
           phoneNumber: normalizedPhone,
           reason,
           source,
-          error: error instanceof Error ? error.stack : undefined,
+          error: errorStack,
         }
       );
     }
@@ -148,6 +221,34 @@ export class WhatsAppSuppressionService {
       : `${this.cachePrefix}${normalizedPhone}`;
 
     try {
+      // Remove from database
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const whatsappSuppressionDelegate = getWhatsAppSuppressionDelegate(client);
+          await whatsappSuppressionDelegate.updateMany({
+            where: {
+              phoneNumber: normalizedPhone,
+              clinicId: clinicId ?? null,
+              isActive: true,
+            },
+            data: {
+              isActive: false,
+              updatedAt: new Date(),
+            },
+          });
+        },
+        {
+          userId: 'system',
+          userRole: 'SYSTEM',
+          clinicId: clinicId ?? '',
+          operation: 'REMOVE_WHATSAPP_SUPPRESSION',
+          resourceType: 'WHATSAPP_SUPPRESSION',
+          resourceId: normalizedPhone,
+          timestamp: new Date(),
+        } as AuditInfo
+      );
+
+      // Remove from cache
       await this.cacheService.delete(cacheKey);
 
       await this.loggingService.log(
@@ -160,15 +261,17 @@ export class WhatsAppSuppressionService {
           clinicId,
         }
       );
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
-        `Failed to remove WhatsApp number from suppression list: ${error instanceof Error ? error.message : String(error)}`,
+        `Failed to remove WhatsApp number from suppression list: ${errorMessage}`,
         'WhatsAppSuppressionService',
         {
           phoneNumber: normalizedPhone,
-          error: error instanceof Error ? error.stack : undefined,
+          error: errorStack,
         }
       );
     }
@@ -179,7 +282,7 @@ export class WhatsAppSuppressionService {
    */
   private normalizePhoneNumber(phone: string): string {
     // Remove all non-digit characters except +
-    const cleaned = phone.replace(/[^\d+]/g, '');
+    const cleaned: string = phone.replace(/[^\d+]/g, '');
 
     // Ensure it starts with +
     if (!cleaned.startsWith('+')) {
@@ -187,5 +290,46 @@ export class WhatsAppSuppressionService {
     }
 
     return cleaned;
+  }
+
+  /**
+   * Map WhatsApp suppression reason to Prisma enum
+   */
+  private mapToPrismaReason(
+    reason: WhatsAppSuppressionReason
+  ): 'BOUNCE' | 'COMPLAINT' | 'UNSUBSCRIBE' | 'MANUAL' {
+    switch (reason) {
+      case WhatsAppSuppressionReason.OPT_OUT:
+        return 'UNSUBSCRIBE';
+      case WhatsAppSuppressionReason.COMPLAINT:
+        return 'COMPLAINT';
+      case WhatsAppSuppressionReason.MANUAL:
+        return 'MANUAL';
+      case WhatsAppSuppressionReason.FAILED:
+        return 'BOUNCE';
+      default:
+        return 'MANUAL';
+    }
+  }
+
+  /**
+   * Map WhatsApp suppression source to Prisma enum
+   */
+  private mapToPrismaSource(
+    source: WhatsAppSuppressionSource
+  ): 'SES' | 'ZEPTOMAIL' | 'USER_ACTION' | 'ADMIN' | 'SYSTEM' {
+    switch (source) {
+      case WhatsAppSuppressionSource.META:
+      case WhatsAppSuppressionSource.TWILIO:
+        return 'SES'; // Use SES as generic provider source
+      case WhatsAppSuppressionSource.USER_ACTION:
+        return 'USER_ACTION';
+      case WhatsAppSuppressionSource.ADMIN:
+        return 'ADMIN';
+      case WhatsAppSuppressionSource.SYSTEM:
+        return 'SYSTEM';
+      default:
+        return 'SYSTEM';
+    }
   }
 }

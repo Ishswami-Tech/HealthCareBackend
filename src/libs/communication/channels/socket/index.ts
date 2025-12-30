@@ -10,9 +10,9 @@
  * @module Socket
  */
 
-export * from '@communication/channels/socket/socket.module';
-export * from '@communication/channels/socket/socket.service';
-export * from '@communication/channels/socket/app.gateway';
-export * from '@communication/channels/socket/base-socket';
-export * from '@communication/channels/socket/event-socket.broadcaster';
-export * from '@communication/channels/socket/socket-auth.middleware';
+export { SocketModule } from '@communication/channels/socket/socket.module';
+export { SocketService } from '@communication/channels/socket/socket.service';
+export { AppGateway } from '@communication/channels/socket/app.gateway';
+export { BaseSocket } from '@communication/channels/socket/base-socket';
+export { EventSocketBroadcaster } from '@communication/channels/socket/event-socket.broadcaster';
+export { SocketAuthMiddleware } from '@communication/channels/socket/socket-auth.middleware';
