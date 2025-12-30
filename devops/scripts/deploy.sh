@@ -4,6 +4,37 @@
 
 set -e  # Exit on any error
 
+# Cleanup function for failed deployments ONLY
+# Preserves successful deployments (with docker-compose.prod.yml) for rollback
+cleanup_failed_deployment_artifacts() {
+    if [ -n "${DEPLOY_PATH}" ] && [ -d "${DEPLOY_PATH}" ]; then
+        cd "${DEPLOY_PATH}" 2>/dev/null || return
+        
+        # Only clean up if there's NO successful deployment
+        if [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+            echo -e "${YELLOW}🧹 Cleaning up failed deployment artifacts (no successful deployment found)...${NC}"
+            
+            # Remove partial git clones (failed clone attempt)
+            [ -d ".git" ] && rm -rf .git 2>/dev/null && echo -e "${YELLOW}  → Removed .git directory from failed clone${NC}" || true
+            
+            # Remove incomplete source code (failed clone)
+            if [ -d "src" ]; then
+                echo -e "${YELLOW}  → Removing incomplete source code from failed clone...${NC}"
+                rm -rf src package.json package-lock.json yarn.lock tsconfig.json .eslintrc* .prettierrc* 2>/dev/null || true
+            fi
+            
+            # Remove build artifacts from failed builds
+            [ -d "node_modules" ] && rm -rf node_modules 2>/dev/null && echo -e "${YELLOW}  → Removed node_modules from failed build${NC}" || true
+            [ -d "dist" ] && rm -rf dist 2>/dev/null && echo -e "${YELLOW}  → Removed dist from failed build${NC}" || true
+        else
+            echo -e "${GREEN}  ✓ Successful deployment found (docker-compose exists) - preserving for rollback${NC}"
+        fi
+    fi
+}
+
+# Register cleanup trap for script failures
+trap 'EXIT_CODE=$?; if [ $EXIT_CODE -ne 0 ]; then cleanup_failed_deployment_artifacts; fi' EXIT
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,6 +52,7 @@ ROLLBACK_FILE="${DEPLOY_PATH}/.deployment-rollback"
 PREVIOUS_IMAGE_TAG=""
 
 echo -e "${GREEN}🚀 Starting deployment...${NC}"
+echo -e "${GREEN}📋 Deploy script version: 2.0 (no repository cloning required)${NC}"
 
 # Navigate to deployment directory (create if it doesn't exist)
 echo -e "${YELLOW}📁 Navigating to deployment directory: ${DEPLOY_PATH}${NC}"
@@ -30,36 +62,114 @@ cd "${DEPLOY_PATH}" || {
     exit 1
 }
 
+# Cleanup function for FAILED deployments only
+# This only removes incomplete/failed deployment artifacts, not successful ones
+cleanup_failed_deployment_only() {
+    echo -e "${YELLOW}🧹 Cleaning up FAILED deployment artifacts only...${NC}"
+    
+    # Remove partial git clones (indicates failed clone attempt)
+    if [ -d ".git" ]; then
+        echo -e "${YELLOW}  → Removing .git directory (from failed clone attempt)...${NC}"
+        rm -rf .git || true
+    fi
+    
+    # Remove incomplete source code ONLY if docker-compose is missing (indicates failed clone)
+    # If docker-compose exists, it's a successful deployment - keep it for rollback
+    if [ -d "src" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+        echo -e "${YELLOW}  → Removing incomplete source code (failed clone - no docker-compose found)...${NC}"
+        rm -rf src package.json package-lock.json yarn.lock tsconfig.json .eslintrc* .prettierrc* 2>/dev/null || true
+    fi
+    
+    # Remove build artifacts ONLY if they're from failed builds (no docker-compose)
+    if [ -d "node_modules" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+        echo -e "${YELLOW}  → Removing node_modules from failed build...${NC}"
+        rm -rf node_modules || true
+    fi
+    
+    if [ -d "dist" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+        echo -e "${YELLOW}  → Removing dist from failed build...${NC}"
+        rm -rf dist || true
+    fi
+    
+    # Remove temporary files from failed deployments
+    find . -maxdepth 1 -name "*.tmp" -o -name "*.bak" -o -name "*.old" 2>/dev/null | while read -r file; do
+        echo -e "${YELLOW}  → Removing temporary file: ${file}${NC}"
+        rm -f "${file}" || true
+    done
+    
+    # Remove empty directories (except essential ones)
+    find . -mindepth 1 -maxdepth 1 -type d ! -name 'devops' ! -name 'logs' -empty -exec rmdir {} + 2>/dev/null || true
+}
+
+# Clean up ONLY failed/incomplete deployments
+# Successful deployments are kept for rollback purposes
+echo -e "${YELLOW}🧹 Checking for failed deployment artifacts...${NC}"
+
+# Check for failed clone attempts (.git without docker-compose = failed)
+if [ -d ".git" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+    echo -e "${YELLOW}  → Found failed git clone attempt (git exists but no docker-compose)...${NC}"
+    cleanup_failed_deployment_only
+elif [ -d ".git" ] && [ -f "devops/docker/docker-compose.prod.yml" ]; then
+    # Git exists but docker-compose also exists - might be from old deployment method
+    # Remove git but keep docker-compose (successful deployment)
+    echo -e "${YELLOW}  → Removing .git directory (not needed, but keeping successful deployment files)...${NC}"
+    rm -rf .git || true
+fi
+
+# Check for incomplete deployments (src exists but no docker-compose = failed)
+if [ -d "src" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+    echo -e "${YELLOW}  → Found incomplete deployment (src exists but no docker-compose)...${NC}"
+    cleanup_failed_deployment_only
+elif [ -d "src" ] && [ -f "devops/docker/docker-compose.prod.yml" ]; then
+    # Source code AND docker-compose exist - this is a successful deployment
+    # Keep it for rollback, but we can remove git if it exists
+    echo -e "${GREEN}  ✓ Found successful deployment (docker-compose exists) - keeping for rollback${NC}"
+fi
+
+# Remove build artifacts ONLY if they're from failed builds (no docker-compose)
+if [ -d "node_modules" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+    echo -e "${YELLOW}  → Removing node_modules from failed build...${NC}"
+    rm -rf node_modules || true
+fi
+
+if [ -d "dist" ] && [ ! -f "devops/docker/docker-compose.prod.yml" ]; then
+    echo -e "${YELLOW}  → Removing dist from failed build...${NC}"
+    rm -rf dist || true
+fi
+
+# Ensure devops/docker directory exists
+mkdir -p devops/docker
+
+echo -e "${GREEN}✅ Cleanup completed (only failed deployments removed)${NC}"
+
 # Set COMPOSE_FILE relative to current directory (we're now in DEPLOY_PATH)
 COMPOSE_FILE="devops/docker/docker-compose.prod.yml"
 
-# Ensure repository code is available (we're now in DEPLOY_PATH)
-if [ ! -d ".git" ] && [ ! -f "${COMPOSE_FILE}" ]; then
-    echo -e "${YELLOW}📥 Repository not found. Cloning repository...${NC}"
-    if [ -z "${GIT_REPO_URL}" ]; then
-        echo -e "${RED}❌ GIT_REPO_URL not set. Cannot clone repository.${NC}"
-        echo -e "${YELLOW}⚠️  You need to either:${NC}"
-        echo -e "${YELLOW}   1. Clone the repository manually to ${DEPLOY_PATH}${NC}"
-        echo -e "${YELLOW}   2. Set GIT_REPO_URL environment variable${NC}"
-        echo -e "${YELLOW}   3. Copy docker-compose.prod.yml to ${DEPLOY_PATH}/devops/docker/${NC}"
-        exit 1
+# Ensure docker-compose file exists (copied by GitHub Actions, no need to clone entire repo)
+echo -e "${YELLOW}🔍 Checking for docker-compose file: ${COMPOSE_FILE}${NC}"
+if [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${RED}❌ Docker Compose file not found: ${COMPOSE_FILE}${NC}"
+    echo -e "${YELLOW}⚠️  The docker-compose.prod.yml file should be copied by GitHub Actions.${NC}"
+    echo -e "${YELLOW}⚠️  If this is a manual deployment, ensure the file exists at: ${COMPOSE_FILE}${NC}"
+    echo -e "${YELLOW}📂 Current directory: $(pwd)${NC}"
+    echo -e "${YELLOW}📂 Directory contents:${NC}"
+    ls -la . || true
+    if [ -d "devops" ]; then
+        echo -e "${YELLOW}📂 devops/ contents:${NC}"
+        ls -la devops/ || true
+        if [ -d "devops/docker" ]; then
+            echo -e "${YELLOW}📂 devops/docker/ contents:${NC}"
+            ls -la devops/docker/ || true
+        else
+            echo -e "${YELLOW}⚠️  devops/docker/ directory does not exist${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  devops/ directory does not exist${NC}"
     fi
-    
-    # Clone repository if it doesn't exist
-    if [ ! -d ".git" ]; then
-        git clone "${GIT_REPO_URL}" . || {
-            echo -e "${RED}❌ Failed to clone repository${NC}"
-            exit 1
-        }
-    fi
+    exit 1
 fi
 
-# Pull latest code (if using git)
-if [ -d ".git" ]; then
-    echo -e "${YELLOW}📥 Pulling latest code from repository...${NC}"
-    git fetch origin main || true
-    git reset --hard origin/main || true
-fi
+echo -e "${GREEN}✅ Docker Compose file found: ${COMPOSE_FILE}${NC}"
 
 # Check if .env.production already exists (created by GitHub Actions)
 if [ -f ".env.production" ]; then
