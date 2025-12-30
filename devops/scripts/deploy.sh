@@ -13,8 +13,12 @@ NC='\033[0m' # No Color
 # Configuration
 DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
 COMPOSE_FILE="${DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
-IMAGE_NAME="${IMAGE:-ghcr.io/your-username/your-repo/healthcare-api}"
+IMAGE_FULL="${IMAGE:-ghcr.io/your-username/your-repo/healthcare-api}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
+
+# Rollback configuration
+ROLLBACK_FILE="${DEPLOY_PATH}/.deployment-rollback"
+PREVIOUS_IMAGE_TAG=""
 
 echo -e "${GREEN}🚀 Starting deployment...${NC}"
 
@@ -201,23 +205,61 @@ if [ -d .git ]; then
     git reset --hard origin/main || true
 fi
 
-# Pull latest Docker image
-echo -e "${YELLOW}📦 Pulling latest Docker image: ${IMAGE_NAME}:${IMAGE_TAG}${NC}"
-docker pull "${IMAGE_NAME}:${IMAGE_TAG}" || {
-    echo -e "${YELLOW}⚠️  Failed to pull ${IMAGE_NAME}:${IMAGE_TAG}, trying latest...${NC}"
-    docker pull "${IMAGE_NAME}:latest" || {
-        echo -e "${RED}❌ Failed to pull Docker image${NC}"
-        exit 1
-    }
-    IMAGE_TAG="latest"
+# Rollback function
+rollback_deployment() {
+    echo -e "${RED}🔄 Rolling back deployment...${NC}"
+    if [ -f "${ROLLBACK_FILE}" ]; then
+        PREVIOUS_IMAGE=$(cat "${ROLLBACK_FILE}")
+        if [ -n "${PREVIOUS_IMAGE}" ] && [ -f "${COMPOSE_FILE}" ]; then
+            echo -e "${YELLOW}Rolling back to previous image: ${PREVIOUS_IMAGE}${NC}"
+            export DOCKER_IMAGE="${PREVIOUS_IMAGE}"
+            docker compose -f "${COMPOSE_FILE}" up -d --force-recreate || {
+                echo -e "${RED}❌ Rollback failed${NC}"
+                return 1
+            }
+            echo -e "${GREEN}✅ Rollback completed${NC}"
+            return 0
+        fi
+    fi
+    echo -e "${YELLOW}⚠️  No previous image found for rollback${NC}"
+    return 1
 }
+
+# Validate image name
+if [ -z "${IMAGE_FULL}" ] || [ "${IMAGE_FULL}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
+    echo -e "${RED}❌ IMAGE environment variable is not set or invalid${NC}"
+    echo -e "${YELLOW}Expected format: ghcr.io/owner/repo/healthcare-api${NC}"
+    exit 1
+fi
+
+# Save current image for rollback
+if [ -f "${COMPOSE_FILE}" ]; then
+    PREVIOUS_IMAGE_TAG=$(docker compose -f "${COMPOSE_FILE}" config 2>/dev/null | grep -oP 'image:\s*\K[^:]+' | head -1 || echo "")
+    if [ -n "${PREVIOUS_IMAGE_TAG}" ]; then
+        echo "${PREVIOUS_IMAGE_TAG}" > "${ROLLBACK_FILE}"
+        echo -e "${GREEN}💾 Saved previous image for rollback: ${PREVIOUS_IMAGE_TAG}${NC}"
+    fi
+fi
+
+# Pull latest Docker image
+echo -e "${YELLOW}📦 Pulling latest Docker image: ${IMAGE_FULL}:${IMAGE_TAG}${NC}"
+if ! docker pull "${IMAGE_FULL}:${IMAGE_TAG}"; then
+    echo -e "${YELLOW}⚠️  Failed to pull ${IMAGE_FULL}:${IMAGE_TAG}, trying latest...${NC}"
+    if ! docker pull "${IMAGE_FULL}:latest"; then
+        echo -e "${RED}❌ Failed to pull Docker image${NC}"
+        echo -e "${YELLOW}🔄 Attempting rollback...${NC}"
+        rollback_deployment
+        exit 1
+    fi
+    IMAGE_TAG="latest"
+fi
 
 # Tag image for docker-compose
 echo -e "${YELLOW}🏷️  Tagging image for docker-compose...${NC}"
-docker tag "${IMAGE_NAME}:${IMAGE_TAG}" "${IMAGE_NAME}:latest" || true
+docker tag "${IMAGE_FULL}:${IMAGE_TAG}" "${IMAGE_FULL}:latest" || true
 
 # Export image name for docker-compose
-export DOCKER_IMAGE="${IMAGE_NAME}:latest"
+export DOCKER_IMAGE="${IMAGE_FULL}:latest"
 
 # Stop existing containers gracefully
 echo -e "${YELLOW}🛑 Stopping existing containers...${NC}"
@@ -233,10 +275,17 @@ if [ -f "${COMPOSE_FILE}" ]; then
     docker compose -f "${COMPOSE_FILE}" pull || true
 fi
 
+# Trap errors for automatic rollback
+trap 'rollback_deployment' ERR
+
 # Start services with new image
 echo -e "${YELLOW}🚀 Starting services...${NC}"
 if [ -f "${COMPOSE_FILE}" ]; then
-    DOCKER_IMAGE="${IMAGE_NAME}:latest" docker compose -f "${COMPOSE_FILE}" up -d
+    DOCKER_IMAGE="${IMAGE_FULL}:latest" docker compose -f "${COMPOSE_FILE}" up -d || {
+        echo -e "${RED}❌ Failed to start services${NC}"
+        rollback_deployment
+        exit 1
+    }
 else
     echo -e "${RED}❌ Compose file not found: ${COMPOSE_FILE}${NC}"
     exit 1
@@ -270,8 +319,17 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     echo -e "${RED}❌ API health check failed after ${MAX_RETRIES} attempts${NC}"
     echo -e "${YELLOW}📋 Recent API logs:${NC}"
     docker compose -f "${COMPOSE_FILE}" logs --tail=50 api || true
+    echo -e "${YELLOW}🔄 Attempting rollback due to health check failure...${NC}"
+    rollback_deployment
     exit 1
 fi
+
+# Disable error trap on success
+trap - ERR
+
+# Save successful deployment
+echo "${IMAGE_FULL}:${IMAGE_TAG}" > "${ROLLBACK_FILE}"
+echo -e "${GREEN}💾 Saved current image for future rollback${NC}"
 
 # Show final status
 echo -e "${GREEN}✅ Deployment completed successfully!${NC}"

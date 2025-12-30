@@ -393,27 +393,36 @@ jobs:
           scp -o StrictHostKeyChecking=no devops/scripts/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
           scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
 
+      - name: Set deployment image name
+        id: deploy-image
+        run: |
+          REPO_LOWER=$(echo "${{ env.IMAGE_REPO }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
+          echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
+          echo "Image: ${IMAGE_FULL}"
+
       - name: Deploy to server via SSH
         env:
           SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
           IMAGE_TAG: main-${{ github.sha }}
           REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_REPO: ${{ env.IMAGE_REPO }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE: ${{ steps.deploy-image.outputs.image }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
           ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
-            # Set deployment variables (convert repo to lowercase for Docker)
-            REPO_LOWER=$(echo "${IMAGE_REPO}" | tr '[:upper:]' '[:lower:]')
+            # Set deployment variables
             export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
-            export IMAGE_TAG="main-${{ github.sha }}"
-            export REGISTRY="${{ env.REGISTRY }}"
-            export IMAGE="ghcr.io/${REPO_LOWER}/${IMAGE_NAME}"
-            export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
-            export GITHUB_USERNAME="${{ github.actor }}"
+            export IMAGE_TAG="${IMAGE_TAG}"
+            export REGISTRY="${REGISTRY}"
+            export IMAGE="${IMAGE}"
+            export GITHUB_TOKEN="${GITHUB_TOKEN}"
+            export GITHUB_USERNAME="${GITHUB_USERNAME}"
+            
+            # Debug: Show image name
+            echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
             
             # Move .env.production to deployment directory
             DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
@@ -429,11 +438,34 @@ jobs:
             rm -f /tmp/deploy.sh
           ENDSSH
 
+      - name: Verify deployment health
+        run: |
+          echo "🏥 Verifying deployment health..."
+          sleep 15  # Wait for services to fully start
+          
+          MAX_RETRIES=10
+          RETRY_COUNT=0
+          HEALTH_URL="https://api.ishswami.in/health"
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -f -s "${HEALTH_URL}" > /dev/null 2>&1; then
+              echo "✅ Deployment health check passed!"
+              exit 0
+            fi
+            
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "⏳ Waiting for health check... (${RETRY_COUNT}/${MAX_RETRIES})"
+            sleep 5
+          done
+          
+          echo "❌ Health check failed after ${MAX_RETRIES} attempts"
+          echo "🔄 Rollback should have been triggered automatically by deploy script"
+          exit 1
+
       - name: Deployment Success
         run: |
           echo "✅ Deployment completed successfully!"
-          REPO_LOWER=$(echo "${{ env.IMAGE_REPO }}" | tr '[:upper:]' '[:lower:]')
-          echo "Image: ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}:main-${{ github.sha }}"
+          echo "Image: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
           echo "Server: ${{ secrets.SERVER_HOST }}"
 
   # Summary Report
