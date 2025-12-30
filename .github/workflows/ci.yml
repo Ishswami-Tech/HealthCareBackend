@@ -465,27 +465,25 @@ jobs:
             fi
             
             # Create deployment directory if it doesn't exist (deploy.sh expects this)
-            # Use SERVER_DEPLOY_PATH which we just validated
-            DEPLOY_PATH_FOR_SETUP="${SERVER_DEPLOY_PATH}"
-            
-            # Final validation before mkdir
-            if [ -z "${DEPLOY_PATH_FOR_SETUP}" ]; then
-              echo "❌ ERROR: DEPLOY_PATH_FOR_SETUP is empty! SERVER_DEPLOY_PATH=${SERVER_DEPLOY_PATH}"
+            # Use SERVER_DEPLOY_PATH directly - no intermediate variable needed
+            # Verify it's still set before using it
+            if [ -z "${SERVER_DEPLOY_PATH}" ]; then
+              echo "❌ ERROR: SERVER_DEPLOY_PATH is empty when trying to create directory!"
               exit 1
             fi
             
-            echo "📁 Creating deployment directory: ${DEPLOY_PATH_FOR_SETUP}"
-            mkdir -p "${DEPLOY_PATH_FOR_SETUP}" || {
-              echo "❌ ERROR: Failed to create directory: ${DEPLOY_PATH_FOR_SETUP}"
+            echo "📁 Creating deployment directory: ${SERVER_DEPLOY_PATH}"
+            mkdir -p "${SERVER_DEPLOY_PATH}" || {
+              echo "❌ ERROR: Failed to create directory: ${SERVER_DEPLOY_PATH}"
               exit 1
             }
             
-            echo "📄 Moving .env.production to ${DEPLOY_PATH_FOR_SETUP}/.env.production"
-            mv /tmp/.env.production "${DEPLOY_PATH_FOR_SETUP}/.env.production" || {
-              echo "❌ ERROR: Failed to move .env.production"
+            echo "📄 Moving .env.production to ${SERVER_DEPLOY_PATH}/.env.production"
+            mv /tmp/.env.production "${SERVER_DEPLOY_PATH}/.env.production" || {
+              echo "❌ ERROR: Failed to move .env.production to ${SERVER_DEPLOY_PATH}/.env.production"
               exit 1
             }
-            chmod 600 "${DEPLOY_PATH_FOR_SETUP}/.env.production"
+            chmod 600 "${SERVER_DEPLOY_PATH}/.env.production"
             
             # Make script executable and run
             chmod +x /tmp/deploy.sh
