@@ -392,6 +392,8 @@ jobs:
         run: |
           scp -o StrictHostKeyChecking=no devops/scripts/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
           scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
+          # Copy docker-compose file (we only need this, not the entire repository)
+          scp -o StrictHostKeyChecking=no devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
 
       - name: Set deployment image name
         id: deploy-image
@@ -445,7 +447,6 @@ jobs:
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
-            export GIT_REPO_URL="https://github.com/${{ github.repository }}.git"
             
             # Debug: Show deployment info
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
@@ -474,8 +475,8 @@ jobs:
             fi
             
             echo "📁 Creating deployment directory: ${SERVER_DEPLOY_PATH}"
-            mkdir -p "${SERVER_DEPLOY_PATH}" || {
-              echo "❌ ERROR: Failed to create directory: ${SERVER_DEPLOY_PATH}"
+            mkdir -p "${SERVER_DEPLOY_PATH}/devops/docker" || {
+              echo "❌ ERROR: Failed to create directory: ${SERVER_DEPLOY_PATH}/devops/docker"
               exit 1
             }
             
@@ -485,6 +486,12 @@ jobs:
               exit 1
             }
             chmod 600 "${SERVER_DEPLOY_PATH}/.env.production"
+            
+            echo "📄 Moving docker-compose.prod.yml to ${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+            mv /tmp/docker-compose.prod.yml "${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml" || {
+              echo "❌ ERROR: Failed to move docker-compose.prod.yml"
+              exit 1
+            }
             
             # Make script executable and run
             chmod +x /tmp/deploy.sh
