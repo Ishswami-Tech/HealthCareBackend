@@ -17,6 +17,7 @@ permissions:
   checks: write
   packages: write
   security-events: write  # Required for CodeQL SARIF upload
+  actions: read  # Required for CodeQL to access workflow run information
 
 env:
   NODE_VERSION: '20'
@@ -70,7 +71,7 @@ jobs:
           output: 'trivy-results.sarif'
 
       - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: 'trivy-results.sarif'
 
@@ -106,7 +107,7 @@ jobs:
         run: yarn build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
