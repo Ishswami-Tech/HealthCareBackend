@@ -415,11 +415,15 @@ jobs:
             
             # Set deployment variables (values embedded from GitHub Actions)
             # Handle SERVER_DEPLOY_PATH with default value
-            SERVER_DEPLOY_PATH_VALUE="${{ secrets.SERVER_DEPLOY_PATH }}"
-            if [ -z "${SERVER_DEPLOY_PATH_VALUE}" ] || [ "${SERVER_DEPLOY_PATH_VALUE}" = "" ]; then
-              SERVER_DEPLOY_PATH_VALUE="/opt/healthcare-backend"
+            # GitHub Actions secrets can be empty strings, so we need to check and set default
+            SERVER_DEPLOY_PATH_RAW="${{ secrets.SERVER_DEPLOY_PATH }}"
+            if [ -z "${SERVER_DEPLOY_PATH_RAW}" ] || [ "x${SERVER_DEPLOY_PATH_RAW}" = "x" ]; then
+              SERVER_DEPLOY_PATH_RAW="/opt/healthcare-backend"
+              echo "Using default SERVER_DEPLOY_PATH: ${SERVER_DEPLOY_PATH_RAW}"
+            else
+              echo "Using SERVER_DEPLOY_PATH from secret: ${SERVER_DEPLOY_PATH_RAW}"
             fi
-            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_VALUE}"
+            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_RAW}"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
@@ -428,7 +432,7 @@ jobs:
             
             # Debug: Show deployment info
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
-            echo "Deployment path: ${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            echo "Server deployment path: ${SERVER_DEPLOY_PATH}"
             
             # Validate IMAGE is set
             if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
@@ -437,19 +441,17 @@ jobs:
               exit 1
             fi
             
-            # Set deployment path with default
-            DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
-            
-            # Validate DEPLOY_PATH is not empty
-            if [ -z "${DEPLOY_PATH}" ]; then
-              echo "ERROR: DEPLOY_PATH is empty"
-              exit 1
+            # Validate SERVER_DEPLOY_PATH is set (deploy.sh will use default if empty)
+            if [ -z "${SERVER_DEPLOY_PATH}" ]; then
+              echo "WARNING: SERVER_DEPLOY_PATH is not set, deploy.sh will use default: /opt/healthcare-backend"
             fi
             
-            # Create deployment directory if it doesn't exist
-            mkdir -p "${DEPLOY_PATH}"
-            mv /tmp/.env.production "${DEPLOY_PATH}/.env.production"
-            chmod 600 "${DEPLOY_PATH}/.env.production"
+            # Create deployment directory if it doesn't exist (deploy.sh expects this)
+            # Use the same logic as deploy.sh: SERVER_DEPLOY_PATH with default
+            DEPLOY_PATH_FOR_SETUP="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            mkdir -p "${DEPLOY_PATH_FOR_SETUP}"
+            mv /tmp/.env.production "${DEPLOY_PATH_FOR_SETUP}/.env.production"
+            chmod 600 "${DEPLOY_PATH_FOR_SETUP}/.env.production"
             
             # Make script executable and run
             chmod +x /tmp/deploy.sh
