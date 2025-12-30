@@ -445,6 +445,7 @@ jobs:
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
+            export GIT_REPO_URL="https://github.com/${{ github.repository }}.git"
             
             # Debug: Show deployment info
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
