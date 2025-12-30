@@ -23,7 +23,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
   IMAGE_NAME: healthcare-api
-  IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}
+  IMAGE: ghcr.io/${{ github.repository }}/healthcare-api
 
 jobs:
   # Code Quality Checks
