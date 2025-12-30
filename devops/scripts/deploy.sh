@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 
 # Configuration
 DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
-COMPOSE_FILE="${DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+# COMPOSE_FILE will be set after we cd to DEPLOY_PATH (relative path)
 IMAGE_FULL="${IMAGE:-ghcr.io/your-username/your-repo/healthcare-api}"
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
@@ -22,20 +22,52 @@ PREVIOUS_IMAGE_TAG=""
 
 echo -e "${GREEN}🚀 Starting deployment...${NC}"
 
-# Navigate to deployment directory
+# Navigate to deployment directory (create if it doesn't exist)
 echo -e "${YELLOW}📁 Navigating to deployment directory: ${DEPLOY_PATH}${NC}"
+mkdir -p "${DEPLOY_PATH}"
 cd "${DEPLOY_PATH}" || {
-    echo -e "${RED}❌ Deployment directory not found: ${DEPLOY_PATH}${NC}"
+    echo -e "${RED}❌ Failed to navigate to deployment directory: ${DEPLOY_PATH}${NC}"
     exit 1
 }
 
+# Set COMPOSE_FILE relative to current directory (we're now in DEPLOY_PATH)
+COMPOSE_FILE="devops/docker/docker-compose.prod.yml"
+
+# Ensure repository code is available (we're now in DEPLOY_PATH)
+if [ ! -d ".git" ] && [ ! -f "${COMPOSE_FILE}" ]; then
+    echo -e "${YELLOW}📥 Repository not found. Cloning repository...${NC}"
+    if [ -z "${GIT_REPO_URL}" ]; then
+        echo -e "${RED}❌ GIT_REPO_URL not set. Cannot clone repository.${NC}"
+        echo -e "${YELLOW}⚠️  You need to either:${NC}"
+        echo -e "${YELLOW}   1. Clone the repository manually to ${DEPLOY_PATH}${NC}"
+        echo -e "${YELLOW}   2. Set GIT_REPO_URL environment variable${NC}"
+        echo -e "${YELLOW}   3. Copy docker-compose.prod.yml to ${DEPLOY_PATH}/devops/docker/${NC}"
+        exit 1
+    fi
+    
+    # Clone repository if it doesn't exist
+    if [ ! -d ".git" ]; then
+        git clone "${GIT_REPO_URL}" . || {
+            echo -e "${RED}❌ Failed to clone repository${NC}"
+            exit 1
+        }
+    fi
+fi
+
+# Pull latest code (if using git)
+if [ -d ".git" ]; then
+    echo -e "${YELLOW}📥 Pulling latest code from repository...${NC}"
+    git fetch origin main || true
+    git reset --hard origin/main || true
+fi
+
 # Check if .env.production already exists (created by GitHub Actions)
-if [ -f "${DEPLOY_PATH}/.env.production" ]; then
+if [ -f ".env.production" ]; then
     echo -e "${GREEN}✅ .env.production file already exists (created by GitHub Actions)${NC}"
-    chmod 600 "${DEPLOY_PATH}/.env.production"
+    chmod 600 ".env.production"
 else
     echo -e "${YELLOW}⚠️  .env.production not found, creating from environment variables...${NC}"
-    ENV_FILE="${DEPLOY_PATH}/.env.production"
+    ENV_FILE=".env.production"
     
     # Write environment variables to .env.production
     # Only write variables that are set and not empty
@@ -198,12 +230,6 @@ else
     echo -e "${YELLOW}⚠️  GITHUB_TOKEN not set, skipping registry login${NC}"
 fi
 
-# Pull latest code (if using git)
-if [ -d .git ]; then
-    echo -e "${YELLOW}📥 Pulling latest code from repository...${NC}"
-    git fetch origin main || true
-    git reset --hard origin/main || true
-fi
 
 # Rollback function
 rollback_deployment() {
