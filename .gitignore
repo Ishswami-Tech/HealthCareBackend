@@ -6,7 +6,8 @@ yarn-error.log
 
 # Package manager lock files (keep pnpm-lock.yaml only)
 package-lock.json
-yarn.lock
+# yarn.lock - REMOVED: Lock files should be committed for reproducible builds
+# yarn.lock
 .yarnrc.yml
 .npmrc
 
