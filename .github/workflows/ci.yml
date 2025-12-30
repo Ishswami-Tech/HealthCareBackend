@@ -415,15 +415,27 @@ jobs:
             
             # Set deployment variables (values embedded from GitHub Actions)
             # Handle SERVER_DEPLOY_PATH with default value
-            # GitHub Actions secrets can be empty strings, so we need to check and set default
-            SERVER_DEPLOY_PATH_RAW="${{ secrets.SERVER_DEPLOY_PATH }}"
-            if [ -z "${SERVER_DEPLOY_PATH_RAW}" ] || [ "x${SERVER_DEPLOY_PATH_RAW}" = "x" ]; then
-              SERVER_DEPLOY_PATH_RAW="/opt/healthcare-backend"
-              echo "Using default SERVER_DEPLOY_PATH: ${SERVER_DEPLOY_PATH_RAW}"
+            # Always start with default, then override if secret is set and not empty
+            SERVER_DEPLOY_PATH_FINAL="/opt/healthcare-backend"
+            SERVER_DEPLOY_PATH_SECRET="${{ secrets.SERVER_DEPLOY_PATH }}"
+            
+            # Override with secret value if it's set and not empty
+            if [ -n "${SERVER_DEPLOY_PATH_SECRET}" ] && [ "${SERVER_DEPLOY_PATH_SECRET}" != "" ]; then
+              SERVER_DEPLOY_PATH_FINAL="${SERVER_DEPLOY_PATH_SECRET}"
+              echo "✅ Using SERVER_DEPLOY_PATH from secret: ${SERVER_DEPLOY_PATH_FINAL}"
             else
-              echo "Using SERVER_DEPLOY_PATH from secret: ${SERVER_DEPLOY_PATH_RAW}"
+              echo "✅ Using default SERVER_DEPLOY_PATH: ${SERVER_DEPLOY_PATH_FINAL}"
             fi
-            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_RAW}"
+            
+            # Final safety check - should never be empty at this point
+            if [ -z "${SERVER_DEPLOY_PATH_FINAL}" ] || [ "${SERVER_DEPLOY_PATH_FINAL}" = "" ]; then
+              echo "❌ ERROR: SERVER_DEPLOY_PATH_FINAL is empty! This should never happen."
+              echo "SERVER_DEPLOY_PATH_SECRET='${SERVER_DEPLOY_PATH_SECRET}'"
+              exit 1
+            fi
+            
+            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_FINAL}"
+            echo "📁 Exported SERVER_DEPLOY_PATH='${SERVER_DEPLOY_PATH}'"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
@@ -441,16 +453,34 @@ jobs:
               exit 1
             fi
             
-            # Validate SERVER_DEPLOY_PATH is set (deploy.sh will use default if empty)
+            # Validate SERVER_DEPLOY_PATH is set (should never be empty after our check above)
             if [ -z "${SERVER_DEPLOY_PATH}" ]; then
-              echo "WARNING: SERVER_DEPLOY_PATH is not set, deploy.sh will use default: /opt/healthcare-backend"
+              echo "❌ ERROR: SERVER_DEPLOY_PATH is empty after default assignment!"
+              echo "This should never happen. Check the logic above."
+              exit 1
             fi
             
             # Create deployment directory if it doesn't exist (deploy.sh expects this)
-            # Use the same logic as deploy.sh: SERVER_DEPLOY_PATH with default
-            DEPLOY_PATH_FOR_SETUP="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
-            mkdir -p "${DEPLOY_PATH_FOR_SETUP}"
-            mv /tmp/.env.production "${DEPLOY_PATH_FOR_SETUP}/.env.production"
+            # Use SERVER_DEPLOY_PATH which we just validated
+            DEPLOY_PATH_FOR_SETUP="${SERVER_DEPLOY_PATH}"
+            
+            # Final validation before mkdir
+            if [ -z "${DEPLOY_PATH_FOR_SETUP}" ]; then
+              echo "❌ ERROR: DEPLOY_PATH_FOR_SETUP is empty! SERVER_DEPLOY_PATH=${SERVER_DEPLOY_PATH}"
+              exit 1
+            fi
+            
+            echo "📁 Creating deployment directory: ${DEPLOY_PATH_FOR_SETUP}"
+            mkdir -p "${DEPLOY_PATH_FOR_SETUP}" || {
+              echo "❌ ERROR: Failed to create directory: ${DEPLOY_PATH_FOR_SETUP}"
+              exit 1
+            }
+            
+            echo "📄 Moving .env.production to ${DEPLOY_PATH_FOR_SETUP}/.env.production"
+            mv /tmp/.env.production "${DEPLOY_PATH_FOR_SETUP}/.env.production" || {
+              echo "❌ ERROR: Failed to move .env.production"
+              exit 1
+            }
             chmod 600 "${DEPLOY_PATH_FOR_SETUP}/.env.production"
             
             # Make script executable and run
