@@ -410,19 +410,26 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
             set -e
             
-            # Set deployment variables
-            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
-            export IMAGE_TAG="${IMAGE_TAG}"
-            export REGISTRY="${REGISTRY}"
-            export IMAGE="${IMAGE}"
-            export GITHUB_TOKEN="${GITHUB_TOKEN}"
-            export GITHUB_USERNAME="${GITHUB_USERNAME}"
+            # Set deployment variables (values embedded from GitHub Actions)
+            export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
+            export IMAGE_TAG="main-${{ github.sha }}"
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE="${{ steps.deploy-image.outputs.image }}"
+            export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+            export GITHUB_USERNAME="${{ github.actor }}"
             
             # Debug: Show image name
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
+            
+            # Validate IMAGE is set
+            if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
+              echo "ERROR: IMAGE environment variable is not set or invalid"
+              echo "IMAGE value: '${IMAGE}'"
+              exit 1
+            fi
             
             # Move .env.production to deployment directory
             DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
