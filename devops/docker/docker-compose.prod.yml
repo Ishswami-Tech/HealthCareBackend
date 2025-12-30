@@ -1,14 +1,14 @@
 services:
   api:
     # Use image from GitHub Container Registry (for CI/CD deployments)
-    # Or use local build by uncommenting build section below
-    # image: ${DOCKER_IMAGE:-ghcr.io/your-username/your-repo/healthcare-api:latest}
-    # Uncomment below to build locally instead of using registry image
-    build:
-      context: ../..
-      dockerfile: devops/docker/Dockerfile
-      target: production
-      pull: false
+    # DOCKER_IMAGE is set by deploy.sh script
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
+    # Local build section (commented out - we use pre-built images from registry)
+    # build:
+    #   context: ../..
+    #   dockerfile: devops/docker/Dockerfile
+    #   target: production
+    #   pull: false
     container_name: latest-api
     hostname: api
     ports:
@@ -261,12 +261,13 @@ services:
 
   worker:
     # Use same image as API (worker runs from same codebase)
-    # image: ${DOCKER_IMAGE:-ghcr.io/your-username/your-repo/healthcare-api:latest}
-    # Uncomment below to build locally instead of using registry image
-    build:
-      context: ../..
-      dockerfile: devops/docker/Dockerfile
-      target: production
+    # DOCKER_IMAGE is set by deploy.sh script
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
+    # Local build section (commented out - we use pre-built images from registry)
+    # build:
+    #   context: ../..
+    #   dockerfile: devops/docker/Dockerfile
+    #   target: production
     container_name: latest-worker
     hostname: worker
     env_file:
