@@ -414,15 +414,21 @@ jobs:
             set -e
             
             # Set deployment variables (values embedded from GitHub Actions)
-            export SERVER_DEPLOY_PATH="${{ secrets.SERVER_DEPLOY_PATH }}"
+            # Handle SERVER_DEPLOY_PATH with default value
+            SERVER_DEPLOY_PATH_VALUE="${{ secrets.SERVER_DEPLOY_PATH }}"
+            if [ -z "${SERVER_DEPLOY_PATH_VALUE}" ] || [ "${SERVER_DEPLOY_PATH_VALUE}" = "" ]; then
+              SERVER_DEPLOY_PATH_VALUE="/opt/healthcare-backend"
+            fi
+            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_VALUE}"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
             
-            # Debug: Show image name
+            # Debug: Show deployment info
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
+            echo "Deployment path: ${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
             
             # Validate IMAGE is set
             if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
@@ -431,8 +437,16 @@ jobs:
               exit 1
             fi
             
-            # Move .env.production to deployment directory
+            # Set deployment path with default
             DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            
+            # Validate DEPLOY_PATH is not empty
+            if [ -z "${DEPLOY_PATH}" ]; then
+              echo "ERROR: DEPLOY_PATH is empty"
+              exit 1
+            fi
+            
+            # Create deployment directory if it doesn't exist
             mkdir -p "${DEPLOY_PATH}"
             mv /tmp/.env.production "${DEPLOY_PATH}/.env.production"
             chmod 600 "${DEPLOY_PATH}/.env.production"
