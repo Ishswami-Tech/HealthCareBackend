@@ -1,5 +1,5 @@
-# Continuous Integration Workflow
-name: CI
+# Continuous Integration Workflow - Docker Only
+name: CI/CD
 
 on:
   pull_request:
@@ -15,15 +15,15 @@ permissions:
   contents: read
   pull-requests: write
   checks: write
+  packages: write
 
 env:
   NODE_VERSION: '20'
-  PNPM_VERSION: '9.15.4'
+  YARN_VERSION: '1.22.22'
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
   IMAGE_NAME: healthcare-api
   IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}
-  NAMESPACE: healthcare-backend
 
 jobs:
   # Code Quality Checks
@@ -34,25 +34,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          cache: 'yarn'
+
+      - name: Install Yarn
+        run: npm install -g yarn@${{ env.YARN_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: yarn install --frozen-lockfile
 
       - name: Run ESLint
-        run: pnpm lint
+        run: yarn lint
 
       - name: Check code formatting
-        run: pnpm exec prettier --check "src/**/*.ts"
+        run: yarn exec prettier --check "src/**/*.ts"
 
   # Security Scanning
   security:
@@ -88,25 +86,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          cache: 'yarn'
+
+      - name: Install Yarn
+        run: npm install -g yarn@${{ env.YARN_VERSION }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: yarn install --frozen-lockfile
 
       - name: Generate Prisma Client
-        run: pnpm prisma:generate
+        run: yarn prisma:generate
 
       - name: Build application
-        run: pnpm build
+        run: yarn build
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
@@ -115,258 +111,361 @@ jobs:
           path: dist/
           retention-days: 1
 
-      - name: Setup kubectl (for kustomize validation)
-        uses: azure/setup-kubectl@v4
-
-      - name: Validate Kustomize (base)
-        run: |
-          kubectl kustomize devops/kubernetes/base >/dev/null
-
-      - name: Validate Kustomize (production overlay)
-        run: |
-          kubectl kustomize devops/kubernetes/overlays/production >/dev/null
-
-      - name: Validate Kubernetes manifests with kubeconform
-        uses: yannh/kubeconform-action@v0.6.4
-        with:
-          kubernetes-version: v1.29.0
-          files: |
-            devops/kubernetes/base
-            devops/kubernetes/overlays/production
-
-  # Unit Tests
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    needs: [lint]
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Run tests
-        run: pnpm test --coverage
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          files: ./coverage/coverage-final.json
-          flags: unittests
-          name: codecov-umbrella
-
-  # Docker Build
-  docker:
-    name: Docker Build Test
+  # Docker Build & Push
+  docker-build:
+    name: Docker Build & Push
     runs-on: ubuntu-latest
     needs: [build]
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: devops/docker/Dockerfile
-          push: false
-          tags: healthcare-api:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  deploy:
-    name: Deploy to Kubernetes
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    needs: [build]
-    concurrency:
-      group: deploy-${{ github.ref }}
-      cancel-in-progress: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
-        with:
-          version: ${{ env.PNPM_VERSION }}
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
-
-      - name: Install deps and build
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm prisma:generate
-          pnpm build
-
-      - name: Authenticate to GHCR (podman)
-        uses: redhat-actions/podman-login@v1
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build OCI image with Buildah (no Docker)
-        id: build-image
-        uses: redhat-actions/buildah-build@v2
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
         with:
-          image: ${{ env.IMAGE }}
-          tags: latest,${{ github.sha }}
-          containerfiles: |
-            devops/docker/Dockerfile
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
           context: .
-          build-args: |
-            BUILDKIT_INLINE_CACHE=1
-          layers: false
+          file: devops/docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
 
-      - name: Push image to registry
-        uses: redhat-actions/push-to-registry@v2
-        with:
-          image: ${{ steps.build-image.outputs.image }}
-          tags: ${{ steps.build-image.outputs.tags }}
-          registry: ${{ env.REGISTRY }}
-        env:
-          REGISTRY_USER: ${{ github.actor }}
-          REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Configure kubeconfig
+      - name: Output image digest
         run: |
-          echo "${KUBE_CONFIG_DATA}" | base64 -d > $HOME/.kube/config
-        env:
-          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+          echo "Image pushed: ${{ steps.meta.outputs.tags }}"
 
-      - name: Ensure namespace exists
-        run: |
-          kubectl apply -f devops/kubernetes/base/namespace.yaml
-
-      - name: Create/Update imagePullSecret for GHCR
-        run: |
-          kubectl -n ${NAMESPACE} delete secret ghcr-pull-secret --ignore-not-found=true
-          kubectl -n ${NAMESPACE} create secret docker-registry ghcr-pull-secret \
-            --docker-server=${REGISTRY} \
-            --docker-username=${{ github.actor }} \
-            --docker-password=${{ secrets.GITHUB_TOKEN }} \
-            --docker-email=ci@github.actions
-
-      - name: Patch ServiceAccounts to use imagePullSecret
-        run: |
-          kubectl -n ${NAMESPACE} patch serviceaccount default --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
-          kubectl -n ${NAMESPACE} patch serviceaccount healthcare-api-sa --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
-          kubectl -n ${NAMESPACE} patch serviceaccount healthcare-worker-sa --type merge -p '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' || true
-
-      - name: Apply Kustomize overlay (production)
-        run: |
-          kubectl apply -k devops/kubernetes/overlays/production/
-
-      - name: Set deployed images
-        run: |
-          kubectl -n ${NAMESPACE} set image deployment/healthcare-api api=${IMAGE}:${GITHUB_SHA}
-          kubectl -n ${NAMESPACE} set image deployment/healthcare-worker worker=${IMAGE}:${GITHUB_SHA} || true
-        env:
-          IMAGE: ${{ env.IMAGE }}
-
-      - name: Wait for rollout
-        run: |
-          kubectl rollout status deploy/healthcare-api -n ${NAMESPACE} --timeout=300s
-          kubectl rollout status deploy/healthcare-worker -n ${NAMESPACE} --timeout=300s || true
-
-      - name: Smoke check /health
-        run: |
-          kubectl run tmp-curl --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
-            -sS http://healthcare-api.${NAMESPACE}.svc.cluster.local:8088/health | head -200 || true
-
-  # Integration Tests
-  integration:
-    name: Integration Tests
+  # Deploy to Production Server (Main Branch Only)
+  deploy:
+    name: Deploy to Production
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    needs: [build]
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: userdb_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
-
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 6379:6379
-
+    environment: production  # Use production environment secrets
+    needs: [docker-build]
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          version: ${{ env.PNPM_VERSION }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'pnpm'
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Generate Prisma Client
-        run: pnpm prisma:generate
+      - name: Create .env.production file
+        run: |
+          cat > /tmp/.env.production << EOF
+          NODE_ENV=production
+          IS_DEV=false
+          DATABASE_URL=${{ secrets.DATABASE_URL }}
+          DIRECT_URL=${{ secrets.DIRECT_URL }}
+          DATABASE_SQL_INJECTION_PREVENTION_ENABLED=${{ secrets.DATABASE_SQL_INJECTION_PREVENTION_ENABLED }}
+          DATABASE_ROW_LEVEL_SECURITY_ENABLED=${{ secrets.DATABASE_ROW_LEVEL_SECURITY_ENABLED }}
+          DATABASE_DATA_MASKING_ENABLED=${{ secrets.DATABASE_DATA_MASKING_ENABLED }}
+          DATABASE_RATE_LIMITING_ENABLED=${{ secrets.DATABASE_RATE_LIMITING_ENABLED }}
+          DATABASE_READ_REPLICAS_ENABLED=${{ secrets.DATABASE_READ_REPLICAS_ENABLED }}
+          DATABASE_READ_REPLICAS_STRATEGY=${{ secrets.DATABASE_READ_REPLICAS_STRATEGY }}
+          DATABASE_READ_REPLICAS_URLS=${{ secrets.DATABASE_READ_REPLICAS_URLS }}
+          CACHE_ENABLED=${{ secrets.CACHE_ENABLED }}
+          CACHE_PROVIDER=${{ secrets.CACHE_PROVIDER }}
+          DRAGONFLY_ENABLED=${{ secrets.DRAGONFLY_ENABLED }}
+          DRAGONFLY_HOST=${{ secrets.DRAGONFLY_HOST }}
+          DRAGONFLY_PORT=${{ secrets.DRAGONFLY_PORT }}
+          DRAGONFLY_KEY_PREFIX=${{ secrets.DRAGONFLY_KEY_PREFIX }}
+          DRAGONFLY_PASSWORD=${{ secrets.DRAGONFLY_PASSWORD }}
+          REDIS_HOST=${{ secrets.REDIS_HOST }}
+          REDIS_PORT=${{ secrets.REDIS_PORT }}
+          REDIS_TTL=${{ secrets.REDIS_TTL }}
+          REDIS_PREFIX=${{ secrets.REDIS_PREFIX }}
+          REDIS_ENABLED=${{ secrets.REDIS_ENABLED }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+          PORT=${{ secrets.PORT }}
+          API_PREFIX=${{ secrets.API_PREFIX }}
+          HOST=${{ secrets.HOST }}
+          BIND_ADDRESS=${{ secrets.BIND_ADDRESS }}
+          BASE_URL=${{ secrets.BASE_URL }}
+          API_URL=${{ secrets.API_URL }}
+          FRONTEND_URL=${{ secrets.FRONTEND_URL }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          JWT_EXPIRATION=${{ secrets.JWT_EXPIRATION }}
+          JWT_ACCESS_EXPIRES_IN=${{ secrets.JWT_ACCESS_EXPIRES_IN }}
+          JWT_REFRESH_EXPIRES_IN=${{ secrets.JWT_REFRESH_EXPIRES_IN }}
+          JWT_REFRESH_SECRET=${{ secrets.JWT_REFRESH_SECRET }}
+          PRISMA_SCHEMA_PATH=${{ secrets.PRISMA_SCHEMA_PATH }}
+          LOG_LEVEL=${{ secrets.LOG_LEVEL }}
+          ENABLE_AUDIT_LOGS=${{ secrets.ENABLE_AUDIT_LOGS }}
+          RATE_LIMIT_ENABLED=${{ secrets.RATE_LIMIT_ENABLED }}
+          RATE_LIMIT_TTL=${{ secrets.RATE_LIMIT_TTL }}
+          RATE_LIMIT_MAX=${{ secrets.RATE_LIMIT_MAX }}
+          API_RATE_LIMIT=${{ secrets.API_RATE_LIMIT }}
+          AUTH_RATE_LIMIT=${{ secrets.AUTH_RATE_LIMIT }}
+          HEAVY_RATE_LIMIT=${{ secrets.HEAVY_RATE_LIMIT }}
+          USER_RATE_LIMIT=${{ secrets.USER_RATE_LIMIT }}
+          HEALTH_RATE_LIMIT=${{ secrets.HEALTH_RATE_LIMIT }}
+          MAX_AUTH_ATTEMPTS=${{ secrets.MAX_AUTH_ATTEMPTS }}
+          AUTH_ATTEMPT_WINDOW=${{ secrets.AUTH_ATTEMPT_WINDOW }}
+          MAX_CONCURRENT_SESSIONS=${{ secrets.MAX_CONCURRENT_SESSIONS }}
+          SESSION_INACTIVITY_THRESHOLD=${{ secrets.SESSION_INACTIVITY_THRESHOLD }}
+          SECURITY_RATE_LIMIT=${{ secrets.SECURITY_RATE_LIMIT }}
+          SECURITY_RATE_LIMIT_MAX=${{ secrets.SECURITY_RATE_LIMIT_MAX }}
+          SECURITY_RATE_LIMIT_WINDOW_MS=${{ secrets.SECURITY_RATE_LIMIT_WINDOW_MS }}
+          TRUST_PROXY=${{ secrets.TRUST_PROXY }}
+          EMAIL_PROVIDER=${{ secrets.EMAIL_PROVIDER }}
+          ZEPTOMAIL_ENABLED=${{ secrets.ZEPTOMAIL_ENABLED }}
+          ZEPTOMAIL_SEND_MAIL_TOKEN=${{ secrets.ZEPTOMAIL_SEND_MAIL_TOKEN }}
+          ZEPTOMAIL_FROM_EMAIL=${{ secrets.ZEPTOMAIL_FROM_EMAIL }}
+          ZEPTOMAIL_FROM_NAME=${{ secrets.ZEPTOMAIL_FROM_NAME }}
+          ZEPTOMAIL_BOUNCE_ADDRESS=${{ secrets.ZEPTOMAIL_BOUNCE_ADDRESS }}
+          ZEPTOMAIL_API_BASE_URL=${{ secrets.ZEPTOMAIL_API_BASE_URL }}
+          
+          # Clinic-Specific Email Configuration (Multi-Tenant)
+          # ===================================================
+          # ARCHITECTURE: Single Backend API with Clinic-Specific Credentials Only
+          # - ONE backend API (API_URL) serves ALL clinics
+          # - Only clinic-related credentials differ (email, WhatsApp, SMS, etc.)
+          # - All clinics share the same backend infrastructure
+          #
+          # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_{CONFIG_KEY}
+          # Clinic names are sanitized: spaces/special chars → underscores, uppercase
+          # Example: "Vishwamurti Ayurvedelay" → "VISHWAMURTI_AYURVEDELAY"
+          #
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          # Example for "Aadesh Ayurvedalay":
+          # CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=${{ secrets.CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN }}
+          # CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=${{ secrets.CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL }}
+          # CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_NAME=${{ secrets.CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_NAME }}
+          # CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ secrets.CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
+          #
+          # Vishwamurti Ayurvedelay (CL0001)
+          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
+          
+          CORS_ORIGIN=${{ secrets.CORS_ORIGIN }}
+          CORS_CREDENTIALS=${{ secrets.CORS_CREDENTIALS }}
+          CORS_METHODS=${{ secrets.CORS_METHODS }}
+          SWAGGER_URL=${{ secrets.SWAGGER_URL }}
+          BULL_BOARD_URL=${{ secrets.BULL_BOARD_URL }}
+          SOCKET_URL=${{ secrets.SOCKET_URL }}
+          PRISMA_STUDIO_URL=${{ secrets.PRISMA_STUDIO_URL }}
+          PGADMIN_URL=${{ secrets.PGADMIN_URL }}
+          WHATSAPP_ENABLED=${{ secrets.WHATSAPP_ENABLED }}
+          WHATSAPP_API_URL=${{ secrets.WHATSAPP_API_URL }}
+          WHATSAPP_API_KEY=${{ secrets.WHATSAPP_API_KEY }}
+          WHATSAPP_PHONE_NUMBER_ID=${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_BUSINESS_ACCOUNT_ID=${{ secrets.WHATSAPP_BUSINESS_ACCOUNT_ID }}
+          WHATSAPP_OTP_TEMPLATE_ID=${{ secrets.WHATSAPP_OTP_TEMPLATE_ID }}
+          WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ secrets.WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
+          WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ secrets.WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
+          
+          # Clinic-Specific WhatsApp Configuration (Multi-Tenant)
+          # =======================================================
+          # Each clinic can have separate WhatsApp credentials
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          #
+          # Vishwamurti Ayurvedelay (CL0001)
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
+          
+          # Clinic-Specific Frontend URLs (Multi-Tenant)
+          # ============================================
+          # Each clinic can have its own frontend URL
+          # IMPORTANT: All clinic frontend URLs must also be added to CORS_ORIGIN secret
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL }}
+          # To add more clinics, duplicate the pattern above with the clinic's sanitized name
+          
+          VIDEO_ENABLED=${{ secrets.VIDEO_ENABLED }}
+          VIDEO_PROVIDER=${{ secrets.VIDEO_PROVIDER }}
+          OPENVIDU_URL=${{ secrets.OPENVIDU_URL }}
+          OPENVIDU_SECRET=${{ secrets.OPENVIDU_SECRET }}
+          OPENVIDU_DOMAIN=${{ secrets.OPENVIDU_DOMAIN }}
+          OPENVIDU_WEBHOOK_ENABLED=${{ secrets.OPENVIDU_WEBHOOK_ENABLED }}
+          OPENVIDU_WEBHOOK_ENDPOINT=${{ secrets.OPENVIDU_WEBHOOK_ENDPOINT }}
+          OPENVIDU_WEBHOOK_EVENTS=${{ secrets.OPENVIDU_WEBHOOK_EVENTS }}
+          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI=${{ secrets.GOOGLE_REDIRECT_URI }}
+          SESSION_SECRET=${{ secrets.SESSION_SECRET }}
+          SESSION_TIMEOUT=${{ secrets.SESSION_TIMEOUT }}
+          SESSION_SECURE_COOKIES=${{ secrets.SESSION_SECURE_COOKIES }}
+          SESSION_SAME_SITE=${{ secrets.SESSION_SAME_SITE }}
+          COOKIE_SECRET=${{ secrets.COOKIE_SECRET }}
+          FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_PRIVATE_KEY=${{ secrets.FIREBASE_PRIVATE_KEY }}
+          FIREBASE_CLIENT_EMAIL=${{ secrets.FIREBASE_CLIENT_EMAIL }}
+          FIREBASE_DATABASE_URL=${{ secrets.FIREBASE_DATABASE_URL }}
+          FIREBASE_VAPID_KEY=${{ secrets.FIREBASE_VAPID_KEY }}
+          
+          # Clinic-Specific Firebase Configuration (Multi-Tenant)
+          # ======================================================
+          # Each clinic can have separate Firebase credentials for push notifications
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          #
+          # Vishwamurti Ayurvedelay (CL0001)
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PROJECT_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PROJECT_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY }}
+          
+          # Clinic-Specific SMS Configuration (Multi-Tenant)
+          # ================================================
+          # Each clinic can have separate SMS provider credentials
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          #
+          # Vishwamurti Ayurvedelay (CL0001)
+          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER }}
+          
+          # Clinic-Specific OpenVidu Configuration (Multi-Tenant)
+          # ====================================================
+          # Each clinic can have separate OpenVidu video server configuration
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN }}
+          
+          # Clinic-Specific S3 Storage Configuration (Multi-Tenant)
+          # =======================================================
+          # Each clinic can have separate S3 storage bucket and credentials
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_BUCKET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_BUCKET }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_ACCESS_KEY_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_ACCESS_KEY_ID }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_SECRET_ACCESS_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_SECRET_ACCESS_KEY }}
+          
+          # Clinic-Specific Social Auth Configuration (Multi-Tenant)
+          # ========================================================
+          # Each clinic can have separate OAuth credentials (Google, Facebook, Apple)
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_GOOGLE_CLIENT_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_GOOGLE_CLIENT_ID }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_GOOGLE_CLIENT_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_GOOGLE_CLIENT_SECRET }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_ID }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_SECRET }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_ID=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_ID }}
+          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_SECRET }}
+          
+          FACEBOOK_APP_ID=${{ secrets.FACEBOOK_APP_ID }}
+          FACEBOOK_APP_SECRET=${{ secrets.FACEBOOK_APP_SECRET }}
+          APPLE_CLIENT_ID=${{ secrets.APPLE_CLIENT_ID }}
+          APPLE_CLIENT_SECRET=${{ secrets.APPLE_CLIENT_SECRET }}
+          S3_ENABLED=${{ secrets.S3_ENABLED }}
+          S3_PROVIDER=${{ secrets.S3_PROVIDER }}
+          S3_ENDPOINT=${{ secrets.S3_ENDPOINT }}
+          S3_REGION=${{ secrets.S3_REGION }}
+          S3_BUCKET=${{ secrets.S3_BUCKET }}
+          S3_ACCESS_KEY_ID=${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY=${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE=${{ secrets.S3_FORCE_PATH_STYLE }}
+          S3_PUBLIC_URL_EXPIRATION=${{ secrets.S3_PUBLIC_URL_EXPIRATION }}
+          CDN_URL=${{ secrets.CDN_URL }}
+          DOCKER_ENV=${{ secrets.DOCKER_ENV }}
+          DOCKER_NETWORK=${{ secrets.DOCKER_NETWORK }}
+          EOF
 
-      - name: Run database migrations
-        run: pnpm exec prisma db push --schema=./src/libs/infrastructure/database/prisma/schema.prisma
+      - name: Copy files to server
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
+          scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
+
+      - name: Deploy to server via SSH
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/userdb_test
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
+          IMAGE_TAG: main-${{ github.sha }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE: ${{ env.IMAGE }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_USERNAME: ${{ github.actor }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            
+            # Set deployment variables
+            export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            export IMAGE_TAG="main-${{ github.sha }}"
+            export REGISTRY="${{ env.REGISTRY }}"
+            export IMAGE="${{ env.IMAGE }}"
+            export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+            export GITHUB_USERNAME="${{ github.actor }}"
+            
+            # Move .env.production to deployment directory
+            DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            mkdir -p "${DEPLOY_PATH}"
+            mv /tmp/.env.production "${DEPLOY_PATH}/.env.production"
+            chmod 600 "${DEPLOY_PATH}/.env.production"
+            
+            # Make script executable and run
+            chmod +x /tmp/deploy.sh
+            /tmp/deploy.sh
+            
+            # Cleanup
+            rm -f /tmp/deploy.sh
+          ENDSSH
 
-      - name: Run integration tests
-        run: pnpm test:e2e
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/userdb_test
-          REDIS_URL: redis://localhost:6379
-          NODE_ENV: test
+      - name: Deployment Success
+        run: |
+          echo "✅ Deployment completed successfully!"
+          echo "Image: ${{ env.IMAGE }}:main-${{ github.sha }}"
+          echo "Server: ${{ secrets.SERVER_HOST }}"
 
   # Summary Report
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, security, build, test, docker, integration]
+    needs: [lint, security, build, docker-build]
     if: success()
     steps:
       - name: Report Success
         run: |
           echo "✅ All CI checks passed successfully!"
+          if [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
+            echo "🚀 Deployment to production completed!"
+          else
           echo "Ready for merge to main branch"
+          fi

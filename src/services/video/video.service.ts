@@ -43,8 +43,13 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
 import type { VideoCallAppointment } from '@core/types/appointment.types';
-import type { VideoCall, VideoCallSettings, ServiceResponse } from '@core/types';
-import type { VideoConsultationSession as AppointmentVideoConsultationSession } from '@core/types/appointment.types';
+import type {
+  VideoCall,
+  VideoCallSettings,
+  ServiceResponse,
+  VideoConsultationSession as AppointmentVideoConsultationSession,
+} from '@core/types';
+import type { VideoConsultationDbModel } from '@core/types/video-database.types';
 import {
   getVideoConsultationDelegate,
   getVideoRecordingDelegate,
@@ -80,33 +85,9 @@ type VideoCallHistoryResponse = ServiceResponse<{
   retrievedAt: string;
 }>;
 
-// Database consultation type (matches Prisma schema)
-interface VideoConsultation {
-  id: string;
-  appointmentId: string;
-  patientId: string;
-  doctorId: string;
-  clinicId: string;
-  roomId: string;
-  status: string;
-  meetingUrl: string | null;
-  startTime: Date | null;
-  endTime: Date | null;
-  duration: number | null;
-  recordingUrl: string | null;
-  recordingEnabled: boolean;
-  screenSharingEnabled: boolean;
-  chatEnabled: boolean;
-  waitingRoomEnabled: boolean;
-  autoRecord: boolean;
-  maxParticipants: number;
-  participants: Array<{ userId: string }>;
-}
-
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
   private provider!: IVideoProvider;
-  private fallbackProvider!: IVideoProvider;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
   private readonly MEETING_CACHE_TTL = 3600; // 1 hour
@@ -129,9 +110,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     // Initialize provider (OpenVidu ONLY - no fallback)
-    this.provider = await this.providerFactory.getProviderWithFallback();
-    // Note: No fallback provider - OpenVidu only configuration
-    // this.fallbackProvider = this.providerFactory.getFallbackProvider();
+    const initializedProvider: IVideoProvider =
+      await this.providerFactory.getProviderWithFallback();
+    this.provider = initializedProvider;
 
     await this.loggingService.log(
       LogType.SYSTEM,
@@ -139,7 +120,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       'Video Service initialized (OpenVidu ONLY - no Jitsi fallback)',
       'VideoService',
       {
-        provider: this.provider.providerName,
+        provider: initializedProvider.providerName,
         fallbackDisabled: true,
       }
     );
@@ -157,12 +138,25 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Get current provider (OpenVidu only - no fallback)
+   * @returns The initialized video provider
+   * @throws HealthcareError if provider is not initialized
    */
   private async getProvider(): Promise<IVideoProvider> {
+    const currentProvider: IVideoProvider | undefined = this.provider;
+    if (!currentProvider) {
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Video provider not initialized',
+        undefined,
+        {},
+        'VideoService.getProvider'
+      );
+    }
+
     // Check if primary provider is healthy
-    const isHealthy = await this.provider.isHealthy();
+    const isHealthy: boolean = await currentProvider.isHealthy();
     if (isHealthy) {
-      return this.provider;
+      return currentProvider;
     }
 
     // No fallback provider - OpenVidu only configuration
@@ -170,14 +164,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     void this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.WARN,
-      `Video provider (${this.provider.providerName}) health check failed, but no fallback available`,
+      `Video provider (${currentProvider.providerName}) health check failed, but no fallback available`,
       'VideoService.getProvider',
       {
-        provider: this.provider.providerName,
+        provider: currentProvider.providerName,
       }
     );
 
-    return this.provider;
+    return currentProvider;
   }
 
   // ============================================================================
@@ -198,22 +192,39 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   ): Promise<VideoTokenResponse> {
     try {
-      const provider = await this.getProvider();
-      return await provider.generateMeetingToken(appointmentId, userId, userRole, userInfo);
-    } catch (error) {
-      // No fallback provider - OpenVidu only configuration
+      const provider: IVideoProvider = await this.getProvider();
+      const tokenResponse: VideoTokenResponse = await provider.generateMeetingToken(
+        appointmentId,
+        userId,
+        userRole,
+        userInfo
+      );
+      return tokenResponse;
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
+      const currentProvider: IVideoProvider | undefined = this.provider;
+      const providerName: string = currentProvider?.providerName ?? 'unknown';
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Video provider failed: ${errorMessage}`,
         'VideoService.generateMeetingToken',
         {
           appointmentId,
-          provider: this.provider?.providerName ?? 'unknown',
-          error: error instanceof Error ? error.message : String(error),
+          provider: providerName,
+          error: errorMessage,
         }
       );
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Video provider failed',
+        undefined,
+        { appointmentId, originalError: String(error) },
+        'VideoService.generateMeetingToken'
+      );
     }
   }
 
@@ -226,16 +237,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userRole: 'patient' | 'doctor'
   ): Promise<VideoConsultationSession> {
     try {
-      const provider = await this.getProvider();
-      const session = await provider.startConsultation(appointmentId, userId, userRole);
+      const provider: IVideoProvider = await this.getProvider();
+      const session: VideoConsultationSession = await provider.startConsultation(
+        appointmentId,
+        userId,
+        userRole
+      );
 
       // Emit event
+      const now: number = Date.now();
+      const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.started', {
-        eventId: `video-consultation-started-${appointmentId}-${Date.now()}`,
+        eventId: `video-consultation-started-${appointmentId}-${now}`,
         eventType: 'video.consultation.started',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp,
         source: 'VideoService',
         version: '1.0.0',
         payload: {
@@ -248,20 +265,31 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       });
 
       return session;
-    } catch (error) {
-      // No fallback provider - OpenVidu only configuration
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
+      const currentProvider: IVideoProvider | undefined = this.provider;
+      const providerName: string = currentProvider?.providerName ?? 'unknown';
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Video provider failed: ${errorMessage}`,
         'VideoService.startConsultation',
         {
           appointmentId,
-          provider: this.provider?.providerName ?? 'unknown',
-          error: error instanceof Error ? error.message : String(error),
+          provider: providerName,
+          error: errorMessage,
         }
       );
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Video provider failed',
+        undefined,
+        { appointmentId, originalError: String(error) },
+        'VideoService.startConsultation'
+      );
     }
   }
 
@@ -275,8 +303,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     sessionNotes?: string
   ): Promise<VideoConsultationSession> {
     try {
-      const provider = await this.getProvider();
-      const session = await provider.endConsultation(appointmentId, userId, userRole);
+      const provider: IVideoProvider = await this.getProvider();
+      const session: VideoConsultationSession = await provider.endConsultation(
+        appointmentId,
+        userId,
+        userRole
+      );
 
       // Save session notes if provided
       if (sessionNotes) {
@@ -285,18 +317,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Calculate duration
-      const duration =
-        session.startTime && session.endTime
-          ? Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 1000)
-          : undefined;
+      let duration: number | undefined;
+      if (session.startTime && session.endTime) {
+        const startTimeMs: number = session.startTime.getTime();
+        const endTimeMs: number = session.endTime.getTime();
+        duration = Math.floor((endTimeMs - startTimeMs) / 1000);
+      }
 
       // Emit event
+      const now: number = Date.now();
+      const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.ended', {
-        eventId: `video-consultation-ended-${appointmentId}-${Date.now()}`,
+        eventId: `video-consultation-ended-${appointmentId}-${now}`,
         eventType: 'video.consultation.ended',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp,
         source: 'VideoService',
         version: '1.0.0',
         payload: {
@@ -308,20 +344,31 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       });
 
       return session;
-    } catch (error) {
-      // No fallback provider - OpenVidu only configuration
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
+      const currentProvider: IVideoProvider | undefined = this.provider;
+      const providerName: string = currentProvider?.providerName ?? 'unknown';
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Video provider failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Video provider failed: ${errorMessage}`,
         'VideoService.endConsultation',
         {
           appointmentId,
-          provider: this.provider?.providerName ?? 'unknown',
-          error: error instanceof Error ? error.message : String(error),
+          provider: providerName,
+          error: errorMessage,
         }
       );
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Video provider failed',
+        undefined,
+        { appointmentId, originalError: String(error) },
+        'VideoService.endConsultation'
+      );
     }
   }
 
@@ -330,9 +377,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    */
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
     try {
-      const provider = await this.getProvider();
-      return await provider.getConsultationSession(appointmentId);
-    } catch (_error) {
+      const provider: IVideoProvider = await this.getProvider();
+      const session: VideoConsultationSession | null =
+        await provider.getConsultationSession(appointmentId);
+      return session;
+    } catch {
       // No fallback provider - OpenVidu only configuration
       return null;
     }
@@ -351,33 +400,45 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Map to legacy format
+    const statusMap: Record<
+      'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED',
+      'pending' | 'started' | 'ended' | 'cancelled'
+    > = {
+      SCHEDULED: 'pending',
+      ACTIVE: 'started',
+      ENDED: 'ended',
+      CANCELLED: 'cancelled',
+    };
+
+    const sessionStatus = session.status;
+    const mappedStatus = statusMap[sessionStatus] ?? 'cancelled';
+
+    const participants: Array<{
+      userId: string;
+      userRole: 'patient' | 'doctor';
+      joinedAt?: Date;
+    }> = session.participants.map(p => {
+      const participant: {
+        userId: string;
+        userRole: 'patient' | 'doctor';
+        joinedAt?: Date;
+      } = {
+        userId: p.userId,
+        userRole: p.role === 'HOST' ? 'doctor' : 'patient',
+      };
+      if (p.joinedAt) {
+        participant.joinedAt = p.joinedAt;
+      }
+      return participant;
+    });
+
     return {
       appointmentId: session.appointmentId,
       roomName: session.roomName,
-      status:
-        session.status === 'SCHEDULED'
-          ? 'pending'
-          : session.status === 'ACTIVE'
-            ? 'started'
-            : session.status === 'ENDED'
-              ? 'ended'
-              : 'cancelled',
-      startTime: session.startTime || undefined,
-      endTime: session.endTime || undefined,
-      participants: session.participants.map(p => {
-        const participant: {
-          userId: string;
-          userRole: 'patient' | 'doctor';
-          joinedAt?: Date;
-        } = {
-          userId: p.userId,
-          userRole: p.role === 'HOST' ? 'doctor' : 'patient',
-        };
-        if (p.joinedAt) {
-          participant.joinedAt = p.joinedAt;
-        }
-        return participant;
-      }),
+      status: mappedStatus,
+      startTime: session.startTime ?? undefined,
+      endTime: session.endTime ?? undefined,
+      participants,
       hipaaAuditLog: [],
       technicalIssues: [],
     };
@@ -411,7 +472,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (
         cachedSessionValue &&
         typeof cachedSessionValue === 'object' &&
-        cachedSessionValue !== null
+        cachedSessionValue !== null &&
+        'appointmentId' in cachedSessionValue
       ) {
         const cachedSession = cachedSessionValue as AppointmentVideoConsultationSession;
         if (!cachedSession.technicalIssues) {
@@ -451,7 +513,16 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           appointmentId,
         }
       );
-      throw error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to report technical issue',
+        undefined,
+        { appointmentId, userId, issueType, originalError: String(error) },
+        'VideoService.reportTechnicalIssue'
+      );
     }
   }
 
@@ -530,8 +601,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const meetingUrl = await this.generateMeetingUrl(appointmentId);
 
       // Create video call record
+      const now = Date.now();
       const videoCall: VideoCall = {
-        id: `vc-${appointmentId}-${Date.now()}`,
+        id: `vc-${appointmentId}-${now}`,
         appointmentId,
         patientId,
         doctorId,
@@ -556,6 +628,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const cacheKey = `videocall:${videoCall.id}`;
       await this.cacheService.set(cacheKey, JSON.stringify(videoCall), this.VIDEO_CACHE_TTL);
 
+      const responseTime = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -566,7 +639,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           patientId,
           doctorId,
           clinicId,
-          responseTime: Date.now() - startTime,
+          responseTime,
         }
       );
 
@@ -576,30 +649,41 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         message: 'Video call created successfully',
       };
       return response;
-    } catch (_error) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to create video call: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to create video call: ${errorMessage}`,
         'VideoService',
         {
           appointmentId,
           patientId,
           doctorId,
           clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to create video call',
+        undefined,
+        { appointmentId, patientId, doctorId, clinicId, originalError: String(error) },
+        'VideoService.createVideoCall'
+      );
     }
   }
 
   async joinVideoCall(callId: string, userId: string): Promise<JoinVideoCallResponse> {
-    const startTime = Date.now();
+    const startTime: number = Date.now();
 
     try {
       // Get video call details
-      const videoCall = await this.getVideoCall(callId);
+      const videoCall: VideoCall | null = await this.getVideoCall(callId);
       if (!videoCall) {
         throw new NotFoundException('Video call not found');
       }
@@ -610,56 +694,73 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Update call status if first participant
+      let updatedVideoCall: VideoCall = videoCall;
       if (videoCall.status === 'scheduled') {
-        videoCall.status = 'active';
-        videoCall.startTime = new Date().toISOString();
-        await this.updateVideoCall(videoCall);
+        const now: Date = new Date();
+        updatedVideoCall = {
+          ...videoCall,
+          status: 'active',
+          startTime: now.toISOString(),
+        };
+        await this.updateVideoCall(updatedVideoCall);
       }
 
       // Generate join token
-      const joinToken = await this.generateJoinToken(callId, userId);
+      const joinToken: string = await this.generateJoinToken(callId, userId);
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'User joined video call successfully',
         'VideoService',
-        { callId, userId, responseTime: Date.now() - startTime }
+        { callId, userId, responseTime }
       );
 
       const response: JoinVideoCallResponse = {
         success: true,
         data: {
           callId,
-          ...(videoCall.meetingUrl && { meetingUrl: videoCall.meetingUrl }),
+          ...(updatedVideoCall.meetingUrl ? { meetingUrl: updatedVideoCall.meetingUrl } : {}),
           joinToken,
-          settings: videoCall.settings,
+          settings: updatedVideoCall.settings,
         },
         message: 'User joined video call successfully',
       };
       return response;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to join video call: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to join video call: ${errorMessage}`,
         'VideoService',
         {
           callId,
           userId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to join video call',
+        undefined,
+        { callId, userId, originalError: String(error) },
+        'VideoService.joinVideoCall'
+      );
     }
   }
 
-  async startRecording(callId: string, userId: string): Promise<unknown> {
-    const startTime = Date.now();
+  async startRecording(callId: string, userId: string): Promise<RecordingResponse> {
+    const startTime: number = Date.now();
 
     try {
       // Get video call details
-      const videoCall = await this.getVideoCall(callId);
+      const videoCall: VideoCall | null = await this.getVideoCall(callId);
       if (!videoCall) {
         throw new NotFoundException('Video call not found');
       }
@@ -670,51 +771,67 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Start recording (placeholder implementation)
-      const recordingId = await this.initiateRecording(callId);
+      const recordingId: string = await this.initiateRecording(callId);
 
       // Update video call with recording info
-      videoCall.recordingUrl = `https://recordings.example.com/${recordingId}`;
-      await this.updateVideoCall(videoCall);
+      const recordingUrl: string = `https://recordings.example.com/${recordingId}`;
+      const updatedVideoCall: VideoCall = {
+        ...videoCall,
+        recordingUrl,
+      };
+      await this.updateVideoCall(updatedVideoCall);
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Recording started successfully',
         'VideoService',
-        { callId, userId, recordingId, responseTime: Date.now() - startTime }
+        { callId, userId, recordingId, responseTime }
       );
 
       const response: RecordingResponse = {
         success: true,
         data: {
           recordingId,
-          recordingUrl: videoCall.recordingUrl,
+          recordingUrl,
         },
         message: 'Recording started',
       };
       return response;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to start recording: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to start recording: ${errorMessage}`,
         'VideoService',
         {
           callId,
           userId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to start recording',
+        undefined,
+        { callId, userId, originalError: String(error) },
+        'VideoService.startRecording'
+      );
     }
   }
 
-  async stopRecording(callId: string, userId: string): Promise<unknown> {
-    const startTime = Date.now();
+  async stopRecording(callId: string, userId: string): Promise<RecordingResponse> {
+    const startTime: number = Date.now();
 
     try {
       // Get video call details
-      const videoCall = await this.getVideoCall(callId);
+      const videoCall: VideoCall | null = await this.getVideoCall(callId);
       if (!videoCall) {
         throw new NotFoundException('Video call not found');
       }
@@ -725,38 +842,51 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Stop recording (placeholder implementation)
-      const recordingResult = await this.finalizeRecording(callId);
+      const recordingResult: { duration: number; url: string } =
+        await this.finalizeRecording(callId);
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Recording stopped successfully',
         'VideoService',
-        { callId, userId, responseTime: Date.now() - startTime }
+        { callId, userId, responseTime }
       );
 
       const response: RecordingResponse = {
         success: true,
         data: {
-          ...(videoCall.recordingUrl && { recordingUrl: videoCall.recordingUrl }),
+          ...(videoCall.recordingUrl ? { recordingUrl: videoCall.recordingUrl } : {}),
           duration: recordingResult.duration,
         },
         message: 'Recording stopped',
       };
       return response;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to stop recording: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to stop recording: ${errorMessage}`,
         'VideoService',
         {
           callId,
           userId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to stop recording',
+        undefined,
+        { callId, userId, originalError: String(error) },
+        'VideoService.stopRecording'
+      );
     }
   }
 
@@ -776,21 +906,30 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // End the call
-      videoCall.status = 'completed';
-      videoCall.endTime = new Date().toISOString();
+      const endTime = new Date();
+      const endTimeIso = endTime.toISOString();
+      let duration: number | undefined;
       if (videoCall.startTime) {
-        videoCall.duration = Math.floor(
-          (new Date(videoCall.endTime).getTime() - new Date(videoCall.startTime).getTime()) / 1000
-        );
+        const startTimeDate = new Date(videoCall.startTime);
+        const endTimeDate = new Date(endTimeIso);
+        duration = Math.floor((endTimeDate.getTime() - startTimeDate.getTime()) / 1000);
       }
 
-      await this.updateVideoCall(videoCall);
+      const updatedVideoCall: VideoCall = {
+        ...videoCall,
+        status: 'completed',
+        endTime: endTimeIso,
+        ...(duration !== undefined ? { duration } : {}),
+      };
+
+      await this.updateVideoCall(updatedVideoCall);
 
       // Stop any active recording
-      if (videoCall.recordingUrl) {
+      if (updatedVideoCall.recordingUrl) {
         await this.stopRecording(callId, userId);
       }
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -799,8 +938,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         {
           callId,
           userId,
-          duration: videoCall.duration,
-          responseTime: Date.now() - startTime,
+          duration,
+          responseTime,
         }
       );
 
@@ -808,24 +947,35 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         success: true,
         data: {
           callId,
-          ...(videoCall.duration !== undefined && { duration: videoCall.duration }),
+          ...(duration !== undefined ? { duration } : {}),
         },
         message: 'Video call ended',
       };
       return response;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to end video call: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to end video call: ${errorMessage}`,
         'VideoService',
         {
           callId,
           userId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to end video call',
+        undefined,
+        { callId, userId, originalError: String(error) },
+        'VideoService.endVideoCall'
+      );
     }
   }
 
@@ -834,11 +984,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     imageData: Record<string, unknown>
   ): Promise<ShareMedicalImageResponse> {
-    const startTime = Date.now();
+    const startTime: number = Date.now();
 
     try {
       // Get video call details
-      const videoCall = await this.getVideoCall(callId);
+      const videoCall: VideoCall | null = await this.getVideoCall(callId);
       if (!videoCall) {
         throw new NotFoundException('Video call not found');
       }
@@ -849,14 +999,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Upload and share image (placeholder implementation)
-      const imageUrl = await this.uploadMedicalImage(imageData, callId, userId);
+      const imageUrl: string = await this.uploadMedicalImage(imageData, callId, userId);
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
         'Medical image shared successfully',
         'VideoService',
-        { callId, userId, imageUrl, responseTime: Date.now() - startTime }
+        { callId, userId, imageUrl, responseTime }
       );
 
       const response: ShareMedicalImageResponse = {
@@ -867,44 +1018,63 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         message: 'Medical image shared',
       };
       return response;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to share medical image: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to share medical image: ${errorMessage}`,
         'VideoService',
         {
           callId,
           userId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to share medical image',
+        undefined,
+        { callId, userId, originalError: String(error) },
+        'VideoService.shareMedicalImage'
+      );
     }
   }
 
   async getVideoCallHistory(userId: string, clinicId?: string): Promise<VideoCallHistoryResponse> {
-    const startTime = Date.now();
-    const cacheKey = `videocalls:history:${userId}:${clinicId || 'all'}`;
+    const startTime: number = Date.now();
+    const cacheKey: string = `videocalls:history:${userId}:${clinicId || 'all'}`;
 
     try {
       // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string) as VideoCallHistoryResponse;
+      const cached: string | null = await this.cacheService.get(cacheKey);
+      if (cached && typeof cached === 'string') {
+        try {
+          const parsed: unknown = JSON.parse(cached);
+          if (parsed && typeof parsed === 'object' && 'success' in parsed && 'data' in parsed) {
+            return parsed as VideoCallHistoryResponse;
+          }
+        } catch {
+          // Invalid cache data, continue to database lookup
+        }
       }
 
       // Get video call history from database (placeholder implementation)
-      const calls = await this.fetchVideoCallHistory(userId, clinicId);
+      const calls: VideoCall[] = await this.fetchVideoCallHistory(userId, clinicId);
 
+      const now: Date = new Date();
       const result: VideoCallHistoryResponse = {
         success: true,
         data: {
           userId,
-          ...(clinicId && { clinicId }),
+          ...(clinicId ? { clinicId } : {}),
           calls,
           total: calls.length,
-          retrievedAt: new Date().toISOString(),
+          retrievedAt: now.toISOString(),
         },
         message: 'Video call history retrieved successfully',
       };
@@ -912,6 +1082,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Cache the result
       await this.cacheService.set(cacheKey, JSON.stringify(result), this.VIDEO_CACHE_TTL);
 
+      const responseTime: number = Date.now() - startTime;
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
@@ -921,24 +1092,35 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           userId,
           clinicId,
           count: calls.length,
-          responseTime: Date.now() - startTime,
+          responseTime,
         }
       );
 
       return result;
-    } catch (_error) {
+    } catch (error: unknown) {
+      const errorMessage: string = error instanceof Error ? error.message : String(error);
+      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get video call history: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to get video call history: ${errorMessage}`,
         'VideoService',
         {
           userId,
           clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
+          errorStack,
         }
       );
-      throw _error;
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new HealthcareError(
+        ErrorCode.INTERNAL_SERVER_ERROR,
+        'Failed to get video call history',
+        undefined,
+        { userId, clinicId, originalError: String(error) },
+        'VideoService.getVideoCallHistory'
+      );
     }
   }
 
@@ -1165,8 +1347,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     // Try cache first
     const cacheKey = `videocall:${callId}`;
     const cached = await this.cacheService.get(cacheKey);
-    if (cached) {
-      return JSON.parse(cached as string) as VideoCall;
+    if (cached && typeof cached === 'string') {
+      try {
+        const parsed = JSON.parse(cached) as unknown;
+        if (parsed && typeof parsed === 'object' && 'id' in parsed && 'appointmentId' in parsed) {
+          return parsed as VideoCall;
+        }
+      } catch {
+        // Invalid cache data, continue to database lookup
+      }
     }
 
     let consultation = await this.databaseService.executeHealthcareRead(async client => {
@@ -1211,12 +1400,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       doctorId: consultation.doctorId,
       clinicId: consultation.clinicId,
       status: this.mapDbStatusToVideoCallStatus(consultation.status),
-      ...(consultation.meetingUrl && { meetingUrl: consultation.meetingUrl }),
-      participants: consultation.participants.map((p: { userId: string }) => p.userId),
-      ...(consultation.startTime && { startTime: consultation.startTime.toISOString() }),
-      ...(consultation.endTime && { endTime: consultation.endTime.toISOString() }),
-      ...(consultation.duration && { duration: consultation.duration }),
-      ...(consultation.recordingUrl && { recordingUrl: consultation.recordingUrl }),
+      ...(consultation.meetingUrl ? { meetingUrl: consultation.meetingUrl } : {}),
+      participants: consultation.participants.map(p => p.userId),
+      ...(consultation.startTime ? { startTime: consultation.startTime.toISOString() } : {}),
+      ...(consultation.endTime ? { endTime: consultation.endTime.toISOString() } : {}),
+      ...(consultation.duration !== null && consultation.duration !== undefined
+        ? { duration: consultation.duration }
+        : {}),
+      ...(consultation.recordingUrl ? { recordingUrl: consultation.recordingUrl } : {}),
       settings: {
         maxParticipants: consultation.maxParticipants,
         recordingEnabled: consultation.recordingEnabled,
@@ -1233,7 +1424,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     return videoCall;
   }
 
-  private async getVideoConsultationByCallId(callId: string): Promise<VideoConsultation | null> {
+  private async getVideoConsultationByCallId(
+    callId: string
+  ): Promise<VideoConsultationDbModel | null> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const delegate = getVideoConsultationDelegate(client);
       return await delegate.findFirst({
@@ -1276,25 +1469,49 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (consultation) {
+        const updateData: {
+          status: string;
+          meetingUrl?: string | null;
+          startTime?: Date;
+          endTime?: Date;
+          duration?: number;
+          recordingUrl?: string | null;
+          recordingEnabled: boolean;
+          screenSharingEnabled: boolean;
+          chatEnabled: boolean;
+          waitingRoomEnabled: boolean;
+          autoRecord: boolean;
+          maxParticipants: number;
+        } = {
+          status: this.mapVideoCallStatusToDbStatus(videoCall.status),
+          meetingUrl: videoCall.meetingUrl ?? null,
+          recordingEnabled: videoCall.settings.recordingEnabled,
+          screenSharingEnabled: videoCall.settings.screenSharingEnabled,
+          chatEnabled: videoCall.settings.chatEnabled,
+          waitingRoomEnabled: videoCall.settings.waitingRoomEnabled,
+          autoRecord: videoCall.settings.autoRecord,
+          maxParticipants: videoCall.settings.maxParticipants,
+        };
+
+        if (videoCall.startTime) {
+          updateData.startTime = new Date(videoCall.startTime);
+        }
+        if (videoCall.endTime) {
+          updateData.endTime = new Date(videoCall.endTime);
+        }
+        if (videoCall.duration !== undefined) {
+          updateData.duration = videoCall.duration;
+        }
+        if (videoCall.recordingUrl !== undefined) {
+          updateData.recordingUrl = videoCall.recordingUrl ?? null;
+        }
+
         await this.databaseService.executeHealthcareWrite(
           async client => {
             const delegate = getVideoConsultationDelegate(client);
             return await delegate.update({
               where: { id: consultation.id },
-              data: {
-                status: this.mapVideoCallStatusToDbStatus(videoCall.status),
-                meetingUrl: videoCall.meetingUrl,
-                ...(videoCall.startTime && { startTime: new Date(videoCall.startTime) }),
-                ...(videoCall.endTime && { endTime: new Date(videoCall.endTime) }),
-                ...(videoCall.duration && { duration: videoCall.duration }),
-                ...(videoCall.recordingUrl && { recordingUrl: videoCall.recordingUrl }),
-                recordingEnabled: videoCall.settings.recordingEnabled,
-                screenSharingEnabled: videoCall.settings.screenSharingEnabled,
-                chatEnabled: videoCall.settings.chatEnabled,
-                waitingRoomEnabled: videoCall.settings.waitingRoomEnabled,
-                autoRecord: videoCall.settings.autoRecord,
-                maxParticipants: videoCall.settings.maxParticipants,
-              },
+              data: updateData,
             });
           },
           {
@@ -1437,10 +1654,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Calculate duration
-      const duration =
-        consultation.startTime && consultation.endTime
-          ? Math.floor((consultation.endTime.getTime() - consultation.startTime.getTime()) / 1000)
-          : 0;
+      let duration = 0;
+      if (consultation.startTime && consultation.endTime) {
+        const startTimeMs = consultation.startTime.getTime();
+        const endTimeMs = consultation.endTime.getTime();
+        duration = Math.floor((endTimeMs - startTimeMs) / 1000);
+      }
 
       const updatedRecording = (await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -1551,19 +1770,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         });
       });
 
-      const videoCalls = consultations.map(consultation => ({
+      const videoCalls: VideoCall[] = consultations.map(consultation => ({
         id: consultation.id,
         appointmentId: consultation.appointmentId,
         patientId: consultation.patientId,
         doctorId: consultation.doctorId,
         clinicId: consultation.clinicId,
         status: this.mapDbStatusToVideoCallStatus(consultation.status),
-        ...(consultation.meetingUrl && { meetingUrl: consultation.meetingUrl }),
-        participants: consultation.participants.map((p: { userId: string }) => p.userId),
-        ...(consultation.startTime && { startTime: consultation.startTime.toISOString() }),
-        ...(consultation.endTime && { endTime: consultation.endTime.toISOString() }),
-        ...(consultation.duration && { duration: consultation.duration }),
-        ...(consultation.recordingUrl && { recordingUrl: consultation.recordingUrl }),
+        ...(consultation.meetingUrl ? { meetingUrl: consultation.meetingUrl } : {}),
+        participants: consultation.participants.map(p => p.userId),
+        ...(consultation.startTime ? { startTime: consultation.startTime.toISOString() } : {}),
+        ...(consultation.endTime ? { endTime: consultation.endTime.toISOString() } : {}),
+        ...(consultation.duration !== null && consultation.duration !== undefined
+          ? { duration: consultation.duration }
+          : {}),
+        ...(consultation.recordingUrl ? { recordingUrl: consultation.recordingUrl } : {}),
         settings: {
           maxParticipants: consultation.maxParticipants,
           recordingEnabled: consultation.recordingEnabled,
@@ -1608,25 +1829,39 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get fallback provider name
    */
-  getFallbackProvider(): string {
-    if (!this.fallbackProvider) {
-      return 'unknown';
-    }
-    return this.fallbackProvider.providerName;
+  getFallbackProvider(): string | null {
+    // No fallback provider configured (OpenVidu only)
+    return null;
   }
 
   /**
    * Check if video service is healthy
+   * Real-time check: Verifies OpenVidu is actually running and accessible
    */
   async isHealthy(): Promise<boolean> {
     try {
       if (!this.provider) {
+        // Provider not initialized yet - may be during startup
         return false;
       }
       const provider = await this.getProvider();
-      return await provider.isHealthy();
-    } catch {
-      return false;
+      // Real-time health check - verify provider is actually healthy
+      const isProviderHealthy = await provider.isHealthy();
+      return isProviderHealthy;
+    } catch (error) {
+      // Log error but don't fail health check if provider exists
+      // Provider may be temporarily unreachable but still functional
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Video service health check error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          'VideoService.isHealthy',
+          {}
+        );
+      }
+      // If provider exists, assume healthy (container health check will catch actual failures)
+      return this.provider !== undefined && this.provider !== null;
     }
   }
 

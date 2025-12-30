@@ -24,9 +24,9 @@ npx tsx src/libs/infrastructure/database/prisma/seed.ts
    - Subdomain: `aadesh`
    - Clinic ID: `CL0001`
 
-2. **Shri Vishwamurthi Ayurvedalay** (Mumbai, Maharashtra)
+2. **Shri Vishwamurti Ayurvedalay** (Mumbai, Maharashtra)
    - 3 locations: Main Branch (Juhu), Andheri Branch, Powai Branch
-   - Subdomain: `vishwamurthi`
+   - Subdomain: `Vishwamurti`
    - Clinic ID: `CL0002`
 
 ### 👥 Demo Users (Easy Testing)
@@ -60,7 +60,7 @@ After seeding, a `test-ids.json` file is created in the project root with:
 ```json
 {
   "clinics": ["uuid-clinic-1", "uuid-clinic-2"],
-  "clinicNames": ["Aadesh Ayurvedalay", "Shri Vishwamurthi Ayurvedalay"],
+  "clinicNames": ["Aadesh Ayurvedalay", "Shri Vishwamurti Ayurvedalay"],
   "demoDoctorId": "uuid-demo-doctor",
   "demoPatientId": "uuid-demo-patient",
   "demoReceptionistId": "uuid-demo-receptionist",

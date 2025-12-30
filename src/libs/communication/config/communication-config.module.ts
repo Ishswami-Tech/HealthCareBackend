@@ -14,7 +14,6 @@ import { DatabaseModule } from '@infrastructure/database/database.module';
 // CacheModule is @Global() - no need to import, CacheService is available globally
 // Use direct import and forwardRef to avoid TDZ issues
 import { LoggingModule } from '@infrastructure/logging/logging.module';
-import { EmailServicesModule } from '@communication/adapters/email/email-services.module';
 import { CredentialEncryptionService } from './credential-encryption.service';
 import { CommunicationConfigService } from './communication-config.service';
 import { ClinicTemplateService } from '../services/clinic-template.service';
@@ -24,7 +23,7 @@ import { ClinicTemplateService } from '../services/clinic-template.service';
     forwardRef(() => ConfigModule),
     forwardRef(() => DatabaseModule),
     forwardRef(() => LoggingModule),
-    forwardRef(() => EmailServicesModule),
+    // EmailServicesModule removed to break circular dependency
   ],
   providers: [CredentialEncryptionService, CommunicationConfigService, ClinicTemplateService],
   exports: [CredentialEncryptionService, CommunicationConfigService, ClinicTemplateService],

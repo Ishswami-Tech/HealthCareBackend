@@ -110,6 +110,10 @@ SEED_FIXES_SUMMARY.md
 CLEANUP_PLAN.md
 CLEANUP_SUMMARY.md
 
+# Generated secrets (DO NOT COMMIT)
+docs/GENERATED_SECRETS.md
+GENERATED_SECRETS.md
+
 # Temporary test scripts (one-off helpers)
 analyze-endpoints.js
 test-all-fixes.js

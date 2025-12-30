@@ -9,7 +9,7 @@
  */
 
 import { Injectable, Inject, forwardRef, OnModuleInit, Optional } from '@nestjs/common';
-import { COMMUNICATION_SERVICE_TOKEN } from '@communication/communication.module';
+import { COMMUNICATION_SERVICE_TOKEN } from '@communication/communication.constants';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';

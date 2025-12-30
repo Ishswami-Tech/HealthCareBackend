@@ -715,9 +715,9 @@ ZEPTOMAIL_FROM_EMAIL=noreply@healthcare.com
 CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=aadesh_token
 CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=noreply@aadesh.com
 
-# Shri Vishwamurthi Ayurvedalay (clinic-specific)
-CLINIC_SHRIVISHWAMURTHI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=shri_token
-CLINIC_SHRIVISHWAMURTHI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=noreply@shri.com
+# Shri Vishwamurti Ayurvedalay (clinic-specific)
+CLINIC_SHRIVishwamurti_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=shri_token
+CLINIC_SHRIVishwamurti_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=noreply@shri.com
 ```
 
 Each clinic will automatically use its own credentials!

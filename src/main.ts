@@ -1077,7 +1077,7 @@ async function bootstrap() {
                 'database',
                 'prisma'
               );
-              const prismaConfigPath = path.join(prismaDir, 'prisma.config.ts');
+              const prismaConfigPath = path.join(prismaDir, 'prisma.config.js');
 
               logger.log(
                 `[Prisma Studio] Starting Prisma Studio${retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''}...`

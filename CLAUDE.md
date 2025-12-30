@@ -9,7 +9,7 @@ This is a **production-ready HIPAA-compliant healthcare backend** built with Nes
 **Framework**: NestJS with Fastify (NOT Express)
 **Database**: PostgreSQL with Prisma ORM 7.x
 **Caching**: Redis with distributed partitioning
-**Package Manager**: pnpm 9.15.4
+**Package Manager**: yarn 1.22.22
 **Architecture**: Multi-tenant, plugin-based, event-driven
 
 ## Quick Start Summary
@@ -65,51 +65,51 @@ async createEntity(data: CreateDto, context?: RequestContext): Promise<Entity> {
 
 ### Development
 ```bash
-pnpm start:dev              # Start with hot-reload (port 8088)
-pnpm build                  # Production build
-pnpm build:dev              # Development build
-pnpm type-check             # TypeScript type checking
+yarn start:dev              # Start with hot-reload (port 8088)
+yarn build                  # Production build
+yarn build:dev              # Development build
+yarn type-check             # TypeScript type checking
 ```
 
 ### Database (Prisma)
 ```bash
-pnpm prisma:generate        # Generate Prisma client (auto-runs on postinstall)
-pnpm prisma:migrate:dev     # Create and apply migration
-pnpm prisma:migrate         # Apply migrations (production)
-pnpm prisma:db:push         # Push schema changes (dev only)
-pnpm prisma:studio          # Open Prisma Studio (port 5555)
-pnpm prisma:format          # Format schema.prisma
-pnpm seed:dev               # Seed database (development)
+yarn prisma:generate        # Generate Prisma client (auto-runs on postinstall)
+yarn prisma:migrate:dev     # Create and apply migration
+yarn prisma:migrate         # Apply migrations (production)
+yarn prisma:db:push         # Push schema changes (dev only)
+yarn prisma:studio          # Open Prisma Studio (port 5555)
+yarn prisma:format          # Format schema.prisma
+yarn seed:dev               # Seed database (development)
 ```
 
 **Important**: Prisma schema is at `src/libs/infrastructure/database/prisma/schema.prisma`. Generated client outputs to `src/libs/infrastructure/database/prisma/generated/client`.
 
 ### Validation & Quality
 ```bash
-pnpm validate:all           # Run all validations (type, lint, format, security, etc.)
-pnpm lint                   # Fix linting issues
-pnpm lint:check             # Check linting (max 0 warnings)
-pnpm format                 # Format code with Prettier
-pnpm format:check           # Check formatting
-pnpm security:audit         # Security audit
+yarn validate:all           # Run all validations (type, lint, format, security, etc.)
+yarn lint                   # Fix linting issues
+yarn lint:check             # Check linting (max 0 warnings)
+yarn format                 # Format code with Prettier
+yarn format:check           # Check formatting
+yarn security:audit         # Security audit
 ```
 
-**Pre-commit**: `pnpm pre-commit` runs `validate:all`
-**Pre-push**: `pnpm pre-push` runs `validate:build`
+**Pre-commit**: `yarn pre-commit` runs `validate:all`
+**Pre-push**: `yarn pre-push` runs `validate:build`
 
 ### Docker & Deployment
 ```bash
-pnpm docker:up              # Start Docker services (PostgreSQL, Redis)
-pnpm docker:down            # Stop Docker services
-pnpm docker:rebuild         # Rebuild and restart containers
-pnpm k8s:deploy             # Deploy to local Kubernetes
-pnpm k8s:status             # Check Kubernetes status
-pnpm k8s:logs               # View pod logs
+yarn docker:up              # Start Docker services (PostgreSQL, Redis)
+yarn docker:down            # Stop Docker services
+yarn docker:rebuild         # Rebuild and restart containers
+yarn k8s:deploy             # Deploy to local Kubernetes
+yarn k8s:status             # Check Kubernetes status
+yarn k8s:logs               # View pod logs
 ```
 
 ### Testing & Health
 ```bash
-pnpm health:check           # Health check endpoint (curl localhost:8088/health)
+yarn health:check           # Health check endpoint (curl localhost:8088/health)
 ```
 
 ## Architecture
@@ -579,7 +579,7 @@ When adding new features:
 1. Write unit tests for services
 2. Add integration tests for API endpoints
 3. Ensure all tests pass before committing
-4. Run `pnpm validate:all` before pushing
+4. Run `yarn validate:all` before pushing
 
 ## Access Points (Development)
 
@@ -725,8 +725,8 @@ export class CreatePatientDto {
 
 ### Adding a new model
 1. Update `src/libs/infrastructure/database/prisma/schema.prisma`
-2. Run `pnpm prisma:generate`
-3. Create migration: `pnpm prisma:migrate:dev`
+2. Run `yarn prisma:generate`
+3. Create migration: `yarn prisma:migrate:dev`
 4. Create mapper in `@database/mappers/`
 5. Add domain types to `@types/*`
 6. Update `DatabaseService` if adding repository methods
@@ -736,8 +736,8 @@ export class CreatePatientDto {
 2. Fix all ESLint errors (NEVER disable rules with `eslint-disable`)
 3. Maintain existing behavior unless explicitly changing it
 4. Update tests if changing behavior
-5. Run `pnpm validate:all` before committing
-6. Run `pnpm type-check` to ensure TypeScript compliance
+5. Run `yarn validate:all` before committing
+6. Run `yarn type-check` to ensure TypeScript compliance
 
 ### Emitting events
 ```typescript

@@ -50,11 +50,11 @@ function runCommand(command, description, continueOnError = false) {
   const stepStartTime = Date.now();
   try {
     logStep('→', description);
-    // Use pnpm run for npm scripts to ensure local node_modules are used
+    // Use yarn run for npm scripts to ensure local node_modules are used
     const fullCommand =
-      command.startsWith('pnpm run') || command.startsWith('cross-env') || command.startsWith('node')
+      command.startsWith('yarn run') || command.startsWith('yarn') || command.startsWith('cross-env') || command.startsWith('node')
         ? command
-        : `pnpm run ${command}`;
+        : `yarn run ${command}`;
 
     execSync(fullCommand, {
       stdio: 'inherit',
@@ -151,38 +151,38 @@ function main() {
     log('-'.repeat(60), 'blue');
 
     // Critical validations (must pass)
-    const prismaResult = runCommand('pnpm run prisma:validate', 'Prisma schema validation');
+    const prismaResult = runCommand('yarn run prisma:validate', 'Prisma schema validation');
     stepTimes['Prisma Validation'] = prismaResult.time;
     validationCount++;
 
-    const envResult = runCommand('pnpm run env:validate', 'Environment variables validation');
+    const envResult = runCommand('yarn run env:validate', 'Environment variables validation');
     stepTimes['Environment Validation'] = envResult.time;
     validationCount++;
 
-    // Check for forbidden comments (strict TypeScript enforcement)
-    logStep('→', 'Checking for forbidden TypeScript/ESLint comments');
-    const forbiddenCheckResult = runCommand('node scripts/check-forbidden-comments.js', 'Forbidden comments check');
-    stepTimes['Forbidden Comments Check'] = forbiddenCheckResult.time;
+    // Check for forbidden comments and code quality (consolidated validation)
+    logStep('→', 'Validating code quality (forbidden comments, TODOs, outdated deps)');
+    const codeValidationResult = runCommand('node scripts/validate-code.js', 'Code validation check');
+    stepTimes['Code Validation'] = codeValidationResult.time;
     validationCount++;
 
-    const typeCheckResult = runCommand('pnpm run type-check', 'TypeScript type checking');
+    const typeCheckResult = runCommand('yarn run type-check', 'TypeScript type checking');
     stepTimes['TypeScript Check'] = typeCheckResult.time;
     validationCount++;
 
-    const lintResult = runCommand('pnpm run lint', 'ESLint code quality check and fix');
+    const lintResult = runCommand('yarn run lint', 'ESLint code quality check and fix');
     stepTimes['ESLint Fix'] = lintResult.time;
     validationCount++;
 
-    const formatResult = runCommand('pnpm run format', 'Prettier formatting check and fix');
+    const formatResult = runCommand('yarn run format', 'Prettier formatting check and fix');
     stepTimes['Prettier Format'] = formatResult.time;
     validationCount++;
 
     // Verify fixes were successful
-    const lintCheckResult = runCommand('pnpm run lint:check', 'ESLint verification (after fixes)');
+    const lintCheckResult = runCommand('yarn run lint:check', 'ESLint verification (after fixes)');
     stepTimes['ESLint Verification'] = lintCheckResult.time;
     validationCount++;
 
-    const formatCheckResult = runCommand('pnpm run format:check', 'Prettier verification (after fixes)');
+    const formatCheckResult = runCommand('yarn run format:check', 'Prettier verification (after fixes)');
     stepTimes['Prettier Verification'] = formatCheckResult.time;
     validationCount++;
 
@@ -198,24 +198,24 @@ function main() {
 
     // Security audit - fail for production, warn for others
     if (environment === 'production') {
-      const auditResult = runCommand('pnpm run security:audit', 'Security audit (production - strict)');
+      const auditResult = runCommand('yarn run security:audit', 'Security audit (production - strict)');
       stepTimes['Security Audit'] = auditResult.time;
       validationCount++;
     } else {
-      const auditResult = runCommand('pnpm run security:audit', 'Security audit', true);
+      const auditResult = runCommand('yarn run security:audit', 'Security audit', true);
       stepTimes['Security Audit'] = auditResult.time;
       if (!auditResult.success) warningCount++;
     }
 
-    const depsResult = runCommand('pnpm run deps:check', 'Dependency check', true);
+    const depsResult = runCommand('yarn run deps:check', 'Dependency check', true);
     stepTimes['Dependency Check'] = depsResult.time;
     if (!depsResult.success) warningCount++;
 
-    const outdatedResult = runCommand('pnpm run outdated:check', 'Outdated dependencies check', true);
+    const outdatedResult = runCommand('yarn run outdated:check', 'Outdated dependencies check', true);
     stepTimes['Outdated Check'] = outdatedResult.time;
     if (!outdatedResult.success) warningCount++;
 
-    const todoResult = runCommand('pnpm run todo:check', 'TODO/FIXME check', true);
+    const todoResult = runCommand('yarn run todo:check', 'TODO/FIXME check', true);
     stepTimes['TODO Check'] = todoResult.time;
     if (!todoResult.success) warningCount++;
 

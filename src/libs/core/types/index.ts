@@ -231,3 +231,6 @@ export * from './payment.types';
 
 // Realtime Health Types (enterprise-level real-time health monitoring)
 export * from './realtime-health.types';
+
+// WhatsApp Suppression Types (type-safe Prisma delegate access)
+export * from './whatsapp-suppression.types';

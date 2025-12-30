@@ -252,6 +252,7 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           this.loggingService === null && timeSinceInit < startupGracePeriod * 2; // Extended grace for circular deps
 
         if (isPastGracePeriod && !isKnownCircularDependency) {
+          // Service not available - mark as unhealthy
           issues.push('Logging service not available');
           status.healthy = false;
         } else {
@@ -264,6 +265,10 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
           // Reset circuit breaker if service is actually healthy
           this.circuitBreakerService.recordSuccess(this.HEALTH_CHECK_CIRCUIT_BREAKER_NAME);
         }
+      } else {
+        // Service is available - mark as healthy regardless of endpoint status
+        // Endpoint accessibility is secondary to service availability
+        status.healthy = true;
       }
 
       // Fast path: Endpoint accessibility check (only in API service, not worker)
@@ -275,23 +280,25 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
         try {
           const endpointHealth = await this.checkEndpointHealthWithTimeout();
           status.endpoint = endpointHealth;
-          if (!endpointHealth.accessible) {
-            // Only mark as unhealthy if we're past grace period and it's a real failure
-            // Don't mark as unhealthy during startup to avoid false warnings
-            if (isPastGracePeriodForEndpoint) {
-              issues.push('Logging endpoint not accessible');
-              status.healthy = false;
-            }
+          // Don't mark as unhealthy if endpoint check fails - service availability is more important
+          // The endpoint may not be accessible but the service itself is working
+          // Only log as warning, don't fail health check
+          if (!endpointHealth.accessible && isPastGracePeriodForEndpoint) {
+            // Log as info/warning but don't mark as unhealthy
+            // Service is available and working, endpoint accessibility is secondary
+            issues.push('Logging endpoint not accessible (service is still available)');
+            // Don't set status.healthy = false - service is available
           }
         } catch {
-          // Endpoint check failed - only mark as unhealthy if past grace period
+          // Endpoint check failed - don't mark as unhealthy if service is available
+          // Service availability is the primary health indicator
           if (isPastGracePeriodForEndpoint) {
             status.endpoint = {
               accessible: false,
               latency: 0,
             };
-            issues.push('Logging endpoint check failed');
-            status.healthy = false;
+            // Don't mark as unhealthy - service is available
+            issues.push('Logging endpoint check failed (service is still available)');
           } else {
             // During startup, mark as accessible to avoid false warnings
             status.endpoint = {

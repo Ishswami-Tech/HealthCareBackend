@@ -49,9 +49,26 @@ data:
   RATE_LIMIT_WINDOW: "1 minute"
 
   # CORS Configuration
+  # ===================
+  # ARCHITECTURE: Single Backend API, Multiple Clinic Frontends
+  # - ONE backend API (api.ishswami.in) serves ALL clinics
+  # - Each clinic can have its own frontend URL (e.g., clinic1.viddhakarma.com, clinic2.viddhakarma.com)
+  # - Only clinic-related data and configurations differ
+  # - All clinics share the same backend infrastructure (database, cache, services)
+  #
+  # IMPORTANT: Include ALL clinic frontend URLs in CORS_ORIGIN
+  # Format: Comma-separated list (no spaces after commas)
+  # Example: "https://clinic1.viddhakarma.com,https://clinic2.viddhakarma.com,https://www.viddhakarma.com"
   CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in,https://api.ishswami.in,https://video.ishswami.in,https://meet.ishswami.in"
 
   # Frontend URLs
+  # =============
+  # FRONTEND_URL: Default/fallback frontend URL (used when clinic-specific URL not available)
+  # Clinic-specific frontend URLs are configured via environment variables:
+  # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_FRONTEND_URL
+  # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=https://vishwamurti.viddhakarma.com
+  # All clinic frontend URLs must also be included in CORS_ORIGIN above
+  # All frontends connect to the SAME backend API (API_URL)
   FRONTEND_URL: "https://ishswami.in"
   API_URL: "https://api.ishswami.in"
 

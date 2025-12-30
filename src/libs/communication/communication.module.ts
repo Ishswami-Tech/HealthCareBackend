@@ -1,5 +1,5 @@
-import { Module, forwardRef } from '@nestjs/common';
-export const COMMUNICATION_SERVICE_TOKEN = 'COMMUNICATION_SERVICE';
+import { Module, Global, forwardRef } from '@nestjs/common';
+import { COMMUNICATION_SERVICE_TOKEN } from './communication.constants';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { HttpModule } from '@infrastructure/http';
 import { TerminusModule } from '@nestjs/terminus';
@@ -45,28 +45,35 @@ import { CommunicationAlertingService } from './services/communication-alerting.
  *
  * @example
  * ```typescript
- * // In your module
+ * // In your module - CommunicationModule is @Global(), so CommunicationService is available everywhere
  * @Module({
- *   imports: [CommunicationModule],
+ *   // No need to import CommunicationModule - it's global
+ *   providers: [MyService],
  * })
- * export class AppointmentsModule {}
+ * export class MyModule {}
+ *
+ * // In your service
+ * constructor(private readonly communicationService: CommunicationService) {}
  * ```
  */
+@Global()
 @Module({
   imports: [
     HttpModule, // HTTP client for WhatsApp API calls
     TerminusModule, // Health checks
     EventEmitterModule, // Required for EventEmitter2 injection
-    EmailModule, // Email services (SMTP, SES, templates, queue)
-    WhatsAppModule, // WhatsApp Business API
-    PushModule, // Push notifications (Firebase, SNS)
-    SocketModule, // Real-time WebSocket communication
-    ChatModule, // Chat backup and synchronization
-    NotificationModule, // REST API endpoints in @services/notification (for external API access)
-    ListenersModule, // Event-driven communication listeners
-    CommunicationConfigModule, // Multi-tenant communication configuration
-    CommunicationAdaptersModule, // Provider adapters (SMTP, SES, SendGrid, Meta WhatsApp, Twilio)
-    EmailServicesModule, // Email services (suppression list, webhooks, rate monitoring)
+    // Use forwardRef for all channel modules to break circular dependencies
+    // CommunicationModule is built on top of all channel services
+    forwardRef(() => EmailModule), // Email services (SMTP, SES, templates, queue)
+    forwardRef(() => WhatsAppModule), // WhatsApp Business API
+    forwardRef(() => PushModule), // Push notifications (Firebase, SNS)
+    forwardRef(() => SocketModule), // Real-time WebSocket communication
+    forwardRef(() => ChatModule), // Chat backup and synchronization
+    forwardRef(() => NotificationModule), // REST API endpoints in @services/notification (for external API access)
+    forwardRef(() => ListenersModule), // Event-driven communication listeners
+    forwardRef(() => CommunicationConfigModule), // Multi-tenant communication configuration
+    forwardRef(() => CommunicationAdaptersModule), // Provider adapters (SMTP, SES, SendGrid, Meta WhatsApp, Twilio)
+    forwardRef(() => EmailServicesModule), // Email services (suppression list, webhooks, rate monitoring)
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
     forwardRef(() => DatabaseModule), // Database for notification preferences and delivery tracking

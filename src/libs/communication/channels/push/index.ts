@@ -9,7 +9,7 @@
  * @module Push
  */
 
-export * from '@communication/channels/push/push.module';
-export * from '@communication/channels/push/push.service';
-export * from '@communication/channels/push/device-token.service';
-export * from '@communication/channels/push/sns-backup.service';
+export { PushModule } from '@communication/channels/push/push.module';
+export { PushNotificationService } from '@communication/channels/push/push.service';
+export { DeviceTokenService } from '@communication/channels/push/device-token.service';
+export { SNSBackupService } from '@communication/channels/push/sns-backup.service';

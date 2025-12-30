@@ -176,3 +176,13 @@ node test-scripts/notification-preferences/test-patient-notification-preferences
 
 Every API endpoint in the Healthcare application now has comprehensive test coverage with role-based testing where applicable.
 
+
+
+
+
+
+
+
+
+
+

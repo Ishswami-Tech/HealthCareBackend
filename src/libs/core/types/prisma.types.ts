@@ -125,6 +125,12 @@ export function toPermissionEntity(prismaPermission: unknown): PermissionEntity 
   return prismaPermission as PermissionEntity;
 }
 
+/**
+ * Type assertion function to convert Prisma Doctor model to Doctor type
+ * This is a type-safe assertion that ensures the Prisma model matches the Doctor interface
+ * @param prismaDoctor - Prisma Doctor model from database
+ * @returns Doctor type
+ */
 export function toDoctor(prismaDoctor: unknown): Doctor {
   return prismaDoctor as Doctor;
 }

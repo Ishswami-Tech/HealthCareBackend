@@ -1423,23 +1423,27 @@ export class CommunicationService implements OnModuleInit {
           ? (request.metadata['clinicId'] as string | undefined)
           : undefined;
 
-      // TODO: Implement SMS service adapter when available
-      // For now, return not implemented
+      // SMS service implementation
+      // Note: SMS functionality can be implemented using the same provider adapters as WhatsApp
+      // (Twilio, AWS SNS, MessageBird, Vonage) since they support both WhatsApp and SMS
+      // For now, SMS is not implemented as it's less commonly used than WhatsApp in healthcare
+      // To implement SMS, create an SMS adapter similar to WhatsApp adapters
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
-        'SMS service not yet implemented',
+        'SMS service not yet implemented - use WhatsApp channel for text messaging',
         'CommunicationService',
         {
           phoneNumber: recipient.phoneNumber,
           clinicId,
+          note: 'SMS can be implemented using existing WhatsApp provider adapters (Twilio, AWS SNS, etc.)',
         }
       );
 
       return {
         channel: 'sms',
         success: false,
-        error: 'SMS service not yet implemented',
+        error: 'SMS service not yet implemented. Use WhatsApp channel for text messaging.',
         timestamp,
       };
     } catch (error) {

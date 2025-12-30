@@ -650,14 +650,14 @@ async function main() {
 
     console.log(`✓ Aadesh Ayurvedalay created with Clinic ID: CL0002`);
 
-    // Shri Vishwamurthi Ayurvedalay - Clinic ID: CL0003
+    // Shri Vishwamurti Ayurvedalay - Clinic ID: CL0003
     const clinic2 = (await (prisma.clinic.create({
       data: {
-        name: 'Shri Vishwamurthi Ayurvedalay',
+        name: 'Shri Vishwamurti Ayurvedalay',
         address: 'Mumbai, Maharashtra',
         phone: '+91-8765432109',
-        email: 'contact@vishwamurthi.com',
-        app_name: 'vishwamurthi_ayurvedalay',
+        email: 'contact@Vishwamurti.com',
+        app_name: 'Vishwamurti_ayurvedalay',
         // Use helper functions (which use dotenv) for environment variable access
         db_connection_string:
           getEnvWithDefault('DATABASE_URL', '') ||
@@ -666,13 +666,13 @@ async function main() {
         createdByUser: {
           connect: { id: superAdminUser.id },
         },
-        clinicId: generateClinicId(), // CL0003 - Shri Vishwamurthi Ayurvedalay
-        subdomain: 'vishwamurthi',
+        clinicId: generateClinicId(), // CL0003 - Shri Vishwamurti Ayurvedalay
+        subdomain: 'Vishwamurti',
         isActive: true,
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 
-    console.log(`✓ Shri Vishwamurthi Ayurvedalay created with Clinic ID: CL0003`);
+    console.log(`✓ Shri Vishwamurti Ayurvedalay created with Clinic ID: CL0003`);
 
     // Create clinic locations
     console.log('Creating clinic locations...');
@@ -725,18 +725,18 @@ async function main() {
       }) as unknown as Promise<{ id: string }>,
     ])) as unknown as Array<{ id: string }>;
 
-    // Vishwamurthi Ayurvedalay Locations
+    // Vishwamurti Ayurvedalay Locations
     const clinic2Locations = (await Promise.all([
       prisma.clinicLocation.create({
         data: {
-          name: 'Vishwamurthi Main Branch',
+          name: 'Vishwamurti Main Branch',
           address: 'Juhu, Mumbai',
           city: 'Mumbai',
           state: 'Maharashtra',
           country: 'India',
           zipCode: '400049',
           phone: '+91-8765432109',
-          email: 'main@vishwamurthi.com',
+          email: 'main@Vishwamurti.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -744,14 +744,14 @@ async function main() {
       }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
-          name: 'Vishwamurthi Andheri Branch',
+          name: 'Vishwamurti Andheri Branch',
           address: 'Andheri East, Mumbai',
           city: 'Mumbai',
           state: 'Maharashtra',
           country: 'India',
           zipCode: '400069',
           phone: '+91-8765432108',
-          email: 'andheri@vishwamurthi.com',
+          email: 'andheri@Vishwamurti.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -759,14 +759,14 @@ async function main() {
       }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
-          name: 'Vishwamurthi Powai Branch',
+          name: 'Vishwamurti Powai Branch',
           address: 'Powai, Mumbai',
           city: 'Mumbai',
           state: 'Maharashtra',
           country: 'India',
           zipCode: '400076',
           phone: '+91-8765432107',
-          email: 'powai@vishwamurthi.com',
+          email: 'powai@Vishwamurti.com',
           clinicId: clinic2.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -994,7 +994,7 @@ async function main() {
         startTime: faker.date.future(),
         endTime: faker.date.future(),
       },
-      // Connect doctor to Vishwamurthi clinic with a random location
+      // Connect doctor to Vishwamurti clinic with a random location
       {
         doctorId: doctor.id,
         clinicId: clinic2.id,
@@ -1679,7 +1679,7 @@ async function main() {
     console.log('🏥 Created Clinics:');
     console.log('  1. Aadesh Ayurvedalay (Clinic ID: CL0002, UUID: ' + clinic1.id + ')');
     console.log(
-      '  2. Shri Vishwamurthi Ayurvedalay (Clinic ID: CL0003, UUID: ' + clinic2.id + ')\n'
+      '  2. Shri Vishwamurti Ayurvedalay (Clinic ID: CL0003, UUID: ' + clinic2.id + ')\n'
     );
 
     console.log('👥 Demo Login Credentials:');
@@ -1697,7 +1697,7 @@ async function main() {
     // Export test IDs for automated testing
     const testIds = {
       clinics: [clinic1.id, clinic2.id],
-      clinicNames: ['Aadesh Ayurvedalay', 'Shri Vishwamurthi Ayurvedalay'],
+      clinicNames: ['Aadesh Ayurvedalay', 'Shri Vishwamurti Ayurvedalay'],
       demoDoctorId: demoDoctor.id,
       demoPatientId: demoPatient.id,
       demoReceptionistId: demoReceptionist.id,

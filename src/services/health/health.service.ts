@@ -20,6 +20,7 @@ import { LogType, LogLevel } from '@core/types';
 import { performance } from 'node:perf_hooks';
 import { cpus, totalmem, freemem } from 'node:os';
 import { LoggingService } from '@infrastructure/logging';
+import { CommunicationHealthMonitorService } from '@communication/communication-health-monitor.service';
 import cluster from 'cluster';
 import * as os from 'os';
 
@@ -72,7 +73,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     @Optional() private readonly queueHealthIndicator?: QueueHealthIndicator,
     @Optional() private readonly loggingHealthIndicator?: LoggingHealthIndicator,
     @Optional() private readonly videoHealthIndicator?: VideoHealthIndicator,
-    @Optional() private readonly healthCacheService?: HealthCacheService
+    @Optional() private readonly healthCacheService?: HealthCacheService,
+    @Optional()
+    @Inject(forwardRef(() => CommunicationHealthMonitorService))
+    private readonly communicationHealthMonitor?: CommunicationHealthMonitorService
   ) {}
 
   /**
@@ -707,6 +711,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           // Get realtime service status from cache if available
           // Map to ServiceHealth status format ('healthy' | 'unhealthy')
+          // API is always healthy if we can serve health checks (default to healthy)
           let apiStatus: 'healthy' | 'unhealthy' = 'healthy';
           let databaseStatus: 'healthy' | 'unhealthy' = services['database']?.status || 'unhealthy';
           let cacheStatus: 'healthy' | 'unhealthy' = services['cache']?.status || 'unhealthy';
@@ -738,7 +743,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 const queueStatusValue = this.extractRealtimeStatus(queueService?.status);
                 const loggerStatusValue = this.extractRealtimeStatus(loggerService?.status);
 
-                apiStatus = mapRealtimeToServiceHealth(apiStatusValue);
+                // API is always healthy if status is undefined (not in cache) or healthy
+                // Only mark unhealthy if explicitly marked as unhealthy in cache
+                apiStatus = apiStatusValue === 'unhealthy' ? 'unhealthy' : 'healthy';
                 databaseStatus = mapRealtimeToServiceHealth(databaseStatusValue) || databaseStatus;
                 cacheStatus = mapRealtimeToServiceHealth(cacheStatusValue) || cacheStatus;
                 queueStatus = mapRealtimeToServiceHealth(queueStatusValue) || queueStatus;
@@ -746,6 +753,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               }
             } catch {
               // Fallback to Terminus status if cache unavailable
+              // API remains healthy (default)
             }
           }
 
@@ -782,13 +790,56 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 responseTime: 0,
                 lastChecked: new Date().toISOString(),
               },
-              communication: {
-                status: 'healthy' as const,
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details:
-                  'Communication health monitoring is clinic-specific and not monitored at system level',
-              },
+              communication: (() => {
+                // Try to get communication health status if available
+                try {
+                  let socketConnected = false;
+                  let emailConnected = false; // Email should remain inactive as per user request
+
+                  // Get lightweight health status from CommunicationHealthMonitorService if available
+                  if (this.communicationHealthMonitor) {
+                    try {
+                      const lightweightHealth =
+                        this.communicationHealthMonitor.getLightweightHealthStatus();
+                      // Socket should be active if initialized (even if no clients connected)
+                      // The health monitor checks if socket service is initialized, which means it's available
+                      socketConnected = lightweightHealth.socket?.connected || false;
+                      // Email should remain inactive - user explicitly requested this
+                      emailConnected = false;
+                    } catch {
+                      // Ignore errors - use defaults
+                    }
+                  }
+
+                  // If socket is not connected via health monitor, it might be that the health check hasn't run yet
+                  // But we trust the health monitor as the source of truth
+                  // Socket.IO is available if the service is initialized, which the health monitor checks
+
+                  return {
+                    status: 'healthy' as const,
+                    responseTime: 0,
+                    lastChecked: new Date().toISOString(),
+                    details:
+                      'Communication health monitoring is clinic-specific and not monitored at system level',
+                    communicationHealth: {
+                      socket: { connected: socketConnected },
+                      email: { connected: emailConnected }, // Always false - user requested email to be inactive
+                    },
+                  };
+                } catch {
+                  return {
+                    status: 'healthy' as const,
+                    responseTime: 0,
+                    lastChecked: new Date().toISOString(),
+                    details:
+                      'Communication health monitoring is clinic-specific and not monitored at system level',
+                    communicationHealth: {
+                      socket: { connected: false },
+                      email: { connected: false }, // Always false - user requested email to be inactive
+                    },
+                  };
+                }
+              })(),
             },
           };
         } catch (terminusError) {

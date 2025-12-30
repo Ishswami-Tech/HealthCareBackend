@@ -1,573 +1,722 @@
-# Docker Development Environment Guide
+# Docker Production Deployment Guide
 
-Complete guide for setting up, running, monitoring, and troubleshooting the Healthcare Backend Docker development environment.
+Complete guide for deploying, monitoring, and scaling the Healthcare Backend using Docker Compose.
 
-## Table of Contents
+## 🚀 Quick Start
 
-1. [Prerequisites](#prerequisites)
-2. [Quick Start](#quick-start)
-3. [Services Overview](#services-overview)
-4. [Verification & Monitoring](#verification--monitoring)
-5. [Access Points](#access-points)
-6. [Troubleshooting](#troubleshooting)
-7. [Useful Commands](#useful-commands)
-8. [Cache System](#cache-system)
-9. [Configuration](#configuration)
-
-## Prerequisites
-
-1. **Docker Desktop** must be installed and running
-2. **WSL2** (recommended for Windows) or native Docker
-
-### Windows Setup
-
-1. Install **Docker Desktop** for Windows
-2. Enable WSL2 integration:
-   - Docker Desktop → Settings → Resources → WSL Integration
-   - Enable integration with your WSL distro (Ubuntu, etc.)
-   - Click "Apply & Restart"
-
-## Quick Start
-
-### Option 1: Using PowerShell Script (Windows)
-
-```powershell
-cd devops/docker
-.\start-dev.ps1
-```
-
-### Option 2: Using Bash Script (WSL2/Linux/Mac)
-
+### Start All Services
 ```bash
 cd devops/docker
-chmod +x start-dev.sh
-./start-dev.sh
+docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-### Option 3: Manual Start
+### Check Status
+```bash
+docker compose -f docker-compose.prod.yml ps
+```
+
+### View Logs
+```bash
+# All services
+docker compose -f docker-compose.prod.yml logs -f
+
+# Specific service
+docker compose -f docker-compose.prod.yml logs -f api
+docker compose -f docker-compose.prod.yml logs -f worker
+```
+
+### Check Health
+```bash
+curl http://localhost:8088/health
+```
+
+### Stop Services
+```bash
+docker compose -f docker-compose.prod.yml down
+```
+
+### Restart Services
+```bash
+docker compose -f docker-compose.prod.yml restart
+```
+
+---
+
+## 📊 Overview
+
+This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can run on **6 vCPU, 12GB RAM** initially. Docker will enforce resource limits automatically.
+
+**Target Capacity (8 vCPU/24GB RAM):**
+- **Concurrent Users**: 700-900
+- **Requests/Second**: 1,200-1,800 req/s
+- **Requests/Day**: 104M-156M requests/day
+
+**Initial Capacity (6 vCPU/12GB RAM):**
+- **Concurrent Users**: 300-400
+- **Requests/Second**: 500-800 req/s
+- **Requests/Day**: 43M-69M requests/day
+
+**Scale When**: Resources reach **80% utilization** for **15+ minutes**
+
+---
+
+## 📋 Prerequisites
+
+1. **Docker Engine** (v20.10+) or **Docker Desktop** installed and running
+2. **Docker Compose** (v2.0+) installed
+3. **Production environment file** (`.env.production`) configured with all required secrets
+4. **SSL Certificates** mounted at `/etc/letsencrypt` (for HTTPS)
+5. **Server**: Minimum 6 vCPU, 12GB RAM (recommended: 8 vCPU, 24GB RAM)
+
+---
+
+## 🔐 Required Environment Variables
+
+Before deploying, ensure `.env.production` contains all required variables. See [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) for complete list.
+
+### Critical (Must be changed from defaults):
+- `JWT_SECRET` - Secure JWT signing secret (minimum 32 characters)
+- `SESSION_SECRET` - Fastify session secret (minimum 32 characters)
+- `COOKIE_SECRET` - Cookie signing secret (minimum 32 characters)
+- `OPENVIDU_SECRET` - OpenVidu server secret
+- `JWT_REFRESH_SECRET` - JWT refresh token secret
+
+### Database:
+- `DATABASE_URL` - PostgreSQL connection string
+- `DIRECT_URL` - Direct PostgreSQL connection (for migrations)
+
+### External Services (if used):
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `FIREBASE_PROJECT_ID` - Firebase project ID
+- `FIREBASE_PRIVATE_KEY` - Firebase private key
+- `FIREBASE_CLIENT_EMAIL` - Firebase client email
+- `ZEPTOMAIL_SEND_MAIL_TOKEN` - ZeptoMail API token
+
+---
+
+## 🎯 Resource Allocation
+
+### Target Configuration (8 vCPU, 24GB RAM)
+
+| Service | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
+|---------|-----------|-----------|-------------|-------------|
+| **API** | 3.0 | 6GB | 1.5 | 2GB |
+| **PostgreSQL** | 3.0 | 10GB | 1.5 | 3GB |
+| **Dragonfly** | 1.5 | 4GB | 0.5 | 1GB |
+| **Worker** | 1.0 | 2GB | 0.5 | 512MB |
+| **OpenVidu** | 2.0 | 4GB | 1.0 | 2GB |
+| **Total** | **10.5** | **26GB** | **5.0** | **8.5GB** |
+
+**Note**: Total limits slightly exceed server capacity to allow Docker to manage resource allocation efficiently. Docker will enforce actual limits based on available resources.
+
+### Current Server (6 vCPU, 12GB RAM)
+
+When running on 6 vCPU/12GB RAM:
+- Docker enforces limits based on available resources
+- Services will use what's available within their limits
+- Performance will be reduced but functional
+- Monitor and scale when resources reach 80% utilization
+
+---
+
+## 🔧 Configuration Details
+
+### API Service
+
+**Resources:**
+- CPU: 3.0 limit / 1.5 reserve
+- RAM: 6GB limit / 2GB reserve
+
+**Database Connections:**
+- `connection_limit=60`
+- `pool_size=30`
+- `max_connections=60`
+
+**Rate Limiting:**
+- `SECURITY_RATE_LIMIT_MAX: 4000`
+- `RATE_LIMIT_MAX: 600`
+- `API_RATE_LIMIT: 1000`
+
+**Node.js Memory:**
+- `--max-old-space-size=6144` (6GB heap)
+
+### PostgreSQL Service
+
+**Resources:**
+- CPU: 3.0 limit / 1.5 reserve
+- RAM: 10GB limit / 3GB reserve
+
+**Configuration:**
+- `max_connections=120`
+- `shared_buffers=2GB`
+- `effective_cache_size=12GB`
+- `work_mem=16MB`
+- `max_worker_processes=8`
+- `max_parallel_workers=8`
+
+### Dragonfly Cache
+
+**Resources:**
+- CPU: 1.5 limit / 0.5 reserve
+- RAM: 4GB limit / 1GB reserve
+
+**Configuration:**
+- `--maxmemory=4gb`
+- `--proactor_threads=6`
+- `net.core.somaxconn=2048`
+
+**Note**: Redis has been removed. Dragonfly is the only cache provider.
+
+### Worker Service
+
+**Resources:**
+- CPU: 1.0 limit / 0.5 reserve
+- RAM: 2GB limit / 512MB reserve
+
+**Configuration:**
+- `connection_limit=30`
+- `pool_size=15`
+- `BULL_WORKER_CONCURRENCY: 10`
+- `BULL_MAX_JOBS_PER_WORKER: 100`
+
+### OpenVidu Service
+
+**Resources:**
+- CPU: 2.0 limit / 1.0 reserve
+- RAM: 4GB limit / 2GB reserve
+
+**Configuration:**
+- Port: 4443 (HTTP internally, SSL handled by Nginx)
+- WebSocket support for video streaming
+- Depends on Coturn for TURN/STUN
+
+---
+
+## 🚀 Deployment Steps
+
+### Step 1: Prepare Environment
 
 ```bash
 # Navigate to project root
 cd /path/to/HealthCareBackend
 
-# Start services
-docker compose -f devops/docker/docker-compose.dev.yml up -d --build
+# Ensure .env.production exists and is configured
+# Values come from GitHub Secrets during CI/CD deployment
+```
+
+### Step 2: Build and Start Services
+
+```bash
+# Navigate to docker directory
+cd devops/docker
+
+# Build and start services
+docker compose -f docker-compose.prod.yml up -d --build
 
 # Check status
-docker compose -f devops/docker/docker-compose.dev.yml ps
-
-# View logs
-docker compose -f devops/docker/docker-compose.dev.yml logs -f api
+docker compose -f docker-compose.prod.yml ps
 ```
 
-## Services Overview
-
-When you run the startup script, the following containers are created:
-
-| Container | Description | Ports | Health Check |
-|-----------|-------------|-------|--------------|
-| **healthcare-api** | Main API service | 8088, 5555 | `/health` (Terminus-based), Socket.IO `/health` namespace |
-| **healthcare-postgres** | PostgreSQL database | 5432 | `pg_isready` |
-| **healthcare-dragonfly** | Dragonfly cache (default) | 6380 | `redis-cli ping` |
-| **healthcare-redis** | Redis cache (fallback) | 6379 | `redis-cli ping` |
-| **healthcare-redis-ui** | Redis Commander UI | 8082 | HTTP |
-| **healthcare-pgadmin** | PgAdmin UI | 5050 | HTTP |
-
-### Service Details
-
-- **healthcare-api**: NestJS application with hot-reload in development mode
-- **healthcare-postgres**: PostgreSQL 14+ database
-- **healthcare-dragonfly**: High-performance cache (26x faster than Redis) - **Default Provider**
-- **healthcare-redis**: Redis cache for fallback scenarios
-- **healthcare-redis-ui**: Web UI for managing Redis/Dragonfly
-- **healthcare-pgadmin**: Web UI for managing PostgreSQL
-
-## Verification & Monitoring
-
-### Quick Verification Script
-
-For WSL users, run the automated verification:
+### Step 3: Verify Deployment
 
 ```bash
-./devops/docker/verify-wsl.sh
+# Check all containers are running
+docker compose -f docker-compose.prod.yml ps
+
+# Check API logs
+docker compose -f docker-compose.prod.yml logs -f api
+
+# Check worker logs
+docker compose -f docker-compose.prod.yml logs -f worker
+
+# Test health endpoint
+curl https://api.ishswami.in/health
 ```
 
-### Manual Verification Steps
+---
 
-#### 1. Check Container Status
+## 📊 Services Overview
+
+| Service | Container Name | Description | Ports |
+|---------|---------------|-------------|-------|
+| **API** | `latest-api` | Main API service | 8088 |
+| **Worker** | `latest-worker` | Background job processor | - |
+| **PostgreSQL** | `latest-postgres` | Database | 5432 |
+| **Dragonfly** | `latest-dragonfly` | Cache provider | 6380 |
+| **OpenVidu** | `latest-openvidu-server` | Video conferencing | 4443 |
+| **Coturn** | `latest-coturn` | TURN/STUN server | 3478 |
+
+### Network Configuration
+
+Services use a custom network (`app-network`) with fixed IP addresses:
+- API: `172.18.0.5`
+- PostgreSQL: `172.18.0.2`
+- Dragonfly: `172.18.0.4`
+- Worker: `172.18.0.6`
+- OpenVidu: `172.18.0.7`
+- Coturn: `172.18.0.8`
+
+### Volume Persistence
+
+Data is persisted in Docker volumes:
+- `latest_postgres_data` - PostgreSQL data
+- `latest_dragonfly_data` - Dragonfly data
+- `latest_openvidu_recordings` - OpenVidu recordings
+- `./logs` - Application logs (host-mounted)
+
+---
+
+## 📈 Monitoring & Scaling
+
+### Monitoring Thresholds
+
+- **<70%**: Healthy, no action needed
+- **70-80%**: Monitor closely, plan for scaling
+- **80-90%**: Scale immediately (upgrade server)
+- **>90%**: Critical, emergency scaling required
+
+### Quick Monitoring Commands
 
 ```bash
-docker compose -f devops/docker/docker-compose.dev.yml ps
+# Real-time resource usage
+docker stats
+
+# Check container health
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Check API response time
+curl -w "\nTime: %{time_total}s\n" -o /dev/null -s https://api.ishswami.in/health
+
+# Check detailed health endpoint
+curl -w "\nTime: %{time_total}s\n" -o /dev/null -s "https://api.ishswami.in/health?detailed=true"
+
+# Check database connections
+docker exec latest-postgres psql -U postgres -d userdb -c "SELECT count(*) FROM pg_stat_activity;"
+
+# Check cache memory
+docker exec latest-dragonfly redis-cli -p 6379 INFO memory | grep used_memory_human
 ```
 
-**Expected Output:**
-- All containers: `Up` and `healthy`
-- `healthcare-dragonfly`: `(healthy)`
-- `healthcare-api`: `Up` (may show "Starting" during compilation)
+### Scaling Triggers
 
-#### 2. Verify Cache Provider Configuration
+Scale when **ANY** of these conditions persist for **15+ minutes**:
+
+1. **CPU Usage**: >80% consistently
+2. **RAM Usage**: >80% consistently
+3. **Response Time**: P95 >400ms consistently
+4. **Database Connections**: >80% of limit (96/120)
+5. **Error Rate**: >1% consistently
+6. **Concurrent Users**: Approaching 400+ regularly
+
+---
+
+## 🔄 Vertical Scaling: 6 vCPU/12GB → 8 vCPU/24GB RAM
+
+### Pre-Scaling Checklist
+
+- [ ] Monitoring shows sustained 80%+ utilization
+- [ ] Database backups are current
+- [ ] Application logs show no critical errors
+- [ ] Cache hit rate is >85%
+- [ ] No planned maintenance windows
+- [ ] Team is available for monitoring post-upgrade
+
+### Scaling Procedure
+
+#### Step 1: Backup
 
 ```bash
-# Check API environment
-docker exec -it healthcare-api env | grep CACHE_PROVIDER
+# Navigate to docker directory
+cd devops/docker
+
+# Backup database
+docker exec latest-postgres pg_dump -U postgres userdb > backup_pre_scale_$(date +%Y%m%d_%H%M%S).sql
+
+# Verify backup
+ls -lh backup_pre_scale_*.sql
+
+# Backup volumes (optional but recommended)
+docker run --rm \
+  -v latest_postgres_data:/data \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/postgres_volume_backup_$(date +%Y%m%d_%H%M%S).tar.gz /data
 ```
 
-**Expected Output:**
-```
-CACHE_PROVIDER=dragonfly
+#### Step 2: Document Current State
+
+```bash
+# Save current resource usage
+docker stats --no-stream > resource_usage_before_scale.txt
+
+# Save current configuration
+cp docker-compose.prod.yml docker-compose.prod.yml.backup
 ```
 
-#### 3. Test Cache Connections
+#### Step 3: Stop Services
+
+```bash
+# Stop all services
+docker compose -f docker-compose.prod.yml down
+
+# Verify all containers are stopped
+docker ps -a | grep latest-
+
+# Wait 30 seconds for cleanup
+sleep 30
+```
+
+**Note**: Database data persists in volumes, so no data loss.
+
+#### Step 4: Upgrade Server Resources
+
+**Via Your Hosting Provider (Contabo):**
+
+1. Login to Contabo Customer Panel
+2. Go to VPS → Your Server → Upgrade
+3. Select 8 vCPU, 24GB RAM
+4. Confirm upgrade
+
+**Wait for**: Server reboot and full initialization (usually 2-5 minutes)
+
+#### Step 5: Verify New Server Resources
+
+```bash
+# SSH into server
+ssh deploy@31.220.79.219
+
+# Check CPU cores
+nproc
+# Expected: 8
+
+# Check RAM
+free -h
+# Expected: ~24GB total
+```
+
+#### Step 6: Restart Services
+
+```bash
+# Navigate to docker directory
+cd devops/docker
+
+# Start services (Docker will use new resource limits)
+docker compose -f docker-compose.prod.yml up -d
+
+# Watch startup logs
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+**Wait for**: All services to be healthy (usually 1-2 minutes)
+
+#### Step 7: Verify Services
+
+```bash
+# Check all containers are running
+docker ps
+
+# Check resource allocation
+docker stats --no-stream
+
+# Check health status
+docker ps --format "table {{.Names}}\t{{.Status}}"
+
+# Test API
+curl https://api.ishswami.in/health
+
+# Check database
+docker exec latest-postgres psql -U postgres -d userdb -c "SELECT version();"
+```
+
+#### Step 8: Monitor Post-Scaling
+
+**First 15 minutes** (Critical monitoring period):
+
+```bash
+# Continuous monitoring
+watch -n 5 'docker stats --no-stream'
+
+# Check for errors
+docker logs latest-api --tail 50 | grep -i error
+docker logs latest-postgres --tail 50 | grep -i error
+```
+
+**First hour**: Check every 10 minutes, verify response times, check error rates
+
+**First 24 hours**: Check daily, review logs, verify performance metrics
+
+### Expected Improvements After Scaling
+
+| Metric | Before (6/12) | After (8/24) | Improvement |
+|--------|---------------|--------------|-------------|
+| **Concurrent Users** | 300-400 | 700-900 | **2.5x** |
+| **Requests/Second** | 500-800 | 1,200-1,800 | **2.25x** |
+| **Response Time (p95)** | 200-300ms | 150-200ms | **25% faster** |
+| **CPU Usage** | 70-80% | 50-70% | **Lower** |
+| **RAM Usage** | 75-85% | 55-75% | **Lower** |
+
+### Rollback Procedure
+
+If issues occur:
+
+```bash
+# Stop services
+cd devops/docker
+docker compose -f docker-compose.prod.yml down
+
+# Downgrade server via hosting provider
+
+# Restart services
+docker compose -f docker-compose.prod.yml up -d
+
+# Restore database if needed
+docker exec -i latest-postgres psql -U postgres -d userdb < backup_pre_scale_*.sql
+```
+
+---
+
+## 🔍 Health Checks
+
+All services include health checks:
+
+```bash
+# Check API health
+curl http://localhost:8088/health
+
+# Check container health status
+docker compose -f docker-compose.prod.yml ps
+
+# Expected: All containers should show "healthy" status
+```
+
+---
+
+## 📝 Logs
+
+### View Logs
+
+```bash
+# All services
+docker compose -f docker-compose.prod.yml logs -f
+
+# Specific service
+docker compose -f docker-compose.prod.yml logs -f api
+docker compose -f docker-compose.prod.yml logs -f worker
+docker compose -f docker-compose.prod.yml logs -f postgres
+docker compose -f docker-compose.prod.yml logs -f openvidu-server
+```
+
+### Log Files
+
+Logs are persisted to `devops/docker/logs/` directory (mounted volume).
+
+---
+
+## 🔄 Updates and Maintenance
+
+### Update Application
+
+```bash
+# Pull latest code (or use CI/CD)
+git pull
+
+# Rebuild and restart
+docker compose -f docker-compose.prod.yml up -d --build
+
+# Or restart specific service
+docker compose -f docker-compose.prod.yml restart api
+```
+
+### Database Migrations
+
+Migrations run automatically on API container startup. To run manually:
+
+```bash
+# Enter API container
+docker exec -it latest-api sh
+
+# Run migrations
+yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma
+```
+
+### Backup Database
+
+```bash
+# Create backup
+docker exec -it latest-postgres pg_dump -U postgres userdb > backup_$(date +%Y%m%d_%H%M%S).sql
+
+# Restore backup
+docker exec -i latest-postgres psql -U postgres userdb < backup_20240101_120000.sql
+```
+
+---
+
+## 🛑 Stop Services
+
+```bash
+# Stop all services (keeps data)
+docker compose -f docker-compose.prod.yml down
+
+# Stop and remove volumes (⚠️ deletes data)
+docker compose -f docker-compose.prod.yml down -v
+```
+
+---
+
+## 🔒 Security Checklist
+
+Before going live, ensure:
+
+- [ ] All secrets are changed from default values
+- [ ] `JWT_SECRET` is at least 32 characters
+- [ ] `SESSION_SECRET` is at least 32 characters
+- [ ] `COOKIE_SECRET` is at least 32 characters
+- [ ] `OPENVIDU_SECRET` is secure
+- [ ] `SESSION_SECURE_COOKIES=true` (production)
+- [ ] `SESSION_SAME_SITE=strict` (production)
+- [ ] SSL certificates are properly mounted
+- [ ] Database credentials are secure
+- [ ] CORS origins are restricted to production domains
+- [ ] Rate limiting is enabled
+- [ ] Audit logging is enabled
+
+---
+
+## 🐛 Troubleshooting
+
+### Container Won't Start
+
+```bash
+# Check logs
+docker compose -f docker-compose.prod.yml logs api
+
+# Check container status
+docker compose -f docker-compose.prod.yml ps
+
+# Restart service
+docker compose -f docker-compose.prod.yml restart api
+```
+
+### Database Connection Issues
+
+```bash
+# Check PostgreSQL is running
+docker compose -f docker-compose.prod.yml ps postgres
+
+# Test connection from API container
+docker exec -it latest-api sh -c "psql $DATABASE_URL -c 'SELECT 1'"
+```
+
+### Cache Connection Issues
 
 ```bash
 # Test Dragonfly connection
-docker exec -it healthcare-dragonfly redis-cli -p 6379 ping
-# Should return: PONG
+docker exec -it latest-dragonfly redis-cli -p 6379 ping
 
-# Test Redis connection (fallback)
-docker exec -it healthcare-redis redis-cli ping
-# Should return: PONG
-
-# Test from API container
-docker exec -it healthcare-api sh -c "redis-cli -h dragonfly -p 6379 ping"
-# Should return: PONG
+# Check from API container
+docker exec -it latest-api sh -c "redis-cli -h dragonfly -p 6379 ping"
 ```
-
-#### 4. Check API Logs for Cache Connection
-
-```bash
-# View API logs
-docker compose -f devops/docker/docker-compose.dev.yml logs api | grep -i "dragonfly\|cache"
-```
-
-**Look for:**
-- ✅ `Connecting to Dragonfly at dragonfly:6379`
-- ✅ `✓ Dragonfly connected successfully`
-- ✅ `Cache provider: dragonfly`
-- ✅ `Nest application successfully started`
-- ✅ `Application is running on: http://0.0.0.0:8088`
-
-#### 5. Test API Health Endpoint
-
-```bash
-# Test health endpoint
-curl http://localhost:8088/health
-
-# Or open in browser
-# http://localhost:8088/health
-```
-
-#### 6. Test Cache Endpoint
-
-```bash
-# Test cache info endpoint
-curl http://localhost:8088/api/v1/cache
-
-# Test with debug info
-curl "http://localhost:8088/api/v1/cache?includeDebug=true"
-```
-
-**Expected Response:**
-```json
-{
-  "health": {
-    "status": "healthy",
-    "ping": <number>
-  },
-  "metrics": {
-    "keys": <number>,
-    "hitRate": <number>,
-    "memory": {...}
-  },
-  "stats": {
-    "hits": <number>,
-    "misses": <number>
-  }
-}
-```
-
-#### 7. Verify Cache Provider in Redis Commander
-
-1. Open http://localhost:8082
-2. Login: `admin` / `admin`
-3. You should see both:
-   - **local** (Redis) - Port 6379
-   - **dragonfly** (Dragonfly) - Port 6379
-
-### Monitoring Commands
-
-#### Monitor All Containers
-
-```bash
-docker compose -f devops/docker/docker-compose.dev.yml ps
-```
-
-#### Monitor API Logs (Real-time)
-
-**Bash:**
-```bash
-docker compose -f devops/docker/docker-compose.dev.yml logs -f api
-```
-
-**PowerShell:**
-```powershell
-docker compose -f devops/docker/docker-compose.dev.yml logs -f api
-```
-
-**Or use the monitoring scripts:**
-```bash
-# Bash
-./devops/docker/monitor-logs.sh
-
-# PowerShell
-.\devops/docker\monitor-logs.ps1
-```
-
-#### Monitor Cache Connection
-
-```bash
-# Check Dragonfly connection
-docker exec healthcare-dragonfly redis-cli -p 6379 ping
-
-# Check Redis connection  
-docker exec healthcare-redis redis-cli ping
-
-# Check API cache configuration
-docker exec healthcare-api env | grep -E "CACHE_PROVIDER|DRAGONFLY"
-```
-
-#### Monitor Cache Metrics
-
-```bash
-# Get cache info
-curl http://localhost:8088/api/v1/cache
-
-# Get cache info with debug
-curl "http://localhost:8088/api/v1/cache?includeDebug=true"
-
-# View real-time cache metrics
-watch -n 2 'curl -s http://localhost:8088/api/v1/cache | jq .metrics'
-```
-
-#### Monitor All Services
-
-```bash
-docker compose -f devops/docker/docker-compose.dev.yml logs -f
-```
-
-### Success Indicators
-
-#### ✅ API Logs Should Show:
-- `✓ Dragonfly connected successfully`
-- `Cache provider: dragonfly`
-- `Nest application successfully started`
-- `Application is running on: http://0.0.0.0:8088`
-
-#### ✅ Container Status:
-- All containers: `Up` and `healthy`
-- `healthcare-dragonfly`: `(healthy)`
-- `healthcare-api`: `Up` (no errors)
-
-#### ✅ Cache Connection:
-- Dragonfly ping: `PONG`
-- API can connect to Dragonfly
-- Cache operations work
-
-### Error Indicators
-
-#### ❌ Connection Errors:
-- `Failed to connect to Dragonfly`
-- `ECONNREFUSED`
-- `Connection timeout`
-
-#### ❌ Configuration Errors:
-- `CACHE_PROVIDER not set`
-- `DRAGONFLY_HOST not found`
-
-#### ❌ Compilation Errors:
-- TypeScript errors in logs
-- Application won't start
-
-## Access Points
-
-Once all services are running:
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| **API** | http://localhost:8088 | - |
-| **Swagger Docs** | http://localhost:8088/docs | - |
-| **Health Check** | http://localhost:8088/health | - |
-| **Queue Dashboard** | http://localhost:8088/queue-dashboard | - |
-| **Cache Info** | http://localhost:8088/api/v1/cache | - |
-| **Prisma Studio** | http://localhost:5555 | - |
-| **PgAdmin** | http://localhost:5050 | admin@admin.com / admin |
-
-**Session Management:**
-- **Fastify Session**: Configured with CacheService/Dragonfly backend
-- **Session Store**: Uses `FastifySessionStoreAdapter` with CacheService (provider-agnostic)
-- **Session Timeout**: 24 hours (86400 seconds) - configurable via `SESSION_TIMEOUT`
-- **Cookie Security**: Development uses `SESSION_SECURE_COOKIES=false`, production uses `true`
-- **Session Secrets**: `SESSION_SECRET` and `COOKIE_SECRET` (minimum 32 characters each)
-| **Redis Commander** | http://localhost:8082 | admin / admin |
-
-## Troubleshooting
-
-### Docker Not Running
-
-1. Open **Docker Desktop** application
-2. Wait for Docker to fully start (whale icon in system tray)
-3. Ensure WSL2 integration is enabled:
-   - Docker Desktop → Settings → Resources → WSL Integration
-   - Enable integration with your WSL distro
-   - Click "Apply & Restart"
-
-### Containers Not Starting
-
-```bash
-# Check logs for errors
-docker compose -f devops/docker/docker-compose.dev.yml logs
-
-# Restart specific service
-docker compose -f devops/docker/docker-compose.dev.yml restart api
-
-# Rebuild and restart
-docker compose -f devops/docker/docker-compose.dev.yml up -d --build --force-recreate
-```
-
-### Dragonfly Connection Issues
-
-```bash
-# Check Dragonfly container
-docker ps | grep dragonfly
-
-# Check Dragonfly logs
-docker logs healthcare-dragonfly
-
-# Test connection manually
-docker exec -it healthcare-dragonfly redis-cli -p 6379 ping
-
-# Restart Dragonfly
-docker compose -f devops/docker/docker-compose.dev.yml restart dragonfly
-```
-
-### Port Conflicts
-
-If ports are already in use, modify `docker-compose.dev.yml`:
-
-- **8088**: Change `API_PORT` environment variable
-- **5432**: Change PostgreSQL port mapping
-- **6379/6380**: Change cache port mappings
-
-### Cache Provider Not Switching
-
-1. Check environment variable:
-   ```bash
-   docker exec -it healthcare-api env | grep CACHE_PROVIDER
-   # Should show: CACHE_PROVIDER=dragonfly
-   ```
-
-2. Restart API container:
-   ```bash
-   docker compose -f devops/docker/docker-compose.dev.yml restart api
-   ```
-
-### API Not Starting
-
-1. Check logs:
-   ```bash
-   docker compose -f devops/docker/docker-compose.dev.yml logs api
-   ```
-
-2. Restart API:
-   ```bash
-   docker compose -f devops/docker/docker-compose.dev.yml restart api
-   ```
-
-3. Rebuild if needed:
-   ```bash
-   docker compose -f devops/docker/docker-compose.dev.yml up -d --build api
-   ```
 
 ### Health Check Failing
 
 ```bash
-# Check health check command
-docker exec -it healthcare-dragonfly redis-cli -p 6379 ping
+# Check health endpoint manually
+docker exec -it latest-api wget -q --spider http://localhost:8088/health
 
-# If fails, check if redis-cli is available
-docker exec -it healthcare-dragonfly which redis-cli
+# Check API logs for errors
+docker compose -f docker-compose.prod.yml logs api | tail -50
 ```
 
-## Useful Commands
-
-### Container Management
+### OpenVidu Issues
 
 ```bash
-# View all logs
-docker compose -f devops/docker/docker-compose.dev.yml logs -f
+# Check OpenVidu container
+docker ps | grep openvidu
 
-# View specific service logs
-docker compose -f devops/docker/docker-compose.dev.yml logs -f api
-docker compose -f devops/docker/docker-compose.dev.yml logs -f dragonfly
+# Check OpenVidu logs
+docker logs latest-openvidu-server
 
-# Stop all services
-docker compose -f devops/docker/docker-compose.dev.yml down
+# Test OpenVidu directly
+curl http://127.0.0.1:4443
 
-# Stop and remove volumes (⚠️ deletes data)
-docker compose -f devops/docker/docker-compose.dev.yml down -v
+# Check Coturn (TURN server)
+docker ps | grep coturn
+docker logs latest-coturn
+```
 
-# Restart specific service
-docker compose -f devops/docker/docker-compose.dev.yml restart api
+---
 
-# Shell access to API container
-docker exec -it healthcare-api sh
+## 📊 Performance Expectations
 
-# Shell access to Dragonfly container
-docker exec -it healthcare-dragonfly sh
+### On 6 vCPU/12GB RAM (Initial)
 
-# Check container resource usage
+| Metric | Value |
+|--------|-------|
+| Concurrent Users | 300-400 |
+| Requests/Second | 500-800 |
+| CPU Usage | 60-75% |
+| RAM Usage | 65-80% |
+| Response Time (p95) | 200-300ms |
+
+### On 8 vCPU/24GB RAM (After Scaling)
+
+| Metric | Value |
+|--------|-------|
+| Concurrent Users | 700-900 |
+| Requests/Second | 1,200-1,800 |
+| CPU Usage | 50-70% |
+| RAM Usage | 55-75% |
+| Response Time (p95) | 150-200ms |
+
+---
+
+## 📚 Additional Resources
+
+- [Nginx Configuration](../nginx/README.md) - Reverse proxy and SSL setup
+- [Server Setup Guide](../../docs/SERVER_SETUP_GUIDE.md) - Complete server setup
+- [Deployment Guide](../../docs/DEPLOYMENT_GUIDE.md) - CI/CD deployment
+- [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) - Environment variables
+- [Main README](../../README.md) - Project overview
+
+---
+
+## 🆘 Support
+
+For issues:
+1. Check container logs
+2. Verify environment variables
+3. Check network connectivity
+4. Review health check status
+5. Consult troubleshooting section above
+
+---
+
+## ✅ Quick Reference
+
+**Deploy:**
+```bash
+cd devops/docker && docker compose -f docker-compose.prod.yml up -d --build
+```
+
+**Monitor:**
+```bash
 docker stats
 ```
 
-### Cache Operations
+**Scale When:**
+- CPU or RAM >80% for 15+ minutes
 
-```bash
-# Test cache set/get operations
-curl -X POST http://localhost:8088/api/v1/cache/test-key \
-  -H "Content-Type: application/json" \
-  -d '{"value": "test-value", "ttl": 60}'
+**Upgrade To:**
+- 8 vCPU, 24GB RAM
 
-curl http://localhost:8088/api/v1/cache/test-key
+**Expected Capacity:**
+- 700-900 concurrent users
+- 1,200-1,800 req/s
 
-# Run cache benchmark
-curl -X POST "http://localhost:8088/api/v1/cache/benchmark?operations=1000&payloadSize=1024"
-```
+---
 
-### Network Connectivity
+## 🎯 Summary
 
-```bash
-# From API container, test connectivity
-docker exec -it healthcare-api sh -c "ping -c 2 dragonfly"
-docker exec -it healthcare-api sh -c "ping -c 2 redis"
-```
+This configuration is optimized for **8 vCPU/24GB RAM** but runs on **6 vCPU/12GB RAM** initially. Monitor resources and scale vertically when utilization reaches 80%. Dragonfly is the only cache provider (Redis removed). OpenVidu is included for video conferencing.
 
-### Environment Variables
-
-```bash
-# Check all cache-related environment variables
-docker exec -it healthcare-api env | grep -E "CACHE|DRAGONFLY|REDIS"
-```
-
-**Expected Variables:**
-- `CACHE_PROVIDER=dragonfly`
-- `DRAGONFLY_ENABLED=true`
-- `DRAGONFLY_HOST=dragonfly`
-- `DRAGONFLY_PORT=6379`
-- `REDIS_HOST=redis`
-- `REDIS_PORT=6379`
-
-## Cache System
-
-### Cache Provider Configuration
-
-The system uses **Dragonfly** as the default cache provider (26x faster than Redis). To switch providers:
-
-1. **Change environment variable** in `docker-compose.dev.yml`:
-   ```yaml
-   CACHE_PROVIDER: redis  # or dragonfly
-   ```
-
-2. **Restart API container**:
-   ```bash
-   docker compose -f devops/docker/docker-compose.dev.yml restart api
-   ```
-
-### Cache Verification Checklist
-
-Run through this checklist to verify the cache system:
-
-1. ✅ All containers are running and healthy
-2. ✅ `CACHE_PROVIDER=dragonfly` is set
-3. ✅ API logs show successful Dragonfly connection
-4. ✅ Cache operations work (set/get)
-5. ✅ Cache metrics are available
-6. ✅ Health endpoint returns healthy status
-7. ✅ No connection errors in logs
-
-### Cache Performance Verification
-
-```bash
-# Test cache performance
-curl -X POST "http://localhost:8088/api/v1/cache/benchmark?operations=1000&payloadSize=1024"
-
-# Monitor cache metrics
-curl "http://localhost:8088/api/v1/cache?includeDebug=true" | jq .
-```
-
-## Configuration
-
-### Environment Variables
-
-Key environment variables can be configured in `docker-compose.dev.yml`:
-
-**Cache Configuration:**
-- `CACHE_PROVIDER`: `dragonfly` (default) or `redis`
-- `DRAGONFLY_HOST`: `dragonfly` (container name)
-- `DRAGONFLY_PORT`: `6379`
-- `REDIS_HOST`: `redis` (container name)
-- `REDIS_PORT`: `6379`
-
-**Session Configuration (Fastify Session with CacheService/Dragonfly):**
-- `SESSION_SECRET`: Session secret (minimum 32 characters) - used for Fastify session encryption
-- `SESSION_TIMEOUT`: Session timeout in seconds (default: 86400 = 24 hours)
-- `SESSION_SECURE_COOKIES`: `true` for production, `false` for development
-- `SESSION_SAME_SITE`: Cookie SameSite policy (`strict`, `lax`, or `none`)
-- `COOKIE_SECRET`: Cookie signing secret (minimum 32 characters) - used for cookie encryption
-
-**Database Configuration:**
-- `DATABASE_URL`: PostgreSQL connection string
-- `NODE_ENV`: `development` or `production`
-
-### Docker Compose File
-
-The main configuration file is:
-- `devops/docker/docker-compose.dev.yml`
-
-Modify this file to:
-- Change port mappings
-- Adjust resource limits
-- Modify environment variables
-- Add/remove services
-
-## Monitoring Scripts
-
-The following scripts are available for monitoring:
-
-- **`monitor-app.sh`**: Monitors app startup and health
-- **`monitor-cache.sh`**: Monitors cache system and connections
-- **`monitor-logs.sh`** / **`monitor-logs.ps1`**: Monitor API logs in real-time
-- **`verify-wsl.sh`**: Comprehensive verification script for WSL users
-
-## Next Steps
-
-After successful startup:
-
-1. ✅ Verify all containers are running
-2. ✅ Check API logs for successful Dragonfly connection
-3. ✅ Test health endpoint
-4. ✅ Test cache operations
-5. ✅ Monitor cache metrics
-6. ✅ Start developing!
-
-## Support
-
-If you encounter issues:
-
-1. Check container logs
-2. Verify Docker Desktop is running
-3. Ensure ports are not in use
-4. Check network connectivity between containers
-5. Review the troubleshooting section above
-
-For detailed cache system documentation, see: `src/libs/infrastructure/cache/README.md`
-
+**Ready for production deployment!**
