@@ -37,6 +37,7 @@ import type {
   SurgicalRecordResponse,
   ImmunizationResponse,
 } from '@core/types/ehr.types';
+import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -45,6 +46,7 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
+@ApiTags('ehr')
 @Controller('ehr')
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class EHRController {

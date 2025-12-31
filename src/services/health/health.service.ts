@@ -193,18 +193,42 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       // Use health indicator for database health check
       const healthStatus = await Promise.race([
-        this.databaseHealthIndicator.check('database').then(result => {
-          const dbResult = result['database'] as Record<string, unknown>;
-          return {
-            isHealthy: dbResult?.['status'] === 'up',
-            connectionCount: 0,
-            activeQueries: 0,
-            avgResponseTime:
-              typeof dbResult?.['responseTime'] === 'number' ? dbResult['responseTime'] : 0,
-            lastHealthCheck: new Date(),
-            errors: dbResult?.['status'] === 'down' ? ['Database health check failed'] : [],
-          };
-        }),
+        this.databaseHealthIndicator
+          .check('database')
+          .then(result => {
+            const dbResult = result['database'] as Record<string, unknown>;
+            return {
+              isHealthy: dbResult?.['status'] === 'up',
+              connectionCount: 0,
+              activeQueries: 0,
+              avgResponseTime:
+                typeof dbResult?.['responseTime'] === 'number' ? dbResult['responseTime'] : 0,
+              lastHealthCheck: new Date(),
+              errors: dbResult?.['status'] === 'down' ? ['Database health check failed'] : [],
+            };
+          })
+          .catch((checkError: unknown) => {
+            // Handle HealthCheckError specifically - it contains the actual error details
+            if (checkError instanceof HealthCheckError) {
+              const causes = checkError.causes as Record<string, unknown> | undefined;
+              const dbCause = causes?.['database'] as Record<string, unknown> | undefined;
+              const errorMessage =
+                (typeof dbCause?.['error'] === 'string' ? dbCause['error'] : undefined) ||
+                checkError.message ||
+                'Database health check failed';
+
+              return {
+                isHealthy: false,
+                connectionCount: 0,
+                activeQueries: 0,
+                avgResponseTime: -1,
+                lastHealthCheck: new Date(),
+                errors: [errorMessage],
+              };
+            }
+            // Re-throw other errors to be caught by outer catch
+            throw checkError;
+          }),
         new Promise<{
           isHealthy: boolean;
           avgResponseTime: number;
@@ -232,13 +256,31 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             : healthStatus.errors?.[0] || 'Database connection failed',
         });
       }
-    } catch (_error) {
+    } catch (error) {
+      // Log the actual error for debugging
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.ERROR,
+          `Database health monitoring failed: ${errorMessage}`,
+          'HealthService.monitorDatabaseConnection',
+          {
+            error: errorMessage,
+            stack: errorStack,
+            databaseHealthIndicatorAvailable: !!this.databaseHealthIndicator,
+          }
+        );
+      }
+
       // Defensive check before calling .set()
       if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
         this.serviceStatusCache.set('database', {
           status: 'unhealthy',
           timestamp: Date.now(),
-          details: 'Database monitoring error',
+          details: `Database monitoring error: ${errorMessage}`,
         });
       }
     }

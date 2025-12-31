@@ -28,6 +28,7 @@ import {
   CreateInvoiceDto,
   UpdateInvoiceDto,
 } from '@dtos/billing.dto';
+import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -38,6 +39,7 @@ import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
 
+@ApiTags('billing')
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class BillingController {

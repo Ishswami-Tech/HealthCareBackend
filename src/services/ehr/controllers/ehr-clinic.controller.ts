@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { EHRService } from '@services/ehr/ehr.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -9,6 +10,7 @@ import { PatientCache, Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
+@ApiTags('ehr')
 @Controller('ehr/clinic')
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
 export class EHRClinicController {
