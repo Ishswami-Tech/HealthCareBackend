@@ -559,14 +559,30 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Prisma 7: Use adapter pattern for library engine type
     // Create PostgreSQL adapter with connection string
-    let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
+    // Priority: DIRECT_URL (clean) > DATABASE_URL (with params)
+    let connectionString = getEnv('DIRECT_URL') || dbUrlValue || getEnv('DATABASE_URL') || '';
     if (!connectionString) {
       throw new HealthcareError(
         ErrorCode.DATABASE_CONNECTION_FAILED,
-        'DATABASE_URL environment variable is not set',
+        'DATABASE_URL or DIRECT_URL environment variable is not set',
         undefined,
         {},
         'PrismaService.constructor'
+      );
+    }
+
+    // Log connection string (masked) for debugging
+    const maskedUrl = connectionString.replace(/:[^:@]+@/, ':****@');
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        `PrismaService initializing with connection: ${maskedUrl}`,
+        'PrismaService.constructor',
+        {
+          hasDirectUrl: !!getEnv('DIRECT_URL'),
+          hasDatabaseUrl: !!getEnv('DATABASE_URL'),
+        }
       );
     }
 
