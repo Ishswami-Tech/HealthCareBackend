@@ -1,4 +1,5 @@
 // Import PrismaClient - use adapter pattern for Prisma 7 with engine type "client"
+// Import from generated client to ensure type compatibility with Prisma 7
 import { PrismaClient } from './generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -23,6 +24,8 @@ import {
   Dosha,
 } from '@core/types/enums.types';
 import type { Role } from '@core/types/rbac.types';
+// Import entity types from centralized types for proper type annotations
+import type { RbacRoleEntity, UserRoleEntity } from '@core/types';
 import { Gender } from '@dtos/user.dto';
 // Use helper functions (which use dotenv) for environment variable access
 // These mimic ConfigService methods but work in seed scripts
@@ -143,17 +146,17 @@ function exportTestIds(testIds: Record<string, unknown>) {
 async function assignRoleToUser(userId: string, roleName: string, clinicId: string): Promise<void> {
   try {
     // Find or create RBAC role
-    let rbacRole = await prisma.rbacRole.findFirst({
+    let rbacRole: RbacRoleEntity | null = (await prisma.rbacRole.findFirst({
       where: {
         name: roleName,
         domain: 'healthcare',
         clinicId: null, // System roles have null clinicId
       },
-    });
+    })) as RbacRoleEntity | null;
 
     if (!rbacRole) {
       console.log(`Creating RBAC role: ${roleName}...`);
-      rbacRole = await prisma.rbacRole.create({
+      rbacRole = (await prisma.rbacRole.create({
         data: {
           name: roleName,
           displayName: roleName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -163,12 +166,12 @@ async function assignRoleToUser(userId: string, roleName: string, clinicId: stri
           isSystemRole: true,
           isActive: true,
         },
-      });
+      })) as RbacRoleEntity;
       console.log(`✓ Created RBAC role: ${roleName}`);
     }
 
     // Check if role is already assigned
-    const existingAssignment = await prisma.userRole.findFirst({
+    const existingAssignmentResult = await prisma.userRole.findFirst({
       where: {
         userId,
         roleId: rbacRole.id,
@@ -176,6 +179,22 @@ async function assignRoleToUser(userId: string, roleName: string, clinicId: stri
         isActive: true,
       },
     });
+    // Convert Prisma result to UserRoleEntity (handle JsonValue to Record conversion)
+    const existingAssignment: UserRoleEntity | null = existingAssignmentResult
+      ? ({
+          ...existingAssignmentResult,
+          permissions:
+            existingAssignmentResult.permissions &&
+            typeof existingAssignmentResult.permissions === 'object'
+              ? (existingAssignmentResult.permissions as Record<string, never>)
+              : null,
+          schedule:
+            existingAssignmentResult.schedule &&
+            typeof existingAssignmentResult.schedule === 'object'
+              ? (existingAssignmentResult.schedule as Record<string, never>)
+              : null,
+        } as UserRoleEntity)
+      : null;
 
     if (!existingAssignment) {
       console.log(`Assigning RBAC role ${roleName} to user ${userId}...`);
@@ -1591,6 +1610,7 @@ async function main() {
 
       // Create CheckInLocations with locationId linking to ClinicLocation
       console.log('Creating check-in locations...');
+      // Use unknown first for type assertion to avoid strict type checking issues
       const checkInLocationClient = prisma.checkInLocation as unknown as {
         create: (args: {
           data: {
