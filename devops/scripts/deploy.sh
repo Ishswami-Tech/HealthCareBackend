@@ -342,11 +342,19 @@ fi
 
 
 # Rollback function
+# Only rollback if there was a successful deployment (docker-compose exists)
 rollback_deployment() {
     echo -e "${RED}🔄 Rolling back deployment...${NC}"
+    
+    # Only rollback if docker-compose exists (indicates successful deployment)
+    if [ ! -f "${COMPOSE_FILE}" ]; then
+        echo -e "${YELLOW}⚠️  No successful deployment found (docker-compose missing) - cannot rollback${NC}"
+        return 1
+    fi
+    
     if [ -f "${ROLLBACK_FILE}" ]; then
         PREVIOUS_IMAGE=$(cat "${ROLLBACK_FILE}")
-        if [ -n "${PREVIOUS_IMAGE}" ] && [ -f "${COMPOSE_FILE}" ]; then
+        if [ -n "${PREVIOUS_IMAGE}" ]; then
             echo -e "${YELLOW}Rolling back to previous image: ${PREVIOUS_IMAGE}${NC}"
             export DOCKER_IMAGE="${PREVIOUS_IMAGE}"
             docker compose -f "${COMPOSE_FILE}" up -d --force-recreate || {
