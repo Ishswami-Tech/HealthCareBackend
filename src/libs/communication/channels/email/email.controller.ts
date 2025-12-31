@@ -9,7 +9,7 @@ class SendTestEmailDto {
   template?: EmailTemplate;
 }
 
-@ApiTags('email')
+@ApiTags('communication')
 @Controller('email')
 export class EmailController {
   constructor(

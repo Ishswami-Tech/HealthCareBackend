@@ -1,13 +1,11 @@
 import { Controller, Get, Res, Query } from '@nestjs/common';
-import { ApiExcludeController } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
 
-// Exclude health controller from Swagger to avoid circular dependency with SystemMetrics
-// Health endpoints are simple monitoring endpoints that don't need Swagger documentation
-@ApiExcludeController()
+@ApiTags('health')
 @Controller('health')
 export class HealthController {
   constructor(private readonly healthService: HealthService) {}
@@ -30,7 +28,70 @@ export class HealthController {
   @Get()
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
-  // Swagger decorators removed - health controller is excluded from Swagger to avoid circular dependency
+  @ApiOperation({
+    summary: 'System health check',
+    description:
+      'Returns real-time health status of core services (database, cache, queue, logging, video). Use ?detailed=true for extended metrics.',
+  })
+  @ApiQuery({
+    name: 'detailed',
+    required: false,
+    type: String,
+    description: 'If true, includes system metrics, process info, and extended details',
+    example: 'true',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Health check response',
+    schema: {
+      type: 'object',
+      properties: {
+        status: { type: 'string', example: 'healthy' },
+        timestamp: { type: 'string', example: '2025-12-31T19:00:00.000Z' },
+        environment: { type: 'string', example: 'production' },
+        services: {
+          type: 'object',
+          properties: {
+            database: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'healthy' },
+                responseTime: { type: 'number', example: 45 },
+              },
+            },
+            cache: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'healthy' },
+                responseTime: { type: 'number', example: 2 },
+              },
+            },
+            queue: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'healthy' },
+                responseTime: { type: 'number', example: 1 },
+              },
+            },
+            logging: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'healthy' },
+                responseTime: { type: 'number', example: 1 },
+              },
+            },
+            video: {
+              type: 'object',
+              properties: {
+                status: { type: 'string', example: 'healthy' },
+                primaryProvider: { type: 'string', example: 'openvidu' },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
   async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
     try {
       const isDetailed = detailed === 'true' || detailed === '1';

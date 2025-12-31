@@ -536,7 +536,7 @@ Migrations run automatically on API container startup. To run manually:
 docker exec -it latest-api sh
 
 # Run migrations
-yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma
+yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --config=/app/src/libs/infrastructure/database/prisma/prisma.config.js
 ```
 
 ### Backup Database

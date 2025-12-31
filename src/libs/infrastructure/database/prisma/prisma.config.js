@@ -18,7 +18,7 @@ function getCleanDatabaseUrl() {
   }
 
   // Priority 2: DATABASE_URL from environment (Docker or system env)
-  const databaseUrl = process.env.DATABASE_URL || '';
+  const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     return '';
   }
@@ -40,4 +40,3 @@ module.exports = {
     url: getCleanDatabaseUrl(),
   },
 };
-
