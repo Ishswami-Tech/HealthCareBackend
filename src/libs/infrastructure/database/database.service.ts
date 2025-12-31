@@ -1511,28 +1511,80 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
    * Get connection health status
    * @see IDatabaseClient.getHealthStatus
    */
-  getHealthStatus(): Promise<DatabaseHealthStatus> {
+  async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
+      // Check if Prisma is ready first
+      if (!this.prismaService || !this.prismaService.isReady()) {
+        return {
+          isHealthy: false,
+          connectionCount: 0,
+          activeQueries: 0,
+          avgResponseTime: -1,
+          lastHealthCheck: new Date(),
+          errors: ['Prisma client not ready'],
+        };
+      }
+
       const connectionMetrics = this.connectionPoolManager.getMetrics();
       const healthStatus = this.healthMonitor.getHealthStatus();
 
-      return Promise.resolve({
+      // If health monitor shows default status (latency 0, no real check performed), perform real-time check
+      // This happens if health monitoring hasn't started yet or if the last check was too long ago
+      const timeSinceLastCheck = Date.now() - healthStatus.lastCheck.getTime();
+      const shouldPerformRealtimeCheck = 
+        (healthStatus.status === 'healthy' && healthStatus.latency === 0) || // Default status
+        (timeSinceLastCheck > 60000); // Last check was more than 60 seconds ago
+
+      if (shouldPerformRealtimeCheck) {
+        try {
+          // Perform a quick real-time health check
+          const startTime = Date.now();
+          await Promise.race([
+            this.prismaService.$queryRaw`SELECT 1`,
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 5000)),
+          ]);
+          const latency = Date.now() - startTime;
+
+          return {
+            isHealthy: connectionMetrics.isHealthy && latency < 5000,
+            connectionCount: connectionMetrics.totalConnections,
+            activeQueries: connectionMetrics.activeConnections,
+            avgResponseTime: latency,
+            lastHealthCheck: new Date(),
+            errors: latency >= 5000 ? ['Database health check timeout'] : [],
+          };
+        } catch (checkError) {
+          return {
+            isHealthy: false,
+            connectionCount: connectionMetrics.totalConnections,
+            activeQueries: connectionMetrics.activeConnections,
+            avgResponseTime: -1,
+            lastHealthCheck: new Date(),
+            errors: [checkError instanceof Error ? checkError.message : 'Database health check failed'],
+          };
+        }
+      }
+
+      // Use cached health status from monitor
+      return {
         isHealthy: connectionMetrics.isHealthy && healthStatus.status === 'healthy',
         connectionCount: connectionMetrics.totalConnections,
         activeQueries: connectionMetrics.activeConnections,
         avgResponseTime: healthStatus.latency,
         lastHealthCheck: healthStatus.lastCheck,
-        errors: healthStatus.status === 'unhealthy' ? ['Database health check failed'] : [],
-      });
+        errors: healthStatus.status === 'unhealthy' 
+          ? (healthStatus.details?.error ? [String(healthStatus.details.error)] : ['Database health check failed']) 
+          : [],
+      };
     } catch (error) {
-      return Promise.resolve({
+      return {
         isHealthy: false,
         connectionCount: 0,
         activeQueries: 0,
         avgResponseTime: -1,
         lastHealthCheck: new Date(),
-        errors: [(error as Error).message],
-      });
+        errors: [error instanceof Error ? error.message : 'Unknown error'],
+      };
     }
   }
 

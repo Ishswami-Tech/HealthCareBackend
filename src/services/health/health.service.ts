@@ -6,7 +6,7 @@ import {
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { HealthCheckService, HealthCheckError } from '@nestjs/terminus';
+import { HealthCheckService, HealthCheckError, HealthIndicatorResult } from '@nestjs/terminus';
 import { ConfigService } from '@config/config.service';
 import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
 import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
@@ -642,7 +642,32 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     const startTime = performance.now();
 
     try {
-      // Use Terminus for health checks if available
+      // OPTIMIZATION: Use cached status from background monitoring when available and fresh
+      // This prevents redundant database/cache queries when background monitoring already has fresh data
+      const currentTime = Date.now();
+      const useCachedStatus = (
+        serviceName: string,
+        maxAge: number = 15000
+      ): ServiceHealth | null => {
+        const cached = this.serviceStatusCache.get(serviceName);
+        if (cached && currentTime - cached.timestamp < maxAge) {
+          return {
+            status: cached.status,
+            details: cached.details || `${serviceName} status from background monitoring`,
+            responseTime: 0,
+            lastChecked: new Date(cached.timestamp).toISOString(),
+          };
+        }
+        return null;
+      };
+
+      // Try to use cached status for database (background monitoring updates every 10s)
+      const cachedDbHealth = useCachedStatus('database', 15000);
+      const cachedCacheHealth = useCachedStatus('cache', 15000);
+      const cachedQueueHealth = useCachedStatus('queue', 15000);
+      const cachedLoggerHealth = useCachedStatus('logging', 15000);
+
+      // Use Terminus for health checks if available, but only for services without fresh cache
       if (
         this.healthCheckService &&
         this.databaseHealthIndicator &&
@@ -652,33 +677,94 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         this.videoHealthIndicator
       ) {
         try {
-          const terminusResult = await this.healthCheckService.check([
-            () => this.databaseHealthIndicator!.check('database'),
-            () => this.cacheHealthIndicator!.check('cache'),
-            () => this.queueHealthIndicator!.check('queue'),
-            () => this.loggingHealthIndicator!.check('logging'),
-            () => this.videoHealthIndicator!.check('video'),
-          ]);
+          // Build health check array - only check services that don't have fresh cache
+          const healthCheckPromises: Array<() => Promise<HealthIndicatorResult>> = [];
+          const serviceKeys: string[] = [];
+
+          // Database - use cache if available, otherwise check
+          if (cachedDbHealth) {
+            // Will use cached status below
+          } else {
+            healthCheckPromises.push(() => this.databaseHealthIndicator!.check('database'));
+            serviceKeys.push('database');
+          }
+
+          // Cache - use cache if available, otherwise check
+          if (cachedCacheHealth) {
+            // Will use cached status below
+          } else {
+            healthCheckPromises.push(() => this.cacheHealthIndicator!.check('cache'));
+            serviceKeys.push('cache');
+          }
+
+          // Queue - use cache if available, otherwise check
+          if (cachedQueueHealth) {
+            // Will use cached status below
+          } else {
+            healthCheckPromises.push(() => this.queueHealthIndicator!.check('queue'));
+            serviceKeys.push('queue');
+          }
+
+          // Logger - use cache if available, otherwise check
+          if (cachedLoggerHealth) {
+            // Will use cached status below
+          } else {
+            healthCheckPromises.push(() => this.loggingHealthIndicator!.check('logging'));
+            serviceKeys.push('logging');
+          }
+
+          // Video - always check (no background monitoring)
+          healthCheckPromises.push(() => this.videoHealthIndicator!.check('video'));
+          serviceKeys.push('video');
+
+          // Only run Terminus checks if we have services to check
+          let terminusResult: {
+            status: string;
+            info?: Record<string, unknown>;
+            error?: Record<string, unknown>;
+          } | null = null;
+          if (healthCheckPromises.length > 0) {
+            terminusResult = await this.healthCheckService.check(healthCheckPromises);
+          }
 
           // Transform Terminus result to HealthCheckResponse format
           const services: Record<string, ServiceHealth> = {};
-          const terminusStatus = terminusResult.status as string;
-          const info = (terminusResult as { info?: Record<string, unknown> }).info || {};
-          const error = (terminusResult as { error?: Record<string, unknown> }).error || {};
 
-          // Map Terminus indicators to services
+          // Use cached status for services that have fresh cache
+          if (cachedDbHealth) {
+            services['database'] = cachedDbHealth;
+          }
+          if (cachedCacheHealth) {
+            services['cache'] = cachedCacheHealth;
+          }
+          if (cachedQueueHealth) {
+            services['queue'] = cachedQueueHealth;
+          }
+          if (cachedLoggerHealth) {
+            services['logging'] = cachedLoggerHealth;
+          }
+
+          // Process Terminus results only for services that were actually checked
+          const terminusStatus = terminusResult?.status || 'ok';
+          const info = terminusResult?.info || {};
+          const error = terminusResult?.error || {};
+
+          // Map Terminus indicators to services (only for services that were checked)
           const allIndicators = { ...info, ...error };
-          for (const [key, indicatorData] of Object.entries(allIndicators)) {
+          for (const key of serviceKeys) {
+            if (!key) continue;
+            const indicatorData = allIndicators[key];
             if (indicatorData && typeof indicatorData === 'object') {
               const data = indicatorData as Record<string, unknown>;
+              const hasError = error[key] !== undefined;
               const message =
                 typeof data['message'] === 'string'
                   ? data['message']
-                  : error[key]
+                  : hasError
                     ? 'Service unhealthy'
                     : 'Service healthy';
               services[key] = {
-                status: error[key] ? 'unhealthy' : 'healthy',
+                status: hasError ? 'unhealthy' : 'healthy',
                 responseTime: typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
                 lastChecked: new Date().toISOString(),
                 details: message,
@@ -686,13 +772,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
+          // Determine overall status from all services (cached + checked)
+          const allServiceStatuses = Object.values(services).map(s => s.status);
+          const hasUnhealthy = allServiceStatuses.some(s => s === 'unhealthy');
+
           const responseTime = Math.round(performance.now() - startTime);
           const environment = this.config?.getEnvironment() || 'development';
 
           // Get realtime health status from cache if available
           // Map realtime status ('healthy' | 'degraded' | 'unhealthy') to ServiceHealth status ('healthy' | 'unhealthy')
           let overallStatus: 'healthy' | 'degraded' =
-            terminusStatus === 'ok' ? 'healthy' : 'degraded';
+            terminusStatus === 'ok' && !hasUnhealthy ? 'healthy' : 'degraded';
           if (this.healthCacheService) {
             try {
               const cachedStatus: unknown = await this.healthCacheService.getCachedStatus();
@@ -845,6 +935,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         } catch (terminusError) {
           // Terminus throws HealthCheckError when services are down
           // Extract the error information
+          // Check if we're in startup grace period
+          const timeSinceStart = Date.now() - this.serviceStartTime;
+          const isInStartupGracePeriod =
+            timeSinceStart < this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD;
+
           if (terminusError instanceof HealthCheckError) {
             const causes = terminusError.causes as Record<string, unknown> | undefined;
             if (causes && typeof causes === 'object') {
@@ -852,14 +947,30 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               for (const [key, indicatorData] of Object.entries(causes)) {
                 if (indicatorData && typeof indicatorData === 'object') {
                   const data = indicatorData as Record<string, unknown>;
-                  const message =
+                  const errorMessage =
                     typeof data['message'] === 'string' ? data['message'] : 'Service unhealthy';
+                  const errorDetails =
+                    typeof data['error'] === 'string' ? data['error'] : errorMessage;
+
+                  // During startup grace period, show more helpful message
+                  let details = errorMessage;
+                  if (isInStartupGracePeriod) {
+                    const remainingSeconds = Math.round(
+                      (this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD - timeSinceStart) / 1000
+                    );
+                    details = `Service is starting up... (${remainingSeconds}s remaining). Error: ${errorDetails}`;
+                  } else {
+                    details = errorDetails || errorMessage;
+                  }
+
                   services[key] = {
-                    status: 'unhealthy',
+                    status: 'unhealthy', // ServiceHealth only supports 'healthy' | 'unhealthy', not 'degraded'
                     responseTime:
                       typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
                     lastChecked: new Date().toISOString(),
-                    details: message,
+                    details: isInStartupGracePeriod
+                      ? `${details} (Service is starting up - this is expected during initialization)`
+                      : details,
                   };
                 }
               }
