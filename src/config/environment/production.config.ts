@@ -54,9 +54,9 @@ export default function createProductionConfig(): ProductionConfig {
       baseUrl: removeTrailingSlash(
         getEnvWithDefault(ENV_VARS.BASE_URL, '') ||
           getEnvWithDefault(ENV_VARS.API_URL, '') ||
-          'http://api.ishswami.in'
+          'https://api.ishswami.in'
       ),
-      apiUrl: getEnvWithDefault(ENV_VARS.API_URL, 'http://api.ishswami.in'),
+      apiUrl: getEnvWithDefault(ENV_VARS.API_URL, 'https://api.ishswami.in'),
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -65,7 +65,7 @@ export default function createProductionConfig(): ProductionConfig {
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, ''),
       prismaStudio: getEnvWithDefault(ENV_VARS.PRISMA_STUDIO_URL, '/prisma'),
-      frontend: getEnvWithDefault(ENV_VARS.FRONTEND_URL, 'http://ishswami.in'),
+      frontend: getEnvWithDefault(ENV_VARS.FRONTEND_URL, 'https://ishswami.in'),
     },
     database: {
       // Use helper functions (which use dotenv) for environment variable access
