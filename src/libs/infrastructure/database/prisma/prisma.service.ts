@@ -8,7 +8,8 @@ import {
 } from '@nestjs/common';
 // Use dynamic import for PrismaClient to avoid module caching issues
 // This allows PrismaClient to be loaded after prisma generate completes
-// Prisma 7: Import from generated client location
+// Prisma 7: Import type from generated client for proper type resolution
+// Import from generated client to ensure type compatibility
 import type { PrismaClient } from './generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
@@ -24,6 +25,9 @@ import { createRequire } from 'module';
 // Re-export PrismaClient type
 // Note: We use composition instead of inheritance to avoid 'any' types
 export type { PrismaClient } from '@prisma/client';
+
+// Type alias for PrismaClient constructor (used for dynamic loading)
+type PrismaClientConstructor = new (args?: PrismaClientConstructorArgs) => PrismaClient;
 
 // Import types from centralized locations
 import type {
@@ -245,7 +249,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Dynamically import PrismaClient to avoid module caching issues
    * This ensures PrismaClient is loaded after prisma generate completes
    */
-  private static async loadPrismaClient(): Promise<typeof PrismaClient> {
+  private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
     const customClientPath = path.join(
       cwd,
@@ -267,7 +271,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           process.platform === 'win32'
             ? `file:///${customClientIndex.replace(/\\/g, '/')}`
             : `file://${customClientIndex}`
-        )) as { PrismaClient?: typeof PrismaClient };
+        )) as { PrismaClient?: PrismaClientConstructor };
         if (customModule?.PrismaClient) {
           return customModule.PrismaClient;
         }
@@ -279,7 +283,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     try {
       // Dynamic import to get fresh PrismaClient from generated location
       const prismaModule = (await import('./generated/client')) as {
-        PrismaClient: typeof PrismaClient;
+        PrismaClient: PrismaClientConstructor;
       };
       return prismaModule.PrismaClient;
     } catch (error) {
@@ -324,7 +328,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       // Use createRequire for type-safe dynamic requires (CommonJS compatibility)
       // Dynamic require is necessary for Prisma client loading with pnpm
       const requireModule = createRequire(__filename);
-      let prismaModule: { PrismaClient: typeof PrismaClient } | null = null;
+      let prismaModule: { PrismaClient: PrismaClientConstructor } | null = null;
       const cwd = process.cwd();
 
       // Try custom generated location first (Prisma 7 with custom output)
@@ -343,18 +347,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       try {
         // Try custom location first
         if (fs.existsSync(customClientIndex)) {
-          prismaModule = requireModule(customClientIndex) as { PrismaClient: typeof PrismaClient };
+          prismaModule = requireModule(customClientIndex) as {
+            PrismaClient: PrismaClientConstructor;
+          };
         } else if (fs.existsSync(customClientPath)) {
           // Try directory import
-          prismaModule = requireModule(customClientPath) as { PrismaClient: typeof PrismaClient };
+          prismaModule = requireModule(customClientPath) as {
+            PrismaClient: PrismaClientConstructor;
+          };
         } else {
           // Fall back to generated client location
           const fallbackPath = path.join(__dirname, 'generated', 'client');
           if (fs.existsSync(fallbackPath)) {
-            prismaModule = requireModule(fallbackPath) as { PrismaClient: typeof PrismaClient };
+            prismaModule = requireModule(fallbackPath) as { PrismaClient: PrismaClientConstructor };
           } else {
             // Last resort: try @prisma/client (might not work with custom output)
-            prismaModule = requireModule('@prisma/client') as { PrismaClient: typeof PrismaClient };
+            prismaModule = requireModule('@prisma/client') as {
+              PrismaClient: PrismaClientConstructor;
+            };
           }
         }
       } catch (requireError) {
@@ -399,7 +409,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         for (const clientPath of possiblePaths) {
           if (fs.existsSync(clientPath)) {
             try {
-              prismaModule = requireModule(clientPath) as { PrismaClient: typeof PrismaClient };
+              prismaModule = requireModule(clientPath) as { PrismaClient: PrismaClientConstructor };
               break;
             } catch {
               // Continue to next path
@@ -437,9 +447,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
       // PrismaClient will throw an error if not generated when you try to instantiate it
       // The error message from Prisma is: "@prisma/client did not initialize yet. Please run "prisma generate" and try to import it again."
-      type PrismaClientConstructor = new (
-        constructorArgs: PrismaClientConstructorArgs
-      ) => PrismaClient;
       const PrismaClientConstructorClass = PrismaClientClass as unknown as PrismaClientConstructor;
 
       // Create instance - this will throw if PrismaClient wasn't generated

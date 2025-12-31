@@ -315,7 +315,8 @@ export class AppController {
         ? 'healthy'
         : 'unhealthy';
       // Communication service status (overall communication health)
-      const communicationStatus = communicationHealth?.status === 'healthy' ? 'healthy' : 'unhealthy';
+      const communicationStatus =
+        communicationHealth?.status === 'healthy' ? 'healthy' : 'unhealthy';
 
       // Extract real-time metrics for all services
       const basePort =
@@ -394,9 +395,7 @@ export class AppController {
           active: isCommunicationRunning, // Active if communication health check passes
           category: 'Services',
           port: Number(basePort),
-          status: communicationHealth?.status === 'healthy'
-            ? 'Running'
-            : 'Inactive',
+          status: communicationHealth?.status === 'healthy' ? 'Running' : 'Inactive',
           metrics: communicationMetrics,
         },
       ];
