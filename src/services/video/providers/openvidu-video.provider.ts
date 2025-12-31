@@ -51,9 +51,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
     private readonly databaseService: DatabaseService
   ) {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
-    this.apiUrl = videoConfig?.openvidu?.url || 'https://video.yourdomain.com';
+    this.apiUrl = videoConfig?.openvidu?.url || 'http://openvidu-server:4443';
     this.secret = videoConfig?.openvidu?.secret || '';
-    this.domain = videoConfig?.openvidu?.domain || 'video.yourdomain.com';
+    this.domain = videoConfig?.openvidu?.domain || 'video.ishswami.in';
   }
 
   /**

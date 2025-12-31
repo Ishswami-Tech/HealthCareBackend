@@ -630,7 +630,7 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.getUrlsConfig()?.frontend ?? this.configService.getEnv('FRONTEND_URL') ?? (this.configService.getEnv('BASE_URL') ?? 'http://localhost:8088').replace(':8088', ':3000')}/reset-password?token=${resetToken}`,
+          resetUrl: `${this.configService.getUrlsConfig()?.frontend ?? this.configService.getEnv('FRONTEND_URL') ?? 'https://ishswami.in'}/reset-password?token=${resetToken}`,
         },
         ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
       });
