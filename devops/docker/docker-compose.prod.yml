@@ -64,7 +64,7 @@ services:
       API_PREFIX: ${API_PREFIX:-/api/v1}
       MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
       API_DOMAIN: ${API_DOMAIN:-api.ishswami.in}
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       JWT_EXPIRATION: 24h
       
@@ -383,7 +383,7 @@ services:
       - server.port=4443
       - server.address=0.0.0.0
       - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:${PORT:-8088}/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
       - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
       - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
       - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
