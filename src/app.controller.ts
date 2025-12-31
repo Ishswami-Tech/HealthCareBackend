@@ -314,9 +314,8 @@ export class AppController {
       const socketStatus = communicationHealthData?.communicationHealth?.socket?.connected
         ? 'healthy'
         : 'unhealthy';
-      const emailStatus = communicationHealthData?.communicationHealth?.email?.connected
-        ? 'healthy'
-        : 'unhealthy';
+      // Communication service status (overall communication health)
+      const communicationStatus = communicationHealth?.status === 'healthy' ? 'healthy' : 'unhealthy';
 
       // Extract real-time metrics for all services
       const basePort =
@@ -328,7 +327,7 @@ export class AppController {
       const loggerMetrics =
         (loggerHealth && 'metrics' in loggerHealth ? loggerHealth.metrics : {}) || {};
       const socketMetrics = communicationHealthData?.communicationHealth?.socket || {};
-      const emailMetrics = communicationHealthData?.communicationHealth?.email || {};
+      const communicationMetrics = communicationHealthData?.communicationHealth || {};
       const queuePort = (queueMetrics['port'] as number | string | undefined) || basePort;
       const loggerPort = (loggerMetrics['port'] as number | string | undefined) || basePort;
       const activeQueues = queueMetrics['activeQueues'] as number | undefined;
@@ -339,7 +338,7 @@ export class AppController {
       const isQueueRunning = queueHealth?.status === 'healthy';
       const isLoggerRunning = loggerHealth?.status === 'healthy';
       const isSocketRunning = socketStatus === 'healthy';
-      const isEmailRunning = emailStatus === 'healthy';
+      const isCommunicationRunning = communicationStatus === 'healthy';
       const isPrismaStudioRunning = prismaStudioStatus === 'healthy';
       const isRedisCommanderRunning = redisCommanderStatus === 'healthy';
 
@@ -389,16 +388,16 @@ export class AppController {
           metrics: socketMetrics,
         },
         {
-          name: 'Email Service',
-          description: `Email sending and template management. Port: ${String(basePort)}`,
-          url: `${baseUrl}${appConfig.apiPrefix}/email/status`,
-          active: isEmailRunning, // Active if email health check passes
+          name: 'Communication',
+          description: `Communication service for email, WhatsApp, SMS, and push notifications. Port: ${String(basePort)}`,
+          url: `${baseUrl}${appConfig.apiPrefix}/communication/health`,
+          active: isCommunicationRunning, // Active if communication health check passes
           category: 'Services',
           port: Number(basePort),
-          status: communicationHealthData?.communicationHealth?.email?.connected
+          status: communicationHealth?.status === 'healthy'
             ? 'Running'
             : 'Inactive',
-          metrics: emailMetrics,
+          metrics: communicationMetrics,
         },
       ];
 
@@ -454,14 +453,14 @@ export class AppController {
       // Development: Show all services
       const services = isProduction
         ? allServices.filter((service: ServiceInfo) => {
-            // In production/staging, only show: API Documentation, Queue Dashboard, Logger, WebSocket, Email Service
+            // In production/staging, only show: API Documentation, Queue Dashboard, Logger, WebSocket, Communication
             // Hide: Prisma Studio, Redis Commander (unless Redis is provider)
             const essentialServices = [
               'API Documentation',
               'Queue Dashboard',
               'Logger',
               'WebSocket',
-              'Email Service',
+              'Communication',
             ];
             // Also show Redis Commander if Redis is the provider (not Dragonfly)
             if (service.name === 'Redis Commander' && !service.devOnly) {
