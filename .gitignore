@@ -90,9 +90,7 @@ bin/
 # test-startup.sh
 # test-local-start.sh
 # quick-test.sh
-.env.development
-.env.test.local
-.env.production
+# Note: .env files are already ignored above (lines 14-20)
 
 # Test output and log files
 seed-output*.txt

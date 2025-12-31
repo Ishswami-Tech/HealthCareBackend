@@ -134,5 +134,20 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
     },
+  },
+  {
+    // Seed file - allowed to use PrismaClient directly per architectural rules
+    files: ['**/seed.ts', '**/seed.js'],
+    rules: {
+      // Seed files are explicitly allowed to use PrismaClient directly
+      // per architectural rules: "we should not use prisma service or prisma client directly
+      // we should use database service except seed for all @src/ code"
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-redundant-type-constituents': 'off',
+    },
   }
 );

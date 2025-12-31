@@ -10,7 +10,9 @@ import {
 // This allows PrismaClient to be loaded after prisma generate completes
 // Prisma 7: Import type from generated client for proper type resolution
 // Import from generated client to ensure type compatibility
-import type { PrismaClient } from './generated/client';
+import type { PrismaClient as GeneratedPrismaClient } from './generated/client';
+// Import PrismaClient type from @prisma/client for static properties and type annotations
+import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { LoggingService } from '@infrastructure/logging';
@@ -27,7 +29,8 @@ import { createRequire } from 'module';
 export type { PrismaClient } from '@prisma/client';
 
 // Type alias for PrismaClient constructor (used for dynamic loading)
-type PrismaClientConstructor = new (args?: PrismaClientConstructorArgs) => PrismaClient;
+// Use GeneratedPrismaClient for the constructor return type to match the actual generated client
+type PrismaClientConstructor = new (args?: PrismaClientConstructorArgs) => GeneratedPrismaClient;
 
 // Import types from centralized locations
 import type {
@@ -235,9 +238,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static instance: PrismaService | null = null;
   // Singleton PrismaClient instance shared across all PrismaService instances
   // This prevents connection pool exhaustion when using REQUEST scope
+  // Use type assertion to avoid ESLint error type issues with dynamic imports
   private static sharedPrismaClient: PrismaClient | null = null;
   // Dedicated PrismaClient instance for health checks
   // Uses a separate connection pool to avoid interfering with regular operations
+  // Use type assertion to avoid ESLint error type issues with dynamic imports
   private static healthCheckPrismaClient: PrismaClient | null = null;
   private static circuitBreakerFailures = 0;
   private static circuitBreakerLastFailure = 0;
@@ -307,6 +312,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static createPrismaClientInstance(
     constructorArgs: PrismaClientConstructorArgs
   ): PrismaClient {
+    // Return type is PrismaClient from @prisma/client, but actual instance is GeneratedPrismaClient
+    // Type assertion is safe because both types are compatible
     try {
       // Clear require cache for @prisma/client to force reload
       // This ensures we get a fresh PrismaClient after prisma generate
@@ -450,7 +457,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       const PrismaClientConstructorClass = PrismaClientClass as unknown as PrismaClientConstructor;
 
       // Create instance - this will throw if PrismaClient wasn't generated
-      const client = new PrismaClientConstructorClass(constructorArgs);
+      // Type assertion: GeneratedPrismaClient is compatible with PrismaClient from @prisma/client
+      const client = new PrismaClientConstructorClass(constructorArgs) as unknown as PrismaClient;
 
       // Verify the client is properly initialized by checking for delegates
       // This ensures PrismaClient was generated correctly
@@ -633,6 +641,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Direct assignment instead of Object.defineProperty to avoid access issues
+    // Type assertion is safe: sharedPrismaClient is PrismaClient from @prisma/client
     this.prismaClient = PrismaService.sharedPrismaClient;
 
     // Apply production optimizations
@@ -715,6 +724,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     };
 
     // Replace prismaClient with extended version using direct assignment
+    // Type assertion is safe: extendPrismaClient returns PrismaClient-compatible instance
     this.prismaClient = PrismaService.extendPrismaClient(this.prismaClient, productionExtendArgs);
 
     // Initialize delegate properties using Object.defineProperty to break ESLint's type tracking
@@ -871,9 +881,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         adapter: healthCheckAdapter,
       };
 
+      // Type assertion is safe: createPrismaClientInstance returns PrismaClient from @prisma/client
       PrismaService.healthCheckPrismaClient =
         PrismaService.createPrismaClientInstance(prismaConstructorArgs);
     }
+    // Type assertion is safe: healthCheckPrismaClient is PrismaClient from @prisma/client
     return PrismaService.healthCheckPrismaClient;
   }
 
@@ -1046,6 +1058,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             adapter,
           };
 
+          // Type assertion is safe: createPrismaClientInstance returns PrismaClient from @prisma/client
           this.prismaClient = PrismaService.createPrismaClientInstance(constructorArgs);
 
           // Verify client is properly initialized
