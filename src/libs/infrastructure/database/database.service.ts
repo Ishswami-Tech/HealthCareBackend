@@ -1531,9 +1531,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       // If health monitor shows default status (latency 0, no real check performed), perform real-time check
       // This happens if health monitoring hasn't started yet or if the last check was too long ago
       const timeSinceLastCheck = Date.now() - healthStatus.lastCheck.getTime();
-      const shouldPerformRealtimeCheck = 
+      const shouldPerformRealtimeCheck =
         (healthStatus.status === 'healthy' && healthStatus.latency === 0) || // Default status
-        (timeSinceLastCheck > 60000); // Last check was more than 60 seconds ago
+        timeSinceLastCheck > 60000; // Last check was more than 60 seconds ago
 
       if (shouldPerformRealtimeCheck) {
         try {
@@ -1541,7 +1541,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           const startTime = Date.now();
           await Promise.race([
             this.prismaService.$queryRaw`SELECT 1`,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Health check timeout')), 5000)),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timeout')), 5000)
+            ),
           ]);
           const latency = Date.now() - startTime;
 
@@ -1560,21 +1562,38 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             activeQueries: connectionMetrics.activeConnections,
             avgResponseTime: -1,
             lastHealthCheck: new Date(),
-            errors: [checkError instanceof Error ? checkError.message : 'Database health check failed'],
+            errors: [
+              checkError instanceof Error ? checkError.message : 'Database health check failed',
+            ],
           };
         }
       }
 
       // Use cached health status from monitor
+      // Properly extract error message from details (handles both string and object errors)
+      let errorMessage = 'Database health check failed';
+      if (healthStatus.status === 'unhealthy' && healthStatus.details?.['error']) {
+        const errorDetail = healthStatus.details['error'];
+        if (typeof errorDetail === 'string') {
+          errorMessage = errorDetail;
+        } else if (errorDetail instanceof Error) {
+          errorMessage = errorDetail.message;
+        } else if (typeof errorDetail === 'object' && errorDetail !== null) {
+          // For objects, try to extract a meaningful message or stringify safely
+          errorMessage =
+            'message' in errorDetail && typeof errorDetail.message === 'string'
+              ? errorDetail.message
+              : JSON.stringify(errorDetail);
+        }
+      }
+
       return {
         isHealthy: connectionMetrics.isHealthy && healthStatus.status === 'healthy',
         connectionCount: connectionMetrics.totalConnections,
         activeQueries: connectionMetrics.activeConnections,
         avgResponseTime: healthStatus.latency,
         lastHealthCheck: healthStatus.lastCheck,
-        errors: healthStatus.status === 'unhealthy' 
-          ? (healthStatus.details?.error ? [String(healthStatus.details.error)] : ['Database health check failed']) 
-          : [],
+        errors: healthStatus.status === 'unhealthy' ? [errorMessage] : [],
       };
     } catch (error) {
       return {
