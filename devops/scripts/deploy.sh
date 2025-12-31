@@ -221,6 +221,31 @@ else
     [ -n "${BASE_URL}" ] && echo "BASE_URL=${BASE_URL}"
     [ -n "${API_URL}" ] && echo "API_URL=${API_URL}"
     [ -n "${FRONTEND_URL}" ] && echo "FRONTEND_URL=${FRONTEND_URL}"
+    [ -n "${MAIN_DOMAIN}" ] && echo "MAIN_DOMAIN=${MAIN_DOMAIN}"
+    [ -n "${API_DOMAIN}" ] && echo "API_DOMAIN=${API_DOMAIN}"
+    [ -n "${FRONTEND_DOMAIN}" ] && echo "FRONTEND_DOMAIN=${FRONTEND_DOMAIN}"
+    
+    # Clinic-Specific Frontend URLs (Multi-Tenant)
+    # ============================================
+    # ARCHITECTURE: Single Backend API, Multiple Frontends
+    # - Each clinic has its own frontend URL (e.g., https://vishwamurti.viddhakarma.com)
+    # - All frontends connect to the SAME backend API (API_URL)
+    # - Each frontend automatically sends X-Clinic-ID header in all requests
+    # - Backend uses X-Clinic-ID to identify which clinic the request is for
+    #
+    # IMPORTANT: All clinic frontend URLs MUST be added to CORS_ORIGIN variable
+    # Format: Comma-separated list (no spaces after commas)
+    # Example: "https://ishswami.in,https://vishwamurti.viddhakarma.com,https://clinic2.viddhakarma.com"
+    #
+    # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_FRONTEND_URL
+    # Example: "Vishwamurti Ayurvedelay" → "VISHWAMURTI_AYURVEDELAY"
+    #
+    # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+    # Example for "Aadesh Ayurvedalay":
+    # [ -n "${CLINIC_AADESH_AYURVEDELAY_FRONTEND_URL}" ] && echo "CLINIC_AADESH_AYURVEDELAY_FRONTEND_URL=${CLINIC_AADESH_AYURVEDELAY_FRONTEND_URL}"
+    #
+    # Vishwamurti Ayurvedelay (CL0001)
+    [ -n "${CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL}" ] && echo "CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL}"
     
     # JWT Configuration
     [ -n "${JWT_SECRET}" ] && echo "JWT_SECRET=${JWT_SECRET}"

@@ -206,6 +206,9 @@ jobs:
           BASE_URL=${{ vars.BASE_URL }}
           API_URL=${{ vars.API_URL }}
           FRONTEND_URL=${{ vars.FRONTEND_URL }}
+          MAIN_DOMAIN=${{ vars.MAIN_DOMAIN }}
+          API_DOMAIN=${{ vars.API_DOMAIN }}
+          FRONTEND_DOMAIN=${{ vars.FRONTEND_DOMAIN }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           JWT_EXPIRATION=${{ vars.JWT_EXPIRATION }}
           JWT_ACCESS_EXPIRES_IN=${{ vars.JWT_ACCESS_EXPIRES_IN }}
@@ -240,10 +243,12 @@ jobs:
           
           # Clinic-Specific Email Configuration (Multi-Tenant)
           # ===================================================
-          # ARCHITECTURE: Single Backend API with Clinic-Specific Credentials Only
+          # ARCHITECTURE: Single Backend API, Multiple Frontends
           # - ONE backend API (API_URL) serves ALL clinics
-          # - Only clinic-related credentials differ (email, WhatsApp, SMS, etc.)
-          # - All clinics share the same backend infrastructure
+          # - MULTIPLE frontends (one per clinic) connect to the SAME API
+          # - Each frontend sends X-Clinic-ID header to identify which clinic it represents
+          # - Only clinic-related credentials differ (email, WhatsApp, SMS, frontend URLs, etc.)
+          # - All clinics share the same backend infrastructure (database, cache, services)
           #
           # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_{CONFIG_KEY}
           # Clinic names are sanitized: spaces/special chars → underscores, uppercase
@@ -262,6 +267,12 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
           
+          # CORS Configuration - Single API, Multiple Frontends
+          # =====================================================
+          # IMPORTANT: Include ALL clinic frontend URLs in CORS_ORIGIN
+          # Format: Comma-separated list (no spaces after commas)
+          # Example: "https://ishswami.in,https://www.ishswami.in,https://vishwamurti.viddhakarma.com"
+          # All frontends connect to the SAME backend API (API_URL)
           CORS_ORIGIN=${{ vars.CORS_ORIGIN }}
           CORS_CREDENTIALS=${{ vars.CORS_CREDENTIALS }}
           CORS_METHODS=${{ vars.CORS_METHODS }}
@@ -294,10 +305,25 @@ jobs:
           
           # Clinic-Specific Frontend URLs (Multi-Tenant)
           # ============================================
-          # Each clinic can have its own frontend URL
-          # IMPORTANT: All clinic frontend URLs must also be added to CORS_ORIGIN variable
-          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL }}
-          # To add more clinics, duplicate the pattern above with the clinic's sanitized name
+          # ARCHITECTURE: Single Backend API, Multiple Frontends
+          # - Each clinic has its own frontend URL (e.g., https://vishwamurti.viddhakarma.com)
+          # - All frontends connect to the SAME backend API (API_URL)
+          # - Each frontend automatically sends X-Clinic-ID header in all requests
+          # - Backend uses X-Clinic-ID to identify which clinic the request is for
+          #
+          # IMPORTANT: All clinic frontend URLs MUST be added to CORS_ORIGIN variable
+          # Format: Comma-separated list (no spaces after commas)
+          # Example: "https://ishswami.in,https://vishwamurti.viddhakarma.com,https://clinic2.viddhakarma.com"
+          #
+          # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_FRONTEND_URL
+          # Example: "Vishwamurti Ayurvedelay" → "VISHWAMURTI_AYURVEDELAY"
+          #
+          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
+          # Example for "Aadesh Ayurvedalay":
+          # CLINIC_AADESH_AYURVEDELAY_FRONTEND_URL=${{ vars.CLINIC_AADESH_AYURVEDELAY_FRONTEND_URL }}
+          #
+          # Vishwamurti Ayurvedelay (CL0001)
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL }}
           
           VIDEO_ENABLED=${{ vars.VIDEO_ENABLED }}
           VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}

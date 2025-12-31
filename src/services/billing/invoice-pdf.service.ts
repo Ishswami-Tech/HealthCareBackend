@@ -409,7 +409,7 @@ export class InvoicePDFService {
       appConfig.baseUrl ||
       this.configService.getEnv('API_URL') ||
       this.configService.getEnv('BASE_URL') ||
-      'http://localhost:8088';
+      'https://api.ishswami.in';
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 
