@@ -182,7 +182,7 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed') &&
+        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
         echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Running Prisma Database Sync (Development Mode)...' &&
@@ -384,7 +384,7 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed') &&
+        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
         echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Starting worker process...' &&

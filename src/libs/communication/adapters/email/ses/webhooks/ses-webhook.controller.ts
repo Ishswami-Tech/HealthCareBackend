@@ -28,7 +28,7 @@ interface SNSMessage {
   UnsubscribeURL: string;
 }
 
-@ApiTags('Email Webhooks')
+@ApiTags('communication')
 @Controller('webhooks/ses')
 export class SESWebhookController {
   constructor(private readonly sesWebhookService: SESWebhookService) {}

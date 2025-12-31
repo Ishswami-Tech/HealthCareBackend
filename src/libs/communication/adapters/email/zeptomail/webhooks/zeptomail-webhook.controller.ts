@@ -35,7 +35,7 @@ interface ZeptoMailWebhookEvent {
   metadata?: Record<string, unknown>;
 }
 
-@ApiTags('Email Webhooks')
+@ApiTags('communication')
 @Controller('webhooks/zeptomail')
 export class ZeptoMailWebhookController {
   constructor(
