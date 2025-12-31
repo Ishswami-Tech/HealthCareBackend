@@ -13,6 +13,7 @@ import { AppointmentsModule } from './services/appointments/appointments.module'
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ScheduleModule } from '@nestjs/schedule';
 import { QueueModule } from '@infrastructure/queue';
+import { BullBoardModule } from '@infrastructure/queue/src/bull-board/bull-board.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { BillingModule } from './services/billing/billing.module';
 import { EHRModule } from './services/ehr/ehr.module';
@@ -40,6 +41,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     }),
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
+    BullBoardModule.forRoot(), // Queue dashboard at /queue-dashboard
     // JWT is configured in AuthModule - no need for global registration here
     // This ensures all JWT operations use the same secret from ConfigService
     // Core modules must be loaded before communication modules to ensure LoggingService is available
