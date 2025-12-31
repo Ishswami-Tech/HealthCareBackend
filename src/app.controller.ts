@@ -1,4 +1,4 @@
-import { Controller, Get, Res, Inject, forwardRef } from '@nestjs/common';
+import { Controller, Get, Res, Inject, forwardRef, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { AppService } from './app.service';
 import { Public } from '@core/decorators/public.decorator';
@@ -315,7 +315,8 @@ export class AppController {
         ? 'healthy'
         : 'unhealthy';
       // Communication service status (overall communication health)
-      const communicationStatus = communicationHealth?.status === 'healthy' ? 'healthy' : 'unhealthy';
+      const communicationStatus =
+        communicationHealth?.status === 'healthy' ? 'healthy' : 'unhealthy';
 
       // Extract real-time metrics for all services
       const basePort =
@@ -394,9 +395,7 @@ export class AppController {
           active: isCommunicationRunning, // Active if communication health check passes
           category: 'Services',
           port: Number(basePort),
-          status: communicationHealth?.status === 'healthy'
-            ? 'Running'
-            : 'Inactive',
+          status: communicationHealth?.status === 'healthy' ? 'Running' : 'Inactive',
           metrics: communicationMetrics,
         },
       ];
@@ -577,6 +576,36 @@ export class AppController {
           </body>
         </html>
       `);
+    }
+  }
+
+  @Get('health')
+  @Public()
+  @ApiOperation({
+    summary: 'System Health Check',
+    description:
+      'Returns real-time health status of all core services. Use ?detailed=true for extended metrics.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Health status retrieved successfully',
+  })
+  async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
+    try {
+      const isDetailed = detailed === 'true' || detailed === '1';
+      const healthResult = isDetailed
+        ? await this.healthService.getDetailedHealth()
+        : await this.healthService.getHealth();
+
+      return res.status(200).send(healthResult);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const fallbackResponse = {
+        status: 'degraded',
+        timestamp: new Date().toISOString(),
+        message: `Health check failed: ${errorMessage}`,
+      };
+      return res.status(200).send(fallbackResponse);
     }
   }
 
