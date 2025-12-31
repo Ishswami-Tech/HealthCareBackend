@@ -110,20 +110,41 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
  * Redis configuration factory (for backward compatibility)
  * This is registered with NestJS ConfigModule as 'redis'
  * Merged from redis.config.ts - now part of unified cache configuration
+ *
+ * When Redis is disabled, returns minimal config with safe defaults (no validation required)
  */
 export const redisConfig = registerAs('redis', (): RedisConfig => {
   // Use helper functions (which use dotenv) for environment variable access
+  const isRedisEnabled = isCacheEnabled() && getCacheProvider() === 'redis';
+
+  // If Redis is disabled, return minimal config with safe defaults (no validation needed)
+  if (!isRedisEnabled) {
+    return {
+      host: getDefaultRedisHost(), // Safe default, won't be used
+      port: 6379, // Safe default, won't be used
+      ttl: DEFAULT_CONFIG.REDIS_TTL, // Safe default, won't be used
+      prefix: 'healthcare:', // Safe default, won't be used
+      enabled: false,
+      development: isDevelopment(),
+    };
+  }
+
+  // Redis is enabled - require proper configuration
+  const redisHostEnv = getEnv(ENV_VARS.REDIS_HOST);
+  // Use default if empty or undefined (empty string from .env file counts as empty)
+  const redisHost =
+    redisHostEnv && redisHostEnv.trim() !== '' ? redisHostEnv : getDefaultRedisHost();
+
   const config: RedisConfig = {
-    host: getEnv(ENV_VARS.REDIS_HOST) ?? getDefaultRedisHost(),
+    host: redisHost,
     port: parseInteger(getEnv(ENV_VARS.REDIS_PORT), 6379, 1, 65535),
     ttl: parseInteger(getEnv('REDIS_TTL'), DEFAULT_CONFIG.REDIS_TTL, 1),
     prefix: getEnvWithDefault('REDIS_PREFIX', 'healthcare:'),
-    // Respect cache enabled status - Redis is only enabled if cache is enabled and Redis is the provider
-    enabled: isCacheEnabled() && getCacheProvider() === 'redis',
+    enabled: true, // Redis is enabled
     development: isDevelopment(),
   };
 
-  // Validate configuration
+  // Validate configuration only when Redis is enabled
   validateRedisConfig(config);
 
   return config;
