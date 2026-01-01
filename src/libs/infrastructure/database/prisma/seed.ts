@@ -1,6 +1,8 @@
 // Import PrismaClient - use adapter pattern for Prisma 7 with engine type "client"
 // Import from generated client to ensure type compatibility with Prisma 7
-import { PrismaClient } from './generated/client';
+// Prisma Client is generated before type checking in build script
+// Note: This file is excluded from TypeScript checking in tsconfig.json
+import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import { faker } from '@faker-js/faker';
@@ -94,7 +96,9 @@ const adapter = new PrismaPg(pool);
 // Create PrismaClient with adapter - simplified initialization
 // Clear require cache to ensure fresh PrismaClient
 try {
-  const modulePath = require.resolve('./generated/client');
+  // Use dynamic import path - TypeScript cannot resolve at compile time
+  // Type assertion is safe because we verify the module exists at runtime
+  const modulePath = require.resolve('./generated/client/index.js' as string);
   delete require.cache[modulePath];
   Object.keys(require.cache).forEach(key => {
     if (key.includes('prisma') || key.includes('.prisma')) {
@@ -113,7 +117,8 @@ const prismaConstructorArgs = {
 };
 
 console.log('Creating PrismaClient instance...');
-const prisma = new PrismaClient(prismaConstructorArgs);
+// Explicit type annotation ensures TypeScript can properly infer PrismaClient methods
+const prisma: PrismaClient = new PrismaClient(prismaConstructorArgs);
 console.log('PrismaClient initialized successfully');
 
 let userIdCounter = 1;
@@ -298,7 +303,9 @@ async function quickSeed() {
         where: { id: demoPatient.id },
         include: { clinics: true },
       });
-      if (!patientClinicCheck?.clinics?.some(c => c.id === clinic.id)) {
+      // Type assertion needed because Prisma types may not be available at compile time
+      const clinics = (patientClinicCheck?.clinics || []) as Array<{ id: string }>;
+      if (!clinics.some((c: { id: string }) => c.id === clinic.id)) {
         console.log('Ensuring patient-clinic association...');
         await prisma.user.update({
           where: { id: demoPatient.id },
@@ -325,7 +332,9 @@ async function quickSeed() {
         where: { email: 'patient1@example.com' },
         include: { clinics: true },
       });
-      if (!patientClinics?.clinics?.some(c => c.id === clinic.id)) {
+      // Type assertion needed because Prisma types may not be available at compile time
+      const patientClinicsList = (patientClinics?.clinics || []) as Array<{ id: string }>;
+      if (!patientClinicsList.some((c: { id: string }) => c.id === clinic.id)) {
         console.log('Associating patient with clinic...');
         await prisma.user.update({
           where: { id: demoPatient.id },
@@ -372,7 +381,9 @@ async function quickSeed() {
         where: { id: demoDoctor.id },
         include: { clinics: true },
       });
-      if (!doctorClinicCheckAfterCreate?.clinics?.some(c => c.id === clinic.id)) {
+      // Type assertion needed because Prisma types may not be available at compile time
+      const doctorClinicsAfterCreate = (doctorClinicCheckAfterCreate?.clinics || []) as Array<{ id: string }>;
+      if (!doctorClinicsAfterCreate.some((c: { id: string }) => c.id === clinic.id)) {
         console.log('Ensuring doctor-clinic association...');
         await prisma.user.update({
           where: { id: demoDoctor.id },
@@ -422,7 +433,9 @@ async function quickSeed() {
         where: { email: 'doctor1@example.com' },
         include: { clinics: true },
       });
-      if (!doctorClinics?.clinics?.some(c => c.id === clinic.id)) {
+      // Type assertion needed because Prisma types may not be available at compile time
+      const doctorClinicsList = (doctorClinics?.clinics || []) as Array<{ id: string }>;
+      if (!doctorClinicsList.some((c: { id: string }) => c.id === clinic.id)) {
         console.log('Associating doctor with clinic...');
         await prisma.user.update({
           where: { id: demoDoctor.id },

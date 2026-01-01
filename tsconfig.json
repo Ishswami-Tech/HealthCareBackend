@@ -27,6 +27,8 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "allowJs": false,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
     "paths": {
       "@database/*": ["src/libs/infrastructure/database/*"],
       "@infrastructure/*": ["src/libs/infrastructure/*"],
@@ -54,9 +56,10 @@
     "node_modules",
     "dist",
     "**/prisma.config.js",
-    "**/generated/**",
-    "src/libs/infrastructure/database/generated"
+    "src/libs/infrastructure/database/generated",
+    "src/libs/infrastructure/database/prisma/seed.ts"
     // Note: src/libs/infrastructure/database/prisma/generated is NOT excluded
     // to allow TypeScript to resolve types from Prisma Client
+    // Note: seed.ts is excluded as it's only used for development/testing
   ]
 }

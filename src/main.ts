@@ -76,7 +76,7 @@ function setupConsoleRedirect(loggingService: LoggingService) {
 }
 
 // Add environment type
-const validEnvironments = ['development', 'production', 'staging', 'test'] as const;
+const validEnvironments = ['development', 'production', 'staging', 'test', 'local-prod'] as const;
 type Environment = (typeof validEnvironments)[number];
 
 // Framework adapter instance - initialized in bootstrap
@@ -637,7 +637,8 @@ async function bootstrap() {
     let envConfig: ReturnType<typeof productionConfig> | ReturnType<typeof developmentConfig>;
     if (environment === 'production') {
       envConfig = productionConfig();
-    } else if (environment === 'staging') {
+    } else if (environment === 'staging' || environment === 'local-prod') {
+      // local-prod uses staging config (production-like but for local testing)
       envConfig = stagingConfig();
     } else if (environment === 'test') {
       envConfig = testConfig();

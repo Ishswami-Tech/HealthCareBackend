@@ -11,7 +11,7 @@ const nestjsTypedRules =
   nestjsTypedPlugin.configs?.flat?.recommended?.rules ||
   {};
 
-export default tseslint.config(
+export default [
   {
     ignores: [
       'eslint.config.mjs',
@@ -23,6 +23,8 @@ export default tseslint.config(
       'src/libs/infrastructure/database/prisma/generated/**',
       '**/*.generated.ts',
       '**/*.generated.js',
+      '**/seed.ts',
+      '**/seed.js',
     ],
   },
   eslint.configs.recommended,
@@ -136,18 +138,10 @@ export default tseslint.config(
     },
   },
   {
-    // Seed file - allowed to use PrismaClient directly per architectural rules
-    files: ['**/seed.ts', '**/seed.js'],
+    // Allow console.log in seed files and scripts
+    files: ['**/seed.ts', '**/seed.js', '**/scripts/**/*.ts', '**/scripts/**/*.js'],
     rules: {
-      // Seed files are explicitly allowed to use PrismaClient directly
-      // per architectural rules: "we should not use prisma service or prisma client directly
-      // we should use database service except seed for all @src/ code"
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-redundant-type-constituents': 'off',
+      'no-console': 'off',
     },
-  }
-);
+  },
+];

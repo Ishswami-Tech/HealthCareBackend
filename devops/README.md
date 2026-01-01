@@ -200,10 +200,12 @@ Helpers:
 
 All DevOps operations are now consolidated into unified scripts:
 - **Main Entry**: `devops/scripts/healthcare.sh` - Routes to Docker or Kubernetes
-- **Docker**: `devops/scripts/docker.sh` - All Docker Compose operations
-- **Kubernetes**: `devops/scripts/k8s.sh` - All Kubernetes operations
+- **Docker**: `devops/scripts/dev/docker.sh` - Local Docker Compose operations
+- **Docker Production**: `devops/scripts/docker-infra/` - Production Docker infrastructure scripts
+- **Kubernetes**: `devops/scripts/dev/k8s.sh` - Local Kubernetes operations
+- **Kubernetes Production**: `devops/scripts/kubernetes/` - Production Kubernetes scripts (to be implemented)
 
-See `devops/scripts/README.md` for detailed usage.
+See `devops/scripts/README.md` for detailed usage and `devops/scripts/VERIFICATION.md` for implementation status.
 
 ## Health Monitoring
 

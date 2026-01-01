@@ -1,5 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -7,10 +9,12 @@ import type { InvoicePDFData } from '@core/types/billing.types';
 
 @Injectable()
 export class InvoicePDFService {
-  private readonly logger = new Logger(InvoicePDFService.name);
   private readonly invoicesDir: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
+  ) {
     // Create invoices directory if it doesn't exist
     // Try app storage first, fallback to /tmp if permission denied
     const storageDir = path.join(process.cwd(), 'storage', 'invoices');
@@ -23,8 +27,12 @@ export class InvoicePDFService {
       this.invoicesDir = storageDir;
     } catch (error) {
       // If permission denied, use /tmp as fallback
-      this.logger.warn(
-        `Could not create storage directory at ${storageDir}, using /tmp as fallback: ${error instanceof Error ? error.message : 'Unknown error'}`
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Could not create storage directory at ${storageDir}, using /tmp as fallback`,
+        'InvoicePDFService',
+        { storageDir, error: error instanceof Error ? error.message : 'Unknown error' }
       );
       try {
         if (!fs.existsSync(tmpDir)) {
@@ -32,8 +40,12 @@ export class InvoicePDFService {
         }
         this.invoicesDir = tmpDir;
       } catch (tmpError) {
-        this.logger.error(
-          `Failed to create fallback directory at ${tmpDir}: ${tmpError instanceof Error ? tmpError.message : 'Unknown error'}`
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Failed to create fallback directory at ${tmpDir}`,
+          'InvoicePDFService',
+          { tmpDir, error: tmpError instanceof Error ? tmpError.message : 'Unknown error' }
         );
         // Last resort: use current working directory
         this.invoicesDir = process.cwd();
@@ -77,13 +89,25 @@ export class InvoicePDFService {
         writeStream.on('error', reject);
       });
 
-      this.logger.log(`Invoice PDF generated successfully: ${fileName}`);
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Invoice PDF generated successfully: ${fileName}`,
+        'InvoicePDFService',
+        { fileName, invoiceNumber: data.invoiceNumber }
+      );
 
       return { filePath, fileName };
     } catch (error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to generate invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
+        'InvoicePDFService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
       throw error;
     }
@@ -422,11 +446,24 @@ export class InvoicePDFService {
 
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
-        this.logger.log(`Invoice PDF deleted: ${fileName}`);
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          `Invoice PDF deleted: ${fileName}`,
+          'InvoicePDFService',
+          { fileName }
+        );
       }
     } catch (error) {
-      this.logger.error(
-        `Failed to delete invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to delete invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'InvoicePDFService',
+        {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }

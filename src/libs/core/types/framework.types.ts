@@ -58,7 +58,7 @@ import type { RedisClient } from './common.types';
  * ```
  */
 export interface FrameworkAdapterOptions {
-  readonly environment: 'development' | 'production' | 'staging' | 'test';
+  readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   readonly isHorizontalScaling: boolean;
   readonly instanceId: string;
   readonly trustProxy: boolean;
@@ -211,7 +211,7 @@ export type ServiceToken = string | symbol | (new (...args: never[]) => unknown)
  * Application configuration options
  */
 export interface ApplicationConfig {
-  readonly environment: 'development' | 'production' | 'staging' | 'test';
+  readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   readonly isHorizontalScaling: boolean;
   readonly instanceId: string;
   readonly trustProxy: boolean;

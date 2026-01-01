@@ -75,6 +75,9 @@ src/libs/infrastructure/database/prisma/generated/
 node_modules/.prisma
 # Note: src/libs/infrastructure/database/prisma/generated/ is tracked in git
 
+# Docker data directories (local development data)
+devops/docker/data/
+
 .claude
 
 # Binary files and executables
