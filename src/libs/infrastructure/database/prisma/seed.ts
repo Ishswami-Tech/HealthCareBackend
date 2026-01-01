@@ -382,7 +382,9 @@ async function quickSeed() {
         include: { clinics: true },
       });
       // Type assertion needed because Prisma types may not be available at compile time
-      const doctorClinicsAfterCreate = (doctorClinicCheckAfterCreate?.clinics || []) as Array<{ id: string }>;
+      const doctorClinicsAfterCreate = (doctorClinicCheckAfterCreate?.clinics || []) as Array<{
+        id: string;
+      }>;
       if (!doctorClinicsAfterCreate.some((c: { id: string }) => c.id === clinic.id)) {
         console.log('Ensuring doctor-clinic association...');
         await prisma.user.update({
