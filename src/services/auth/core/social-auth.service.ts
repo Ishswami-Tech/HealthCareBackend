@@ -1,7 +1,9 @@
-import { Injectable, Logger, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database';
 import { EmailService } from '@communication/channels/email/email.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
 import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
@@ -9,14 +11,14 @@ import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
 export class SocialAuthService {
-  private readonly logger = new Logger(SocialAuthService.name);
   private readonly providers: Map<string, SocialAuthProvider> = new Map();
   private googleOAuthClient: OAuth2Client | null = null;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
-    private readonly emailService: EmailService
+    private readonly emailService: EmailService,
+    private readonly loggingService: LoggingService
   ) {
     this.initializeProviders();
     this.initializeGoogleOAuth();
@@ -78,10 +80,20 @@ export class SocialAuthService {
         clientSecret,
         redirectUri,
       });
-      this.logger.log('Google OAuth2 client initialized');
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        'Google OAuth2 client initialized',
+        'SocialAuthService',
+        {}
+      );
     } else {
-      this.logger.warn(
-        'Google OAuth2 client not initialized - missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET'
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.WARN,
+        'Google OAuth2 client not initialized - missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET',
+        'SocialAuthService',
+        {}
       );
     }
   }
@@ -104,9 +116,15 @@ export class SocialAuthService {
         provider: 'google',
       });
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         'Google authentication failed',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'SocialAuthService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       throw new BadRequestException('Google authentication failed');
     }
@@ -133,9 +151,15 @@ export class SocialAuthService {
         provider: 'facebook',
       });
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         'Facebook authentication failed',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'SocialAuthService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       throw new BadRequestException('Facebook authentication failed');
     }
@@ -157,9 +181,15 @@ export class SocialAuthService {
         provider: 'apple',
       });
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         'Apple authentication failed',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'SocialAuthService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       throw new BadRequestException('Apple authentication failed');
     }
@@ -212,7 +242,13 @@ export class SocialAuthService {
           ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
         });
 
-        this.logger.log(`New social user created: ${user.email} via ${socialUser.provider}`);
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.INFO,
+          `New social user created: ${user.email} via ${socialUser.provider}`,
+          'SocialAuthService',
+          { userId: user.id, email: user.email, provider: socialUser.provider }
+        );
       } else {
         // Update existing user with social ID if not already set
         const socialIdField = this.getSocialIdField(socialUser.provider);
@@ -229,8 +265,12 @@ export class SocialAuthService {
           user = await this.databaseService.updateUserSafe(user.id, updateData);
         }
 
-        this.logger.log(
-          `Existing user logged in via social: ${user.email} via ${socialUser.provider}`
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.INFO,
+          `Existing user logged in via social: ${user.email} via ${socialUser.provider}`,
+          'SocialAuthService',
+          { userId: user.id, email: user.email, provider: socialUser.provider }
         );
       }
 
@@ -249,9 +289,17 @@ export class SocialAuthService {
         message: isNewUser ? 'Account created successfully' : 'Login successful',
       };
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to process social user: ${socialUser.email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'SocialAuthService',
+        {
+          email: socialUser.email,
+          provider: socialUser.provider,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       throw _error;
     }
@@ -314,7 +362,13 @@ export class SocialAuthService {
       }
 
       if (payload.email_verified === false) {
-        this.logger.warn(`Google account email not verified: ${payload.email}`);
+        void this.loggingService.log(
+          LogType.AUTH,
+          LogLevel.WARN,
+          `Google account email not verified: ${payload.email}`,
+          'SocialAuthService',
+          { email: payload.email }
+        );
         // Continue anyway - some Google accounts may not have verified emails
       }
 
@@ -343,8 +397,15 @@ export class SocialAuthService {
       }
       return result;
     } catch (error) {
-      this.logger.error(
-        `Google token verification failed: ${error instanceof Error ? error.message : String(error)}`
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Google token verification failed',
+        'SocialAuthService',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
 
       // If token verification fails, try to get user info using access token
@@ -391,8 +452,18 @@ export class SocialAuthService {
         }
         return result;
       } catch (accessTokenError) {
-        this.logger.error(
-          `Google access token verification also failed: ${accessTokenError instanceof Error ? accessTokenError.message : String(accessTokenError)}`
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Google access token verification also failed',
+          'SocialAuthService',
+          {
+            error:
+              accessTokenError instanceof Error
+                ? accessTokenError.message
+                : String(accessTokenError),
+            stack: accessTokenError instanceof Error ? accessTokenError.stack : undefined,
+          }
         );
         throw new BadRequestException(
           `Google authentication failed: ${error instanceof Error ? error.message : 'Invalid token'}`

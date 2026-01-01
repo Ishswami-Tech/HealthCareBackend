@@ -1,13 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentWaitlistService } from './appointment-waitlist.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 @Injectable()
 export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
-  protected readonly logger = new Logger(ClinicWaitlistPlugin.name);
-
-  constructor(private readonly waitlistService: AppointmentWaitlistService) {
-    super();
+  constructor(
+    private readonly waitlistService: AppointmentWaitlistService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   get name(): string {
@@ -39,11 +44,19 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
       [key: string]: unknown;
     };
 
-    this.logger.log(`Processing waitlist operation: ${operation}`, {
-      operation,
-      doctorId: params['doctorId'],
-      clinicId: params['clinicId'],
-    });
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Processing waitlist operation: ${operation}`,
+        'ClinicWaitlistPlugin',
+        {
+          operation,
+          doctorId: params['doctorId'],
+          clinicId: params['clinicId'],
+        }
+      );
+    }
 
     try {
       switch (operation) {
@@ -90,10 +103,19 @@ export class ClinicWaitlistPlugin extends BaseAppointmentPlugin {
           throw new Error(`Unsupported operation: ${operation}`);
       }
     } catch (_error) {
-      this.logger.error(`Waitlist operation failed: ${operation}`, {
-        operation,
-        _error: _error instanceof Error ? _error.message : String(_error),
-      });
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Waitlist operation failed: ${operation}`,
+          'ClinicWaitlistPlugin',
+          {
+            operation,
+            error: _error instanceof Error ? _error.message : String(_error),
+            stack: _error instanceof Error ? _error.stack : undefined,
+          }
+        );
+      }
       throw _error;
     }
   }

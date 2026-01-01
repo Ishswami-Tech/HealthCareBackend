@@ -155,6 +155,15 @@ function main() {
     stepTimes['Prisma Validation'] = prismaResult.time;
     validationCount++;
 
+    // Generate Prisma Client before type checking to ensure types are available
+    logStep('→', 'Generating Prisma Client (required for type checking)');
+    const prismaGenerateResult = runCommand('yarn run prisma:generate', 'Prisma Client generation', true);
+    stepTimes['Prisma Generate'] = prismaGenerateResult.time;
+    if (!prismaGenerateResult.success) {
+      logWarning('Prisma Client generation had issues, but continuing...');
+      warningCount++;
+    }
+
     const envResult = runCommand('yarn run env:validate', 'Environment variables validation');
     stepTimes['Environment Validation'] = envResult.time;
     validationCount++;

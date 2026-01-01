@@ -1,7 +1,8 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { VideoService } from '@services/video/video.service';
 import { VideoConsultationTracker } from '@services/video/video-consultation-tracker.service';
+import { LoggingService } from '@infrastructure/logging';
 
 /**
  * Interface for video plugin data validation
@@ -60,9 +61,12 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
    */
   constructor(
     private readonly videoService: VideoService,
-    private readonly consultationTracker: VideoConsultationTracker
+    private readonly consultationTracker: VideoConsultationTracker,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
   ) {
-    super();
+    super(loggingService);
   }
 
   /**
@@ -79,7 +83,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     }
 
     const videoData = data;
-    this.logPluginAction('Processing clinic video operation', {
+    await this.logPluginAction('Processing clinic video operation', {
       operation: videoData.operation,
     });
 
@@ -224,13 +228,13 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
           return await this.consultationTracker.endConsultationTracking(videoData.appointmentId!);
 
         default:
-          this.logPluginError('Unknown video operation', {
+          await this.logPluginError('Unknown video operation', {
             operation: videoData.operation,
           });
           throw new Error(`Unknown video operation: ${videoData.operation}`);
       }
     } catch (error) {
-      this.logPluginError('Failed to process video operation', {
+      await this.logPluginError('Failed to process video operation', {
         operation: videoData.operation,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -244,7 +248,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
    * @param data - The data to validate
    * @returns Promise resolving to true if the data is valid, false otherwise
    */
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     if (!this.isValidVideoData(data)) {
       return Promise.resolve(false);
     }
@@ -283,7 +287,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     const fields = requiredFields[operation as keyof typeof requiredFields];
 
     if (!fields) {
-      this.logPluginError('Invalid operation', { operation });
+      await this.logPluginError('Invalid operation', { operation });
       return Promise.resolve(false);
     }
 
@@ -293,7 +297,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     });
 
     if (!isValid) {
-      this.logPluginError('Missing required fields', {
+      await this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });

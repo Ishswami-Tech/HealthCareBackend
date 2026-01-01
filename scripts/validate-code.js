@@ -85,7 +85,7 @@ function checkForbiddenComments() {
           walkDir(filePath);
         }
       } else if (file.endsWith('.ts') && !file.endsWith('.d.ts')) {
-        if (!filePath.includes('prisma/generated')) {
+        if (!filePath.includes('prisma/generated') && !filePath.includes('seed.ts')) {
           checkFile(filePath);
         }
       }

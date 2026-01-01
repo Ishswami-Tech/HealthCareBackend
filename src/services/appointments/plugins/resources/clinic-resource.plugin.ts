@@ -1,6 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentResourceService } from './appointment-resource.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type { Resource } from '@core/types/appointment.types';
 
 interface ResourcePluginData {
@@ -18,10 +20,13 @@ interface ResourcePluginData {
 
 @Injectable()
 export class ClinicResourcePlugin extends BaseAppointmentPlugin {
-  protected readonly logger = new Logger(ClinicResourcePlugin.name);
-
-  constructor(private readonly resourceService: AppointmentResourceService) {
-    super();
+  constructor(
+    private readonly resourceService: AppointmentResourceService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   get name(): string {
@@ -52,11 +57,19 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
     const pluginData = this.validatePluginData(data);
     const { operation, ...params } = pluginData;
 
-    this.logger.log(`Processing resource operation: ${operation}`, {
-      operation,
-      resourceId: params.resourceId,
-      clinicId: params.clinicId,
-    });
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Processing resource operation: ${operation}`,
+        'ClinicResourcePlugin',
+        {
+          operation,
+          resourceId: params.resourceId,
+          clinicId: params.clinicId,
+        }
+      );
+    }
 
     try {
       switch (operation) {
@@ -127,10 +140,19 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
           throw new Error(`Unsupported operation: ${operation}`);
       }
     } catch (_error) {
-      this.logger.error(`Resource operation failed: ${operation}`, {
-        operation,
-        _error: _error instanceof Error ? _error.message : String(_error),
-      });
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Resource operation failed: ${operation}`,
+          'ClinicResourcePlugin',
+          {
+            operation,
+            error: _error instanceof Error ? _error.message : String(_error),
+            stack: _error instanceof Error ? _error.stack : undefined,
+          }
+        );
+      }
       throw _error;
     }
   }

@@ -1,48 +1,90 @@
-# Docker Production Deployment Guide
+# Docker Deployment Guides
 
-Complete guide for deploying, monitoring, and scaling the Healthcare Backend using Docker Compose.
+Complete guides for deploying, monitoring, and scaling the Healthcare Backend using Docker Compose.
+
+## 📚 Available Environments
+
+- **Production** - Production deployment with pre-built images (see [Production Deployment](#-production-deployment))
+- **Local-Prod** - Local production-like environment for testing (see [Local-Prod Environment](#-local-prod-environment))
+- **Development** - Development environment with hot-reload (see `docker-compose.dev.yml`)
+
+---
 
 ## 🚀 Quick Start
 
-### Start All Services
+### Production
+
 ```bash
 cd devops/docker
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-### Check Status
+### Local-Prod (Local Testing)
+
 ```bash
+cd devops/docker
+docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
+```
+
+### Check Status
+
+```bash
+# Production
 docker compose -f docker-compose.prod.yml ps
+
+# Local-Prod
+docker compose -f docker-compose.local-prod.yml ps
 ```
 
 ### View Logs
+
 ```bash
-# All services
+# Production - All services
 docker compose -f docker-compose.prod.yml logs -f
 
-# Specific service
+# Production - Specific service
 docker compose -f docker-compose.prod.yml logs -f api
 docker compose -f docker-compose.prod.yml logs -f worker
+
+# Local-Prod - All services
+docker compose -f docker-compose.local-prod.yml logs -f
+
+# Local-Prod - Specific service
+docker compose -f docker-compose.local-prod.yml logs -f api
+docker compose -f docker-compose.local-prod.yml logs -f worker
 ```
 
 ### Check Health
+
 ```bash
 curl http://localhost:8088/health
 ```
 
 ### Stop Services
+
 ```bash
+# Production
 docker compose -f docker-compose.prod.yml down
+
+# Local-Prod
+docker compose -f docker-compose.local-prod.yml down
 ```
 
 ### Restart Services
+
 ```bash
+# Production
 docker compose -f docker-compose.prod.yml restart
+
+# Local-Prod
+docker compose -f docker-compose.local-prod.yml restart
 ```
 
 ---
 
-## 📊 Overview
+## 🏭 Production Deployment
+
+### 📊 Overview
 
 This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can run on **6 vCPU, 12GB RAM** initially. Docker will enforce resource limits automatically.
 
@@ -58,9 +100,7 @@ This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can 
 
 **Scale When**: Resources reach **80% utilization** for **15+ minutes**
 
----
-
-## 📋 Prerequisites
+### 📋 Prerequisites
 
 1. **Docker Engine** (v20.10+) or **Docker Desktop** installed and running
 2. **Docker Compose** (v2.0+) installed
@@ -68,24 +108,22 @@ This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can 
 4. **SSL Certificates** mounted at `/etc/letsencrypt` (for HTTPS)
 5. **Server**: Minimum 6 vCPU, 12GB RAM (recommended: 8 vCPU, 24GB RAM)
 
----
-
-## 🔐 Required Environment Variables
+### 🔐 Required Environment Variables
 
 Before deploying, ensure `.env.production` contains all required variables. See [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) for complete list.
 
-### Critical (Must be changed from defaults):
+#### Critical (Must be changed from defaults):
 - `JWT_SECRET` - Secure JWT signing secret (minimum 32 characters)
 - `SESSION_SECRET` - Fastify session secret (minimum 32 characters)
 - `COOKIE_SECRET` - Cookie signing secret (minimum 32 characters)
 - `OPENVIDU_SECRET` - OpenVidu server secret
 - `JWT_REFRESH_SECRET` - JWT refresh token secret
 
-### Database:
+#### Database:
 - `DATABASE_URL` - PostgreSQL connection string
 - `DIRECT_URL` - Direct PostgreSQL connection (for migrations)
 
-### External Services (if used):
+#### External Services (if used):
 - `GOOGLE_CLIENT_ID` - Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
 - `FIREBASE_PROJECT_ID` - Firebase project ID
@@ -93,11 +131,9 @@ Before deploying, ensure `.env.production` contains all required variables. See 
 - `FIREBASE_CLIENT_EMAIL` - Firebase client email
 - `ZEPTOMAIL_SEND_MAIL_TOKEN` - ZeptoMail API token
 
----
+### 🎯 Resource Allocation
 
-## 🎯 Resource Allocation
-
-### Target Configuration (8 vCPU, 24GB RAM)
+#### Target Configuration (8 vCPU, 24GB RAM)
 
 | Service | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
 |---------|-----------|-----------|-------------|-------------|
@@ -110,7 +146,7 @@ Before deploying, ensure `.env.production` contains all required variables. See 
 
 **Note**: Total limits slightly exceed server capacity to allow Docker to manage resource allocation efficiently. Docker will enforce actual limits based on available resources.
 
-### Current Server (6 vCPU, 12GB RAM)
+#### Current Server (6 vCPU, 12GB RAM)
 
 When running on 6 vCPU/12GB RAM:
 - Docker enforces limits based on available resources
@@ -118,11 +154,9 @@ When running on 6 vCPU/12GB RAM:
 - Performance will be reduced but functional
 - Monitor and scale when resources reach 80% utilization
 
----
+### 🔧 Configuration Details
 
-## 🔧 Configuration Details
-
-### API Service
+#### API Service
 
 **Resources:**
 - CPU: 3.0 limit / 1.5 reserve
@@ -141,7 +175,7 @@ When running on 6 vCPU/12GB RAM:
 **Node.js Memory:**
 - `--max-old-space-size=6144` (6GB heap)
 
-### PostgreSQL Service
+#### PostgreSQL Service
 
 **Resources:**
 - CPU: 3.0 limit / 1.5 reserve
@@ -155,7 +189,7 @@ When running on 6 vCPU/12GB RAM:
 - `max_worker_processes=8`
 - `max_parallel_workers=8`
 
-### Dragonfly Cache
+#### Dragonfly Cache
 
 **Resources:**
 - CPU: 1.5 limit / 0.5 reserve
@@ -168,7 +202,7 @@ When running on 6 vCPU/12GB RAM:
 
 **Note**: Redis has been removed. Dragonfly is the only cache provider.
 
-### Worker Service
+#### Worker Service
 
 **Resources:**
 - CPU: 1.0 limit / 0.5 reserve
@@ -180,7 +214,7 @@ When running on 6 vCPU/12GB RAM:
 - `BULL_WORKER_CONCURRENCY: 10`
 - `BULL_MAX_JOBS_PER_WORKER: 100`
 
-### OpenVidu Service
+#### OpenVidu Service
 
 **Resources:**
 - CPU: 2.0 limit / 1.0 reserve
@@ -191,11 +225,9 @@ When running on 6 vCPU/12GB RAM:
 - WebSocket support for video streaming
 - Depends on Coturn for TURN/STUN
 
----
+### 🚀 Deployment Steps
 
-## 🚀 Deployment Steps
-
-### Step 1: Prepare Environment
+#### Step 1: Prepare Environment
 
 ```bash
 # Navigate to project root
@@ -205,7 +237,7 @@ cd /path/to/HealthCareBackend
 # Values come from GitHub Secrets during CI/CD deployment
 ```
 
-### Step 2: Build and Start Services
+#### Step 2: Build and Start Services
 
 ```bash
 # Navigate to docker directory
@@ -218,7 +250,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml ps
 ```
 
-### Step 3: Verify Deployment
+#### Step 3: Verify Deployment
 
 ```bash
 # Check all containers are running
@@ -234,9 +266,7 @@ docker compose -f docker-compose.prod.yml logs -f worker
 curl https://api.ishswami.in/health
 ```
 
----
-
-## 📊 Services Overview
+### 📊 Services Overview
 
 | Service | Container Name | Description | Ports |
 |---------|---------------|-------------|-------|
@@ -247,7 +277,7 @@ curl https://api.ishswami.in/health
 | **OpenVidu** | `latest-openvidu-server` | Video conferencing | 4443 |
 | **Coturn** | `latest-coturn` | TURN/STUN server | 3478 |
 
-### Network Configuration
+#### Network Configuration
 
 Services use a custom network (`app-network`) with fixed IP addresses:
 - API: `172.18.0.5`
@@ -257,7 +287,7 @@ Services use a custom network (`app-network`) with fixed IP addresses:
 - OpenVidu: `172.18.0.7`
 - Coturn: `172.18.0.8`
 
-### Volume Persistence
+#### Volume Persistence
 
 Data is persisted in Docker volumes:
 - `latest_postgres_data` - PostgreSQL data
@@ -265,18 +295,16 @@ Data is persisted in Docker volumes:
 - `latest_openvidu_recordings` - OpenVidu recordings
 - `./logs` - Application logs (host-mounted)
 
----
+### 📈 Monitoring & Scaling
 
-## 📈 Monitoring & Scaling
-
-### Monitoring Thresholds
+#### Monitoring Thresholds
 
 - **<70%**: Healthy, no action needed
 - **70-80%**: Monitor closely, plan for scaling
 - **80-90%**: Scale immediately (upgrade server)
 - **>90%**: Critical, emergency scaling required
 
-### Quick Monitoring Commands
+#### Quick Monitoring Commands
 
 ```bash
 # Real-time resource usage
@@ -298,7 +326,7 @@ docker exec latest-postgres psql -U postgres -d userdb -c "SELECT count(*) FROM 
 docker exec latest-dragonfly redis-cli -p 6379 INFO memory | grep used_memory_human
 ```
 
-### Scaling Triggers
+#### Scaling Triggers
 
 Scale when **ANY** of these conditions persist for **15+ minutes**:
 
@@ -309,11 +337,9 @@ Scale when **ANY** of these conditions persist for **15+ minutes**:
 5. **Error Rate**: >1% consistently
 6. **Concurrent Users**: Approaching 400+ regularly
 
----
+### 🔄 Vertical Scaling: 6 vCPU/12GB → 8 vCPU/24GB RAM
 
-## 🔄 Vertical Scaling: 6 vCPU/12GB → 8 vCPU/24GB RAM
-
-### Pre-Scaling Checklist
+#### Pre-Scaling Checklist
 
 - [ ] Monitoring shows sustained 80%+ utilization
 - [ ] Database backups are current
@@ -322,9 +348,9 @@ Scale when **ANY** of these conditions persist for **15+ minutes**:
 - [ ] No planned maintenance windows
 - [ ] Team is available for monitoring post-upgrade
 
-### Scaling Procedure
+#### Scaling Procedure
 
-#### Step 1: Backup
+**Step 1: Backup**
 
 ```bash
 # Navigate to docker directory
@@ -343,7 +369,7 @@ docker run --rm \
   alpine tar czf /backup/postgres_volume_backup_$(date +%Y%m%d_%H%M%S).tar.gz /data
 ```
 
-#### Step 2: Document Current State
+**Step 2: Document Current State**
 
 ```bash
 # Save current resource usage
@@ -353,7 +379,7 @@ docker stats --no-stream > resource_usage_before_scale.txt
 cp docker-compose.prod.yml docker-compose.prod.yml.backup
 ```
 
-#### Step 3: Stop Services
+**Step 3: Stop Services**
 
 ```bash
 # Stop all services
@@ -368,7 +394,7 @@ sleep 30
 
 **Note**: Database data persists in volumes, so no data loss.
 
-#### Step 4: Upgrade Server Resources
+**Step 4: Upgrade Server Resources**
 
 **Via Your Hosting Provider (Contabo):**
 
@@ -379,7 +405,7 @@ sleep 30
 
 **Wait for**: Server reboot and full initialization (usually 2-5 minutes)
 
-#### Step 5: Verify New Server Resources
+**Step 5: Verify New Server Resources**
 
 ```bash
 # SSH into server
@@ -394,7 +420,7 @@ free -h
 # Expected: ~24GB total
 ```
 
-#### Step 6: Restart Services
+**Step 6: Restart Services**
 
 ```bash
 # Navigate to docker directory
@@ -409,7 +435,7 @@ docker compose -f docker-compose.prod.yml logs -f
 
 **Wait for**: All services to be healthy (usually 1-2 minutes)
 
-#### Step 7: Verify Services
+**Step 7: Verify Services**
 
 ```bash
 # Check all containers are running
@@ -428,7 +454,7 @@ curl https://api.ishswami.in/health
 docker exec latest-postgres psql -U postgres -d userdb -c "SELECT version();"
 ```
 
-#### Step 8: Monitor Post-Scaling
+**Step 8: Monitor Post-Scaling**
 
 **First 15 minutes** (Critical monitoring period):
 
@@ -445,7 +471,7 @@ docker logs latest-postgres --tail 50 | grep -i error
 
 **First 24 hours**: Check daily, review logs, verify performance metrics
 
-### Expected Improvements After Scaling
+#### Expected Improvements After Scaling
 
 | Metric | Before (6/12) | After (8/24) | Improvement |
 |--------|---------------|--------------|-------------|
@@ -455,7 +481,7 @@ docker logs latest-postgres --tail 50 | grep -i error
 | **CPU Usage** | 70-80% | 50-70% | **Lower** |
 | **RAM Usage** | 75-85% | 55-75% | **Lower** |
 
-### Rollback Procedure
+#### Rollback Procedure
 
 If issues occur:
 
@@ -473,6 +499,232 @@ docker compose -f docker-compose.prod.yml up -d
 docker exec -i latest-postgres psql -U postgres -d userdb < backup_pre_scale_*.sql
 ```
 
+### 📊 Performance Expectations
+
+#### On 6 vCPU/12GB RAM (Initial)
+
+| Metric | Value |
+|--------|-------|
+| Concurrent Users | 300-400 |
+| Requests/Second | 500-800 |
+| CPU Usage | 60-75% |
+| RAM Usage | 65-80% |
+| Response Time (p95) | 200-300ms |
+
+#### On 8 vCPU/24GB RAM (After Scaling)
+
+| Metric | Value |
+|--------|-------|
+| Concurrent Users | 700-900 |
+| Requests/Second | 1,200-1,800 |
+| CPU Usage | 50-70% |
+| RAM Usage | 55-75% |
+| Response Time (p95) | 150-200ms |
+
+---
+
+## 🧪 Local-Prod Environment
+
+### 📊 Overview
+
+This local-prod Docker Compose configuration is **optimized for local testing** and mirrors the production setup with:
+
+- **Reduced resource limits** (suitable for local development machines)
+- **Local builds** instead of pre-built images
+- **Local-prod environment variables** (`.env.local-prod`)
+- **Local volume mounts** for easier debugging
+- **Same architecture** as production for accurate testing
+
+**Key Differences from Production:**
+
+| Aspect | Production | Local-Prod |
+|--------|-----------|---------|
+| **Image Source** | Pre-built from registry | Local build |
+| **Resource Limits** | 8 vCPU/24GB RAM optimized | Reduced for local testing |
+| **Environment** | `.env.production` | `.env.local-prod` |
+| **Cache Prefix** | `healthcare:` | `healthcare:local-prod:` |
+| **Rate Limits** | Higher (production scale) | Lower (testing scale) |
+| **Network Name** | `app-network` | `local-prod_app_network` |
+| **Container Names** | `latest-*` | `local-prod-*` |
+
+### 📋 Prerequisites
+
+1. **Docker Engine** (v20.10+) or **Docker Desktop** installed and running
+2. **Docker Compose** (v2.0+) installed
+3. **Local-prod environment file** (`.env.local-prod`) configured
+4. **Local machine** with at least 4GB RAM available for Docker
+
+### 🔐 Required Environment Variables
+
+Create `.env.local-prod` file in the project root with local-prod-specific values:
+
+```bash
+# Copy from .env.production and adjust for local-prod
+cp .env.production .env.local-prod
+
+# Edit .env.local-prod with local-prod values
+```
+
+#### Critical Variables:
+
+```env
+# Application
+NODE_ENV=local-prod
+PORT=8088
+
+# Database (uses local PostgreSQL container)
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=40&pool_timeout=60
+
+# Cache (uses local Dragonfly container)
+DRAGONFLY_HOST=dragonfly
+DRAGONFLY_PORT=6379
+DRAGONFLY_KEY_PREFIX=healthcare:local-prod:
+
+# JWT & Session Secrets (use local-prod-specific values)
+JWT_SECRET=local-prod-jwt-secret-change-in-production-min-32-chars
+SESSION_SECRET=local-prod-session-secret-change-in-production-min-32-chars-long
+COOKIE_SECRET=local-prod-cookie-secret-change-in-production-min-32-chars
+
+# URLs (local)
+API_URL=http://localhost:8088
+FRONTEND_URL=http://localhost:3000
+CORS_ORIGIN=http://localhost:3000,http://localhost:8088
+
+# Video (uses local OpenVidu container)
+OPENVIDU_URL=http://openvidu-server:4443
+OPENVIDU_SECRET=MY_SECRET
+```
+
+### 🎯 Resource Allocation (Local-Prod)
+
+#### Local-Prod Configuration (Local Testing)
+
+| Service | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
+|---------|-----------|-----------|-------------|--------------|
+| **API** | 2.0 | 4GB | 1.0 | 1GB |
+| **PostgreSQL** | 2.0 | 4GB | 1.0 | 2GB |
+| **Dragonfly** | 1.0 | 2GB | 0.5 | 512MB |
+| **Worker** | 0.5 | 1GB | 0.25 | 256MB |
+| **OpenVidu** | 1.5 | 2GB | 0.5 | 1GB |
+| **Total** | **7.0** | **13GB** | **3.25** | **4.75GB** |
+
+**Note**: These limits are suitable for local development machines. Docker will enforce limits based on available resources.
+
+### 🚀 Deployment Steps
+
+#### Step 1: Prepare Environment
+
+```bash
+# Navigate to project root
+cd /path/to/HealthCareBackend
+
+# Create .env.local-prod if it doesn't exist
+# Copy from .env.production and adjust values
+cp .env.production .env.local-prod
+
+# Edit .env.local-prod with local-prod-specific values
+nano .env.local-prod
+```
+
+#### Step 2: Create Data Directories
+
+```bash
+# Navigate to docker directory
+cd devops/docker
+
+# Create data directories for volumes
+mkdir -p data/postgres
+mkdir -p data/dragonfly
+mkdir -p logs
+```
+
+#### Step 3: Build and Start Services
+
+```bash
+# Start infrastructure services first
+docker compose -f docker-compose.local-prod.yml --profile infrastructure up -d
+
+# Wait for infrastructure to be healthy (30-60 seconds)
+docker compose -f docker-compose.local-prod.yml ps
+
+# Start application services
+docker compose -f docker-compose.local-prod.yml --profile app up -d --build
+
+# Check status
+docker compose -f docker-compose.local-prod.yml ps
+```
+
+#### Step 4: Verify Deployment
+
+```bash
+# Check all containers are running
+docker compose -f docker-compose.local-prod.yml ps
+
+# Check API logs
+docker compose -f docker-compose.local-prod.yml logs -f api
+
+# Check worker logs
+docker compose -f docker-compose.local-prod.yml logs -f worker
+
+# Test health endpoint
+curl http://localhost:8088/health
+
+# Test Swagger documentation
+open http://localhost:8088/docs
+```
+
+### 📊 Services Overview
+
+| Service | Container Name | Description | Ports |
+|---------|---------------|-------------|-------|
+| **API** | `local-prod-api` | Main API service | 8088 |
+| **Worker** | `local-prod-worker` | Background job processor | - |
+| **PostgreSQL** | `local-prod-postgres` | Database | 5432 |
+| **Dragonfly** | `local-prod-dragonfly` | Cache provider | 6380 |
+| **OpenVidu** | `local-prod-openvidu-server` | Video conferencing | 4443 |
+| **Coturn** | `local-prod-coturn` | TURN/STUN server | 3478 |
+
+#### Network Configuration
+
+Services use a custom network (`local-prod_app_network`) with fixed IP addresses:
+- API: `172.18.0.5`
+- PostgreSQL: `172.18.0.2`
+- Dragonfly: `172.18.0.4`
+- Worker: `172.18.0.6`
+- OpenVidu: `172.18.0.7`
+- Coturn: `172.18.0.8`
+
+#### Volume Persistence
+
+Data is persisted in local directories:
+- `./data/postgres` - PostgreSQL data
+- `./data/dragonfly` - Dragonfly data
+- `./logs` - Application logs
+
+### 📊 Performance Expectations
+
+#### Local-Prod (Local Testing)
+
+| Metric | Value |
+|--------|-------|
+| Concurrent Users | 50-100 |
+| Requests/Second | 100-200 |
+| CPU Usage | 40-60% |
+| RAM Usage | 50-70% |
+| Response Time (p95) | 150-250ms |
+
+**Note**: Performance will vary based on your local machine resources.
+
+### 🔒 Security Notes
+
+Local-prod environment uses:
+- **HTTP** instead of HTTPS (for local testing)
+- **Insecure cookies** (`SESSION_SECURE_COOKIES=false`)
+- **Lax same-site** (`SESSION_SAME_SITE=lax`)
+- **Local-prod-specific secrets** (different from production)
+
+**⚠️ Never use local-prod secrets in production!**
+
 ---
 
 ## 🔍 Health Checks
@@ -480,11 +732,17 @@ docker exec -i latest-postgres psql -U postgres -d userdb < backup_pre_scale_*.s
 All services include health checks:
 
 ```bash
-# Check API health
+# Production - Check API health
 curl http://localhost:8088/health
 
-# Check container health status
+# Production - Check container health status
 docker compose -f docker-compose.prod.yml ps
+
+# Local-Prod - Check API health
+curl http://localhost:8088/health
+
+# Local-Prod - Check container health status
+docker compose -f docker-compose.local-prod.yml ps
 
 # Expected: All containers should show "healthy" status
 ```
@@ -496,14 +754,23 @@ docker compose -f docker-compose.prod.yml ps
 ### View Logs
 
 ```bash
-# All services
+# Production - All services
 docker compose -f docker-compose.prod.yml logs -f
 
-# Specific service
+# Production - Specific service
 docker compose -f docker-compose.prod.yml logs -f api
 docker compose -f docker-compose.prod.yml logs -f worker
 docker compose -f docker-compose.prod.yml logs -f postgres
 docker compose -f docker-compose.prod.yml logs -f openvidu-server
+
+# Local-Prod - All services
+docker compose -f docker-compose.local-prod.yml logs -f
+
+# Local-Prod - Specific service
+docker compose -f docker-compose.local-prod.yml logs -f api
+docker compose -f docker-compose.local-prod.yml logs -f worker
+docker compose -f docker-compose.local-prod.yml logs -f postgres
+docker compose -f docker-compose.local-prod.yml logs -f openvidu-server
 ```
 
 ### Log Files
@@ -517,14 +784,16 @@ Logs are persisted to `devops/docker/logs/` directory (mounted volume).
 ### Update Application
 
 ```bash
-# Pull latest code (or use CI/CD)
+# Production
 git pull
-
-# Rebuild and restart
 docker compose -f docker-compose.prod.yml up -d --build
 
 # Or restart specific service
 docker compose -f docker-compose.prod.yml restart api
+
+# Local-Prod - Rebuild Application
+docker compose -f docker-compose.local-prod.yml build api worker
+docker compose -f docker-compose.local-prod.yml up -d
 ```
 
 ### Database Migrations
@@ -532,21 +801,28 @@ docker compose -f docker-compose.prod.yml restart api
 Migrations run automatically on API container startup. To run manually:
 
 ```bash
-# Enter API container
+# Production
 docker exec -it latest-api sh
+yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --config=/app/src/libs/infrastructure/database/prisma/prisma.config.js
 
-# Run migrations
+# Local-Prod
+docker exec -it local-prod-api sh
 yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --config=/app/src/libs/infrastructure/database/prisma/prisma.config.js
 ```
 
 ### Backup Database
 
 ```bash
-# Create backup
+# Production
 docker exec -it latest-postgres pg_dump -U postgres userdb > backup_$(date +%Y%m%d_%H%M%S).sql
-
-# Restore backup
 docker exec -i latest-postgres psql -U postgres userdb < backup_20240101_120000.sql
+
+# Local-Prod - Database Reset (Local-Prod Only)
+docker compose -f docker-compose.local-prod.yml down
+docker compose -f docker-compose.local-prod.yml down -v
+rm -rf data/postgres data/dragonfly
+mkdir -p data/postgres data/dragonfly
+docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
 ```
 
 ---
@@ -554,11 +830,17 @@ docker exec -i latest-postgres psql -U postgres userdb < backup_20240101_120000.
 ## 🛑 Stop Services
 
 ```bash
-# Stop all services (keeps data)
+# Production - Stop all services (keeps data)
 docker compose -f docker-compose.prod.yml down
 
-# Stop and remove volumes (⚠️ deletes data)
+# Production - Stop and remove volumes (⚠️ deletes data)
 docker compose -f docker-compose.prod.yml down -v
+
+# Local-Prod - Stop all services (keeps data)
+docker compose -f docker-compose.local-prod.yml down
+
+# Local-Prod - Stop and remove volumes (⚠️ deletes data)
+docker compose -f docker-compose.local-prod.yml down -v
 ```
 
 ---
@@ -587,86 +869,93 @@ Before going live, ensure:
 ### Container Won't Start
 
 ```bash
-# Check logs
+# Production
 docker compose -f docker-compose.prod.yml logs api
-
-# Check container status
 docker compose -f docker-compose.prod.yml ps
-
-# Restart service
 docker compose -f docker-compose.prod.yml restart api
+
+# Local-Prod
+docker compose -f docker-compose.local-prod.yml logs api
+docker compose -f docker-compose.local-prod.yml ps
+docker compose -f docker-compose.local-prod.yml restart api
+```
+
+### Build Fails (Local-Prod)
+
+```bash
+# Clean build (no cache)
+docker compose -f docker-compose.local-prod.yml build --no-cache api worker
+
+# Check Dockerfile
+cat devops/docker/Dockerfile
 ```
 
 ### Database Connection Issues
 
 ```bash
-# Check PostgreSQL is running
+# Production
 docker compose -f docker-compose.prod.yml ps postgres
-
-# Test connection from API container
 docker exec -it latest-api sh -c "psql $DATABASE_URL -c 'SELECT 1'"
+
+# Local-Prod
+docker compose -f docker-compose.local-prod.yml ps postgres
+docker exec -it local-prod-api sh -c "psql $DATABASE_URL -c 'SELECT 1'"
 ```
 
 ### Cache Connection Issues
 
 ```bash
-# Test Dragonfly connection
+# Production
 docker exec -it latest-dragonfly redis-cli -p 6379 ping
-
-# Check from API container
 docker exec -it latest-api sh -c "redis-cli -h dragonfly -p 6379 ping"
+
+# Local-Prod
+docker exec -it local-prod-dragonfly redis-cli -p 6379 ping
+docker exec -it local-prod-api sh -c "redis-cli -h dragonfly -p 6379 ping"
 ```
 
 ### Health Check Failing
 
 ```bash
-# Check health endpoint manually
+# Production
 docker exec -it latest-api wget -q --spider http://localhost:8088/health
-
-# Check API logs for errors
 docker compose -f docker-compose.prod.yml logs api | tail -50
+
+# Local-Prod
+docker exec -it local-prod-api wget -q --spider http://localhost:8088/health
+docker compose -f docker-compose.local-prod.yml logs api | tail -50
 ```
 
 ### OpenVidu Issues
 
 ```bash
-# Check OpenVidu container
+# Production
 docker ps | grep openvidu
-
-# Check OpenVidu logs
 docker logs latest-openvidu-server
-
-# Test OpenVidu directly
 curl http://127.0.0.1:4443
-
-# Check Coturn (TURN server)
 docker ps | grep coturn
 docker logs latest-coturn
+
+# Local-Prod
+docker ps | grep openvidu
+docker logs local-prod-openvidu-server
+curl http://127.0.0.1:4443
+docker ps | grep coturn
+docker logs local-prod-coturn
 ```
 
----
+### Port Conflicts (Local-Prod)
 
-## 📊 Performance Expectations
+If ports are already in use:
 
-### On 6 vCPU/12GB RAM (Initial)
+```bash
+# Check what's using the port
+# Windows: netstat -ano | findstr :8088
+# Linux/Mac: lsof -i :8088
 
-| Metric | Value |
-|--------|-------|
-| Concurrent Users | 300-400 |
-| Requests/Second | 500-800 |
-| CPU Usage | 60-75% |
-| RAM Usage | 65-80% |
-| Response Time (p95) | 200-300ms |
-
-### On 8 vCPU/24GB RAM (After Scaling)
-
-| Metric | Value |
-|--------|-------|
-| Concurrent Users | 700-900 |
-| Requests/Second | 1,200-1,800 |
-| CPU Usage | 50-70% |
-| RAM Usage | 55-75% |
-| Response Time (p95) | 150-200ms |
+# Change port in docker-compose.local-prod.yml
+# Update PORT environment variable
+```
 
 ---
 
@@ -693,6 +982,8 @@ For issues:
 
 ## ✅ Quick Reference
 
+### Production
+
 **Deploy:**
 ```bash
 cd devops/docker && docker compose -f docker-compose.prod.yml up -d --build
@@ -713,10 +1004,51 @@ docker stats
 - 700-900 concurrent users
 - 1,200-1,800 req/s
 
+### Local-Prod
+
+**Deploy:**
+```bash
+cd devops/docker && docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
+```
+
+**Monitor:**
+```bash
+docker stats
+```
+
+**Logs:**
+```bash
+docker compose -f docker-compose.local-prod.yml logs -f api
+```
+
+**Health:**
+```bash
+curl http://localhost:8088/health
+```
+
+**Stop:**
+```bash
+docker compose -f docker-compose.local-prod.yml down
+```
+
 ---
 
 ## 🎯 Summary
 
+### Production
+
 This configuration is optimized for **8 vCPU/24GB RAM** but runs on **6 vCPU/12GB RAM** initially. Monitor resources and scale vertically when utilization reaches 80%. Dragonfly is the only cache provider (Redis removed). OpenVidu is included for video conferencing.
 
 **Ready for production deployment!**
+
+### Local-Prod
+
+This local-prod configuration mirrors production architecture with reduced resource limits suitable for local testing. Use it to:
+
+- ✅ Test production-like deployments locally
+- ✅ Verify Docker builds work correctly
+- ✅ Test database migrations
+- ✅ Verify all services integrate properly
+- ✅ Debug production-like issues locally
+
+**Ready for local production testing!**

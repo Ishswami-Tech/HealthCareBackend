@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentEligibilityService } from './appointment-eligibility.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -9,9 +9,11 @@ import type { EligibilityCriteria } from '@core/types/appointment.types';
 export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
   constructor(
     private readonly eligibilityService: AppointmentEligibilityService,
-    private readonly loggingService: LoggingService
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
   ) {
-    super();
+    super(loggingService);
   }
 
   get name(): string {
@@ -46,17 +48,19 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
     const pluginData = data as PluginData;
     const { operation, ...params } = pluginData;
 
-    void this.loggingService.log(
-      LogType.BUSINESS,
-      LogLevel.INFO,
-      `Processing eligibility operation: ${operation}`,
-      'ClinicEligibilityPlugin',
-      {
-        operation,
-        patientId: params['patientId'] as string,
-        clinicId: params['clinicId'] as string,
-      }
-    );
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Processing eligibility operation: ${operation}`,
+        'ClinicEligibilityPlugin',
+        {
+          operation,
+          patientId: params['patientId'] as string,
+          clinicId: params['clinicId'] as string,
+        }
+      );
+    }
 
     try {
       switch (operation) {
@@ -99,16 +103,18 @@ export class ClinicEligibilityPlugin extends BaseAppointmentPlugin {
           throw new Error(`Unsupported operation: ${operation}`);
       }
     } catch (_error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Eligibility operation failed: ${operation}`,
-        'ClinicEligibilityPlugin',
-        {
-          operation,
-          _error: _error instanceof Error ? _error.message : String(_error),
-        }
-      );
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Eligibility operation failed: ${operation}`,
+          'ClinicEligibilityPlugin',
+          {
+            operation,
+            _error: _error instanceof Error ? _error.message : String(_error),
+          }
+        );
+      }
       throw _error;
     }
   }

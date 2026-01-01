@@ -1,21 +1,23 @@
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 
 @Injectable()
 export class OtpService {
-  private readonly logger = new Logger(OtpService.name);
   private readonly config: OtpConfig;
 
   constructor(
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
-    private readonly configService: ConfigService
+    private readonly configService: ConfigService,
+    private readonly loggingService: LoggingService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.config = {
@@ -89,7 +91,13 @@ export class OtpService {
         ...(clinicId && { clinicId }),
       });
 
-      this.logger.log(`OTP sent to ${email} for ${purpose}`);
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        `OTP sent to ${email} for ${purpose}`,
+        'OtpService',
+        { email, purpose }
+      );
 
       return {
         success: true,
@@ -98,9 +106,16 @@ export class OtpService {
         attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
       };
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to send OTP to ${email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'OtpService',
+        {
+          email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       return {
         success: false,
@@ -134,16 +149,29 @@ export class OtpService {
       // Remove OTP after successful verification
       await this.cacheService.del(otpKey);
 
-      this.logger.log(`OTP verified successfully for ${email}`);
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        `OTP verified successfully for ${email}`,
+        'OtpService',
+        { email }
+      );
 
       return {
         success: true,
         message: 'OTP verified successfully',
       };
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to verify OTP for ${email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'OtpService',
+        {
+          email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       return {
         success: false,
@@ -182,9 +210,16 @@ export class OtpService {
         attemptsRemaining: cooldown ? 0 : attemptsRemaining,
       };
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to check OTP status for ${email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'OtpService',
+        {
+          email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       return {
         exists: false,
@@ -201,13 +236,25 @@ export class OtpService {
       const otpKey = `otp:${email}`;
       await this.cacheService.del(otpKey);
 
-      this.logger.log(`OTP invalidated for ${email}`);
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `OTP invalidated for ${email}`,
+        'OtpService'
+      );
 
       return true;
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to invalidate OTP for ${email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'OtpService',
+        {
+          email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       return false;
     }
@@ -223,11 +270,24 @@ export class OtpService {
 
       await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(cooldownKey)]);
 
-      this.logger.log(`OTP attempts reset for ${email}`);
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.INFO,
+        `OTP attempts reset for ${email}`,
+        'OtpService',
+        { email }
+      );
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to reset OTP attempts for ${email}`,
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'OtpService',
+        {
+          email,
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
     }
   }

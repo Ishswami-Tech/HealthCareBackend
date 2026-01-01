@@ -14,8 +14,8 @@ export interface AppConfig {
   readonly port: number;
   /** API prefix for all routes */
   readonly apiPrefix: string;
-  /** Current environment (development, production, test) */
-  readonly environment: 'development' | 'production' | 'staging' | 'test';
+  /** Current environment (development, production, staging, test, local-prod) */
+  readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   /** Whether the application is in development mode */
   readonly isDev: boolean;
   /** Host address for the application */

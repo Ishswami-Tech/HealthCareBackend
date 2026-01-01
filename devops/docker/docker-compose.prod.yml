@@ -1,5 +1,233 @@
 services:
+  # Infrastructure Services (Profile: infrastructure)
+  postgres:
+    profiles: ["infrastructure"]
+    image: postgres:16
+    container_name: latest-postgres
+    hostname: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/pgdata
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: userdb
+      # Optimized for 8 vCPU/24GB RAM: API (60) + Worker (30) + overhead = 120
+      POSTGRES_MAX_CONNECTIONS: 120
+      POSTGRES_SHARED_BUFFERS: 2GB
+      PGDATA: /var/lib/postgresql/data/pgdata
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
+        limits:
+          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for PostgreSQL)
+          memory: 10G      # Target: 24GB server (10GB for PostgreSQL)
+        reservations:
+          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 3G       # Minimum guaranteed (works on 12GB server)
+    restart: unless-stopped
+    shm_size: 256mb  # Shared memory for PostgreSQL
+    stop_grace_period: 1m
+    command: >
+      postgres 
+      -c max_connections=120 
+      -c shared_buffers=2GB 
+      -c effective_cache_size=12GB 
+      -c maintenance_work_mem=256MB 
+      -c checkpoint_completion_target=0.9 
+      -c wal_buffers=32MB 
+      -c default_statistics_target=100 
+      -c random_page_cost=1.1 
+      -c effective_io_concurrency=200 
+      -c work_mem=16MB 
+      -c min_wal_size=2GB 
+      -c max_wal_size=8GB 
+      -c max_worker_processes=8 
+      -c max_parallel_workers_per_gather=4 
+      -c max_parallel_workers=8 
+      -c max_parallel_maintenance_workers=4 
+      -c idle_in_transaction_session_timeout=60000 
+      -c statement_timeout=60000 
+      -c lock_timeout=60000 
+      -c listen_addresses='*' 
+      -c log_connections=on 
+      -c log_disconnections=on 
+      -c tcp_keepalives_idle=60 
+      -c tcp_keepalives_interval=10 
+      -c tcp_keepalives_count=3 
+      -c client_min_messages=warning
+    labels:
+      - "com.docker.compose.service=postgres"
+      - "app.component=database"
+      - "app.type=postgres"
+      - "app.healthcheck=enabled"
+      - "app.persist=true"
+
+  dragonfly:
+    profiles: ["infrastructure"]
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: latest-dragonfly
+    hostname: dragonfly
+    command: >
+      --alsologtostderr
+      --cache_mode=false
+      --maxmemory=4gb
+      --proactor_threads=6
+      --logtostderr
+      --default_lua_flags=allow-undeclared-keys
+    ports:
+      - "6380:6379"
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.4
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
+        limits:
+          cpus: "1.5"      # Target: 8 vCPU server (1.5 CPU for Dragonfly)
+          memory: 4G       # Target: 24GB server (4GB for Dragonfly cache)
+        reservations:
+          cpus: "0.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 1G       # Minimum guaranteed (works on 12GB server)
+    restart: unless-stopped
+    sysctls:
+      net.core.somaxconn: 2048  # Increased from 1024 for more connections
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    labels:
+      - "com.docker.compose.service=dragonfly"
+      - "app.component=cache"
+      - "app.type=dragonfly"
+      - "app.healthcheck=enabled"
+
+  openvidu-server:
+    profiles: ["infrastructure"]
+    image: openvidu/openvidu-server-kms:latest
+    container_name: latest-openvidu-server
+    hostname: openvidu-server
+    ports:
+      - "4443:4443"
+      - "50000-50050:50000-50050/udp"
+      - "50000-50050:50000-50050/tcp"
+    environment:
+      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://video.ishswami.in}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - OPENVIDU_EDITION=ce
+      - OPENVIDU_CDR=false
+      - SERVER_PORT=4443
+      - SERVER_SSL_ENABLED=false
+      - HTTPS_PORT=4443
+      - HTTP_PORT=5443
+      - server.port=4443
+      - server.address=0.0.0.0
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
+      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
+      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
+      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
+      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
+      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
+      - OPENVIDU_RECORDING=false
+      - COTURN_IP=coturn
+      - OPENVIDU_LOGS_LEVEL=WARN
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - TZ=UTC
+    volumes:
+      - openvidu_recordings:/opt/openvidu/recordings
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      coturn:
+        condition: service_healthy
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.7
+        aliases:
+          - openvidu-server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  coturn:
+    profiles: ["infrastructure"]
+    image: coturn/coturn:latest
+    container_name: latest-coturn
+    hostname: coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
+    environment:
+      - TZ=UTC
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-ip=0.0.0.0
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=openvidu:openvidu
+      - --realm=openvidu
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.8
+        aliases:
+          - coturn
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Application Services (Profile: app)
   api:
+    profiles: ["app"]
     # Use image from GitHub Container Registry (for CI/CD deployments)
     # DOCKER_IMAGE is set by deploy.sh script
     image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
@@ -143,128 +371,8 @@ services:
       - "app.component=backend"
       - "app.type=api"
 
-  postgres:
-    image: postgres:16
-    container_name: latest-postgres
-    hostname: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data/pgdata
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: userdb
-      # Optimized for 8 vCPU/24GB RAM: API (60) + Worker (30) + overhead = 120
-      POSTGRES_MAX_CONNECTIONS: 120
-      POSTGRES_SHARED_BUFFERS: 2GB
-      PGDATA: /var/lib/postgresql/data/pgdata
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.2
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    deploy:
-      resources:
-        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
-        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
-        limits:
-          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for PostgreSQL)
-          memory: 10G      # Target: 24GB server (10GB for PostgreSQL)
-        reservations:
-          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 3G       # Minimum guaranteed (works on 12GB server)
-    restart: unless-stopped
-    shm_size: 256mb  # Shared memory for PostgreSQL
-    stop_grace_period: 1m
-    command: >
-      postgres 
-      -c max_connections=120 
-      -c shared_buffers=2GB 
-      -c effective_cache_size=12GB 
-      -c maintenance_work_mem=256MB 
-      -c checkpoint_completion_target=0.9 
-      -c wal_buffers=32MB 
-      -c default_statistics_target=100 
-      -c random_page_cost=1.1 
-      -c effective_io_concurrency=200 
-      -c work_mem=16MB 
-      -c min_wal_size=2GB 
-      -c max_wal_size=8GB 
-      -c max_worker_processes=8 
-      -c max_parallel_workers_per_gather=4 
-      -c max_parallel_workers=8 
-      -c max_parallel_maintenance_workers=4 
-      -c idle_in_transaction_session_timeout=60000 
-      -c statement_timeout=60000 
-      -c lock_timeout=60000 
-      -c listen_addresses='*' 
-      -c log_connections=on 
-      -c log_disconnections=on 
-      -c tcp_keepalives_idle=60 
-      -c tcp_keepalives_interval=10 
-      -c tcp_keepalives_count=3 
-      -c client_min_messages=warning
-    labels:
-      - "com.docker.compose.service=postgres"
-      - "app.component=database"
-      - "app.type=postgres"
-      - "app.healthcheck=enabled"
-      - "app.persist=true"
-
-  dragonfly:
-    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: latest-dragonfly
-    hostname: dragonfly
-    command: >
-      --alsologtostderr
-      --cache_mode=false
-      --maxmemory=4gb
-      --proactor_threads=6
-      --logtostderr
-      --default_lua_flags=allow-undeclared-keys
-    ports:
-      - "6380:6379"
-    volumes:
-      - dragonfly_data:/data
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.4
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    deploy:
-      resources:
-        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
-        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
-        limits:
-          cpus: "1.5"      # Target: 8 vCPU server (1.5 CPU for Dragonfly)
-          memory: 4G       # Target: 24GB server (4GB for Dragonfly cache)
-        reservations:
-          cpus: "0.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 1G       # Minimum guaranteed (works on 12GB server)
-    restart: unless-stopped
-    sysctls:
-      net.core.somaxconn: 2048  # Increased from 1024 for more connections
-    ulimits:
-      nproc: 65535
-      nofile:
-        soft: 65535
-        hard: 65535
-    labels:
-      - "com.docker.compose.service=dragonfly"
-      - "app.component=cache"
-      - "app.type=dragonfly"
-      - "app.healthcheck=enabled"
-
   worker:
+    profiles: ["app"]
     # Use same image as API (worker runs from same codebase)
     # DOCKER_IMAGE is set by deploy.sh script
     image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
@@ -361,112 +469,19 @@ services:
       - "app.component=worker"
       - "app.type=worker"
 
-  # OpenVidu Services
-  openvidu-server:
-    image: openvidu/openvidu-server-kms:latest
-    container_name: latest-openvidu-server
-    hostname: openvidu-server
-    ports:
-      - "4443:4443"
-      - "50000-50050:50000-50050/udp"
-      - "50000-50050:50000-50050/tcp"
-    environment:
-      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://video.ishswami.in}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-video.ishswami.in}
-      - OPENVIDU_EDITION=ce
-      - OPENVIDU_CDR=false
-      - SERVER_PORT=4443
-      - SERVER_SSL_ENABLED=false
-      - HTTPS_PORT=4443
-      - HTTP_PORT=5443
-      - server.port=4443
-      - server.address=0.0.0.0
-      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
-      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
-      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
-      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
-      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
-      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
-      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
-      - OPENVIDU_RECORDING=false
-      - COTURN_IP=coturn
-      - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-video.ishswami.in}
-      - TZ=UTC
-    volumes:
-      - openvidu_recordings:/opt/openvidu/recordings
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      coturn:
-        condition: service_healthy
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.7
-        aliases:
-          - openvidu-server
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 4G
-        reservations:
-          cpus: "1.0"
-          memory: 2G
-
-  coturn:
-    image: coturn/coturn:latest
-    container_name: latest-coturn
-    hostname: coturn
-    ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
-      - "49160-49200:49160-49200/udp"
-      - "49160-49200:49160-49200/tcp"
-    environment:
-      - TZ=UTC
-    command:
-      - -n
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --lt-cred-mech
-      - --user=openvidu:openvidu
-      - --realm=openvidu
-      - --no-cli
-      - --no-tls
-      - --no-dtls
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.8
-        aliases:
-          - coturn
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-
 volumes:
   postgres_data:
-    name: latest_postgres_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/healthcare-backend/data/postgres
   dragonfly_data:
-    name: latest_dragonfly_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/healthcare-backend/data/dragonfly
   openvidu_recordings:
     name: latest_openvidu_recordings
 

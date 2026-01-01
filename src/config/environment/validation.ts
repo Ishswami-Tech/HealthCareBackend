@@ -8,6 +8,7 @@ import { getEnv } from './utils';
 const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
   production: [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET],
   staging: [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET],
+  'local-prod': [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET], // Same as staging
   development: [], // Development is lenient
   test: [], // Test is lenient
 } as const;
@@ -31,6 +32,13 @@ const RECOMMENDED_VARS_BY_ENV: Record<string, readonly string[]> = {
     'SESSION_SECRET',
     'COOKIE_SECRET',
   ],
+  'local-prod': [
+    ENV_VARS.REDIS_HOST,
+    ENV_VARS.EMAIL_HOST,
+    ENV_VARS.CORS_ORIGIN,
+    'SESSION_SECRET',
+    'COOKIE_SECRET',
+  ], // Same as staging
   development: [ENV_VARS.DATABASE_URL, ENV_VARS.REDIS_HOST],
   test: [ENV_VARS.DATABASE_URL],
 } as const;
@@ -38,7 +46,7 @@ const RECOMMENDED_VARS_BY_ENV: Record<string, readonly string[]> = {
 /**
  * Validates environment variables for a specific environment
  *
- * @param environment - The environment to validate (development, production, staging, test)
+ * @param environment - The environment to validate (development, production, staging, test, local-prod)
  * @param throwOnMissing - Whether to throw an error if required variables are missing (default: true)
  * @returns Object containing validation results
  *
@@ -107,7 +115,7 @@ export function validateEnvironmentConfig(
  * @returns Map of environment to validation results
  */
 export function validateAllEnvironments(
-  environments: readonly string[] = ['development', 'production', 'staging', 'test']
+  environments: readonly string[] = ['development', 'production', 'staging', 'test', 'local-prod']
 ): Map<string, ReturnType<typeof validateEnvironmentConfig>> {
   const results = new Map<string, ReturnType<typeof validateEnvironmentConfig>>();
 

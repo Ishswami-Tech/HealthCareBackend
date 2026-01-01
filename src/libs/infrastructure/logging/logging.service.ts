@@ -571,14 +571,29 @@ export class LoggingService {
 
       // Enhanced database query with better indexing
       if (!this.databaseService) {
-        // Cache-only fallback for high performance
+        // Cache-only fallback for high performance (when database is not available)
         const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
         const parsedLogs = cachedLogs
           .map(log => JSON.parse(log) as unknown)
           .filter((log: unknown) => {
-            const logData = log as { timestamp: string };
+            const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
             const logDate = new Date(logData.timestamp);
-            return logDate >= finalStartTime && logDate <= finalEndTime;
+
+            // Apply time filter
+            const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
+
+            // Apply type filter
+            const matchesType = !type || logData.type === type;
+
+            // Apply level filter
+            const matchesLevel = !level || logData.level === level;
+
+            return inTimeRange && matchesType && matchesLevel;
+          })
+          .sort((a: unknown, b: unknown) => {
+            const aData = a as { timestamp: string };
+            const bData = b as { timestamp: string };
+            return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
           })
           .slice(0, 1000); // Limit for performance
 
@@ -655,7 +670,7 @@ export class LoggingService {
           clinicId: string | null;
         }>;
 
-        const result = (
+        const dbResult = (
           dbLogs as Array<{
             id: string;
             action: string;
@@ -683,22 +698,100 @@ export class LoggingService {
           };
         });
 
-        // Enhanced caching with longer TTL for 1M users
-        await this.cacheService?.set(cacheKey, result, 900); // 15 minutes
+        // CRITICAL: Combine database logs with cache logs to ensure ALL logs appear in UI
+        // Cache logs contain the full log entry with all metadata, while DB logs are audit-only
+        let combinedLogs = [...dbResult];
 
-        return result;
+        try {
+          // Get cache logs and combine with database logs
+          const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
+          const parsedCacheLogs = cachedLogs
+            .map(log => JSON.parse(log) as unknown)
+            .filter((log: unknown) => {
+              const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
+              const logDate = new Date(logData.timestamp);
+
+              // Apply time filter
+              const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
+
+              // Apply type filter
+              const matchesType = !type || logData.type === type;
+
+              // Apply level filter
+              const matchesLevel = !level || logData.level === level;
+
+              return inTimeRange && matchesType && matchesLevel;
+            })
+            .slice(0, 5000); // Limit cache logs for performance
+
+          // Combine and deduplicate by ID (cache logs have more complete data)
+          const logMap = new Map<string, unknown>();
+
+          // First add cache logs (they have complete metadata)
+          for (const log of parsedCacheLogs) {
+            const logData = log as { id: string };
+            if (logData.id) {
+              logMap.set(logData.id, log);
+            }
+          }
+
+          // Then add database logs (only if not already in cache)
+          for (const log of dbResult) {
+            const logData = log as { id: string };
+            if (logData.id && !logMap.has(logData.id)) {
+              logMap.set(logData.id, log);
+            }
+          }
+
+          combinedLogs = Array.from(logMap.values()) as typeof combinedLogs;
+
+          // Sort by timestamp descending (newest first)
+          combinedLogs.sort((a: unknown, b: unknown) => {
+            const aData = a as { timestamp: string | Date };
+            const bData = b as { timestamp: string | Date };
+            const aTime = new Date(aData.timestamp).getTime();
+            const bTime = new Date(bData.timestamp).getTime();
+            return bTime - aTime;
+          });
+
+          // Limit to 1000 for performance
+          combinedLogs = combinedLogs.slice(0, 1000);
+        } catch (_cacheError) {
+          // If cache retrieval fails, just use database logs
+          // Silent fail - database logs are still available
+        }
+
+        // Enhanced caching with longer TTL for 1M users
+        await this.cacheService?.set(cacheKey, combinedLogs, 900); // 15 minutes
+
+        return combinedLogs;
       } catch (_error) {
         // Database query failed, falling back to cache - silent fail
 
-        // Fallback to cache-only logs
+        // Fallback to cache-only logs (these contain full log entries with all metadata)
         try {
           const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
           const parsedLogs = cachedLogs
             .map(log => JSON.parse(log) as unknown)
             .filter((log: unknown) => {
-              const logData = log as { timestamp: string };
+              const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
               const logDate = new Date(logData.timestamp);
-              return logDate >= finalStartTime && logDate <= finalEndTime;
+
+              // Apply time filter
+              const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
+
+              // Apply type filter
+              const matchesType = !type || logData.type === type;
+
+              // Apply level filter
+              const matchesLevel = !level || logData.level === level;
+
+              return inTimeRange && matchesType && matchesLevel;
+            })
+            .sort((a: unknown, b: unknown) => {
+              const aData = a as { timestamp: string };
+              const bData = b as { timestamp: string };
+              return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
             })
             .slice(0, 1000); // Limit for performance
 

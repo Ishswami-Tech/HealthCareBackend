@@ -8,7 +8,7 @@
  * @description Multi-tenant communication configuration service
  */
 
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -102,7 +102,6 @@ export interface ClinicCommunicationConfig {
  */
 @Injectable()
 export class CommunicationConfigService implements OnModuleInit {
-  private readonly logger = new Logger(CommunicationConfigService.name);
   private readonly cacheTTL = 3600; // 1 hour
 
   private suppressionListService: SuppressionListService | undefined;
@@ -133,8 +132,14 @@ export class CommunicationConfigService implements OnModuleInit {
     return this.suppressionListService;
   }
 
-  onModuleInit(): void {
-    this.logger.log('CommunicationConfigService initialized');
+  async onModuleInit(): Promise<void> {
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'CommunicationConfigService initialized',
+      'CommunicationConfigService',
+      {}
+    );
   }
 
   /**

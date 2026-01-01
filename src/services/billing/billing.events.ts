@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { BillingService } from './billing.service';
 import { DatabaseService } from '@infrastructure/database';
@@ -10,8 +10,6 @@ import { LogType, LogLevel, AppointmentStatus } from '@core/types';
  */
 @Injectable()
 export class BillingEventsListener {
-  private readonly logger = new Logger(BillingEventsListener.name);
-
   constructor(
     private readonly billingService: BillingService,
     private readonly databaseService: DatabaseService,
@@ -23,19 +21,36 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.subscription.created')
   async handleSubscriptionCreated(payload: { subscriptionId: string; userId: string }) {
-    this.logger.log(
-      `Handling subscription.created event for subscription ${payload.subscriptionId}`
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Handling subscription.created event for subscription ${payload.subscriptionId}`,
+      'BillingEventsListener',
+      { subscriptionId: payload.subscriptionId, userId: payload.userId }
     );
 
     try {
       // Send subscription confirmation and invoice via WhatsApp
       await this.billingService.sendSubscriptionConfirmation(payload.subscriptionId);
 
-      this.logger.log(`Subscription confirmation sent successfully for ${payload.subscriptionId}`);
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        `Subscription confirmation sent successfully for ${payload.subscriptionId}`,
+        'BillingEventsListener',
+        { subscriptionId: payload.subscriptionId }
+      );
     } catch (error) {
-      this.logger.error(
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to send subscription confirmation: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
+        'BillingEventsListener',
+        {
+          subscriptionId: payload.subscriptionId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }
@@ -45,17 +60,36 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.invoice.created')
   async handleInvoiceCreated(payload: { invoiceId: string }) {
-    this.logger.log(`Handling invoice.created event for invoice ${payload.invoiceId}`);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Handling invoice.created event for invoice ${payload.invoiceId}`,
+      'BillingEventsListener',
+      { invoiceId: payload.invoiceId }
+    );
 
     try {
       // Generate PDF for the invoice
       await this.billingService.generateInvoicePDF(payload.invoiceId);
 
-      this.logger.log(`Invoice PDF generated successfully for ${payload.invoiceId}`);
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        `Invoice PDF generated successfully for ${payload.invoiceId}`,
+        'BillingEventsListener',
+        { invoiceId: payload.invoiceId }
+      );
     } catch (error) {
-      this.logger.error(
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to generate invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
+        'BillingEventsListener',
+        {
+          invoiceId: payload.invoiceId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }
@@ -65,7 +99,13 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.payment.updated')
   async handlePaymentUpdated(payload: { paymentId: string }) {
-    this.logger.log(`Handling payment.updated event for payment ${payload.paymentId}`);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Handling payment.updated event for payment ${payload.paymentId}`,
+      'BillingEventsListener',
+      { paymentId: payload.paymentId }
+    );
 
     try {
       // Get payment details to check if it's completed and has an invoice
@@ -81,12 +121,25 @@ export class BillingEventsListener {
         // Send invoice via WhatsApp
         await this.billingService.sendInvoiceViaWhatsApp(payment.invoiceId);
 
-        this.logger.log(`Invoice sent via WhatsApp for payment ${payload.paymentId}`);
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          `Invoice sent via WhatsApp for payment ${payload.paymentId}`,
+          'BillingEventsListener',
+          { paymentId: payload.paymentId, invoiceId: payment.invoiceId }
+        );
       }
     } catch (error) {
-      this.logger.error(
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
+        'BillingEventsListener',
+        {
+          paymentId: payload.paymentId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }
@@ -96,17 +149,36 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.invoice.paid')
   async handleInvoicePaid(payload: { invoiceId: string }) {
-    this.logger.log(`Handling invoice.paid event for invoice ${payload.invoiceId}`);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Handling invoice.paid event for invoice ${payload.invoiceId}`,
+      'BillingEventsListener',
+      { invoiceId: payload.invoiceId }
+    );
 
     try {
       // Send invoice via WhatsApp
       await this.billingService.sendInvoiceViaWhatsApp(payload.invoiceId);
 
-      this.logger.log(`Invoice sent via WhatsApp for ${payload.invoiceId}`);
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        `Invoice sent via WhatsApp for ${payload.invoiceId}`,
+        'BillingEventsListener',
+        { invoiceId: payload.invoiceId }
+      );
     } catch (error) {
-      this.logger.error(
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
+        'BillingEventsListener',
+        {
+          invoiceId: payload.invoiceId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     }
   }
@@ -122,7 +194,17 @@ export class BillingEventsListener {
     status: string;
     clinicId: string;
   }) {
-    this.logger.log(`Handling payment.completed event for payment ${payload.paymentId}`);
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      `Handling payment.completed event for payment ${payload.paymentId}`,
+      'BillingEventsListener',
+      {
+        paymentId: payload.paymentId,
+        appointmentId: payload.appointmentId,
+        clinicId: payload.clinicId,
+      }
+    );
 
     try {
       // Only process if payment is for an appointment and status is completed
@@ -163,17 +245,8 @@ export class BillingEventsListener {
             clinicId: payload.clinicId,
           }
         );
-
-        this.logger.log(
-          `Appointment ${payload.appointmentId} confirmed after payment ${payload.paymentId}`
-        );
       }
     } catch (error) {
-      this.logger.error(
-        `Failed to confirm appointment after payment: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        error instanceof Error ? error.stack : undefined
-      );
-
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
@@ -182,7 +255,9 @@ export class BillingEventsListener {
         {
           appointmentId: payload.appointmentId,
           paymentId: payload.paymentId,
-          error: error instanceof Error ? error.stack : undefined,
+          clinicId: payload.clinicId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
         }
       );
     }

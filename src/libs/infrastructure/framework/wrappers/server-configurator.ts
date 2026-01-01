@@ -22,7 +22,7 @@ import { LogType, LogLevel } from '@core/types';
  * Server configuration options
  */
 export interface ServerConfigurationOptions {
-  readonly environment: 'development' | 'production' | 'staging' | 'test';
+  readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
   readonly configService?: ConfigService;
   readonly defaultPort?: number;
   readonly defaultHost?: string;
@@ -38,7 +38,7 @@ export class ServerConfigurator {
   private readonly logger: Logger;
   private readonly loggingService: LoggingService | undefined;
   private readonly configService: ConfigService | undefined;
-  private readonly environment: 'development' | 'production' | 'staging' | 'test';
+  private readonly environment: 'development' | 'production' | 'staging' | 'test' | 'local-prod';
 
   /**
    * Create a new ServerConfigurator instance
@@ -107,8 +107,8 @@ export class ServerConfigurator {
     const trustProxyValue = this.configService?.get<string>('TRUST_PROXY', '0') || '0';
     const trustProxy = trustProxyValue === '1' || trustProxyValue === 'true';
 
-    // Production-like settings for staging and production
-    const isProductionLike = this.environment === 'production' || this.environment === 'staging';
+    // Production-like settings for staging, production, and local-prod
+    const isProductionLike = this.environment === 'production' || this.environment === 'staging' || this.environment === 'local-prod';
     const bodyLimit = isProductionLike
       ? 50 * 1024 * 1024 // 50MB in production/staging
       : 10 * 1024 * 1024; // 10MB in development/test
@@ -120,7 +120,7 @@ export class ServerConfigurator {
     const requestTimeout = isProductionLike ? 30000 : 10000;
 
     const enableHttp2: boolean =
-      (this.environment === 'production' || this.environment === 'staging') &&
+      (this.environment === 'production' || this.environment === 'staging' || this.environment === 'local-prod') &&
       (this.configService?.getEnvBoolean('ENABLE_HTTP2', true) ?? true);
 
     const config: ApplicationConfig = {

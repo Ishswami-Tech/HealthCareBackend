@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentAnalyticsService } from './appointment-analytics.service';
+import { LoggingService } from '@infrastructure/logging';
 import type { AnalyticsFilter } from '@core/types/appointment.types';
 
 interface AnalyticsPluginData {
@@ -43,13 +44,18 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
     'report-generation',
   ];
 
-  constructor(private readonly analyticsService: AppointmentAnalyticsService) {
-    super();
+  constructor(
+    private readonly analyticsService: AppointmentAnalyticsService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = this.validatePluginData(data);
-    this.logPluginAction('Processing clinic analytics operation', {
+    await this.logPluginAction('Processing clinic analytics operation', {
       operation: pluginData.operation,
     });
 
@@ -133,7 +139,7 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
         return await this.getPatientAnalytics(data);
 
       default:
-        this.logPluginError('Unknown analytics operation', {
+        await this.logPluginError('Unknown analytics operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown analytics operation: ${pluginData.operation}`);
@@ -151,7 +157,7 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
     return record as unknown as AnalyticsPluginData;
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     try {
       const pluginData = this.validatePluginData(data);
       const requiredFields: Record<string, string[]> = {
@@ -171,21 +177,21 @@ export class ClinicAnalyticsPlugin extends BaseAppointmentPlugin {
       const required = requiredFields[operation];
 
       if (!required) {
-        this.logPluginError('Unknown operation for validation', { operation });
-        return Promise.resolve(false);
+        await this.logPluginError('Unknown operation for validation', { operation });
+        return false;
       }
 
       for (const field of required) {
         if (!pluginData[field as keyof AnalyticsPluginData]) {
-          this.logPluginError(`Missing required field: ${field}`, {
+          await this.logPluginError(`Missing required field: ${field}`, {
             operation,
             field,
           });
-          return Promise.resolve(false);
+          return false;
         }
       }
 
-      return Promise.resolve(true);
+      return true;
     } catch {
       return Promise.resolve(false);
     }

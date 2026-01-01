@@ -1,30 +1,70 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import type { BasePlugin, PluginContext, PluginHealth } from '@core/types';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 @Injectable()
 export abstract class BaseAppointmentPlugin implements BasePlugin {
-  protected readonly logger = new Logger(this.constructor.name);
+  // LoggingService is optional - child classes should inject it
+  // If not available, logging calls will be no-ops
+  protected loggingService?: LoggingService;
 
   abstract readonly name: string;
   abstract readonly version: string;
   abstract readonly features: string[];
 
-  initialize(_context: PluginContext): Promise<void> {
-    this.logger.log(`🚀 Initializing plugin: ${this.name}`);
+  // Constructor to optionally inject LoggingService
+  constructor(
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService | undefined
+  ) {
+    // Handle optional loggingService with exactOptionalPropertyTypes
+    if (loggingService !== undefined) {
+    this.loggingService = loggingService;
+    }
+  }
+
+  async initialize(_context: PluginContext): Promise<void> {
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `🚀 Initializing plugin: ${this.name}`,
+        this.constructor.name,
+        { pluginName: this.name }
+      );
+    }
     // Default implementation - can be overridden
     return Promise.resolve();
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as Record<string, unknown>;
-    this.logger.log(`✅ Validating data for plugin: ${this.name}`);
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `✅ Validating data for plugin: ${this.name}`,
+        this.constructor.name,
+        { pluginName: this.name }
+      );
+    }
     // Default implementation - can be overridden
     return Promise.resolve(Boolean(pluginData));
   }
 
   async process(data: unknown): Promise<unknown> {
     const _pluginData = data as Record<string, unknown>;
-    this.logger.log(`🔧 Processing data for plugin: ${this.name}`);
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `🔧 Processing data for plugin: ${this.name}`,
+        this.constructor.name,
+        { pluginName: this.name }
+      );
+    }
     // Default implementation - can be overridden
     return Promise.resolve(data);
   }
@@ -42,8 +82,16 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     });
   }
 
-  destroy(): Promise<void> {
-    this.logger.log(`🛑 Destroying plugin: ${this.name}`);
+  async destroy(): Promise<void> {
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `🛑 Destroying plugin: ${this.name}`,
+        this.constructor.name,
+        { pluginName: this.name }
+      );
+    }
     // Default implementation - can be overridden
     return Promise.resolve();
   }
@@ -64,11 +112,35 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
     };
   }
 
-  protected logPluginAction(action: string, data?: unknown): void {
-    this.logger.log(`🔧 Plugin ${this.name} - ${action}`, data);
+  protected async logPluginAction(action: string, data?: unknown): Promise<void> {
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `🔧 Plugin ${this.name} - ${action}`,
+        this.constructor.name,
+        {
+          pluginName: this.name,
+          action,
+          ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
+        }
+      );
+    }
   }
 
-  protected logPluginError(error: string, data?: unknown): void {
-    this.logger.error(`❌ Plugin ${this.name} - ${error}`, data);
+  protected async logPluginError(error: string, data?: unknown): Promise<void> {
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `❌ Plugin ${this.name} - ${error}`,
+        this.constructor.name,
+        {
+          pluginName: this.name,
+          error,
+          ...(data && typeof data === 'object' ? (data as Record<string, unknown>) : { data }),
+        }
+      );
+    }
   }
 }

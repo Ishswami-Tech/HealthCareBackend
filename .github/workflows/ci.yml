@@ -138,17 +138,395 @@ jobs:
         run: |
           echo "Image pushed: ${{ steps.meta.outputs.tags }}"
 
+  # Change Detection
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      infra-changed: ${{ steps.filter.outputs.infra }}
+      app-changed: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect infrastructure and application changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'devops/docker/Dockerfile.postgres'
+              - 'devops/docker/Dockerfile.dragonfly'
+              - 'devops/docker/Dockerfile.openvidu'
+              - 'devops/docker/docker-compose.prod.yml'
+              - 'prisma/migrations/**'
+            app:
+              - 'src/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig.json'
+              - 'devops/docker/Dockerfile'
+
+      - name: Output changes
+        run: |
+          echo "Infrastructure changed: ${{ steps.filter.outputs.infra }}"
+          echo "Application changed: ${{ steps.filter.outputs.app }}"
+
+  # Infrastructure Health Check
+  check-infrastructure:
+    name: Check Infrastructure Health
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    needs: [detect-changes]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy health check script
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
+          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Run health check
+        id: health-check
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            chmod +x /tmp/health-check.sh /tmp/utils.sh
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            /tmp/health-check.sh > /tmp/health-status.json
+            echo "EXIT_CODE=$?" > /tmp/health-exit.txt
+          ENDSSH
+          
+          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
+          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-exit.txt /tmp/health-exit.txt || true
+          
+          if [[ -f /tmp/health-exit.txt ]]; then
+            EXIT_CODE=$(cat /tmp/health-exit.txt | grep EXIT_CODE | cut -d= -f2)
+            if [[ "$EXIT_CODE" == "0" ]]; then
+              echo "infra-healthy=true" >> $GITHUB_OUTPUT
+              echo "infra-status=healthy" >> $GITHUB_OUTPUT
+            else
+              echo "infra-healthy=false" >> $GITHUB_OUTPUT
+              if [[ "$EXIT_CODE" == "3" ]]; then
+                echo "infra-status=missing" >> $GITHUB_OUTPUT
+              else
+                echo "infra-status=unhealthy" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            echo "infra-healthy=false" >> $GITHUB_OUTPUT
+            echo "infra-status=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display health status
+        run: |
+          echo "Infrastructure Health: ${{ steps.health-check.outputs.infra-healthy }}"
+          echo "Infrastructure Status: ${{ steps.health-check.outputs.infra-status }}"
+          if [[ -f /tmp/health-status.json ]]; then
+            cat /tmp/health-status.json
+          fi
+
+  # Backup Infrastructure
+  backup-infrastructure:
+    name: Backup Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      (needs.detect-changes.outputs.infra-changed == 'true' || 
+       needs.check-infrastructure.outputs.infra-healthy == 'false')
+    environment: production
+    needs: [detect-changes, check-infrastructure]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy backup scripts
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
+          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Run backup
+        id: backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            chmod +x /tmp/backup.sh
+            BACKUP_ID=\$(/tmp/backup.sh)
+            echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
+          ENDSSH
+          
+          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
+          BACKUP_ID=\$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
+          echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
+          echo "Backup ID: \${BACKUP_ID}"
+
+  # Debug Infrastructure
+  debug-infrastructure:
+    name: Debug Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.check-infrastructure.outputs.infra-healthy == 'false' &&
+      needs.detect-changes.outputs.infra-changed != 'true'
+    environment: production
+    needs: [detect-changes, check-infrastructure]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy diagnostic scripts
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh
+          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Run diagnostics and auto-fix
+        id: debug
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            chmod +x /tmp/diagnose.sh
+            if /tmp/diagnose.sh > /tmp/debug-result.json 2>&1; then
+              echo "debug-status=fixed" > /tmp/debug-status.txt
+            else
+              echo "debug-status=failed" > /tmp/debug-status.txt
+            fi
+          ENDSSH
+          
+          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/debug-status.txt /tmp/debug-status.txt
+          DEBUG_STATUS=\$(grep debug-status /tmp/debug-status.txt | cut -d= -f2)
+          echo "debug-status=\${DEBUG_STATUS}" >> $GITHUB_OUTPUT
+
+  # Recreate Infrastructure
+  recreate-infrastructure:
+    name: Recreate Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      (needs.detect-changes.outputs.infra-changed == 'true' || 
+       (needs.check-infrastructure.outputs.infra-healthy == 'false' && 
+        (needs.debug-infrastructure.result == 'failure' || needs.debug-infrastructure.result == 'skipped')))
+    environment: production
+    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Recreate infrastructure containers
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            cd /opt/healthcare-backend/devops/docker || exit 1
+            
+            # Stop existing infrastructure containers gracefully
+            echo "Stopping existing infrastructure containers..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure stop || true
+            
+            # Recreate infrastructure containers
+            echo "Recreating infrastructure containers..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d
+            
+            # Wait for containers to be healthy
+            echo "Waiting for infrastructure containers to be healthy..."
+            sleep 10
+            
+            # Check container status
+            docker compose -f docker-compose.prod.yml --profile infrastructure ps
+          ENDSSH
+
+  # Restore Backup
+  restore-backup:
+    name: Restore Backup
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.backup-infrastructure.result == 'success' &&
+      needs.backup-infrastructure.outputs.backup-id != ''
+    environment: production
+    needs: [backup-infrastructure, recreate-infrastructure]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy restore scripts
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/restore.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/restore.sh
+          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Restore from backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            chmod +x /tmp/restore.sh
+            /tmp/restore.sh "${{ needs.backup-infrastructure.outputs.backup-id }}"
+          ENDSSH
+
+  # Verify Infrastructure
+  verify-infrastructure:
+    name: Verify Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      (needs.recreate-infrastructure.result == 'success' || 
+       needs.restore-backup.result == 'success' ||
+       (needs.recreate-infrastructure.result == 'skipped' && needs.restore-backup.result == 'skipped'))
+    environment: production
+    needs: [recreate-infrastructure, restore-backup]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy verify script
+        run: |
+          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
+          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Verify infrastructure
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            chmod +x /tmp/verify.sh
+            /tmp/verify.sh
+          ENDSSH
+
+  # Build Application (conditional)
+  build-application:
+    name: Build Application
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.detect-changes.outputs.app-changed == 'true'
+    needs: [detect-changes, docker-build]
+    timeout-minutes: 30
+    steps:
+      - name: Application build completed
+        run: |
+          echo "Application images already built in docker-build job"
+
   # Deploy to Production Server (Main Branch Only)
   deploy:
     name: Deploy to Production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [docker-build]
+    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure, recreate-infrastructure, restore-backup, verify-infrastructure, build-application]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -416,9 +794,10 @@ jobs:
 
       - name: Copy files to server
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
+          # Copy all deployment scripts
+          scp -o StrictHostKeyChecking=no -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
           scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
-          # Copy docker-compose file (we only need this, not the entire repository)
+          # Copy docker-compose file
           scp -o StrictHostKeyChecking=no devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
 
       - name: Set deployment image name
@@ -428,6 +807,28 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image: ${IMAGE_FULL}"
+
+      - name: Setup server directories
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+            set -e
+            
+            # Run directory setup script
+            if [[ -f /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh ]]; then
+              echo "Setting up server directories..."
+              chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
+              /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
+            else
+              echo "Setup script not found, creating directories manually..."
+              mkdir -p /opt/healthcare-backend/backups/{postgres,dragonfly,metadata}
+              mkdir -p /opt/healthcare-backend/data/{postgres,dragonfly,openvidu_recordings}
+              mkdir -p /var/log/deployments
+              chmod 700 /opt/healthcare-backend/backups
+              chmod 755 /opt/healthcare-backend/data
+              chmod 755 /var/log/deployments
+              echo "Directories created"
+            fi
+          ENDSSH
 
       - name: Deploy to server via SSH
         env:
@@ -519,15 +920,36 @@ jobs:
               exit 1
             }
             
-            # Make script executable and run
-            chmod +x /tmp/deploy.sh
-            /tmp/deploy.sh
+            # Make scripts executable
+            chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/*.sh
+            chmod +x /opt/healthcare-backend/devops/scripts/shared/*.sh
             
-            # Cleanup
-            rm -f /tmp/deploy.sh
+            # Set deployment variables for deploy.sh
+            export INFRA_CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
+            export APP_CHANGED="${{ needs.detect-changes.outputs.app-changed }}"
+            export INFRA_HEALTHY="${{ needs.check-infrastructure.outputs.infra-healthy }}"
+            export INFRA_STATUS="${{ needs.check-infrastructure.outputs.infra-status }}"
+            export BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id || '' }}"
+            
+            # Flag to indicate infrastructure operations were already handled by CI/CD jobs
+            # This prevents deploy.sh from duplicating backup/recreate/restore operations
+            if [[ "${{ needs.detect-changes.outputs.infra-changed }}" == "true" ]] || \
+               [[ "${{ needs.check-infrastructure.outputs.infra-healthy }}" == "false" ]]; then
+              export INFRA_ALREADY_HANDLED="true"
+            else
+              export INFRA_ALREADY_HANDLED="false"
+            fi
+            
+            # Run smart deployment orchestrator
+            # Note: deploy.sh will skip infrastructure operations if INFRA_ALREADY_HANDLED=true
+            # and only handle application deployment
+            cd /opt/healthcare-backend
+            /opt/healthcare-backend/devops/scripts/docker-infra/deploy.sh
+            
           ENDSSH
 
-      - name: Verify deployment health
+      - name: Verify deployment
+        if: always()
         run: |
           echo "🏥 Verifying deployment health..."
           sleep 15  # Wait for services to fully start
@@ -561,8 +983,8 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, security, docker-build]  # Build happens inside Docker
-    if: success()
+    needs: [lint, security, docker-build, deploy]
+    if: always() && !contains(needs.*.result, 'failure')
     steps:
       - name: Report Success
         run: |
@@ -570,5 +992,5 @@ jobs:
           if [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
             echo "🚀 Deployment to production completed!"
           else
-          echo "Ready for merge to main branch"
+            echo "Ready for merge to main branch"
           fi

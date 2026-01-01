@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { PaymentService } from './payment.service';
+import { LoggingService } from '@infrastructure/logging';
 import type { RefundData } from '@core/types/billing.types';
 
 interface PaymentPluginData {
@@ -23,13 +24,18 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
     'subscription-billing',
   ];
 
-  constructor(private readonly paymentService: PaymentService) {
-    super();
+  constructor(
+    private readonly paymentService: PaymentService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = this.validatePluginData(data);
-    this.logPluginAction('Processing clinic payment operation', {
+    await this.logPluginAction('Processing clinic payment operation', {
       operation: pluginData.operation,
     });
 
@@ -92,7 +98,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
       }
 
       default:
-        this.logPluginError('Unknown payment operation', {
+        await this.logPluginError('Unknown payment operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown payment operation: ${pluginData.operation}`);
@@ -110,7 +116,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
     return record as unknown as PaymentPluginData;
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     try {
       const pluginData = this.validatePluginData(data);
       // Validate that required fields are present for each operation
@@ -129,7 +135,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
       const fields = requiredFields[operation];
 
       if (!fields) {
-        this.logPluginError('Invalid operation', { operation });
+        await this.logPluginError('Invalid operation', { operation });
         return Promise.resolve(false);
       }
 
@@ -137,7 +143,7 @@ export class ClinicPaymentPlugin extends BaseAppointmentPlugin {
         field => pluginData[field as keyof PaymentPluginData] !== undefined
       );
       if (!isValid) {
-        this.logPluginError('Missing required fields', {
+        await this.logPluginError('Missing required fields', {
           operation,
           requiredFields: fields,
         });
