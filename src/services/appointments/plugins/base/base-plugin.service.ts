@@ -17,11 +17,11 @@ export abstract class BaseAppointmentPlugin implements BasePlugin {
   constructor(
     @Optional()
     @Inject(forwardRef(() => LoggingService))
-    loggingService?: LoggingService | undefined
+    loggingService?: LoggingService
   ) {
     // Handle optional loggingService with exactOptionalPropertyTypes
     if (loggingService !== undefined) {
-    this.loggingService = loggingService;
+      this.loggingService = loggingService;
     }
   }
 

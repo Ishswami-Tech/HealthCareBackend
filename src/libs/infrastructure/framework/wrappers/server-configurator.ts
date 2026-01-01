@@ -108,7 +108,10 @@ export class ServerConfigurator {
     const trustProxy = trustProxyValue === '1' || trustProxyValue === 'true';
 
     // Production-like settings for staging, production, and local-prod
-    const isProductionLike = this.environment === 'production' || this.environment === 'staging' || this.environment === 'local-prod';
+    const isProductionLike =
+      this.environment === 'production' ||
+      this.environment === 'staging' ||
+      this.environment === 'local-prod';
     const bodyLimit = isProductionLike
       ? 50 * 1024 * 1024 // 50MB in production/staging
       : 10 * 1024 * 1024; // 10MB in development/test
@@ -120,7 +123,9 @@ export class ServerConfigurator {
     const requestTimeout = isProductionLike ? 30000 : 10000;
 
     const enableHttp2: boolean =
-      (this.environment === 'production' || this.environment === 'staging' || this.environment === 'local-prod') &&
+      (this.environment === 'production' ||
+        this.environment === 'staging' ||
+        this.environment === 'local-prod') &&
       (this.configService?.getEnvBoolean('ENABLE_HTTP2', true) ?? true);
 
     const config: ApplicationConfig = {

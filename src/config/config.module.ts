@@ -87,7 +87,10 @@ function validateConfigEarly(): void {
       }
 
       // Only throw for production/staging/local-prod (strict environments)
-      if ((nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'local-prod') && result.missing.length > 0) {
+      if (
+        (nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'local-prod') &&
+        result.missing.length > 0
+      ) {
         const errorMessage = getEnvironmentValidationErrorMessage(nodeEnv, result.missing);
         throw new Error(errorMessage);
       }
