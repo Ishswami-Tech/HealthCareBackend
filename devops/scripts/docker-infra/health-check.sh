@@ -24,6 +24,14 @@ declare -A SERVICE_DETAILS
 # Check PostgreSQL
 check_postgres() {
     local container="${CONTAINER_PREFIX}postgres"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        SERVICE_STATUS["postgres"]="invalid"
+        SERVICE_DETAILS["postgres"]='{"status":"invalid","error":"Invalid container name"}'
+        return 1
+    fi
+    
     local status="unhealthy"
     local details="{}"
     
@@ -63,6 +71,14 @@ check_postgres() {
 # Check Dragonfly
 check_dragonfly() {
     local container="${CONTAINER_PREFIX}dragonfly"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        SERVICE_STATUS["dragonfly"]="invalid"
+        SERVICE_DETAILS["dragonfly"]='{"status":"invalid","error":"Invalid container name"}'
+        return 1
+    fi
+    
     local status="unhealthy"
     local details="{}"
     
@@ -99,6 +115,14 @@ check_dragonfly() {
 # Check OpenVidu
 check_openvidu() {
     local container="${CONTAINER_PREFIX}openvidu-server"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        SERVICE_STATUS["openvidu"]="invalid"
+        SERVICE_DETAILS["openvidu"]='{"status":"invalid","error":"Invalid container name"}'
+        return 1
+    fi
+    
     local status="unhealthy"
     local details="{}"
     

@@ -37,6 +37,12 @@ ENV_FILE="${BASE_DIR}/.env.production"
 
 # Ensure directories exist
 ensure_directories() {
+    # Check if running as root
+    local is_root=false
+    if [[ "$(id -u)" == "0" ]]; then
+        is_root=true
+    fi
+    
     # Check if directories exist, create if not
     if [[ ! -d "${BACKUP_DIR}/postgres" ]]; then
         mkdir -p "${BACKUP_DIR}/postgres"
@@ -53,8 +59,15 @@ ensure_directories() {
         log_info "Created directory: ${BACKUP_DIR}/metadata"
     fi
     
+    # /var/log/deployments requires sudo if not running as root
     if [[ ! -d "${LOG_DIR}" ]]; then
-        mkdir -p "${LOG_DIR}"
+        if [[ "${LOG_DIR}" == /var/log* ]] && ! $is_root; then
+            sudo mkdir -p "${LOG_DIR}" || log_error "Failed to create directory: ${LOG_DIR}"
+            sudo chmod 755 "${LOG_DIR}" 2>/dev/null || log_warning "Could not set permissions on ${LOG_DIR}"
+        else
+            mkdir -p "${LOG_DIR}"
+            chmod 755 "${LOG_DIR}" 2>/dev/null || log_warning "Could not set permissions on ${LOG_DIR}"
+        fi
         log_info "Created directory: ${LOG_DIR}"
     fi
     
@@ -75,7 +88,11 @@ ensure_directories() {
     
     # Set permissions (safe to run multiple times)
     chmod 700 "${BACKUP_DIR}" 2>/dev/null || true
-    chmod 755 "${LOG_DIR}" 2>/dev/null || true
+    if [[ "${LOG_DIR}" == /var/log* ]] && ! $is_root; then
+        sudo chmod 755 "${LOG_DIR}" 2>/dev/null || true
+    else
+        chmod 755 "${LOG_DIR}" 2>/dev/null || true
+    fi
     chmod 755 "${BASE_DIR}/data" 2>/dev/null || true
 }
 
@@ -151,12 +168,21 @@ check_disk_space() {
 # Check if container is running
 container_running() {
     local container="$1"
+    # Security: Validate container name before use
+    if ! validate_container_name "$container"; then
+        return 1
+    fi
     docker ps --format '{{.Names}}' | grep -q "^${container}$" >/dev/null 2>&1
 }
 
 # Get container status
 get_container_status() {
     local container="$1"
+    # Security: Validate container name before use
+    if ! validate_container_name "$container"; then
+        echo "invalid"
+        return 1
+    fi
     docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "missing"
 }
 
@@ -239,10 +265,112 @@ json_fix_trailing() {
     sed '$ s/,$//'
 }
 
+# Security: Input validation functions
+# Validate backup ID format (alphanumeric, hyphens, underscores, or "latest")
+validate_backup_id() {
+    local backup_id="$1"
+    if [[ "$backup_id" == "latest" ]]; then
+        return 0
+    fi
+    # Only allow alphanumeric, hyphens, underscores
+    if [[ ! "$backup_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "Invalid backup ID format: ${backup_id}"
+        return 1
+    fi
+    # Prevent path traversal attempts
+    if [[ "$backup_id" == *".."* ]] || [[ "$backup_id" == *"/"* ]]; then
+        log_error "Backup ID contains invalid characters (path traversal attempt): ${backup_id}"
+        return 1
+    fi
+    return 0
+}
+
+# Validate file path (prevent path traversal)
+validate_file_path() {
+    local file_path="$1"
+    local base_dir="$2"
+    
+    # Resolve absolute path
+    local abs_path
+    if [[ "$file_path" == /* ]]; then
+        abs_path="$file_path"
+    else
+        abs_path="${base_dir}/${file_path}"
+    fi
+    
+    # Normalize path (resolve .. and .)
+    abs_path=$(cd "$(dirname "$abs_path")" 2>/dev/null && pwd)/$(basename "$abs_path") 2>/dev/null || echo "$abs_path"
+    
+    # Check if path is within base directory
+    if [[ "$abs_path" != "$base_dir"* ]]; then
+        log_error "Path traversal detected: ${file_path}"
+        return 1
+    fi
+    
+    # Check for .. in original path
+    if [[ "$file_path" == *".."* ]]; then
+        log_error "Path traversal detected (..): ${file_path}"
+        return 1
+    fi
+    
+    return 0
+}
+
+# Validate container name (alphanumeric, hyphens, underscores, dots)
+validate_container_name() {
+    local container="$1"
+    # Only allow safe characters for container names
+    if [[ ! "$container" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        log_error "Invalid container name format: ${container}"
+        return 1
+    fi
+    # Prevent command injection attempts
+    if [[ "$container" == *"$"* ]] || [[ "$container" == *"`"* ]] || [[ "$container" == *"|"* ]] || [[ "$container" == *"&"* ]] || [[ "$container" == *";"* ]]; then
+        log_error "Container name contains dangerous characters: ${container}"
+        return 1
+    fi
+    return 0
+}
+
+# Validate S3 path (prevent path traversal)
+validate_s3_path() {
+    local s3_path="$1"
+    # Only allow alphanumeric, slashes, hyphens, underscores, dots
+    if [[ ! "$s3_path" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_error "Invalid S3 path format: ${s3_path}"
+        return 1
+    fi
+    # Prevent path traversal
+    if [[ "$s3_path" == *".."* ]]; then
+        log_error "S3 path contains path traversal (..): ${s3_path}"
+        return 1
+    fi
+    return 0
+}
+
+# Sanitize filename (remove dangerous characters)
+sanitize_filename() {
+    local filename="$1"
+    # Remove path separators and dangerous characters
+    echo "$filename" | sed 's/[^a-zA-Z0-9_.-]//g'
+}
+
 # S3 helper functions (using AWS CLI or direct API)
 s3_upload() {
     local local_file="$1"
     local s3_path="$2"
+    
+    # Security: Validate S3 path before use
+    if ! validate_s3_path "$s3_path"; then
+        log_error "Invalid S3 path: ${s3_path}"
+        return 1
+    fi
+    
+    # Security: Validate local file path
+    if [[ ! -f "$local_file" ]]; then
+        log_error "Local file not found: ${local_file}"
+        return 1
+    fi
     
     if [[ -z "${S3_ENABLED:-}" ]] || [[ "${S3_ENABLED}" != "true" ]]; then
         log_warning "S3 is not enabled, skipping upload"
@@ -256,6 +384,11 @@ s3_upload() {
     
     local endpoint_url=""
     if [[ -n "${S3_ENDPOINT:-}" ]]; then
+        # Security: Validate endpoint URL format
+        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
+            log_error "Invalid S3 endpoint format: ${S3_ENDPOINT}"
+            return 1
+        fi
         endpoint_url="--endpoint-url ${S3_ENDPOINT}"
     fi
     
@@ -285,6 +418,19 @@ s3_download() {
     local s3_path="$1"
     local local_file="$2"
     
+    # Security: Validate S3 path before use
+    if ! validate_s3_path "$s3_path"; then
+        log_error "Invalid S3 path: ${s3_path}"
+        return 1
+    fi
+    
+    # Security: Validate local file path (must be in /tmp or backup directory)
+    local file_dir=$(dirname "$local_file")
+    if [[ "$file_dir" != "/tmp" ]] && [[ "$file_dir" != "$BACKUP_DIR"* ]] && [[ "$file_dir" != "$BASE_DIR"* ]]; then
+        log_error "Invalid local file path (security check): ${local_file}"
+        return 1
+    fi
+    
     if [[ -z "${S3_ENABLED:-}" ]] || [[ "${S3_ENABLED}" != "true" ]]; then
         log_error "S3 is not enabled"
         return 1
@@ -297,6 +443,11 @@ s3_download() {
     
     local endpoint_url=""
     if [[ -n "${S3_ENDPOINT:-}" ]]; then
+        # Security: Validate endpoint URL format
+        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
+            log_error "Invalid S3 endpoint format: ${S3_ENDPOINT}"
+            return 1
+        fi
         endpoint_url="--endpoint-url ${S3_ENDPOINT}"
     fi
     
@@ -325,6 +476,11 @@ s3_download() {
 s3_exists() {
     local s3_path="$1"
     
+    # Security: Validate S3 path before use
+    if ! validate_s3_path "$s3_path"; then
+        return 1
+    fi
+    
     if [[ -z "${S3_ENABLED:-}" ]] || [[ "${S3_ENABLED}" != "true" ]]; then
         return 1
     fi
@@ -335,6 +491,10 @@ s3_exists() {
     
     local endpoint_url=""
     if [[ -n "${S3_ENDPOINT:-}" ]]; then
+        # Security: Validate endpoint URL format
+        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
+            return 1
+        fi
         endpoint_url="--endpoint-url ${S3_ENDPOINT}"
     fi
     

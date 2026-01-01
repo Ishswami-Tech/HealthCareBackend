@@ -67,6 +67,16 @@ verify_application() {
     local api_container="${CONTAINER_PREFIX}api"
     local worker_container="${CONTAINER_PREFIX}worker"
     
+    # Security: Validate container names
+    if ! validate_container_name "$api_container"; then
+        log_error "Invalid API container name: ${api_container}"
+        return 1
+    fi
+    if ! validate_container_name "$worker_container"; then
+        log_error "Invalid worker container name: ${worker_container}"
+        return 1
+    fi
+    
     local api_ready=false
     local worker_ready=false
     

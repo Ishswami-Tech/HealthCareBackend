@@ -193,17 +193,19 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Copy health check script
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
-          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Run health check
         id: health-check
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             chmod +x /tmp/health-check.sh /tmp/utils.sh
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
@@ -211,8 +213,8 @@ jobs:
             echo "EXIT_CODE=$?" > /tmp/health-exit.txt
           ENDSSH
           
-          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
-          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-exit.txt /tmp/health-exit.txt || true
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-exit.txt /tmp/health-exit.txt || true
           
           if [[ -f /tmp/health-exit.txt ]]; then
             EXIT_CODE=$(cat /tmp/health-exit.txt | grep EXIT_CODE | cut -d= -f2)
@@ -263,12 +265,14 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Copy backup scripts
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
-          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Run backup
         id: backup
@@ -282,7 +286,7 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
@@ -298,7 +302,7 @@ jobs:
             echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
           ENDSSH
           
-          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
           BACKUP_ID=\$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
           echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
           echo "Backup ID: \${BACKUP_ID}"
@@ -326,17 +330,19 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Copy diagnostic scripts
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh
-          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Run diagnostics and auto-fix
         id: debug
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             chmod +x /tmp/diagnose.sh
@@ -347,7 +353,7 @@ jobs:
             fi
           ENDSSH
           
-          scp -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/debug-status.txt /tmp/debug-status.txt
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/debug-status.txt /tmp/debug-status.txt
           DEBUG_STATUS=\$(grep debug-status /tmp/debug-status.txt | cut -d= -f2)
           echo "debug-status=\${DEBUG_STATUS}" >> $GITHUB_OUTPUT
 
@@ -376,11 +382,13 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Recreate infrastructure containers
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             cd /opt/healthcare-backend/devops/docker || exit 1
             
@@ -424,12 +432,14 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Copy restore scripts
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/restore.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/restore.sh
-          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/restore.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/restore.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Restore from backup
         env:
@@ -442,7 +452,7 @@ jobs:
           S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
           S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
@@ -454,7 +464,13 @@ jobs:
             export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
             chmod +x /tmp/restore.sh
-            /tmp/restore.sh "${{ needs.backup-infrastructure.outputs.backup-id }}"
+            # Validate backup-id to prevent command injection
+            BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id }}"
+            if [[ ! "$BACKUP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "ERROR: Invalid backup ID format"
+              exit 1
+            fi
+            /tmp/restore.sh "$BACKUP_ID"
           ENDSSH
 
   # Verify Infrastructure
@@ -482,16 +498,18 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Copy verify script
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
-          scp -o StrictHostKeyChecking=no devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Verify infrastructure
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             chmod +x /tmp/verify.sh
@@ -548,7 +566,9 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Create .env.production file
         run: |
@@ -795,10 +815,10 @@ jobs:
       - name: Copy files to server
         run: |
           # Copy all deployment scripts
-          scp -o StrictHostKeyChecking=no -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
-          scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
           # Copy docker-compose file
-          scp -o StrictHostKeyChecking=no devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
 
       - name: Set deployment image name
         id: deploy-image
@@ -810,7 +830,7 @@ jobs:
 
       - name: Setup server directories
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
             # Run directory setup script
@@ -822,10 +842,16 @@ jobs:
               echo "Setup script not found, creating directories manually..."
               mkdir -p /opt/healthcare-backend/backups/{postgres,dragonfly,metadata}
               mkdir -p /opt/healthcare-backend/data/{postgres,dragonfly,openvidu_recordings}
-              mkdir -p /var/log/deployments
+              # /var/log/deployments requires sudo if not running as root
+              if [[ "$EUID" -eq 0 ]]; then
+                mkdir -p /var/log/deployments
+                chmod 755 /var/log/deployments
+              else
+                sudo mkdir -p /var/log/deployments
+                sudo chmod 755 /var/log/deployments
+              fi
               chmod 700 /opt/healthcare-backend/backups
               chmod 755 /opt/healthcare-backend/data
-              chmod 755 /var/log/deployments
               echo "Directories created"
             fi
           ENDSSH
@@ -839,16 +865,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
             # Set deployment variables (values embedded from GitHub Actions)
-            # Handle SERVER_DEPLOY_PATH with default value
-            # Set SERVER_DEPLOY_PATH - export directly to avoid variable assignment issues
+            # Handle SERVER_DEPLOY_PATH with default value and input validation
+            # Security: Validate SERVER_DEPLOY_PATH to prevent path traversal attacks
             SERVER_DEPLOY_PATH_SECRET_VALUE="${{ vars.SERVER_DEPLOY_PATH }}"
             
-            # Export directly based on secret value
+            # Input validation: Only allow alphanumeric, forward slashes, hyphens, and underscores
+            # Prevent path traversal and command injection
             if [ -n "${SERVER_DEPLOY_PATH_SECRET_VALUE}" ] && [ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" != "" ]; then
+              # Validate path format (no .., no spaces, no special chars except /, -, _)
+              if [[ ! "${SERVER_DEPLOY_PATH_SECRET_VALUE}" =~ ^[a-zA-Z0-9/_-]+$ ]] || [[ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" == *".."* ]]; then
+                echo "❌ ERROR: Invalid SERVER_DEPLOY_PATH format (security check failed)"
+                exit 1
+              fi
               export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_SECRET_VALUE}"
               echo "✅ Using SERVER_DEPLOY_PATH from secret: '${SERVER_DEPLOY_PATH}'"
             else
@@ -868,16 +900,18 @@ jobs:
               exit 1
             fi
             
-            echo "📁 Final SERVER_DEPLOY_PATH='${SERVER_DEPLOY_PATH}'"
+            # Security: Don't log full path in production logs (masked by GitHub Actions)
+            echo "📁 Final SERVER_DEPLOY_PATH='[REDACTED]'"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
             
-            # Debug: Show deployment info
+            # Debug: Show deployment info (secrets masked by GitHub Actions)
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
-            echo "Server deployment path: ${SERVER_DEPLOY_PATH}"
+            # Security: Don't log full path in production logs
+            echo "Server deployment path: [REDACTED]"
             
             # Validate IMAGE is set
             if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
@@ -977,7 +1011,8 @@ jobs:
         run: |
           echo "✅ Deployment completed successfully!"
           echo "Image: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
-          echo "Server: ${{ secrets.SERVER_HOST }}"
+          # Security: Don't log server hostname in public logs
+          echo "Server: [REDACTED]"
 
   # Summary Report
   ci-success:

@@ -23,12 +23,19 @@ collect_diagnostics() {
     # Check each service
     for service in "${SERVICES[@]}"; do
         local container="${CONTAINER_PREFIX}${service}"
+        
+        # Security: Validate container name
+        if ! validate_container_name "$container"; then
+            issues+=("{\"service\":\"${service}\",\"severity\":\"critical\",\"issue\":\"Invalid container name\",\"details\":\"Container name validation failed\"}")
+            continue
+        fi
+        
         local status=$(get_container_status "$container")
         
         if [[ "$status" != "running" ]]; then
             issues+=("{\"service\":\"${service}\",\"severity\":\"critical\",\"issue\":\"Container status: ${status}\",\"details\":\"Container is not running\"}")
             
-            # Get logs
+            # Get logs (container name already validated)
             local service_logs=$(docker logs --tail 100 "$container" 2>&1 | head -20 || echo "No logs available")
             logs="${logs%?},\"${service}\":[\"$(echo "$service_logs" | sed 's/"/\\"/g' | tr '\n' '|')\"]}"
         fi
