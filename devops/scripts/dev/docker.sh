@@ -142,9 +142,20 @@ clean() {
 # Shell access
 shell() {
     local service="${1:-api}"
+    # Security: Validate service name (prevent command injection)
+    if [[ ! "$service" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        print_error "Invalid service name: $service"
+        exit 1
+    fi
+    local container="healthcare-$service"
+    # Security: Validate container name
+    if [[ ! "$container" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+        print_error "Invalid container name: $container"
+        exit 1
+    fi
     print_info "Opening shell in: $service"
     cd "$PROJECT_ROOT"
-    docker exec -it "healthcare-$service" sh
+    docker exec -it "$container" sh
 }
 
 # Show access points

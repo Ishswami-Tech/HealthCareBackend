@@ -14,6 +14,9 @@ BACKUP_DIR="${BASE_DIR}/backups"
 DATA_DIR="${BASE_DIR}/data"
 LOG_DIR="/var/log/deployments"
 
+# Global flag for root check
+IS_ROOT=false
+
 # Directories to create
 declare -a DIRECTORIES=(
     "${BASE_DIR}"
@@ -34,23 +37,45 @@ ensure_directory() {
     if [[ -d "$dir" ]]; then
         log_info "Directory already exists: ${dir}"
         # Update permissions if needed
-        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        if $IS_ROOT; then
+            chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        else
+            # For /var/log directories, use sudo even if directory exists
+            if [[ "$dir" == /var/log* ]]; then
+                sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+            else
+                chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+            fi
+        fi
         return 0
+    fi
+    
+    # Check if directory is in /var/log (requires sudo if not root)
+    local needs_sudo=false
+    if [[ "$dir" == /var/log* ]] && ! $IS_ROOT; then
+        needs_sudo=true
     fi
     
     # Create parent directories if needed
     local parent=$(dirname "$dir")
     if [[ ! -d "$parent" ]]; then
         log_info "Creating parent directory: ${parent}"
-        mkdir -p "$parent"
+        if [[ "$parent" == /var/log* ]] && ! $IS_ROOT; then
+            sudo mkdir -p "$parent" || log_error "Failed to create parent directory: ${parent}"
+        else
+            mkdir -p "$parent" || log_error "Failed to create parent directory: ${parent}"
+        fi
     fi
     
     # Create directory
     log_info "Creating directory: ${dir}"
-    mkdir -p "$dir"
-    
-    # Set permissions
-    chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+    if $needs_sudo; then
+        sudo mkdir -p "$dir" || log_error "Failed to create directory: ${dir}"
+        sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+    else
+        mkdir -p "$dir" || log_error "Failed to create directory: ${dir}"
+        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+    fi
     
     log_success "Directory created: ${dir}"
 }
@@ -82,12 +107,12 @@ main() {
     log_info "Setting up server directories..."
     
     # Check if running as root (optional)
-    local is_root=false
     if [[ "$(id -u)" == "0" ]]; then
-        is_root=true
+        IS_ROOT=true
         log_info "Running as root - will set proper ownership"
     else
-        log_info "Not running as root - will create directories with current user permissions"
+        IS_ROOT=false
+        log_info "Not running as root - will use sudo for /var/log directories"
     fi
     
     # Create all directories
@@ -108,7 +133,7 @@ main() {
         ensure_directory "$dir" "$mode"
         
         # Set ownership if root
-        if $is_root; then
+        if $IS_ROOT; then
             # Try to find the appropriate user (common: docker, root, or current user)
             local owner_user=""
             if id "docker" &>/dev/null; then

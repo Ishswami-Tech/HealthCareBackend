@@ -88,12 +88,17 @@ main() {
             shift || true
             # Route to appropriate Docker script
             local cmd="${1:-deploy}"
+            # Security: Validate command name (prevent path traversal)
+            if [[ "$cmd" == *"/"* ]] || [[ "$cmd" == *".."* ]] || [[ "$cmd" == *"$"* ]] || [[ "$cmd" == *"`"* ]]; then
+                echo "❌ Invalid command name (security check failed): $cmd"
+                exit 1
+            fi
             case "$cmd" in
                 deploy|health-check|backup|restore|diagnose|verify|setup-directories)
                     bash "${SCRIPT_DIR}/docker-infra/${cmd}.sh" "${@:2}"
                     ;;
                 *)
-                    # Try as direct script name
+                    # Try as direct script name (with validation)
                     if [[ -f "${SCRIPT_DIR}/docker-infra/${cmd}.sh" ]]; then
                         bash "${SCRIPT_DIR}/docker-infra/${cmd}.sh" "${@:2}"
                     else
@@ -108,6 +113,11 @@ main() {
             shift || true
             # Route to Kubernetes production scripts
             local cmd="${1:-deploy}"
+            # Security: Validate command name (prevent path traversal)
+            if [[ "$cmd" == *"/"* ]] || [[ "$cmd" == *".."* ]] || [[ "$cmd" == *"$"* ]] || [[ "$cmd" == *"`"* ]]; then
+                echo "❌ Invalid command name (security check failed): $cmd"
+                exit 1
+            fi
             if [[ -f "${SCRIPT_DIR}/kubernetes/${cmd}.sh" ]]; then
                 bash "${SCRIPT_DIR}/kubernetes/${cmd}.sh" "${@:2}"
             else

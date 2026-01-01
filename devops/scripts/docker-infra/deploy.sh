@@ -70,7 +70,13 @@ deploy_infrastructure() {
         
         # Wait for health
         for service in postgres dragonfly; do
-            wait_for_health "${CONTAINER_PREFIX}${service}" 300 || {
+            local container="${CONTAINER_PREFIX}${service}"
+            # Security: Validate container name
+            if ! validate_container_name "$container"; then
+                log_error "Invalid container name: ${container}"
+                return 1
+            fi
+            wait_for_health "$container" 300 || {
                 log_error "${service} did not become healthy"
                 return 1
             }
@@ -94,6 +100,16 @@ deploy_application() {
     # Start new containers with different names
     local api_new="${CONTAINER_PREFIX}api-new"
     local worker_new="${CONTAINER_PREFIX}worker-new"
+    
+    # Security: Validate container names
+    if ! validate_container_name "$api_new"; then
+        log_error "Invalid API container name: ${api_new}"
+        return 1
+    fi
+    if ! validate_container_name "$worker_new"; then
+        log_error "Invalid worker container name: ${worker_new}"
+        return 1
+    fi
     
     # Pull latest images
     docker compose -f docker-compose.prod.yml pull api worker || return 1

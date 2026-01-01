@@ -15,6 +15,12 @@ RESTORE_SOURCE=""  # Will be set to "local" or "s3"
 
 # Find backup (local or S3)
 find_backup() {
+    # Security: Validate backup ID before use
+    if ! validate_backup_id "$BACKUP_ID"; then
+        log_error "Invalid backup ID: ${BACKUP_ID}"
+        return 1
+    fi
+    
     log_info "Looking for backup: ${BACKUP_ID}..."
     
     # Try local first
@@ -22,12 +28,22 @@ find_backup() {
         local latest_meta=$(ls -t "${BACKUP_DIR}/metadata"/*.json 2>/dev/null | head -1)
         if [[ -n "$latest_meta" ]]; then
             BACKUP_ID=$(basename "$latest_meta" .json)
+            # Validate extracted backup ID
+            if ! validate_backup_id "$BACKUP_ID"; then
+                log_error "Invalid backup ID extracted from metadata: ${BACKUP_ID}"
+                return 1
+            fi
             RESTORE_SOURCE="local"
             log_success "Found latest local backup: ${BACKUP_ID}"
             return 0
         fi
     else
+        # Security: Validate path before use
         local meta_file="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+        if ! validate_file_path "$meta_file" "$BACKUP_DIR"; then
+            log_error "Invalid metadata file path: ${meta_file}"
+            return 1
+        fi
         if [[ -f "$meta_file" ]]; then
             RESTORE_SOURCE="local"
             log_success "Found local backup: ${BACKUP_ID}"
@@ -38,12 +54,27 @@ find_backup() {
     # Try S3
     if [[ -n "${S3_ENABLED:-}" ]] && [[ "${S3_ENABLED}" == "true" ]]; then
         local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
-        local temp_meta="/tmp/${BACKUP_ID}.json"
+        # Security: Validate S3 path
+        if ! validate_s3_path "$s3_meta_path"; then
+            log_error "Invalid S3 path: ${s3_meta_path}"
+            return 1
+        fi
+        # Security: Sanitize filename for temp file
+        local sanitized_id=$(sanitize_filename "$BACKUP_ID")
+        local temp_meta="/tmp/${sanitized_id}.json"
         
         if s3_download "$s3_meta_path" "$temp_meta"; then
             RESTORE_SOURCE="s3"
             mkdir -p "${BACKUP_DIR}/metadata"
-            cp "$temp_meta" "${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+            # Security: Validate destination path
+            local dest_meta="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+            if ! validate_file_path "$dest_meta" "$BACKUP_DIR"; then
+                log_error "Invalid destination path: ${dest_meta}"
+                rm -f "$temp_meta"
+                return 1
+            fi
+            cp "$temp_meta" "$dest_meta"
+            rm -f "$temp_meta"
             log_success "Found S3 backup: ${BACKUP_ID}"
             return 0
         fi
@@ -56,7 +87,20 @@ find_backup() {
 # Restore PostgreSQL
 restore_postgres() {
     local container="${CONTAINER_PREFIX}postgres"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        log_error "Invalid container name: ${container}"
+        return 1
+    fi
+    
     local meta_file="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+    
+    # Security: Validate metadata file path
+    if ! validate_file_path "$meta_file" "$BACKUP_DIR"; then
+        log_error "Invalid metadata file path: ${meta_file}"
+        return 1
+    fi
     
     if [[ ! -f "$meta_file" ]]; then
         log_error "Metadata file not found: ${meta_file}"
@@ -66,13 +110,35 @@ restore_postgres() {
     # Extract backup file info from metadata (simplified - would use jq in production)
     local backup_file=""
     if [[ "$RESTORE_SOURCE" == "local" ]]; then
-        backup_file=$(grep -o '"file": "[^"]*"' "$meta_file" | head -1 | cut -d'"' -f4)
-        backup_file="${BACKUP_DIR}/postgres/${backup_file}"
+        local extracted_file=$(grep -o '"file": "[^"]*"' "$meta_file" | head -1 | cut -d'"' -f4)
+        # Security: Sanitize and validate extracted filename
+        extracted_file=$(sanitize_filename "$extracted_file")
+        if [[ -z "$extracted_file" ]]; then
+            log_error "Invalid filename extracted from metadata"
+            return 1
+        fi
+        backup_file="${BACKUP_DIR}/postgres/${extracted_file}"
+        # Security: Validate backup file path
+        if ! validate_file_path "$backup_file" "$BACKUP_DIR"; then
+            log_error "Invalid backup file path: ${backup_file}"
+            return 1
+        fi
     else
         # Download from S3
         local s3_file=$(grep -o '"file": "[^"]*"' "$meta_file" | head -1 | cut -d'"' -f4)
+        # Security: Sanitize and validate S3 filename
+        s3_file=$(sanitize_filename "$s3_file")
+        if [[ -z "$s3_file" ]]; then
+            log_error "Invalid S3 filename extracted from metadata"
+            return 1
+        fi
         backup_file="/tmp/${s3_file}"
         local s3_path="backups/postgres/${s3_file}"
+        # Security: Validate S3 path
+        if ! validate_s3_path "$s3_path"; then
+            log_error "Invalid S3 path: ${s3_path}"
+            return 1
+        fi
         s3_download "$s3_path" "$backup_file" || return 1
     fi
     
@@ -107,7 +173,20 @@ restore_postgres() {
 # Restore Dragonfly
 restore_dragonfly() {
     local container="${CONTAINER_PREFIX}dragonfly"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        log_error "Invalid container name: ${container}"
+        return 1
+    fi
+    
     local meta_file="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+    
+    # Security: Validate metadata file path
+    if ! validate_file_path "$meta_file" "$BACKUP_DIR"; then
+        log_error "Invalid metadata file path: ${meta_file}"
+        return 1
+    fi
     
     if [[ ! -f "$meta_file" ]]; then
         log_warning "Dragonfly metadata not found, skipping restore"
@@ -116,12 +195,34 @@ restore_dragonfly() {
     
     local backup_file=""
     if [[ "$RESTORE_SOURCE" == "local" ]]; then
-        backup_file=$(grep -o '"file": "[^"]*"' "$meta_file" | tail -1 | cut -d'"' -f4)
-        backup_file="${BACKUP_DIR}/dragonfly/${backup_file}"
+        local extracted_file=$(grep -o '"file": "[^"]*"' "$meta_file" | tail -1 | cut -d'"' -f4)
+        # Security: Sanitize and validate extracted filename
+        extracted_file=$(sanitize_filename "$extracted_file")
+        if [[ -z "$extracted_file" ]]; then
+            log_error "Invalid filename extracted from metadata"
+            return 1
+        fi
+        backup_file="${BACKUP_DIR}/dragonfly/${extracted_file}"
+        # Security: Validate backup file path
+        if ! validate_file_path "$backup_file" "$BACKUP_DIR"; then
+            log_error "Invalid backup file path: ${backup_file}"
+            return 1
+        fi
     else
         local s3_file=$(grep -o '"file": "[^"]*"' "$meta_file" | tail -1 | cut -d'"' -f4)
+        # Security: Sanitize and validate S3 filename
+        s3_file=$(sanitize_filename "$s3_file")
+        if [[ -z "$s3_file" ]]; then
+            log_error "Invalid S3 filename extracted from metadata"
+            return 1
+        fi
         backup_file="/tmp/${s3_file}"
         local s3_path="backups/dragonfly/${s3_file}"
+        # Security: Validate S3 path
+        if ! validate_s3_path "$s3_path"; then
+            log_error "Invalid S3 path: ${s3_path}"
+            return 1
+        fi
         s3_download "$s3_path" "$backup_file" || return 1
     fi
     

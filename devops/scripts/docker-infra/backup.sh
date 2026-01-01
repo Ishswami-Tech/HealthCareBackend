@@ -24,6 +24,13 @@ BACKUP_RESULTS["dragonfly_s3"]="failed"
 # Backup PostgreSQL
 backup_postgres() {
     local container="${CONTAINER_PREFIX}postgres"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        log_error "Invalid container name: ${container}"
+        return 1
+    fi
+    
     local backup_file="${BACKUP_DIR}/postgres/postgres-${TIMESTAMP}.sql.gz"
     
     log_info "Starting PostgreSQL backup..."
@@ -82,6 +89,12 @@ EOF
 # Backup Dragonfly
 backup_dragonfly() {
     local container="${CONTAINER_PREFIX}dragonfly"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        log_error "Invalid container name: ${container}"
+        return 1
+    fi
     local backup_file="${BACKUP_DIR}/dragonfly/dragonfly-${TIMESTAMP}.rdb.gz"
     
     log_info "Starting Dragonfly backup..."
