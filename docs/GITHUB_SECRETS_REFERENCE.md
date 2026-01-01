@@ -143,6 +143,10 @@ These secrets apply to all clinics and serve as fallback defaults.
 - `S3_FORCE_PATH_STYLE` - Force path style (true)
 - `S3_PUBLIC_URL_EXPIRATION` - URL expiration (3600)
 - `CDN_URL` - CDN URL (optional)
+  - **For Contabo provider**: CDN URL is automatically generated from `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_BUCKET`
+  - **Format**: `https://{endpoint}/{access-key-id}:{bucket}`
+  - **Example**: `https://eu2.contabostorage.com/{access-key-id}:healthcaredata`
+  - **Only set this** if you want to use a different CDN provider (e.g., Cloudflare, AWS CloudFront)
 
 ### Other Configuration
 - `PRISMA_SCHEMA_PATH` - Prisma schema path
@@ -401,10 +405,12 @@ Configuration is resolved in the following priority order:
 
 ## 📚 Related Documentation
 
-- [Environment Variables Guide](./ENVIRONMENT_VARIABLES.md)
-- [Multi-Tenant Configuration](./guides/SUPERADMIN_CLINIC_MANAGEMENT.md)
-- [Communication System Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
-- [Email Integration Guide](./guides/EMAIL_INTEGRATION_GUIDE.md)
+- **Environment Variables**: [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) - Complete reference for all environment variables
+- **Production Template**: [PRODUCTION_ENV_TEMPLATE.txt](./PRODUCTION_ENV_TEMPLATE.txt) - Template file for production environment variables
+- **Deployment Guide**: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) - Step-by-step deployment setup including secrets configuration
+- **Multi-Tenant Configuration**: [guides/SUPERADMIN_CLINIC_MANAGEMENT.md](./guides/SUPERADMIN_CLINIC_MANAGEMENT.md)
+- **Communication System**: [guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)
+- **Email Integration**: [guides/EMAIL_INTEGRATION_GUIDE.md](./guides/EMAIL_INTEGRATION_GUIDE.md)
 
 ---
 

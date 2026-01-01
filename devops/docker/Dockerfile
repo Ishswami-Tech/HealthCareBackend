@@ -18,7 +18,8 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 # Skip postinstall during install - source files (including prisma.config.js) aren't copied yet
 # Prisma generate is called manually after COPY . . below
-RUN yarn install --frozen-lockfile --ignore-scripts
+# --ignore-engines suppresses warnings about invalid engine specifications
+RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines
 
 # Copy all source files including SWC configuration
 # .swcrc and nest-cli.json are required for SWC compiler (20x faster than tsc)
@@ -31,19 +32,39 @@ RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration file
 RUN yarn prisma:generate
 
 # Verify Prisma Client was generated correctly
-# Check if the client directory exists and has the required index.js file
+# Check if the client directory exists and has the required files
+# Prisma 7 generates both TypeScript and JavaScript files
 RUN if [ -d "src/libs/infrastructure/database/prisma/generated/client" ]; then \
   echo "Checking Prisma Client generation..." && \
   echo "Client directory contents:" && \
   ls -la src/libs/infrastructure/database/prisma/generated/client/ | head -15 || true && \
+  # Check for index.js (JavaScript entry point)
   if [ -f "src/libs/infrastructure/database/prisma/generated/client/index.js" ]; then \
   echo "[OK] Prisma Client generated successfully (index.js found)"; \
+  # Also check if runtime/client.js exists (required by index.js)
+  if [ -f "src/libs/infrastructure/database/prisma/generated/client/runtime/client.js" ]; then \
+  echo "[OK] Runtime client.js found"; \
+  else \
+  echo "[WARN] Runtime client.js not found - checking for .mjs or .ts"; \
+  fi; \
   elif [ -f "src/libs/infrastructure/database/prisma/generated/client/index.mjs" ]; then \
   echo "[OK] Prisma Client generated successfully (index.mjs found)"; \
   elif [ "$(ls -A src/libs/infrastructure/database/prisma/generated/client 2>/dev/null)" ]; then \
   echo "[WARN] Prisma Client directory exists with files but index.js not found" && \
-  echo "This might be OK if Prisma uses a different entry point" && \
-  echo "[OK] Prisma Client directory exists with content"; \
+  echo "Checking if Prisma generated JavaScript files in standard location..." && \
+  # Check if Prisma generated index.js in node_modules/.prisma/client
+  if [ -f "node_modules/.prisma/client/index.js" ]; then \
+  echo "[OK] Found index.js in node_modules/.prisma/client, copying to generated client" && \
+  cp node_modules/.prisma/client/index.js src/libs/infrastructure/database/prisma/generated/client/ 2>/dev/null || true && \
+  # Also copy runtime directory if it exists
+  if [ -d "node_modules/.prisma/client/runtime" ]; then \
+  cp -r node_modules/.prisma/client/runtime src/libs/infrastructure/database/prisma/generated/client/ 2>/dev/null || true; \
+  fi; \
+  echo "[OK] Copied index.js and runtime to generated client"; \
+  else \
+  echo "[WARN] index.js not found in standard location either"; \
+  echo "[OK] Prisma Client directory exists with content (TypeScript files)"; \
+  fi; \
   else \
   echo "[ERROR] Prisma Client directory exists but is empty!" && \
   exit 1; \
@@ -67,8 +88,34 @@ RUN mkdir -p node_modules/@prisma && \
 
 # Ensure .prisma/client directory exists as a real directory (not symlink) for Docker COPY
 # Yarn creates real directories, but we ensure proper structure for Docker COPY
+# Prisma 7 generates both TypeScript and JavaScript files
+# Copy generated client to .prisma/client for runtime access
+# Prisma may generate JavaScript files in node_modules/.prisma/client
+# Copy from generated client first, then check standard location
 RUN mkdir -p /app/node_modules/.prisma/client && \
-  cp -r /app/src/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/
+  # Copy all files from generated client (includes TypeScript and any JavaScript files)
+  cp -r /app/src/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/ 2>/dev/null || true && \
+  # Check if Prisma generated index.js in the standard location and copy it if needed
+  if [ -f /app/node_modules/.prisma/client/index.js ]; then \
+  echo "[OK] Found index.js in .prisma/client (from generated client)"; \
+  elif [ -d /app/node_modules/.prisma ] && [ -f /app/node_modules/.prisma/client/index.js ]; then \
+  echo "[OK] Found index.js in standard Prisma location, already copied"; \
+  else \
+  echo "[WARN] index.js not found - checking if Prisma needs to generate it"; \
+  # Try to find index.js anywhere in node_modules
+  find /app/node_modules -name "index.js" -path "*/.prisma/client/*" 2>/dev/null | head -1 | while read jsfile; do \
+  if [ -n "$jsfile" ]; then \
+  echo "[OK] Found index.js at $jsfile, copying to .prisma/client"; \
+  cp "$jsfile" /app/node_modules/.prisma/client/ 2>/dev/null || true; \
+  fi; \
+  done; \
+  fi && \
+  # Verify index.js exists now
+  if [ -f /app/node_modules/.prisma/client/index.js ]; then \
+  echo "[OK] index.js verified in .prisma/client"; \
+  else \
+  echo "[WARN] index.js still not found - Prisma 7 may use TypeScript files directly at runtime"; \
+  fi
 
 # Yarn uses real directories (not symlinks) - copy @prisma packages for Docker multi-stage build
 # This is needed because Docker COPY needs real directories across stages
@@ -147,7 +194,7 @@ WORKDIR /app
 COPY package.json yarn.lock ./
 # Skip postinstall script in production - Prisma client is already generated in builder stage
 # and copied to production via COPY --from=builder /app/node_modules/.prisma
-RUN yarn install --production --frozen-lockfile --ignore-scripts && yarn cache clean
+RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines && yarn cache clean
 
 # Remove yarn-installed @prisma packages to avoid COPY conflicts
 # Then copy real Prisma directories from builder stage
@@ -157,8 +204,16 @@ RUN rm -rf /app/node_modules/.prisma /app/node_modules/prisma /app/node_modules/
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 # Copy prisma CLI for migrations (needed for prisma migrate deploy at startup)
 COPY --from=builder /app/node_modules_real/prisma ./node_modules/prisma
-# Copy all @prisma packages including client-runtime-utils (dereferenced to avoid symlink issues)
+# Copy all @prisma packages EXCEPT client (we'll create symlink to generated client)
+# First, copy @prisma directory structure
+RUN mkdir -p /app/node_modules/@prisma
+# Copy all @prisma packages except the client directory (which we'll symlink)
 COPY --from=builder /app/node_modules_real/@prisma ./node_modules/@prisma
+# Remove the client directory if it exists (it will be replaced with symlink)
+RUN if [ -d /app/node_modules/@prisma/client ]; then \
+  rm -rf /app/node_modules/@prisma/client && \
+  echo "[OK] Removed @prisma/client directory to make room for symlink"; \
+  fi
 # Copy transitive dependencies required by @prisma/adapter-pg
 # These are peer dependencies that yarn installs in node_modules
 # Use conditionals to handle missing optional packages gracefully
@@ -183,37 +238,109 @@ COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.j
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src/libs/infrastructure/database/prisma/generated
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
+# Create entrypoint script inline (devops/docker/ is excluded by .dockerignore)
+# This script ensures Prisma Client is available and symlink points to standard location
+# Updated: Use symlink to standard location instead of copying files
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+  echo 'set -e' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo 'echo "=========================================="' >> /app/entrypoint.sh && \
+  echo 'echo "Healthcare Backend - Container Startup"' >> /app/entrypoint.sh && \
+  echo 'echo "=========================================="' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo '# Always run prisma generate to ensure Prisma Client is available' >> /app/entrypoint.sh && \
+  echo '# Prisma 7 generates TypeScript files in custom output, but JavaScript in standard location' >> /app/entrypoint.sh && \
+  echo '# We point the symlink to the standard location which has the complete JavaScript runtime' >> /app/entrypoint.sh && \
+  echo 'echo "[INFO] Ensuring Prisma Client is fully generated..."' >> /app/entrypoint.sh && \
+  echo 'if [ ! -f /app/node_modules/.bin/prisma ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[ERROR] Prisma CLI not found!"' >> /app/entrypoint.sh && \
+  echo '  exit 1' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '/app/node_modules/.bin/prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || exit 1' >> /app/entrypoint.sh && \
+  echo '# Prisma 7 generates JavaScript files in node_modules/.prisma/client (standard location)' >> /app/entrypoint.sh && \
+  echo '# The custom output path only contains TypeScript files for development' >> /app/entrypoint.sh && \
+  echo '# We point the symlink to the standard location which has the complete JavaScript runtime' >> /app/entrypoint.sh && \
+  echo 'if [ -f /app/node_modules/.prisma/client/index.js ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Found Prisma Client JavaScript files in standard location"' >> /app/entrypoint.sh && \
+  echo '  # Create package.json for Node.js module resolution (Prisma 7 does not create it)' >> /app/entrypoint.sh && \
+  echo '  if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[INFO] Creating package.json for module resolution..."' >> /app/entrypoint.sh && \
+  echo '    echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '    echo "[OK] package.json created"' >> /app/entrypoint.sh && \
+  echo '  fi' >> /app/entrypoint.sh && \
+  echo 'elif [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Found Prisma Client JavaScript files in custom location"' >> /app/entrypoint.sh && \
+  echo 'else' >> /app/entrypoint.sh && \
+  echo '  echo "[ERROR] Prisma Client generation failed - no index.js found!"' >> /app/entrypoint.sh && \
+  echo '  exit 1' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo '# Ensure symlink points to standard location (has complete JavaScript runtime)' >> /app/entrypoint.sh && \
+  echo '# Prisma 7 custom output only has TypeScript, standard location has JavaScript' >> /app/entrypoint.sh && \
+  echo 'if [ -L /app/node_modules/@prisma/client ]; then' >> /app/entrypoint.sh && \
+  echo '  CURRENT_LINK=$(readlink /app/node_modules/@prisma/client)' >> /app/entrypoint.sh && \
+  echo '  if [ "$CURRENT_LINK" != "/app/node_modules/.prisma/client" ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[WARN] @prisma/client symlink points to custom location, updating to standard location..."' >> /app/entrypoint.sh && \
+  echo '    rm /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
+  echo '  fi' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo 'if [ ! -L /app/node_modules/@prisma/client ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[INFO] Creating @prisma/client symlink to standard location..."' >> /app/entrypoint.sh && \
+  echo '  mkdir -p /app/node_modules/@prisma' >> /app/entrypoint.sh && \
+  echo '  ln -sf /app/node_modules/.prisma/client /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Symlink created to standard location"' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo 'echo "=========================================="' >> /app/entrypoint.sh && \
+  echo 'echo "Starting application..."' >> /app/entrypoint.sh && \
+  echo 'echo "=========================================="' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
+  echo 'exec "$@"' >> /app/entrypoint.sh && \
+  chmod +x /app/entrypoint.sh && \
+  echo "[OK] Entrypoint script created"
+
 # Ensure @prisma/client symlink exists for runtime module resolution
 # This allows require('@prisma/client') to find the generated client
+# Note: Entrypoint script will update this symlink to point to standard location at runtime
+# Build-time symlink is created here for initial setup, but entrypoint ensures correct location
 RUN mkdir -p /app/node_modules/@prisma && \
   # Verify generated client exists before creating symlink
   if [ ! -d /app/src/libs/infrastructure/database/prisma/generated/client ]; then \
   echo "[ERROR] Generated Prisma Client directory not found!" && exit 1; \
   fi && \
-  # Verify key files exist
-  test -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js || \
-  (echo "[ERROR] Generated Prisma Client index.js not found!" && exit 1) && \
-  test -f /app/src/libs/infrastructure/database/prisma/generated/client/index.d.ts || \
-  (echo "[WARN] Generated Prisma Client index.d.ts not found, but continuing...") && \
-  # Remove existing symlink if broken
-  if [ -L /app/node_modules/@prisma/client ] && [ ! -e /app/node_modules/@prisma/client ]; then \
-  rm /app/node_modules/@prisma/client; \
-  fi && \
-  # Create symlink with absolute path for better reliability
-  if [ ! -e /app/node_modules/@prisma/client ]; then \
-  ln -sf /app/src/libs/infrastructure/database/prisma/generated/client /app/node_modules/@prisma/client && \
-  echo "[OK] Created @prisma/client symlink"; \
+  # Verify key files exist (Prisma 7 uses client.ts, not index.js)
+  if [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ] || \
+  [ -f /app/src/libs/infrastructure/database/prisma/generated/client/client.ts ] || \
+  [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.mjs ]; then \
+  echo "[OK] Generated Prisma Client files found"; \
   else \
-  echo "[OK] @prisma/client symlink already exists"; \
+  echo "[ERROR] Generated Prisma Client entry point not found!" && \
+  ls -la /app/src/libs/infrastructure/database/prisma/generated/client/ | head -10 && \
+  exit 1; \
   fi && \
-  # Verify symlink works by checking if index.js is accessible through it
-  if [ -f /app/node_modules/@prisma/client/index.js ]; then \
+  # Remove existing client directory or broken symlink
+  if [ -d /app/node_modules/@prisma/client ]; then \
+  rm -rf /app/node_modules/@prisma/client && \
+  echo "[OK] Removed existing @prisma/client directory"; \
+  elif [ -L /app/node_modules/@prisma/client ] && [ ! -e /app/node_modules/@prisma/client ]; then \
+  rm /app/node_modules/@prisma/client && \
+  echo "[OK] Removed broken @prisma/client symlink"; \
+  fi && \
+  # Create initial symlink (entrypoint will update to standard location at runtime)
+  # Prefer standard location if JavaScript files exist there, otherwise use custom location
+  if [ -f /app/node_modules/.prisma/client/index.js ]; then \
+  echo "[OK] JavaScript files found in standard location, creating symlink there" && \
+  ln -sf /app/node_modules/.prisma/client /app/node_modules/@prisma/client; \
+  else \
+  echo "[OK] Creating initial symlink to custom location (entrypoint will update at runtime)" && \
+  ln -sf /app/src/libs/infrastructure/database/prisma/generated/client /app/node_modules/@prisma/client; \
+  fi && \
+  echo "[OK] Created @prisma/client symlink" && \
+  # Verify symlink works by checking if directory is accessible
+  if [ -d /app/node_modules/@prisma/client ] && [ "$(ls -A /app/node_modules/@prisma/client 2>/dev/null)" ]; then \
   echo "[OK] @prisma/client symlink verified and accessible"; \
   else \
-  echo "[ERROR] @prisma/client symlink exists but index.js not accessible!" && \
-  ls -la /app/node_modules/@prisma/ && \
-  ls -la /app/src/libs/infrastructure/database/prisma/generated/client/ | head -5 && \
-  exit 1; \
+  echo "[WARN] @prisma/client symlink exists but not accessible (entrypoint will fix at runtime)"; \
   fi && \
   # Also verify direct path access
   echo "[OK] Generated Prisma Client verified at direct path: /app/src/libs/infrastructure/database/prisma/generated/client" && \
@@ -238,6 +365,10 @@ EXPOSE 8088
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD wget -q --spider http://localhost:8088/health || exit 1
+
+# Set entrypoint (runs before CMD)
+# Entrypoint will ensure Prisma Client is generated if needed
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Run migrations automatically before starting the app
 # Docker Compose depends_on ensures PostgreSQL is ready

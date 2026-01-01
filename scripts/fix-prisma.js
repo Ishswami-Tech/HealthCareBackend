@@ -6,7 +6,7 @@
  * Handles all Prisma-related fixes:
  * 1. Creates sourcemap files for Prisma runtime JS (prevents SWC warnings)
  * 2. Fixes TypeScript type annotations in generated Prisma files
- * 3. Fixes Prisma Client path resolution for pnpm (creates symlinks)
+ * 3. Fixes Prisma Client path resolution for yarn (creates symlinks)
  * 
  * This script consolidates:
  * - fix-prisma-sourcemaps.js
@@ -228,10 +228,10 @@ function fixPrismaTypes() {
 }
 
 // ============================================================================
-// 3. Fix Prisma pnpm Path Resolution
+// 3. Fix Prisma Path Resolution (pnpm compatibility check)
 // ============================================================================
 function fixPrismaPnpm() {
-  log('\n→ Fixing Prisma Client path resolution for pnpm...', 'cyan');
+  log('\n→ Checking Prisma Client path resolution (pnpm compatibility)...', 'cyan');
   
   const prismaClientPath = path.join(appRoot, 'node_modules', '.prisma', 'client');
   const pnpmPath = path.join(appRoot, 'node_modules', '.pnpm');
@@ -258,7 +258,7 @@ function fixPrismaPnpm() {
       return { success: true, skipped: true };
     }
   } else {
-    log('  ✓ Not using pnpm, skipping pnpm-specific fixes', 'green');
+    log('  ✓ Not using pnpm, skipping pnpm-specific compatibility fixes', 'green');
     return { success: true, skipped: true };
   }
 
@@ -329,7 +329,7 @@ function main() {
     log('✓ Type annotations: OK', 'green');
   }
   if (results.pnpm.success) {
-    log('✓ pnpm path resolution: OK', 'green');
+    log('✓ Path resolution (pnpm compatibility): OK', 'green');
   }
 
   log('\n✅ All Prisma fixes completed!\n', 'green');

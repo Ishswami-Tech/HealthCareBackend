@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pre-commit hook for Prisma Client generation
+# This ensures generated files are always up-to-date before commit
+
+echo "🔍 Running pre-commit checks..."
+
+# Run lint-staged (handles Prisma schema changes automatically)
+npx lint-staged
+
+# Additional validation for Prisma generated files
+echo "🔍 Validating Prisma generated files..."
+node scripts/validate-prisma-generated.js --regenerate || {
+  echo "❌ Prisma generated files validation failed!"
+  echo "💡 Run 'yarn prisma:regenerate' to fix this issue"
+  exit 1
+}
+
+echo "✅ Pre-commit checks passed!"
+

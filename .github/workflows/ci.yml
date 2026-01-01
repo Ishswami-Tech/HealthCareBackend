@@ -48,6 +48,18 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Validate Prisma generated files
+        run: |
+          echo "🔍 Validating Prisma generated files..."
+          yarn prisma:validate-generated || {
+            echo "❌ Prisma generated files are stale or invalid"
+            echo "💡 Regenerating Prisma Client..."
+            yarn prisma:regenerate
+            echo "⚠️  Generated files were updated. Please commit the changes."
+            exit 1
+          }
+          echo "✅ Prisma generated files are up-to-date"
+
       - name: Run ESLint
         run: yarn lint
 

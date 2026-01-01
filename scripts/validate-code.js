@@ -213,7 +213,7 @@ function checkOutdated() {
   log('\n→ Checking for outdated dependencies...', 'cyan');
   
   try {
-    const output = execSync('pnpm outdated', {
+    const output = execSync('yarn outdated', {
       encoding: 'utf8',
       cwd: appRoot,
       stdio: ['pipe', 'pipe', 'pipe'],

@@ -44,7 +44,7 @@ ensure_directory() {
             if [[ "$dir" == /var/log* ]]; then
                 sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
             else
-                chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
             fi
         fi
         return 0
@@ -74,7 +74,7 @@ ensure_directory() {
         sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
     else
         mkdir -p "$dir" || log_error "Failed to create directory: ${dir}"
-        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+    chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
     fi
     
     log_success "Directory created: ${dir}"

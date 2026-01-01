@@ -484,6 +484,7 @@ Since `CACHE_PROVIDER=dragonfly`, Redis is not needed. Set `REDIS_ENABLED=false`
 | `S3_FORCE_PATH_STYLE` | `true` |
 | `S3_PUBLIC_URL_EXPIRATION` | `3600` |
 | `CDN_URL` | (empty or your CDN URL) |
+| | **Note**: For Contabo provider, CDN URL is automatically generated from `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_BUCKET`. Only set this if using a different CDN provider (e.g., Cloudflare, AWS CloudFront) |
 
 **Docker Configuration:**
 
@@ -1087,11 +1088,13 @@ Your CI/CD pipeline is now set up! Every push to the `main` branch will:
 
 ## 📚 Related Documentation
 
-- [Server Setup Guide](./SERVER_SETUP_GUIDE.md) - Complete server setup
-- [Docker Deployment Guide](../devops/docker/README.md) - Docker Compose setup
-- [Nginx Configuration](../devops/nginx/README.md) - Reverse proxy and SSL setup
-- [Environment Variables Template](./PRODUCTION_ENV_TEMPLATE.txt) - Complete env var template
-- [Scripts Documentation](../devops/scripts/README.md) - DevOps scripts
+- **GitHub Secrets**: [GITHUB_SECRETS_REFERENCE.md](./GITHUB_SECRETS_REFERENCE.md) - Complete list of required secrets for CI/CD
+- **Environment Variables**: [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) - Complete reference for all environment variables
+- **Production Template**: [PRODUCTION_ENV_TEMPLATE.txt](./PRODUCTION_ENV_TEMPLATE.txt) - Template file for production environment variables
+- **Server Setup Guide**: [SERVER_SETUP_GUIDE.md](./SERVER_SETUP_GUIDE.md) - Complete server setup
+- **Docker Deployment**: [../devops/docker/README.md](../devops/docker/README.md) - Docker Compose setup
+- **Nginx Configuration**: [../devops/nginx/README.md](../devops/nginx/README.md) - Reverse proxy and SSL setup
+- **Scripts Documentation**: [../devops/scripts/README.md](../devops/scripts/README.md) - DevOps scripts
 
 ---
 

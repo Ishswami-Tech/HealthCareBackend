@@ -262,8 +262,8 @@ export class ClinicIsolationService implements OnModuleInit {
             stack: errorStack,
             errorCode,
             action: isTableMissingError
-              ? 'Run database migrations: npx prisma migrate deploy'
-              : 'Ensure Prisma client is generated: npx prisma generate',
+              ? 'Run database migrations: yarn prisma migrate deploy'
+              : 'Ensure Prisma client is generated: yarn prisma generate',
           }
         );
         // Don't throw - allow application to start without clinic caching

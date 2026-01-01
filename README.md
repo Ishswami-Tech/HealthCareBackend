@@ -24,15 +24,43 @@ A modern, scalable healthcare management system built with NestJS, PostgreSQL, a
 # Clone and setup
 git clone [repository-url]
 cd healthcare-backend
-npm install
+yarn install
 
 # Environment setup
 cp .env.example .env
 # Configure your environment variables
 
+# Prisma Client is automatically generated on install
+# If you modify the schema, it will auto-regenerate on commit (via pre-commit hook)
+
 # Start development environment
 ./run.sh dev start
 ```
+
+### Prisma Schema Management
+
+This project uses **committed generated files** with automated validation:
+
+- **Pre-commit hook**: Automatically regenerates Prisma Client when schema changes
+- **Post-merge hook**: Regenerates after merging branches
+- **CI validation**: Ensures generated files are always up-to-date
+- **Build integration**: Validates and regenerates during build
+
+**Key Commands**:
+```bash
+# Generate Prisma Client
+yarn prisma:generate
+
+# Regenerate and validate
+yarn prisma:regenerate
+
+# Validate generated files
+yarn prisma:validate-generated
+```
+
+For detailed information, see:
+- [Prisma Complete Guide](./docs/PRISMA_COMPLETE_GUIDE.md) - Complete Prisma guide (generation, Docker, troubleshooting)
+- [Docker README](./devops/docker/README.md#-prisma-schema-management) - Prisma setup and Docker compatibility
 
 ### Production Deployment (Kubernetes - 1M Users)
 
@@ -107,7 +135,7 @@ make k8s-local-access   # Access at localhost:8088
 - **Runtime**: Node.js (v20+)
 - **Language**: TypeScript
 - **Orchestration**: Kubernetes with HPA/VPA
-- **Package Manager**: pnpm (9.15.4) - 67% faster installs
+- **Package Manager**: Yarn (1.22.22) - Fast and reliable package management
 
 ## 📚 Documentation
 
@@ -161,17 +189,17 @@ make k8s-local-access   # Access at localhost:8088
 
 ```bash
 # Development
-npm run start:dev          # Start with hot-reloading
-npm run build              # Build for production
+yarn start:dev          # Start with hot-reloading
+yarn build              # Build for production
 
 # Database
-npm run prisma:generate    # Generate Prisma client
-npm run prisma:migrate     # Run migrations
-npm run prisma:seed        # Seed database
+yarn prisma:generate    # Generate Prisma client
+yarn prisma:migrate     # Run migrations
+yarn prisma:seed        # Seed database
 
 # Testing
-npm run test               # Run unit tests
-npm run test:e2e           # Run e2e tests
+yarn test               # Run unit tests
+yarn test:e2e           # Run e2e tests
 
 # Docker
 ./run.sh dev start         # Start development environment
@@ -326,7 +354,7 @@ docker run -p 8088:8088 healthcare-api
 ### Quick Fixes
 ```bash
 # Reset database
-npm run prisma:migrate:reset
+yarn prisma:migrate:reset
 
 # Clear cache
 redis-cli FLUSHALL

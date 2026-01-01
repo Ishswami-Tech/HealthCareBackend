@@ -1336,7 +1336,7 @@ CheckInLocationService:      5 instances (medium read/write)
 
 #### 1. Run Database Migration
 ```bash
-npm run prisma:db:push
+yarn prisma:db:push
 ```
 
 **This will create**:
@@ -1356,7 +1356,7 @@ npm run prisma:db:push
 
 #### 3. Fix Linter Errors (Formatting)
 ```bash
-npm run lint:fix
+yarn lint:fix
 ```
 
 **Fixes**: CRLF line endings (formatting only, non-blocking)

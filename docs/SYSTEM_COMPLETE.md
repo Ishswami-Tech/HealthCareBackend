@@ -466,10 +466,10 @@ const users = await databaseService.findUsersSafe(
 
 ```bash
 # Run migrations
-npx prisma migrate dev
+yarn prisma migrate dev
 
 # Generate Prisma client
-npx prisma generate
+yarn prisma generate
 ```
 
 ### 2. Environment Configuration

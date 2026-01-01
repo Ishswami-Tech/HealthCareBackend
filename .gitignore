@@ -70,10 +70,12 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Prisma
-src/libs/infrastructure/database/prisma/*.db
 src/libs/infrastructure/database/prisma/generated/ 
+src/libs/infrastructure/database/prisma/*.db
 node_modules/.prisma
-# Note: src/libs/infrastructure/database/prisma/generated/ is tracked in git
+# Note: src/libs/infrastructure/database/prisma/generated/ is TRACKED in git
+# This allows us to commit generated files for faster startup and no runtime dependencies
+# Pre-commit hooks ensure files are always up-to-date
 
 # Docker data directories (local development data)
 devops/docker/data/

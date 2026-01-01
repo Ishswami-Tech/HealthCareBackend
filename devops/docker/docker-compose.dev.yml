@@ -183,7 +183,7 @@ services:
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
         (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
-        echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
+        echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Running Prisma Database Sync (Development Mode)...' &&
         echo 'Using db push for development (no migration history required)...' &&
@@ -385,7 +385,7 @@ services:
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
         (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
-        echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
+        echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Starting worker process...' &&
         yarn exec ts-node -r tsconfig-paths/register src/worker-bootstrap.ts

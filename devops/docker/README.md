@@ -959,12 +959,160 @@ If ports are already in use:
 
 ---
 
+## 🗄️ Prisma Schema Management
+
+### Overview
+
+This project uses **committed generated files** with automated validation to prevent merge conflicts and stale files. Prisma Client is generated during development, committed to the repository, and validated at multiple stages.
+
+### How It Works with Docker
+
+**Build Stage:**
+- Dockerfile runs `yarn prisma:generate` during build (line 31)
+- Regenerates Prisma Client (overwrites committed files)
+- Copies generated files to `dist/` for production
+
+**Runtime Stage:**
+- Entrypoint script runs `prisma generate` again (safety net)
+- Copies JavaScript files from `node_modules/.prisma/client` to custom location
+- Creates symlink for `@prisma/client`
+- Application code checks multiple paths (`dist/`, `src/`, relative, `@prisma/client`)
+
+**Result:**
+- ✅ Committed files act as backup/fallback
+- ✅ Docker always regenerates (ensures fresh files)
+- ✅ Multiple path checks (works in all scenarios)
+- ✅ No runtime dependencies needed (faster startup)
+
+### Initial Setup
+
+After cloning the repository:
+
+```bash
+# Install dependencies (generates Prisma Client automatically)
+yarn install
+
+# Setup Husky Git hooks (for pre-commit/post-merge validation)
+yarn husky install
+
+# Verify Prisma generated files are up-to-date
+yarn prisma:validate-generated
+```
+
+### Git Hooks
+
+The project uses Husky for automated Prisma Client management:
+
+**Pre-commit Hook** (`.husky/pre-commit`):
+- Detects schema changes
+- Automatically regenerates Prisma Client
+- Validates generated files
+- Blocks commit if validation fails
+
+**Post-merge Hook** (`.husky/post-merge`):
+- Detects schema changes after merge
+- Automatically regenerates Prisma Client
+- Prevents merge conflicts
+
+### Available Commands
+
+```bash
+# Generate Prisma Client (standard)
+yarn prisma:generate
+
+# Regenerate and validate
+yarn prisma:regenerate
+
+# Validate generated files only
+yarn prisma:validate-generated
+```
+
+### Safety Mechanisms
+
+1. **Pre-commit hook** - Prevents stale files from being committed
+2. **Post-merge hook** - Prevents merge conflicts
+3. **CI validation** - Catches any missed cases (fails build if stale)
+4. **Build integration** - Always ensures fresh files during build
+5. **Git attributes** - Merge strategy for generated files
+
+### Troubleshooting
+
+**Issue: Pre-commit hook not running**
+```bash
+# Reinstall Husky
+yarn husky install
+
+# Make hooks executable (Linux/Mac)
+chmod +x .husky/pre-commit
+chmod +x .husky/post-merge
+```
+
+**Issue: Prisma generated files are missing**
+```bash
+# Regenerate Prisma Client
+yarn prisma:regenerate
+
+# Verify files exist
+ls -la src/libs/infrastructure/database/prisma/generated/client/
+```
+
+**Issue: CI fails with "Prisma generated files are stale"**
+```bash
+# Pull latest changes
+git pull
+
+# Regenerate
+yarn prisma:regenerate
+
+# Commit and push
+git add . && git commit -m "Update Prisma generated files" && git push
+```
+
+### Docker Compatibility
+
+✅ **Docker works perfectly** with this setup because:
+- Dockerfile regenerates Prisma Client at build time
+- Entrypoint script regenerates at runtime (safety net)
+- Code checks multiple paths (works in all scenarios)
+- Committed files are just backup, Docker always regenerates
+
+**No changes needed** to Docker configuration. The system is fully compatible.
+
+### Files Created/Modified
+
+**New Files:**
+- `scripts/validate-prisma-generated.js` - Validation script
+- `.lintstagedrc.js` - Lint-staged configuration
+- `.husky/pre-commit` - Pre-commit hook
+- `.husky/post-merge` - Post-merge hook
+- `docs/PRISMA_COMPLETE_GUIDE.md` - Complete Prisma guide (generation, Docker, troubleshooting)
+
+**Modified Files:**
+- `package.json` - Added Husky, lint-staged, and new scripts
+- `.gitattributes` - Added merge strategy for generated files
+- `.github/workflows/ci.yml` - Added Prisma validation step
+- `scripts/build.js` - Added Prisma validation
+
+### Benefits
+
+- ✅ **No merge conflicts** on generated files
+- ✅ **No stale files** in repository
+- ✅ **Faster startup** (no runtime generation needed)
+- ✅ **Multiple safety nets** (hooks, CI, build)
+- ✅ **Automated workflow** (no manual steps)
+- ✅ **Clear error messages** (easy troubleshooting)
+
+For detailed information, see [Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md).
+
+---
+
 ## 📚 Additional Resources
 
 - [Nginx Configuration](../nginx/README.md) - Reverse proxy and SSL setup
 - [Server Setup Guide](../../docs/SERVER_SETUP_GUIDE.md) - Complete server setup
 - [Deployment Guide](../../docs/DEPLOYMENT_GUIDE.md) - CI/CD deployment
 - [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) - Environment variables
+- [Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md) - Complete Prisma guide (generation, Docker, troubleshooting)
 - [Main README](../../README.md) - Project overview
 
 ---

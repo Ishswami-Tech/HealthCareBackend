@@ -109,7 +109,7 @@ function main() {
       fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2) + '\n');
       log('Updated package.json with pnpm overrides', 'green');
       log('Reinstalling dependencies to apply overrides...', 'cyan');
-      runCommand('pnpm install', 'Reinstall with overrides');
+      runCommand('yarn install', 'Reinstall with overrides');
     }
     
     // Step 4: Verify fixes

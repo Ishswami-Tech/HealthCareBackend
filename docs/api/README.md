@@ -31,7 +31,7 @@ The environment file includes:
 - `clinicId`: (set for multi-clinic testing)
 
 ### 3. Start Testing
-1. Start the development server: `npm run start:dev`
+1. Start the development server: `yarn start:dev`
 2. Use the "Authentication" folder to login and get JWT token
 3. Set the JWT token in environment variables
 4. Test other endpoints

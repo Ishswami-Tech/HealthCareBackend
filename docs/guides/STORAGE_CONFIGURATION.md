@@ -50,7 +50,11 @@ S3_FORCE_PATH_STYLE=true
 ### Optional
 
 ```bash
-# CDN URL (if using CDN in front of storage)
+# CDN URL (if using external CDN in front of storage)
+# Note: For Contabo provider, CDN URL is automatically generated from S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_BUCKET
+# Format: https://{endpoint}/{access-key-id}:{bucket}
+# Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata
+# Only set this if you want to use a different CDN (e.g., Cloudflare, AWS CloudFront)
 CDN_URL=https://cdn.yourdomain.com
 
 # Presigned URL expiration (seconds, default: 3600 = 1 hour)
@@ -86,6 +90,7 @@ S3_FORCE_PATH_STYLE=true
 - **Example Bucket URL**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata`
 - **File URL Example**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata/path/to/file.pdf`
 - The `S3_BUCKET` value should be just `healthcaredata` (bucket name only)
+- **CDN Auto-Configuration**: When `S3_PROVIDER=contabo`, the CDN URL is automatically generated from your Contabo endpoint, access key ID, and bucket name. You don't need to set `CDN_URL` unless you want to use a different CDN provider (e.g., Cloudflare, AWS CloudFront)
 - The storage service automatically includes the access key ID in public URLs when `S3_PROVIDER=contabo`
 
 ### Example 2: AWS S3
@@ -356,6 +361,8 @@ if (result.success) {
 
 ## 📚 References
 
+- **Environment Variables**: [../ENVIRONMENT_VARIABLES.md](../ENVIRONMENT_VARIABLES.md) - Storage-related environment variables
+- **GitHub Secrets**: [../GITHUB_SECRETS_REFERENCE.md](../GITHUB_SECRETS_REFERENCE.md) - S3 storage secrets for CI/CD
 - [Contabo Object Storage Documentation](https://contabo.com/en/products/object-storage/)
 - [AWS S3 SDK Documentation](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-examples.html)
 - [Kubernetes Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)
