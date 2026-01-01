@@ -1151,7 +1151,7 @@ async function bootstrap() {
                   setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
                 } else {
                   logger.error(
-                    `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: pnpm prisma:studio`
+                    `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
                   );
                 }
               });
@@ -1165,7 +1165,7 @@ async function bootstrap() {
                     setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
                   } else if (code !== 0) {
                     logger.error(
-                      `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: pnpm prisma:studio`
+                      `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
                     );
                   }
                 } else {

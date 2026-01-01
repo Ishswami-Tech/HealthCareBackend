@@ -33,17 +33,17 @@ git clone <repository-url>
 cd HealthCareBackend
 
 # Install dependencies
-npm install
+yarn install
 
 # Setup environment
 cp .env.example .env
 # Edit .env with your configuration
 
 # Run database migrations
-npx prisma migrate dev
+yarn prisma migrate dev
 
 # Start development server
-npm run start:dev
+yarn start:dev
 ```
 
 ---

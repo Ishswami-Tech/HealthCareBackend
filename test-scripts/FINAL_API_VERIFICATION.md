@@ -1,7 +1,9 @@
-# Final API Verification Report
+# Complete API Test Coverage Report
 
 **Date**: December 28, 2025  
 **Status**: ✅ **ALL APIs VERIFIED AND COVERED**
+
+> **Note**: This document consolidates both the final verification report and coverage summary. For the most up-to-date test coverage information, refer to this document.
 
 ## 📊 Complete Coverage Verification
 
@@ -127,6 +129,40 @@
 - **Services with Public Tests**: 2 services
 - **Total Test Suites**: 16 services
 
+### By Endpoint Type
+- **GET Endpoints**: ~120+ tested
+- **POST Endpoints**: ~90+ tested
+- **PUT/PATCH Endpoints**: ~25+ tested
+- **DELETE Endpoints**: ~15+ tested
+
+## 🎯 Running Tests
+
+### Run All Tests
+```bash
+node test-scripts/test-all-apis.js
+```
+
+### Run Specific Service
+```bash
+# Notification Preferences
+node test-scripts/notification-preferences/test-all-notification-preferences-sequential.js
+
+# Clinic Communication
+node test-scripts/clinic-communication/test-clinic-admin-clinic-communication.js
+
+# Email
+node test-scripts/email/test-clinic-admin-email.js
+
+# Email Unsubscribe
+node test-scripts/email-unsubscribe/test-email-unsubscribe.js
+```
+
+### Run Specific Role
+```bash
+# Example: PATIENT notification preferences
+node test-scripts/notification-preferences/test-patient-notification-preferences.js
+```
+
 ## ✅ Master Test Runner Status
 
 All services are included in `test-scripts/test-all-apis.js`:
@@ -182,6 +218,7 @@ Every API endpoint that should be tested now has comprehensive test coverage:
 - ✅ 100% coverage of all testable endpoints
 
 **No additional implementation required for API testing!**
+
 
 
 

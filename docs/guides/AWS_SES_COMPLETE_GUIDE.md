@@ -468,7 +468,7 @@ aws sns list-subscriptions-by-topic \
 
 1. Start your backend server:
    ```bash
-   npm run start:dev
+   yarn start:dev
    ```
 
 2. Check logs for SES initialization:

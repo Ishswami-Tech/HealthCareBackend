@@ -160,6 +160,24 @@ All environment variables are managed through the central configuration service 
 | `WHATSAPP_APPOINTMENT_TEMPLATE_ID` | Appointment template ID | `appointment_reminder` | No |
 | `WHATSAPP_PRESCRIPTION_TEMPLATE_ID` | Prescription template ID | `prescription_notification` | No |
 
+## 💾 Storage Configuration (S3-compatible)
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `S3_ENABLED` | Enable S3 storage | `false` | No |
+| `S3_PROVIDER` | S3 provider (contabo, aws, wasabi, custom) | `contabo` | No |
+| `S3_ENDPOINT` | S3 endpoint URL | `https://eu2.contabostorage.com` | No (required for Contabo) |
+| `S3_REGION` | S3 region | `eu-central-1` (Contabo) / `us-east-1` (AWS) | No |
+| `S3_BUCKET` | S3 bucket name | - | No |
+| `S3_ACCESS_KEY_ID` | S3 access key ID | - | No |
+| `S3_SECRET_ACCESS_KEY` | S3 secret access key | - | No |
+| `S3_FORCE_PATH_STYLE` | Force path-style URLs | `true` (Contabo) / `false` (AWS) | No |
+| `S3_PUBLIC_URL_EXPIRATION` | Presigned URL expiration (seconds) | `3600` | No |
+| `CDN_URL` | CDN URL for public assets | Auto-generated (Contabo) | No |
+| | **Note**: For Contabo provider, CDN URL is automatically generated from `S3_ENDPOINT`, `S3_ACCESS_KEY_ID`, and `S3_BUCKET`. Format: `https://{endpoint}/{access-key-id}:{bucket}`. Only set this if using a different CDN provider (e.g., Cloudflare, AWS CloudFront) | | |
+
+**See Also**: [Storage Configuration Guide](guides/STORAGE_CONFIGURATION.md) for detailed setup instructions.
+
 ## 🛠️ Service URLs
 
 | Variable | Description | Default | Required |
@@ -235,7 +253,10 @@ Environment variables are loaded in this order (later files override earlier one
 
 ## 🔍 See Also
 
-- **Developer Guide**: `docs/DEVELOPER_GUIDE.md` (includes configuration management)
+- **GitHub Secrets Reference**: [GITHUB_SECRETS_REFERENCE.md](./GITHUB_SECRETS_REFERENCE.md) - Complete list of secrets for CI/CD deployment
+- **Production Template**: [PRODUCTION_ENV_TEMPLATE.txt](./PRODUCTION_ENV_TEMPLATE.txt) - Template file for production environment variables
+- **Developer Guide**: [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md) (includes configuration management)
+- **Deployment Guide**: [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md) - Environment variable setup for deployment
 - **Jitsi Setup**: `devops/kubernetes/JITSI_SETUP.md`
 - **Config Service**: `src/config/config.service.ts`
 - **Config Types**: `src/libs/core/types/config.types.ts`

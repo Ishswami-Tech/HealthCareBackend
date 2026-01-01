@@ -105,10 +105,10 @@ docker compose -f devops/docker/docker-compose.dev.yml down
 docker compose -f devops/docker/docker-compose.dev.yml logs -f api
 
 # Run Prisma migrations
-docker exec -it healthcare-api pnpm prisma:migrate
+docker exec -it healthcare-api yarn prisma:migrate
 
 # Run database seed
-docker exec -it healthcare-api pnpm seed:dev
+docker exec -it healthcare-api yarn seed:dev
 ```
 
 **What happens on startup:**

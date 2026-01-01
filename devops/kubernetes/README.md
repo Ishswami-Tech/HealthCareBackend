@@ -19,7 +19,7 @@ kubectl get hpa -n healthcare-backend
 
 ```powershell
 # Enable Kubernetes in Docker Desktop settings
-npm run k8s:local:deploy
+yarn k8s:local:deploy
 ```
 
 ---

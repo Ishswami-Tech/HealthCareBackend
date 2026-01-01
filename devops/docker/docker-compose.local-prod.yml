@@ -444,6 +444,7 @@ services:
           cpus: "0.25"     # Production: 0.5
           memory: 256M     # Production: 512MB
     # Worker doesn't need migrations - only API container runs them
+    # Entrypoint will ensure Prisma Client is generated if needed
     command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"

@@ -38,7 +38,7 @@ The realtime health monitoring system uses Socket.IO to push health status updat
 ### 1. Install Socket.IO Client
 
 ```bash
-npm install socket.io-client
+yarn add socket.io-client
 # or
 yarn add socket.io-client
 ```

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Post-merge hook for Prisma Client regeneration
+# This ensures generated files are up-to-date after merging branches
+
+echo "🔄 Post-merge: Checking Prisma schema changes..."
+
+# Check if schema or config files changed
+if git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD | grep -qE "(schema\.prisma|prisma\.config\.js)"; then
+  echo "📝 Prisma schema or config changed, regenerating client..."
+  yarn prisma:regenerate || {
+    echo "❌ Failed to regenerate Prisma Client after merge"
+    echo "💡 Run 'yarn prisma:regenerate' manually"
+    exit 1
+  }
+  echo "✅ Prisma Client regenerated successfully"
+else
+  echo "ℹ️  No Prisma schema changes detected"
+fi
+

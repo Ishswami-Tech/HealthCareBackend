@@ -43,7 +43,7 @@ echo "   Press Ctrl+C to stop"
 echo ""
 
 # Start the app
-pnpm start:dev
+yarn start:dev
 
 
 
