@@ -7,8 +7,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../shared/utils.sh"
 
-# Container prefix
+# Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
+OPENVIDU_CONTAINER="openvidu-server"
 SERVICES=("postgres" "dragonfly" "openvidu-server")
 
 # Collect diagnostics
@@ -22,7 +27,21 @@ collect_diagnostics() {
     
     # Check each service
     for service in "${SERVICES[@]}"; do
-        local container="${CONTAINER_PREFIX}${service}"
+        # Use fixed names for infrastructure services
+        case "$service" in
+            postgres)
+                local container="${POSTGRES_CONTAINER}"
+                ;;
+            dragonfly)
+                local container="${DRAGONFLY_CONTAINER}"
+                ;;
+            openvidu-server)
+                local container="${OPENVIDU_CONTAINER}"
+                ;;
+            *)
+                local container="${CONTAINER_PREFIX}${service}"
+                ;;
+        esac
         
         # Security: Validate container name
         if ! validate_container_name "$container"; then
@@ -70,7 +89,21 @@ auto_fix() {
     local fixed=false
     
     for service in "${SERVICES[@]}"; do
-        local container="${CONTAINER_PREFIX}${service}"
+        # Use fixed names for infrastructure services
+        case "$service" in
+            postgres)
+                local container="${POSTGRES_CONTAINER}"
+                ;;
+            dragonfly)
+                local container="${DRAGONFLY_CONTAINER}"
+                ;;
+            openvidu-server)
+                local container="${OPENVIDU_CONTAINER}"
+                ;;
+            *)
+                local container="${CONTAINER_PREFIX}${service}"
+                ;;
+        esac
         local status=$(get_container_status "$container")
         
         if [[ "$status" == "exited" ]] || [[ "$status" == "stopped" ]]; then

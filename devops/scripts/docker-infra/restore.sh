@@ -7,8 +7,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../shared/utils.sh"
 
-# Container prefix
+# Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
 
 BACKUP_ID="${1:-latest}"
 RESTORE_SOURCE=""  # Will be set to "local" or "s3"
@@ -86,7 +90,7 @@ find_backup() {
 
 # Restore PostgreSQL
 restore_postgres() {
-    local container="${CONTAINER_PREFIX}postgres"
+    local container="${POSTGRES_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then
@@ -149,7 +153,7 @@ restore_postgres() {
     
     log_info "Restoring PostgreSQL from ${backup_file}..."
     
-    # Stop app containers
+    # Stop app containers (using prefix for app containers)
     docker stop "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
     
     # Drop and recreate database
@@ -172,7 +176,7 @@ restore_postgres() {
 
 # Restore Dragonfly
 restore_dragonfly() {
-    local container="${CONTAINER_PREFIX}dragonfly"
+    local container="${DRAGONFLY_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then

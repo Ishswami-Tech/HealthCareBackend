@@ -7,8 +7,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../shared/utils.sh"
 
-# Container prefix
+# Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
 
 BACKUP_ID=$(create_backup_id)
 TIMESTAMP=$(get_timestamp)
@@ -23,7 +27,7 @@ BACKUP_RESULTS["dragonfly_s3"]="failed"
 
 # Backup PostgreSQL
 backup_postgres() {
-    local container="${CONTAINER_PREFIX}postgres"
+    local container="${POSTGRES_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then
@@ -88,7 +92,7 @@ EOF
 
 # Backup Dragonfly
 backup_dragonfly() {
-    local container="${CONTAINER_PREFIX}dragonfly"
+    local container="${DRAGONFLY_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then

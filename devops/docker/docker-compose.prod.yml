@@ -3,7 +3,7 @@ services:
   postgres:
     profiles: ["infrastructure"]
     image: postgres:16
-    container_name: latest-postgres
+    container_name: postgres
     hostname: postgres
     ports:
       - "5432:5432"
@@ -77,7 +77,7 @@ services:
   dragonfly:
     profiles: ["infrastructure"]
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: latest-dragonfly
+    container_name: dragonfly
     hostname: dragonfly
     command: >
       --alsologtostderr
@@ -126,7 +126,7 @@ services:
   openvidu-server:
     profiles: ["infrastructure"]
     image: openvidu/openvidu-server-kms:latest
-    container_name: latest-openvidu-server
+    container_name: openvidu-server
     hostname: openvidu-server
     ports:
       - "4443:4443"
@@ -189,7 +189,7 @@ services:
   coturn:
     profiles: ["infrastructure"]
     image: coturn/coturn:latest
-    container_name: latest-coturn
+    container_name: coturn
     hostname: coturn
     ports:
       - "3478:3478/udp"
