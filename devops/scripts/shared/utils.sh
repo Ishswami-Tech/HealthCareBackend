@@ -96,11 +96,192 @@ ensure_directories() {
     chmod 755 "${BASE_DIR}/data" 2>/dev/null || true
 }
 
+# Validate environment file syntax
+validate_env_file() {
+    local env_file="${1:-${ENV_FILE}}"
+    local auto_fix="${2:-false}"
+    
+    if [[ ! -f "${env_file}" ]]; then
+        log_error "Environment file not found: ${env_file}"
+        return 1
+    fi
+    
+    local line_num=0
+    local errors_found=0
+    local fixes_applied=0
+    local temp_file=""
+    local backup_file=""
+    
+    if [[ "$auto_fix" == "true" ]]; then
+        backup_file="${env_file}.backup.$(date +%Y%m%d_%H%M%S)"
+        cp "${env_file}" "${backup_file}"
+        log_info "Backup created: ${backup_file}"
+        temp_file=$(mktemp)
+    fi
+    
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line_num=$((line_num + 1))
+        local original_line="$line"
+        local fixed_line="$line"
+        
+        # Skip empty lines
+        if [[ -z "$line" ]]; then
+            [[ -n "$temp_file" ]] && echo "" >> "$temp_file"
+            continue
+        fi
+        
+        # Check for common issues
+        
+        # Issue 1: Comment line missing # prefix (starts with word like "Application", "App", etc.)
+        if [[ "$line" =~ ^[[:space:]]*[A-Z][a-z]+ ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ ! "$line" =~ = ]]; then
+            # Check if it looks like a section header (starts with capital letter, no = sign)
+            if [[ "$line" =~ ^[[:space:]]*(Application|App|Database|Cache|JWT|Prisma|Logging|Rate|Security|Email|CORS|Service|WhatsApp|Video|Google|Session|Firebase|Social|S3|Docker|Clinic) ]]; then
+                log_warning "Line ${line_num}: Missing # prefix for comment: ${line:0:50}..."
+                if [[ "$auto_fix" == "true" ]]; then
+                    fixed_line="# ${line}"
+                    fixes_applied=$((fixes_applied + 1))
+                else
+                    errors_found=$((errors_found + 1))
+                fi
+            fi
+        fi
+        
+        # Issue 2: Variable assignment missing = sign
+        if [[ "$line" =~ ^[[:space:]]*[A-Z_][A-Z0-9_]*[[:space:]]+[^=] ]] && [[ ! "$line" =~ ^[[:space:]]*# ]]; then
+            log_warning "Line ${line_num}: Variable assignment missing = sign: ${line:0:50}..."
+            if [[ "$auto_fix" == "true" ]]; then
+                # Try to fix by adding = after variable name
+                if [[ "$line" =~ ^([[:space:]]*[A-Z_][A-Z0-9_]*)[[:space:]]+(.+)$ ]]; then
+                    fixed_line="${BASH_REMATCH[1]}=${BASH_REMATCH[2]}"
+                    fixes_applied=$((fixes_applied + 1))
+                else
+                    log_error "Line ${line_num}: Cannot auto-fix: ${line:0:50}..."
+                    errors_found=$((errors_found + 1))
+                fi
+            else
+                errors_found=$((errors_found + 1))
+            fi
+        fi
+        
+        # Issue 3: Line starts with "App" or similar without # or =
+        if [[ "$line" =~ ^[[:space:]]*App[[:space:]:] ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ ! "$line" =~ = ]]; then
+            log_warning "Line ${line_num}: Line starting with 'App' without # or =: ${line:0:50}..."
+            if [[ "$auto_fix" == "true" ]]; then
+                fixed_line="# ${line}"
+                fixes_applied=$((fixes_applied + 1))
+            else
+                errors_found=$((errors_found + 1))
+            fi
+        fi
+        
+        # Validate: Line should be either:
+        # 1. Empty
+        # 2. A comment (starts with #)
+        # 3. A valid variable assignment (KEY=VALUE)
+        if [[ -n "$line" ]] && [[ ! "$line" =~ ^[[:space:]]*# ]] && [[ ! "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+            if [[ "$fixed_line" == "$original_line" ]]; then
+                log_error "Line ${line_num}: Invalid format (not a comment or variable assignment): ${line:0:50}..."
+                errors_found=$((errors_found + 1))
+                if [[ "$auto_fix" == "true" ]]; then
+                    # Comment out invalid lines to prevent errors
+                    fixed_line="# INVALID LINE (auto-commented): ${line}"
+                    fixes_applied=$((fixes_applied + 1))
+                fi
+            fi
+        fi
+        
+        if [[ -n "$temp_file" ]]; then
+            echo "$fixed_line" >> "$temp_file"
+        fi
+    done < "${env_file}"
+    
+    # Replace original file if fixes were applied
+    if [[ -n "$temp_file" ]] && [[ $fixes_applied -gt 0 ]]; then
+        mv "$temp_file" "${env_file}"
+        chmod 600 "${env_file}"
+        log_success "File updated: ${fixes_applied} fixes applied"
+        log_info "Backup saved at: ${backup_file}"
+    elif [[ -n "$temp_file" ]]; then
+        rm "$temp_file"
+    fi
+    
+    if [[ $errors_found -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# Test loading the environment file
+test_env_file_load() {
+    local env_file="${1:-${ENV_FILE}}"
+    
+    if [[ ! -f "${env_file}" ]]; then
+        log_error "Environment file not found: ${env_file}"
+        return 1
+    fi
+    
+    log_info "Testing environment file loading..."
+    
+    # Try to source the file in a subshell to catch errors
+    if bash -c "set -a; source '${env_file}' 2>&1; set +a" 2>&1 | grep -q "command not found"; then
+        log_error "Environment file has syntax errors that prevent loading"
+        return 1
+    else
+        log_success "Environment file loads successfully"
+        return 0
+    fi
+}
+
+# Validate and fix environment file (convenience function)
+validate_and_fix_env_file() {
+    local env_file="${1:-${ENV_FILE}}"
+    
+    log_info "Validating environment file: ${env_file}"
+    
+    if validate_env_file "${env_file}" "true"; then
+        if test_env_file_load "${env_file}"; then
+            log_success "✅ Environment file is valid and loads correctly"
+            return 0
+        else
+            log_error "❌ Environment file still has errors after fixes"
+            return 1
+        fi
+    else
+        log_error "❌ Failed to validate/fix environment file"
+        return 1
+    fi
+}
+
 # Load environment variables
 load_env() {
+    local validate="${1:-false}"
+    local auto_fix="${2:-false}"
+    
     if [[ -f "${ENV_FILE}" ]]; then
+        # Optionally validate before loading
+        if [[ "$validate" == "true" ]]; then
+            if ! validate_env_file "${ENV_FILE}" "$auto_fix"; then
+                log_warning "Environment file has validation errors, but continuing to load..."
+            fi
+        fi
+        
         set -a
-        source "${ENV_FILE}"
+        # Use a safer method to load env file that skips invalid lines
+        # This prevents errors when sourcing files with malformed lines
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            # Skip empty lines
+            [[ -z "$line" ]] && continue
+            # Skip comment lines
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            # Only process lines that look like valid variable assignments (KEY=VALUE)
+            if [[ "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
+                # Export the variable safely
+                export "$line" 2>/dev/null || log_warning "Failed to set environment variable: ${line%%=*}"
+            else
+                # Log warning for lines that don't match expected format but don't fail
+                log_warning "Skipping invalid line in ${ENV_FILE}: ${line:0:50}..."
+            fi
+        done < "${ENV_FILE}"
         set +a
     else
         log_warning "Environment file not found: ${ENV_FILE}"
@@ -516,5 +697,7 @@ s3_exists() {
 
 # Initialize on source
 ensure_directories
+# Load environment variables (with validation warnings but no auto-fix by default)
+# Scripts can call validate_and_fix_env_file() or validate_env_file() manually if needed
 load_env
 

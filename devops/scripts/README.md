@@ -159,6 +159,24 @@ All scripts include comprehensive security measures:
 - `validate_s3_path()` - Validates S3 paths
 - `sanitize_filename()` - Sanitizes filenames
 
+#### ✅ Environment File Validation Functions (utils.sh)
+- `validate_env_file([file], [auto_fix])` - Validates environment file syntax (auto_fix: true/false)
+- `validate_and_fix_env_file([file])` - Validates and auto-fixes environment file (creates backup)
+- `test_env_file_load([file])` - Tests that environment file loads without errors
+- `load_env([validate], [auto_fix])` - Loads environment variables with optional validation
+
+**Usage Example:**
+```bash
+# From any script that sources utils.sh:
+source devops/scripts/shared/utils.sh
+
+# Validate and fix .env.production
+validate_and_fix_env_file
+
+# Or just validate without fixing
+validate_env_file "${ENV_FILE}" "false"
+```
+
 #### ✅ Script-Specific Security
 
 **restore.sh:**

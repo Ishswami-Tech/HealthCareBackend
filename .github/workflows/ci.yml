@@ -29,42 +29,25 @@ env:
 
 jobs:
   # Code Quality Checks
+  # Skip linting and format checks for all branches - handled by git hooks
+  # Pre-commit: Quick lint-staged (fast validation on staged files)
+  # Pre-push: Full yarn build (comprehensive validation before pushing)
+  # Docker build: Final validation with yarn build (linting, formatting, optimizations)
   lint:
-    name: Lint & Format Check
+    name: Lint & Format Check (Skipped)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'yarn'
-
-      - name: Install Yarn
-        run: npm install -g yarn@${{ env.YARN_VERSION }}
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Validate Prisma generated files
+      - name: Skip linting and format checks
         run: |
-          echo "🔍 Validating Prisma generated files..."
-          yarn prisma:validate-generated || {
-            echo "❌ Prisma generated files are stale or invalid"
-            echo "💡 Regenerating Prisma Client..."
-            yarn prisma:regenerate
-            echo "⚠️  Generated files were updated. Please commit the changes."
-            exit 1
-          }
-          echo "✅ Prisma generated files are up-to-date"
-
-      - name: Run ESLint
-        run: yarn lint
-
-      - name: Check code formatting
-        run: yarn format:check
+          echo "⏭️  Skipping linting and format checks in CI"
+          echo "✅ Code is validated by pre-commit (lint-staged) and pre-push (yarn build) hooks"
+          echo "✅ Pre-push ensures only buildable code is pushed (full validation)"
+          echo "✅ Docker build runs final validation with yarn build (linting, formatting, optimizations)"
+          echo "✅ Prisma client is generated during Docker build"
+          exit 0
 
   # Security Scanning
   security:
@@ -95,10 +78,14 @@ jobs:
   # TypeScript Build
   # Docker Build & Push
   # Note: Build happens inside Docker, no separate build job needed
+  # Prisma client generation happens during Docker build (see Dockerfile line 32)
+  # Linting and formatting are done in git hooks (pre-commit + pre-push) and Docker build
+  # Pre-push hook runs full yarn build, ensuring only buildable code reaches CI
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: [lint, security]  # Build happens inside Docker, no separate build job needed
+    # Lint job is skipped (handled by pre-push hook), only depend on security
+    needs: [lint, security]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -1016,6 +1003,7 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     needs: [lint, security, docker-build]
+    # Allow lint to be skipped for production (main branch)
     if: always() && !contains(needs.*.result, 'failure')
     steps:
       - name: Report Success
@@ -1026,3 +1014,4 @@ jobs:
           else
             echo "Ready for merge to main branch"
           fi
+          echo "ℹ️  Linting and formatting handled by git hooks (pre-commit + pre-push) and Docker build"

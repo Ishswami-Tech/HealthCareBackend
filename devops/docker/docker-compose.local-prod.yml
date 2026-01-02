@@ -234,6 +234,8 @@ services:
   api:
     profiles: ["app"]
     # Local-Prod: Build locally instead of using pre-built image
+    # Prisma Client is generated during Docker build (see Dockerfile line 33)
+    # NOT generated in CI or at container startup - only during build
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile
@@ -364,6 +366,8 @@ services:
   worker:
     profiles: ["app"]
     # Local-Prod: Build locally instead of using pre-built image
+    # Prisma Client is generated during Docker build (see Dockerfile line 33)
+    # NOT generated in CI or at container startup - only during build
     build:
       context: ../..
       dockerfile: devops/docker/Dockerfile
@@ -444,7 +448,7 @@ services:
           cpus: "0.25"     # Production: 0.5
           memory: 256M     # Production: 512MB
     # Worker doesn't need migrations - only API container runs them
-    # Entrypoint will ensure Prisma Client is generated if needed
+    # Prisma Client is generated during Docker build, entrypoint verifies it exists
     command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"
