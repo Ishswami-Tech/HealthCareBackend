@@ -591,7 +591,12 @@ main() {
             setup_cron_backups
             ;;
         ""|help|--help|-h)
-            usage
+            # If no command provided, default to pre-deployment backup
+            if [[ -z "$command" ]]; then
+                main_backup "pre-deployment"
+            else
+                usage
+            fi
             ;;
         *)
             log_error "Unknown command: $command"

@@ -820,15 +820,24 @@ main() {
     } | json_fix_trailing
     
     # Auto-fix unhealthy containers if enabled (backup → fix → restore → verify)
+    # Retry up to 2 times if fix fails
+    local max_fix_retries=2
+    local fix_attempt=0
+    local fix_succeeded=false
+    
     if $any_unhealthy && [[ "${AUTO_RECREATE_MISSING:-false}" == "true" ]]; then
-        log_info "Auto-fix is enabled, attempting to fix unhealthy containers..."
-        if fix_unhealthy_containers; then
-            log_success "Unhealthy containers fixed, re-checking health..."
+        while [[ $fix_attempt -lt $max_fix_retries ]] && ! $fix_succeeded; do
+            fix_attempt=$((fix_attempt + 1))
+            log_info "Auto-fix attempt $fix_attempt/$max_fix_retries - attempting to fix unhealthy containers..."
             
-            # Re-check health after fixing
-            all_healthy=true
-            any_missing=false
-            any_unhealthy=false
+            if fix_unhealthy_containers; then
+                log_success "Unhealthy containers fixed, re-checking health..."
+                fix_succeeded=true
+                
+                # Re-check health after fixing
+                all_healthy=true
+                any_missing=false
+                any_unhealthy=false
             
             check_postgres || {
                 if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
@@ -898,22 +907,42 @@ main() {
                 echo "  }"
                 json_end
             } | json_fix_trailing
-        else
-            log_warning "Could not fix unhealthy containers, they may need recreation"
+            else
+                log_warning "Fix attempt $fix_attempt failed, waiting before retry..."
+                if [[ $fix_attempt -lt $max_fix_retries ]]; then
+                    sleep $((fix_attempt * 5))  # Exponential backoff: 5s, 10s
+                fi
+            fi
+        done
+        
+        if ! $fix_succeeded; then
+            log_warning "Could not fix unhealthy containers after $max_fix_retries attempts, they may need recreation"
+            # Mark as missing so recovery workflow can handle them
+            any_missing=true
+            any_unhealthy=false
         fi
     fi
     
     # Auto-recover missing containers if enabled (backup → recreate → restore → verify)
+    # Retry up to 2 times if recovery fails
+    local max_recovery_retries=2
+    local recovery_attempt=0
+    local recovery_succeeded=false
+    
     if $any_missing && [[ "${AUTO_RECREATE_MISSING:-false}" == "true" ]]; then
-        log_info "Auto-recovery is enabled, starting full recovery workflow..."
-        if recover_missing_containers; then
-            log_success "Missing containers recreated successfully"
+        while [[ $recovery_attempt -lt $max_recovery_retries ]] && ! $recovery_succeeded; do
+            recovery_attempt=$((recovery_attempt + 1))
+            log_info "Auto-recovery attempt $recovery_attempt/$max_recovery_retries - starting full recovery workflow..."
             
-            # Re-check health after recreation
-            log_info "Re-checking infrastructure health after recreation..."
-            all_healthy=true
-            any_missing=false
-            any_unhealthy=false
+            if recover_missing_containers; then
+                log_success "Missing containers recreated successfully"
+                recovery_succeeded=true
+                
+                # Re-check health after recreation
+                log_info "Re-checking infrastructure health after recreation..."
+                all_healthy=true
+                any_missing=false
+                any_unhealthy=false
             
             check_postgres || {
                 if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
@@ -983,8 +1012,17 @@ main() {
                 echo "  }"
                 json_end
             } | json_fix_trailing
-        else
-            log_error "Failed to recreate missing containers"
+            else
+                log_warning "Recovery attempt $recovery_attempt failed, waiting before retry..."
+                if [[ $recovery_attempt -lt $max_recovery_retries ]]; then
+                    sleep $((recovery_attempt * 10))  # Exponential backoff: 10s, 20s
+                fi
+            fi
+        done
+        
+        if ! $recovery_succeeded; then
+            log_error "Failed to recreate missing containers after $max_recovery_retries attempts"
+            # Still exit with error, but we tried our best
         fi
     fi
     
