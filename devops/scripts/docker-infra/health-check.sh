@@ -27,6 +27,11 @@ fi
 SERVICES=("postgres" "dragonfly" "openvidu-server")
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
+OPENVIDU_CONTAINER="openvidu-server"
+
 # Exit codes
 EXIT_HEALTHY=0
 EXIT_MINOR_ISSUES=1
