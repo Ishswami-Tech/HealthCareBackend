@@ -40,11 +40,15 @@ ensure_directory() {
         if $IS_ROOT; then
             chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
         else
-            # For /var/log directories, use sudo even if directory exists
+            # For /var/log directories, use sudo if available
             if [[ "$dir" == /var/log* ]]; then
-                sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+                if sudo -n true 2>/dev/null; then
+                    sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+                else
+                    chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir} (sudo required)"
+                fi
             else
-        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+                chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
             fi
         fi
         return 0
@@ -52,8 +56,16 @@ ensure_directory() {
     
     # Check if directory is in /var/log (requires sudo if not root)
     local needs_sudo=false
+    local sudo_available=false
     if [[ "$dir" == /var/log* ]] && ! $IS_ROOT; then
         needs_sudo=true
+        # Check if sudo is available without password (NOPASSWD)
+        if sudo -n true 2>/dev/null; then
+            sudo_available=true
+        else
+            # Sudo requires password - try anyway but don't fail if it doesn't work
+            sudo_available=false
+        fi
     fi
     
     # Create parent directories if needed
@@ -61,7 +73,12 @@ ensure_directory() {
     if [[ ! -d "$parent" ]]; then
         log_info "Creating parent directory: ${parent}"
         if [[ "$parent" == /var/log* ]] && ! $IS_ROOT; then
-            sudo mkdir -p "$parent" || log_error "Failed to create parent directory: ${parent}"
+            if $sudo_available; then
+                sudo mkdir -p "$parent" 2>/dev/null || log_warning "Could not create parent directory with sudo: ${parent}"
+            else
+                # Try without sudo - might work if directory already exists or permissions allow
+                mkdir -p "$parent" 2>/dev/null || log_warning "Could not create parent directory: ${parent} (sudo required but not available)"
+            fi
         else
             mkdir -p "$parent" || log_error "Failed to create parent directory: ${parent}"
         fi
@@ -70,14 +87,28 @@ ensure_directory() {
     # Create directory
     log_info "Creating directory: ${dir}"
     if $needs_sudo; then
-        sudo mkdir -p "$dir" || log_error "Failed to create directory: ${dir}"
-        sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        if $sudo_available; then
+            sudo mkdir -p "$dir" 2>/dev/null || log_warning "Could not create directory with sudo: ${dir}"
+            sudo chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        else
+            # Try without sudo - might work if directory already exists
+            if mkdir -p "$dir" 2>/dev/null; then
+                chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+            else
+                log_warning "Could not create ${dir} - sudo required but password not available. Directory may already exist."
+            fi
+        fi
     else
         mkdir -p "$dir" || log_error "Failed to create directory: ${dir}"
-    chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
+        chmod "$mode" "$dir" 2>/dev/null || log_warning "Could not set permissions on ${dir}"
     fi
     
-    log_success "Directory created: ${dir}"
+    # Check if directory exists (even if creation failed, it might already exist)
+    if [[ -d "$dir" ]]; then
+        log_success "Directory created/exists: ${dir}"
+    else
+        log_warning "Directory may not exist: ${dir} (check permissions or create manually)"
+    fi
 }
 
 # Function to set ownership (if running as root)
@@ -153,18 +184,26 @@ main() {
     # Verify critical directories
     log_info "Verifying directory structure..."
     local all_ok=true
+    local critical_missing=false
     
     for dir in "${DIRECTORIES[@]}"; do
         if [[ ! -d "$dir" ]]; then
-            log_error "Directory missing: ${dir}"
-            all_ok=false
+            # /var/log directories are optional if sudo is not available
+            if [[ "$dir" == /var/log* ]] && ! $IS_ROOT && ! sudo -n true 2>/dev/null; then
+                log_warning "Directory missing (sudo required): ${dir} - This is optional if sudo is not configured"
+                # Don't mark as critical failure for /var/log if sudo is not available
+            else
+                log_error "Directory missing: ${dir}"
+                critical_missing=true
+                all_ok=false
+            fi
         else
             log_success "Verified: ${dir}"
         fi
     done
     
-    if $all_ok; then
-        log_success "All directories are set up correctly"
+    if ! $critical_missing; then
+        log_success "All critical directories are set up correctly"
         
         # Display directory structure
         echo ""
@@ -179,11 +218,15 @@ main() {
         echo "        ├── dragonfly/"
         echo "        └── openvidu_recordings/"
         echo ""
-        log_info "Log directory: ${LOG_DIR}"
+        if [[ -d "${LOG_DIR}" ]]; then
+            log_info "Log directory: ${LOG_DIR}"
+        else
+            log_warning "Log directory not available: ${LOG_DIR} (sudo required)"
+        fi
         
         exit 0
     else
-        log_error "Some directories are missing"
+        log_error "Some critical directories are missing"
         exit 1
     fi
 }

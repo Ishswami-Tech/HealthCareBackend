@@ -62,13 +62,21 @@ ensure_directories() {
     # /var/log/deployments requires sudo if not running as root
     if [[ ! -d "${LOG_DIR}" ]]; then
         if [[ "${LOG_DIR}" == /var/log* ]] && ! $is_root; then
-            sudo mkdir -p "${LOG_DIR}" || log_error "Failed to create directory: ${LOG_DIR}"
-            sudo chmod 755 "${LOG_DIR}" 2>/dev/null || log_warning "Could not set permissions on ${LOG_DIR}"
+            # Check if sudo is available without password
+            if sudo -n true 2>/dev/null; then
+                sudo mkdir -p "${LOG_DIR}" 2>/dev/null || log_warning "Could not create ${LOG_DIR} with sudo"
+                sudo chmod 755 "${LOG_DIR}" 2>/dev/null || log_warning "Could not set permissions on ${LOG_DIR}"
+            else
+                # Try without sudo - might work if permissions allow
+                mkdir -p "${LOG_DIR}" 2>/dev/null || log_warning "Could not create ${LOG_DIR} - sudo required but password not available"
+            fi
         else
             mkdir -p "${LOG_DIR}"
             chmod 755 "${LOG_DIR}" 2>/dev/null || log_warning "Could not set permissions on ${LOG_DIR}"
         fi
-        log_info "Created directory: ${LOG_DIR}"
+        if [[ -d "${LOG_DIR}" ]]; then
+            log_info "Created directory: ${LOG_DIR}"
+        fi
     fi
     
     if [[ ! -d "${BASE_DIR}/data/postgres" ]]; then
@@ -89,7 +97,11 @@ ensure_directories() {
     # Set permissions (safe to run multiple times)
     chmod 700 "${BACKUP_DIR}" 2>/dev/null || true
     if [[ "${LOG_DIR}" == /var/log* ]] && ! $is_root; then
-        sudo chmod 755 "${LOG_DIR}" 2>/dev/null || true
+        if sudo -n true 2>/dev/null; then
+            sudo chmod 755 "${LOG_DIR}" 2>/dev/null || true
+        else
+            chmod 755 "${LOG_DIR}" 2>/dev/null || true
+        fi
     else
         chmod 755 "${LOG_DIR}" 2>/dev/null || true
     fi
