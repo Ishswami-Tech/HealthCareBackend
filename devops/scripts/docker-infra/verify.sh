@@ -35,6 +35,9 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
 
+# Ensure BACKUP_DIR is set (from utils.sh, but provide fallback)
+BACKUP_DIR="${BACKUP_DIR:-/opt/healthcare-backend/backups}"
+
 # ============================================================================
 # DEPLOYMENT VERIFICATION FUNCTIONS
 # ============================================================================

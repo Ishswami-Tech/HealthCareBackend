@@ -31,6 +31,7 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 POSTGRES_CONTAINER="postgres"
 DRAGONFLY_CONTAINER="dragonfly"
 OPENVIDU_CONTAINER="openvidu-server"
+COTURN_CONTAINER="coturn"
 
 # Exit codes
 EXIT_HEALTHY=0
@@ -325,6 +326,8 @@ main() {
         echo "  \"services\": {"
         echo "    \"postgres\": ${SERVICE_DETAILS[postgres]},"
         echo "    \"dragonfly\": ${SERVICE_DETAILS[dragonfly]},"
+        echo "    \"coturn\": ${SERVICE_DETAILS[coturn]},"
+        echo "    \"portainer\": ${SERVICE_DETAILS[portainer]},"
         echo "    \"openvidu\": ${SERVICE_DETAILS[openvidu]}"
         echo "  }"
         json_end
