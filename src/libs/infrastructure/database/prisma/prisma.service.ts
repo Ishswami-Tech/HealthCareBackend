@@ -258,11 +258,81 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
 
+    // Try dist/client.js first (production - where PrismaClient is actually exported)
+    // Prisma 7 generates client.js in dist/ with PrismaClient export
+    // Use dynamic import first as the compiled file may use ESM exports
+    const distClientJs = path.join(
+      cwd,
+      'dist',
+      'libs',
+      'infrastructure',
+      'database',
+      'prisma',
+      'generated',
+      'client',
+      'client.js'
+    );
+    if (fs.existsSync(distClientJs)) {
+      // Try dynamic import first (works for both ESM and CommonJS)
+      try {
+        const importPath =
+          process.platform === 'win32'
+            ? `file:///${distClientJs.replace(/\\/g, '/')}`
+            : `file://${distClientJs}`;
+        const prismaModule = (await import(importPath)) as {
+          PrismaClient?: PrismaClientConstructor;
+        };
+        if (prismaModule?.PrismaClient) {
+          return prismaModule.PrismaClient;
+        }
+      } catch {
+        // Fall through to require attempt
+      }
+      // Try require as fallback for CommonJS modules
+      try {
+        const requireModule = createRequire(path.join(cwd, 'package.json'));
+        const prismaModule = requireModule(distClientJs) as {
+          PrismaClient?: PrismaClientConstructor;
+        };
+        if (prismaModule?.PrismaClient) {
+          return prismaModule.PrismaClient;
+        }
+      } catch {
+        // Fall through to next path
+      }
+    }
+
+    // Try @prisma/client (standard location with symlink)
+    // Note: index.js doesn't export PrismaClient, but client.ts does (TypeScript only)
+    // So we need to check custom location's client.js instead
+    try {
+      const requireModule = createRequire(path.join(cwd, 'package.json'));
+      const prismaModule = requireModule('@prisma/client') as {
+        PrismaClient?: PrismaClientConstructor;
+      };
+      if (prismaModule?.PrismaClient) {
+        return prismaModule.PrismaClient;
+      }
+    } catch {
+      // Fall through to dynamic import
+    }
+
+    // Try dynamic import of @prisma/client as fallback
+    try {
+      const prismaModule = (await import('@prisma/client')) as {
+        PrismaClient?: PrismaClientConstructor;
+      };
+      if (prismaModule?.PrismaClient) {
+        return prismaModule.PrismaClient;
+      }
+    } catch {
+      // Fall through to custom paths
+    }
+
     // Try multiple paths in order of preference:
     // 1. dist/ path (production - where compiled code runs from)
     // 2. src/ path (development - where source code is)
     // 3. Relative path (should work if files are in the right place)
-    // 4. @prisma/client module resolution (fallback)
 
     const possiblePaths = [
       // Production path (compiled code runs from dist/)
