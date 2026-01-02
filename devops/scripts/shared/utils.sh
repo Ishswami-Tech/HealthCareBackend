@@ -325,7 +325,9 @@ validate_container_name() {
         return 1
     fi
     # Prevent command injection attempts
-    if [[ "$container" == *"$"* ]] || [[ "$container" == *"`"* ]] || [[ "$container" == *"|"* ]] || [[ "$container" == *"&"* ]] || [[ "$container" == *";"* ]]; then
+    # Check for dangerous characters: $, `, |, &, ;
+    # Using grep with properly escaped backtick in character class
+    if echo "$container" | grep -qE '[\$\`|&;]'; then
         log_error "Container name contains dangerous characters: ${container}"
         return 1
     fi
