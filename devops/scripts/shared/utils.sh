@@ -815,7 +815,7 @@ acquire_deployment_lock() {
     # Create lock directory if it doesn't exist
     mkdir -p "$(dirname "$lock_file")"
     
-    while [[ -f "$lock_file" ]]; then
+    while [[ -f "$lock_file" ]]; do
         if [[ $waited -ge $max_wait ]]; then
             local lock_pid=$(cat "$lock_file" 2>/dev/null || echo "unknown")
             log_error "Another deployment is running (PID: $lock_pid, timeout after ${max_wait}s)"
