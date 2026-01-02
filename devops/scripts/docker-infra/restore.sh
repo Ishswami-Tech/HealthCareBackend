@@ -153,7 +153,9 @@ restore_postgres() {
     
     log_info "Restoring PostgreSQL from ${backup_file}..."
     
-    # Stop app containers (using prefix for app containers)
+    # Stop app containers temporarily (safety measure during database restore)
+    # This prevents app from writing to database during restore
+    # NOTE: This is NOT a health check - it's a safety measure for data consistency
     docker stop "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
     
     # Drop and recreate database
@@ -430,7 +432,8 @@ main_restore() {
     # Restore Dragonfly
     restore_dragonfly || log_warning "Dragonfly restore failed (non-critical)"
     
-    # Start app containers
+    # Start app containers (restart after infrastructure restore completes)
+    # NOTE: This is NOT a health check - it's restarting the app after infrastructure restore
     docker start "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
     
     log_success "Restore process completed"

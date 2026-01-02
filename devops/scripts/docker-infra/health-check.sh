@@ -1,6 +1,7 @@
 #!/bin/bash
 # Infrastructure Health Check Script
-# Checks the health of all infrastructure services (PostgreSQL, Dragonfly, OpenVidu)
+# Checks the health of INFRASTRUCTURE containers only (PostgreSQL, Dragonfly, Coturn, Portainer, OpenVidu)
+# Does NOT check or manage application containers (api, worker)
 
 set -euo pipefail
 
@@ -23,15 +24,18 @@ if ! command -v log_info &>/dev/null; then
     fi
 fi
 
-# Services to check
+# Services to check (INFRASTRUCTURE ONLY - not application containers)
+# Infrastructure containers use fixed names, never use CONTAINER_PREFIX
 SERVICES=("postgres" "dragonfly" "openvidu-server")
-CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
 DRAGONFLY_CONTAINER="dragonfly"
 OPENVIDU_CONTAINER="openvidu-server"
 COTURN_CONTAINER="coturn"
+
+# Ensure BASE_DIR is set (from utils.sh, but provide fallback)
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
 
 # Exit codes
 EXIT_HEALTHY=0
@@ -42,6 +46,18 @@ EXIT_MISSING=3
 # Results
 declare -A SERVICE_STATUS
 declare -A SERVICE_DETAILS
+
+# Initialize all service statuses to avoid unbound variable errors
+SERVICE_STATUS["postgres"]="unknown"
+SERVICE_STATUS["dragonfly"]="unknown"
+SERVICE_STATUS["coturn"]="unknown"
+SERVICE_STATUS["portainer"]="unknown"
+SERVICE_STATUS["openvidu"]="unknown"
+SERVICE_DETAILS["postgres"]='{"status":"unknown"}'
+SERVICE_DETAILS["dragonfly"]='{"status":"unknown"}'
+SERVICE_DETAILS["coturn"]='{"status":"unknown"}'
+SERVICE_DETAILS["portainer"]='{"status":"unknown"}'
+SERVICE_DETAILS["openvidu"]='{"status":"unknown"}'
 
 # Check PostgreSQL
 check_postgres() {
@@ -251,6 +267,439 @@ check_openvidu() {
     fi
 }
 
+# Fix unhealthy containers (backup → fix → restore → verify)
+fix_unhealthy_containers() {
+    log_info "=== Attempting to Fix Unhealthy Containers ==="
+    
+    local diagnose_script="${BASE_DIR}/devops/scripts/docker-infra/diagnose.sh"
+    local backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
+    local restore_script="${BASE_DIR}/devops/scripts/docker-infra/restore.sh"
+    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local fixed_any=false
+    local unhealthy_services=()
+    local backup_id=""
+    
+    # Identify unhealthy services
+    for service in postgres dragonfly coturn portainer openvidu; do
+        if [[ "${SERVICE_STATUS[$service]}" == "unhealthy" ]]; then
+            log_info "Service ${service} is unhealthy"
+            unhealthy_services+=("$service")
+        fi
+    done
+    
+    if [[ ${#unhealthy_services[@]} -eq 0 ]]; then
+        log_info "No unhealthy containers to fix"
+        return 0
+    fi
+    
+    # STEP 1: Take backup before fixing (if containers are accessible)
+    log_info "=== STEP 1: Creating Backup Before Fix ==="
+    
+    local needs_backup=false
+    for service in "${unhealthy_services[@]}"; do
+        case "$service" in
+            postgres|dragonfly)
+                needs_backup=true
+                break
+                ;;
+        esac
+    done
+    
+    if $needs_backup && [[ -f "$backup_script" ]]; then
+        # Check if we can backup (containers might be running but unhealthy)
+        local can_backup=false
+        
+        if container_running "${POSTGRES_CONTAINER}"; then
+            log_info "PostgreSQL is running (unhealthy), attempting backup..."
+            can_backup=true
+        fi
+        
+        if container_running "${DRAGONFLY_CONTAINER}"; then
+            log_info "Dragonfly is running (unhealthy), attempting backup..."
+            can_backup=true
+        fi
+        
+        if $can_backup; then
+            log_info "Creating pre-fix backup..."
+            backup_id=$("$backup_script" pre-deployment 2>&1 | tail -1) || {
+                log_warning "Backup failed, but continuing with fix (data may be lost)"
+                backup_id=""
+            }
+            
+            if [[ -n "$backup_id" ]] && [[ "$backup_id" =~ ^pre-deployment- ]]; then
+                log_success "Backup created successfully (ID: ${backup_id})"
+            else
+                log_warning "Backup may have failed (invalid backup ID: ${backup_id:-none})"
+                backup_id=""
+            fi
+        else
+            log_warning "Cannot create backup (containers not accessible)"
+        fi
+    fi
+    
+    # STEP 2: Fix unhealthy containers
+    log_info "=== STEP 2: Fixing Unhealthy Containers ==="
+    
+    # Try diagnose.sh first (if available)
+    if [[ -f "$diagnose_script" ]]; then
+        log_info "Running diagnose.sh to attempt auto-fix..."
+        if "$diagnose_script" >/dev/null 2>&1; then
+            log_success "Diagnose script completed"
+            fixed_any=true
+        else
+            log_warning "Diagnose script did not fix all issues"
+        fi
+    fi
+    
+    # Try restarting unhealthy containers
+    cd "$(dirname "$compose_file")" 2>/dev/null || return 1
+    
+    for service in "${unhealthy_services[@]}"; do
+        local container=""
+        local compose_service=""
+        
+        case "$service" in
+            postgres)
+                container="${POSTGRES_CONTAINER}"
+                compose_service="postgres"
+                ;;
+            dragonfly)
+                container="${DRAGONFLY_CONTAINER}"
+                compose_service="dragonfly"
+                ;;
+            coturn)
+                container="${COTURN_CONTAINER}"
+                compose_service="coturn"
+                ;;
+            portainer)
+                container="portainer"
+                compose_service="portainer"
+                ;;
+            openvidu)
+                container="${OPENVIDU_CONTAINER}"
+                compose_service="openvidu-server"
+                ;;
+        esac
+        
+        if [[ -z "$container" ]] || [[ -z "$compose_service" ]]; then
+            continue
+        fi
+        
+        # Security: Validate container name
+        if ! validate_container_name "$container"; then
+            log_warning "Invalid container name: ${container}, skipping"
+            continue
+        fi
+        
+        # Check container status
+        local status=$(get_container_status "$container")
+        
+        if [[ "$status" == "exited" ]] || [[ "$status" == "stopped" ]]; then
+            log_info "Container ${container} is stopped, attempting to start..."
+            if docker start "$container" >/dev/null 2>&1; then
+                log_success "Started ${container}"
+                fixed_any=true
+            else
+                log_warning "Failed to start ${container}, trying docker-compose restart..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure restart "$compose_service" >/dev/null 2>&1 || {
+                    log_warning "Failed to restart ${compose_service}"
+                }
+            fi
+        elif [[ "$status" == "running" ]]; then
+            log_info "Container ${container} is running but unhealthy, attempting restart..."
+            if docker restart "$container" >/dev/null 2>&1; then
+                log_success "Restarted ${container}"
+                fixed_any=true
+            else
+                log_warning "Failed to restart ${container}, trying docker-compose restart..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure restart "$compose_service" >/dev/null 2>&1 || {
+                    log_warning "Failed to restart ${compose_service}"
+                }
+            fi
+        elif [[ "$status" == "restarting" ]]; then
+            log_info "Container ${container} is already restarting, waiting..."
+            sleep 10
+        fi
+    done
+    
+    # STEP 3: Wait for containers to stabilize
+    log_info "=== STEP 3: Waiting for Containers to Stabilize ==="
+    
+    if $fixed_any; then
+        log_info "Waiting for containers to stabilize after fixes..."
+        sleep 15
+        
+        # Wait for critical services to be healthy
+        for service in "${unhealthy_services[@]}"; do
+            case "$service" in
+                postgres)
+                    wait_for_health "${POSTGRES_CONTAINER}" 120 || {
+                        log_warning "PostgreSQL did not become healthy after fix attempt"
+                    }
+                    ;;
+                dragonfly)
+                    wait_for_health "${DRAGONFLY_CONTAINER}" 120 || {
+                        log_warning "Dragonfly did not become healthy after fix attempt"
+                    }
+                    ;;
+            esac
+        done
+    fi
+    
+    # STEP 4: Restore backup if we have one
+    if [[ -n "$backup_id" ]] && [[ -f "$restore_script" ]]; then
+        log_info "=== STEP 4: Restoring Backup ==="
+        
+        # Check if we need to restore (postgres or dragonfly were unhealthy)
+        local needs_restore=false
+        for service in "${unhealthy_services[@]}"; do
+            case "$service" in
+                postgres|dragonfly)
+                    needs_restore=true
+                    break
+                    ;;
+            esac
+        done
+        
+        if $needs_restore; then
+            log_info "Restoring from backup: ${backup_id}"
+            if "$restore_script" "$backup_id" >/dev/null 2>&1; then
+                log_success "Backup restored successfully"
+                
+                # Wait for services to be healthy after restore
+                sleep 10
+                for service in "${unhealthy_services[@]}"; do
+                    case "$service" in
+                        postgres)
+                            wait_for_health "${POSTGRES_CONTAINER}" 120 || {
+                                log_warning "PostgreSQL did not become healthy after restore"
+                            }
+                            ;;
+                        dragonfly)
+                            wait_for_health "${DRAGONFLY_CONTAINER}" 120 || {
+                                log_warning "Dragonfly did not become healthy after restore"
+                            }
+                            ;;
+                    esac
+                done
+            else
+                log_warning "Backup restore failed, but containers were fixed"
+            fi
+        fi
+    else
+        log_info "No backup to restore (backup_id: ${backup_id:-none})"
+    fi
+    
+    if $fixed_any; then
+        log_success "Fixed unhealthy containers"
+        return 0
+    else
+        log_warning "Could not fix unhealthy containers automatically"
+        return 1
+    fi
+}
+
+# Full recovery workflow: backup → recreate → restore → verify health
+recover_missing_containers() {
+    log_info "=== Starting Full Recovery Workflow ==="
+    
+    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
+    local restore_script="${BASE_DIR}/devops/scripts/docker-infra/restore.sh"
+    
+    if [[ ! -f "$compose_file" ]]; then
+        log_error "Docker compose file not found: ${compose_file}"
+        return 1
+    fi
+    
+    cd "$(dirname "$compose_file")" || return 1
+    
+    # Check which critical containers are missing
+    local needs_postgres=false
+    local needs_dragonfly=false
+    local missing_services=()
+    
+    if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
+        log_info "Container ${POSTGRES_CONTAINER} is missing"
+        needs_postgres=true
+        missing_services+=("postgres")
+    fi
+    
+    if [[ "${SERVICE_STATUS[dragonfly]}" == "missing" ]]; then
+        log_info "Container ${DRAGONFLY_CONTAINER} is missing"
+        needs_dragonfly=true
+        missing_services+=("dragonfly")
+    fi
+    
+    if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
+        log_info "Container ${COTURN_CONTAINER} is missing"
+        missing_services+=("coturn")
+    fi
+    
+    if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
+        log_info "Container portainer is missing"
+        missing_services+=("portainer")
+    fi
+    
+    if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
+        log_info "Container ${OPENVIDU_CONTAINER} is missing"
+        missing_services+=("openvidu-server")
+    fi
+    
+    if [[ ${#missing_services[@]} -eq 0 ]]; then
+        log_info "No missing containers to recover"
+        return 0
+    fi
+    
+    local backup_id=""
+    
+    # STEP 1: Take backup (if containers are running, even if unhealthy)
+    log_info "=== STEP 1: Creating Backup ==="
+    
+    # Check if we can take a backup (containers might be running but unhealthy)
+    local can_backup_postgres=false
+    local can_backup_dragonfly=false
+    
+    # Check if postgres is running (even if unhealthy, we can try to backup)
+    if container_running "${POSTGRES_CONTAINER}"; then
+        log_info "PostgreSQL container is running, attempting backup..."
+        can_backup_postgres=true
+    elif ! $needs_postgres; then
+        # Postgres is not missing, so it should be running
+        log_info "PostgreSQL should be running, checking..."
+        can_backup_postgres=true
+    fi
+    
+    # Check if dragonfly is running
+    if container_running "${DRAGONFLY_CONTAINER}"; then
+        log_info "Dragonfly container is running, attempting backup..."
+        can_backup_dragonfly=true
+    elif ! $needs_dragonfly; then
+        log_info "Dragonfly should be running, checking..."
+        can_backup_dragonfly=true
+    fi
+    
+    # Start containers temporarily if they're missing but we need to backup
+    if ($needs_postgres || $needs_dragonfly) && [[ -f "$backup_script" ]]; then
+        if $needs_postgres && ! container_running "${POSTGRES_CONTAINER}"; then
+            log_info "Starting PostgreSQL temporarily for backup..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                log_warning "Failed to start PostgreSQL for backup"
+            }
+            if container_running "${POSTGRES_CONTAINER}"; then
+                wait_for_health "${POSTGRES_CONTAINER}" 120 || {
+                    log_warning "PostgreSQL not healthy, but attempting backup anyway"
+                }
+                can_backup_postgres=true
+            fi
+        fi
+        
+        if $needs_dragonfly && ! container_running "${DRAGONFLY_CONTAINER}"; then
+            log_info "Starting Dragonfly temporarily for backup..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                log_warning "Failed to start Dragonfly for backup"
+            }
+            if container_running "${DRAGONFLY_CONTAINER}"; then
+                wait_for_health "${DRAGONFLY_CONTAINER}" 60 || {
+                    log_warning "Dragonfly not healthy, but attempting backup anyway"
+                }
+                can_backup_dragonfly=true
+            fi
+        fi
+    fi
+    
+    # Create backup if we can
+    if ($can_backup_postgres || $can_backup_dragonfly) && [[ -f "$backup_script" ]]; then
+        log_info "Creating pre-recovery backup..."
+        backup_id=$("$backup_script" pre-deployment 2>&1 | tail -1) || {
+            log_warning "Backup failed, but continuing with recovery (data may be lost)"
+            backup_id=""
+        }
+        
+        if [[ -n "$backup_id" ]] && [[ "$backup_id" =~ ^pre-deployment- ]]; then
+            log_success "Backup created successfully (ID: ${backup_id})"
+        else
+            log_warning "Backup may have failed (invalid backup ID: ${backup_id:-none})"
+            backup_id=""
+        fi
+    else
+        log_warning "Cannot create backup (containers not accessible or backup script not found)"
+        log_info "Continuing with recovery without backup (new containers will be empty)"
+    fi
+    
+    # STEP 2: Recreate missing containers
+    log_info "=== STEP 2: Recreating Missing Containers ==="
+    
+    # Stop containers gracefully if they're running
+    if [[ ${#missing_services[@]} -gt 0 ]]; then
+        log_info "Stopping containers gracefully before recreation..."
+        docker compose -f docker-compose.prod.yml --profile infrastructure stop "${missing_services[@]}" 2>/dev/null || true
+        sleep 3
+    fi
+    
+    # Recreate infrastructure containers
+    log_info "Recreating infrastructure containers: ${missing_services[*]}..."
+    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate "${missing_services[@]}"; then
+        log_success "Containers recreated successfully"
+    else
+        log_error "Failed to recreate containers"
+        return 1
+    fi
+    
+    # Wait for containers to start
+    log_info "Waiting for containers to start..."
+    sleep 15
+    
+    # STEP 3: Restore backup (if we have one and critical services were recreated)
+    if [[ -n "$backup_id" ]] && ($needs_postgres || $needs_dragonfly); then
+        log_info "=== STEP 3: Restoring Backup ==="
+        
+        if [[ -f "$restore_script" ]]; then
+            log_info "Restoring from backup: ${backup_id}"
+            if "$restore_script" "$backup_id" >/dev/null 2>&1; then
+                log_success "Backup restored successfully"
+            else
+                log_warning "Backup restore failed, but containers are recreated"
+            fi
+        else
+            log_warning "Restore script not found, skipping restore"
+        fi
+    else
+        log_info "No backup to restore (backup_id: ${backup_id:-none})"
+    fi
+    
+    # STEP 4: Wait for containers to be healthy
+    log_info "=== STEP 4: Waiting for Containers to be Healthy ==="
+    
+    if [[ " ${missing_services[@]} " =~ " postgres " ]]; then
+        log_info "Waiting for PostgreSQL to be healthy..."
+        wait_for_health "${POSTGRES_CONTAINER}" 300 || {
+            log_error "PostgreSQL did not become healthy after recovery"
+            return 1
+        }
+        log_success "PostgreSQL is healthy"
+    fi
+    
+    if [[ " ${missing_services[@]} " =~ " dragonfly " ]]; then
+        log_info "Waiting for Dragonfly to be healthy..."
+        wait_for_health "${DRAGONFLY_CONTAINER}" 300 || {
+            log_warning "Dragonfly did not become healthy after recovery"
+        }
+        log_success "Dragonfly is healthy"
+    fi
+    
+    # Wait for other services
+    for service in coturn portainer openvidu-server; do
+        if [[ " ${missing_services[@]} " =~ " ${service} " ]]; then
+            log_info "Waiting for ${service} to be ready..."
+            sleep 10
+        fi
+    done
+    
+    log_success "=== Recovery Workflow Completed ==="
+    return 0
+}
+
 # Main execution
 main() {
     log_info "Starting infrastructure health check..."
@@ -318,7 +767,44 @@ main() {
         overall_status="unhealthy"
     fi
     
-    # Generate JSON output
+    # Log summary before JSON output
+    echo ""
+    log_info "=== Health Check Summary ==="
+    for service in postgres dragonfly coturn portainer openvidu; do
+        local status="${SERVICE_STATUS[$service]:-unknown}"
+        if [[ "$status" == "healthy" ]]; then
+            log_success "✓ $service: $status"
+        elif [[ "$status" == "missing" ]]; then
+            log_error "✗ $service: $status (container not running)"
+        elif [[ "$status" == "unhealthy" ]]; then
+            log_warning "⚠ $service: $status"
+        else
+            log_warning "? $service: $status"
+        fi
+    done
+    echo ""
+    
+    # Skip if all healthy (no backup/fix/restore needed)
+    if $all_healthy; then
+        log_success "All infrastructure services are healthy - no action needed"
+        # Generate JSON output
+        {
+            json_start
+            json_string "status" "$overall_status"
+            json_string "timestamp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "  \"services\": {"
+            echo "    \"postgres\": ${SERVICE_DETAILS[postgres]},"
+            echo "    \"dragonfly\": ${SERVICE_DETAILS[dragonfly]},"
+            echo "    \"coturn\": ${SERVICE_DETAILS[coturn]},"
+            echo "    \"portainer\": ${SERVICE_DETAILS[portainer]},"
+            echo "    \"openvidu\": ${SERVICE_DETAILS[openvidu]}"
+            echo "  }"
+            json_end
+        } | json_fix_trailing
+        exit $EXIT_HEALTHY
+    fi
+    
+    # Generate JSON output (initial status before fixes)
     {
         json_start
         json_string "status" "$overall_status"
@@ -333,14 +819,190 @@ main() {
         json_end
     } | json_fix_trailing
     
-    # Set exit code
+    # Auto-fix unhealthy containers if enabled (backup → fix → restore → verify)
+    if $any_unhealthy && [[ "${AUTO_RECREATE_MISSING:-false}" == "true" ]]; then
+        log_info "Auto-fix is enabled, attempting to fix unhealthy containers..."
+        if fix_unhealthy_containers; then
+            log_success "Unhealthy containers fixed, re-checking health..."
+            
+            # Re-check health after fixing
+            all_healthy=true
+            any_missing=false
+            any_unhealthy=false
+            
+            check_postgres || {
+                if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_dragonfly || {
+                if [[ "${SERVICE_STATUS[dragonfly]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_coturn || {
+                if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_portainer || {
+                if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_openvidu || {
+                if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            # Update overall status
+            if $any_missing; then
+                overall_status="missing"
+            elif $any_unhealthy; then
+                overall_status="unhealthy"
+            else
+                overall_status="healthy"
+            fi
+            
+            # Regenerate JSON output
+            {
+                json_start
+                json_string "status" "$overall_status"
+                json_string "timestamp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo "  \"services\": {"
+                echo "    \"postgres\": ${SERVICE_DETAILS[postgres]},"
+                echo "    \"dragonfly\": ${SERVICE_DETAILS[dragonfly]},"
+                echo "    \"coturn\": ${SERVICE_DETAILS[coturn]},"
+                echo "    \"portainer\": ${SERVICE_DETAILS[portainer]},"
+                echo "    \"openvidu\": ${SERVICE_DETAILS[openvidu]}"
+                echo "  }"
+                json_end
+            } | json_fix_trailing
+        else
+            log_warning "Could not fix unhealthy containers, they may need recreation"
+        fi
+    fi
+    
+    # Auto-recover missing containers if enabled (backup → recreate → restore → verify)
+    if $any_missing && [[ "${AUTO_RECREATE_MISSING:-false}" == "true" ]]; then
+        log_info "Auto-recovery is enabled, starting full recovery workflow..."
+        if recover_missing_containers; then
+            log_success "Missing containers recreated successfully"
+            
+            # Re-check health after recreation
+            log_info "Re-checking infrastructure health after recreation..."
+            all_healthy=true
+            any_missing=false
+            any_unhealthy=false
+            
+            check_postgres || {
+                if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_dragonfly || {
+                if [[ "${SERVICE_STATUS[dragonfly]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_coturn || {
+                if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_portainer || {
+                if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_openvidu || {
+                if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            # Update overall status
+            if $any_missing; then
+                overall_status="missing"
+            elif $any_unhealthy; then
+                overall_status="unhealthy"
+            else
+                overall_status="healthy"
+            fi
+            
+            # Regenerate JSON output
+            {
+                json_start
+                json_string "status" "$overall_status"
+                json_string "timestamp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+                echo "  \"services\": {"
+                echo "    \"postgres\": ${SERVICE_DETAILS[postgres]},"
+                echo "    \"dragonfly\": ${SERVICE_DETAILS[dragonfly]},"
+                echo "    \"coturn\": ${SERVICE_DETAILS[coturn]},"
+                echo "    \"portainer\": ${SERVICE_DETAILS[portainer]},"
+                echo "    \"openvidu\": ${SERVICE_DETAILS[openvidu]}"
+                echo "  }"
+                json_end
+            } | json_fix_trailing
+        else
+            log_error "Failed to recreate missing containers"
+        fi
+    fi
+    
+    # Set exit code with informative message
     if $all_healthy; then
+        log_success "All infrastructure services are healthy"
         exit $EXIT_HEALTHY
     elif $any_missing; then
+        log_error "One or more infrastructure containers are missing"
+        if [[ "${AUTO_RECREATE_MISSING:-false}" != "true" ]]; then
+            log_info "Tip: Set AUTO_RECREATE_MISSING=true to automatically recreate missing containers"
+        fi
         exit $EXIT_MISSING
     elif $any_unhealthy; then
+        log_error "One or more infrastructure services are unhealthy"
         exit $EXIT_CRITICAL
     else
+        log_warning "Infrastructure health check completed with minor issues"
         exit $EXIT_MINOR_ISSUES
     fi
 }
