@@ -207,8 +207,9 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             chmod +x /tmp/health-check.sh /tmp/utils.sh
             export SCRIPT_DIR="/tmp"
+            export AUTO_RECREATE_MISSING="true"
             source /tmp/utils.sh
-            /tmp/health-check.sh > /tmp/health-status.json
+            /tmp/health-check.sh > /tmp/health-status.json 2>&1
             echo "EXIT_CODE=$?" > /tmp/health-exit.txt
           ENDSSH
           
