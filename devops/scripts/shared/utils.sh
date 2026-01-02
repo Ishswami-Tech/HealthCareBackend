@@ -707,6 +707,353 @@ s3_exists() {
         >/dev/null 2>&1
 }
 
+# ============================================================================
+# EDGE CASE HANDLERS
+# ============================================================================
+
+# 1. Disk Space Management
+check_disk_space_before_backup() {
+    local required_space_gb="${1:-20}"  # Minimum required space in GB
+    local available=$(check_disk_space "$BACKUP_DIR")
+    
+    if [[ "$available" -lt "$required_space_gb" ]]; then
+        log_warning "Low disk space: ${available}GB available (required: ${required_space_gb}GB)"
+        
+        # Try aggressive cleanup
+        cleanup_old_backups_aggressive
+        
+        # Re-check
+        available=$(check_disk_space "$BACKUP_DIR")
+        if [[ "$available" -lt "$required_space_gb" ]]; then
+            log_error "Insufficient disk space even after cleanup: ${available}GB available"
+            send_alert "CRITICAL" "Disk space exhausted on backup server: ${available}GB available"
+            return 1
+        fi
+        
+        log_success "Freed up space, now have ${available}GB available"
+    fi
+    
+    return 0
+}
+
+cleanup_old_backups_aggressive() {
+    log_info "Running aggressive backup cleanup..."
+    
+    # Remove hourly backups older than 24 hours
+    find "${BACKUP_DIR}/postgres/hourly" -type f -mtime +1 -delete 2>/dev/null || true
+    find "${BACKUP_DIR}/dragonfly/hourly" -type f -mtime +1 -delete 2>/dev/null || true
+    
+    # Remove daily backups older than 7 days
+    find "${BACKUP_DIR}/postgres/daily" -type f -mtime +7 -delete 2>/dev/null || true
+    find "${BACKUP_DIR}/dragonfly/daily" -type f -mtime +7 -delete 2>/dev/null || true
+    
+    # Remove weekly backups older than 28 days
+    find "${BACKUP_DIR}/postgres/weekly" -type f -mtime +28 -delete 2>/dev/null || true
+    find "${BACKUP_DIR}/dragonfly/weekly" -type f -mtime +28 -delete 2>/dev/null || true
+    
+    # Keep only last 3 pre-deployment backups
+    cleanup_backup_type "pre-deployment" 3
+    
+    # Keep only last 5 success backups
+    cleanup_backup_type "success" 5
+    
+    log_success "Aggressive cleanup completed"
+}
+
+cleanup_backup_type() {
+    local backup_type="$1"
+    local keep_count="$2"
+    
+    # Find and remove old backups of this type
+    local postgres_dir="${BACKUP_DIR}/postgres/${backup_type}"
+    local dragonfly_dir="${BACKUP_DIR}/dragonfly/${backup_type}"
+    
+    if [[ -d "$postgres_dir" ]]; then
+        ls -t "$postgres_dir"/*.sql.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
+    fi
+    
+    if [[ -d "$dragonfly_dir" ]]; then
+        ls -t "$dragonfly_dir"/*.rdb.gz 2>/dev/null | tail -n +$((keep_count + 1)) | xargs rm -f 2>/dev/null || true
+    fi
+}
+
+# 2. S3 Upload with Retry Logic
+s3_upload_with_retry() {
+    local file="$1"
+    local s3_path="$2"
+    local max_retries="${3:-3}"
+    local retry_delay="${4:-5}"
+    
+    for i in $(seq 1 $max_retries); do
+        if s3_upload "$file" "$s3_path"; then
+            return 0
+        fi
+        
+        if [[ $i -lt $max_retries ]]; then
+            log_warning "S3 upload failed (attempt $i/$max_retries), retrying in ${retry_delay}s..."
+            sleep $retry_delay
+            retry_delay=$((retry_delay * 2))  # Exponential backoff
+        fi
+    done
+    
+    # Store failed upload for later retry
+    local failed_uploads_log="/var/log/backups/failed-uploads.txt"
+    mkdir -p "$(dirname "$failed_uploads_log")"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$file|$s3_path" >> "$failed_uploads_log"
+    
+    log_error "S3 upload failed after $max_retries attempts"
+    send_alert "WARNING" "S3 upload failed for: $s3_path"
+    return 1
+}
+
+# 3. Deployment Lock Management
+acquire_deployment_lock() {
+    local lock_file="/var/lock/healthcare-deployment.lock"
+    local max_wait="${1:-300}"  # 5 minutes default
+    local waited=0
+    
+    # Create lock directory if it doesn't exist
+    mkdir -p "$(dirname "$lock_file")"
+    
+    while [[ -f "$lock_file" ]]; then
+        if [[ $waited -ge $max_wait ]]; then
+            local lock_pid=$(cat "$lock_file" 2>/dev/null || echo "unknown")
+            log_error "Another deployment is running (PID: $lock_pid, timeout after ${max_wait}s)"
+            send_alert "ERROR" "Deployment blocked: concurrent deployment detected"
+            return 1
+        fi
+        
+        log_info "Waiting for concurrent deployment to finish..."
+        sleep 10
+        waited=$((waited + 10))
+    done
+    
+    # Create lock with PID and timestamp
+    echo "$$|$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$lock_file"
+    
+    # Set trap to remove lock on exit
+    trap "release_deployment_lock" EXIT INT TERM
+    
+    log_success "Deployment lock acquired (PID: $$)"
+    return 0
+}
+
+release_deployment_lock() {
+    local lock_file="/var/lock/healthcare-deployment.lock"
+    if [[ -f "$lock_file" ]]; then
+        local lock_pid=$(cat "$lock_file" 2>/dev/null | cut -d'|' -f1)
+        if [[ "$lock_pid" == "$$" ]]; then
+            rm -f "$lock_file"
+            log_info "Deployment lock released"
+        fi
+    fi
+}
+
+# 4. Backup Verification
+verify_backup() {
+    local backup_file="$1"
+    local metadata_file="$2"
+    
+    log_info "Verifying backup: $(basename "$backup_file")"
+    
+    # Check file exists and is not empty
+    if [[ ! -s "$backup_file" ]]; then
+        log_error "Backup file is empty or missing: $backup_file"
+        return 1
+    fi
+    
+    # Verify checksum if metadata exists
+    if [[ -f "$metadata_file" ]]; then
+        if command_exists jq; then
+            local stored_checksum=$(jq -r '.checksum' "$metadata_file" 2>/dev/null | cut -d: -f2)
+            local actual_checksum=$(calculate_checksum "$backup_file")
+            
+            if [[ -n "$stored_checksum" ]] && [[ "$stored_checksum" != "$actual_checksum" ]]; then
+                log_error "Backup checksum mismatch - file may be corrupted"
+                log_error "Expected: $stored_checksum"
+                log_error "Actual: $actual_checksum"
+                send_alert "CRITICAL" "Backup corruption detected: $(basename "$backup_file")"
+                return 1
+            fi
+        fi
+    fi
+    
+    # Test file integrity (can it be decompressed?)
+    if [[ "$backup_file" == *.gz ]]; then
+        if ! gzip -t "$backup_file" 2>/dev/null; then
+            log_error "Backup file is corrupted (gzip test failed)"
+            return 1
+        fi
+    fi
+    
+    log_success "Backup verification passed"
+    return 0
+}
+
+# 5. Network Connectivity Verification
+verify_container_networking() {
+    log_info "Verifying container networking..."
+    
+    local tests_passed=0
+    local tests_failed=0
+    
+    # Test postgres -> dragonfly
+    if docker exec postgres ping -c 1 -W 2 dragonfly > /dev/null 2>&1; then
+        log_success "✓ postgres can reach dragonfly"
+        tests_passed=$((tests_passed + 1))
+    else
+        log_error "✗ postgres cannot reach dragonfly"
+        tests_failed=$((tests_failed + 1))
+    fi
+    
+    # Test api -> postgres (if api is running)
+    if container_running "latest-api"; then
+        if docker exec latest-api sh -c "nc -zv postgres 5432" > /dev/null 2>&1; then
+            log_success "✓ api can reach postgres:5432"
+            tests_passed=$((tests_passed + 1))
+        else
+            log_error "✗ api cannot reach postgres:5432"
+            tests_failed=$((tests_failed + 1))
+        fi
+    fi
+    
+    # Test api -> dragonfly (if api is running)
+    if container_running "latest-api"; then
+        if docker exec latest-api sh -c "nc -zv dragonfly 6379" > /dev/null 2>&1; then
+            log_success "✓ api can reach dragonfly:6379"
+            tests_passed=$((tests_passed + 1))
+        else
+            log_error "✗ api cannot reach dragonfly:6379"
+            tests_failed=$((tests_failed + 1))
+        fi
+    fi
+    
+    if [[ $tests_failed -gt 0 ]]; then
+        log_error "Network connectivity issues detected ($tests_failed failed, $tests_passed passed)"
+        return 1
+    fi
+    
+    log_success "Container networking verified ($tests_passed tests passed)"
+    return 0
+}
+
+# 6. Container Resource Monitoring
+check_container_resources() {
+    local container="$1"
+    local mem_threshold="${2:-90}"  # Default 90%
+    local cpu_threshold="${3:-90}"  # Default 90%
+    
+    if ! container_running "$container"; then
+        return 0
+    fi
+    
+    # Check memory usage
+    local mem_usage=$(docker stats --no-stream --format "{{.MemPerc}}" "$container" 2>/dev/null | sed 's/%//')
+    if [[ -n "$mem_usage" ]] && (( $(echo "$mem_usage > $mem_threshold" | bc -l 2>/dev/null || echo 0) )); then
+        log_warning "Container $container memory usage: ${mem_usage}% (threshold: ${mem_threshold}%)"
+        send_alert "WARNING" "High memory usage on $container: ${mem_usage}%"
+    fi
+    
+    # Check CPU usage
+    local cpu_usage=$(docker stats --no-stream --format "{{.CPUPerc}}" "$container" 2>/dev/null | sed 's/%//')
+    if [[ -n "$cpu_usage" ]] && (( $(echo "$cpu_usage > $cpu_threshold" | bc -l 2>/dev/null || echo 0) )); then
+        log_warning "Container $container CPU usage: ${cpu_usage}% (threshold: ${cpu_threshold}%)"
+    fi
+}
+
+# 7. Zombie Container Cleanup
+cleanup_zombie_containers() {
+    log_info "Checking for zombie containers..."
+    
+    # Find containers with old prefixes or stopped containers
+    local zombies=$(docker ps -a --filter "status=exited" --filter "name=${CONTAINER_PREFIX:-latest-}" --format "{{.Names}}" 2>/dev/null)
+    
+    if [[ -n "$zombies" ]]; then
+        log_warning "Found zombie containers:"
+        echo "$zombies" | while read container; do
+            log_info "  - $container"
+            docker rm -f "$container" 2>/dev/null || log_warning "Failed to remove $container"
+        done
+        log_success "Zombie container cleanup completed"
+    else
+        log_info "No zombie containers found"
+    fi
+}
+
+# 8. Alert System (placeholder - can be extended with Slack/Email)
+send_alert() {
+    local severity="$1"  # INFO, WARNING, ERROR, CRITICAL
+    local message="$2"
+    
+    # Log the alert
+    log_warning "ALERT [$severity]: $message"
+    
+    # TODO: Implement Slack/Email notifications
+    # Example: curl -X POST -H 'Content-type: application/json' \
+    #   --data "{\"text\":\"[$severity] $message\"}" \
+    #   "$SLACK_WEBHOOK_URL"
+    
+    # Write to alert log
+    local alert_log="/var/log/deployments/alerts.log"
+    mkdir -p "$(dirname "$alert_log")"
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$severity|$message" >> "$alert_log"
+}
+
+# 9. Find Last Backup by Type
+find_last_backup() {
+    local backup_type="$1"  # success, pre-deployment, daily, weekly, hourly
+    
+    # Look for metadata files
+    local metadata_dir="${BACKUP_DIR}/metadata"
+    
+    if [[ ! -d "$metadata_dir" ]]; then
+        return 1
+    fi
+    
+    # Find most recent backup of this type
+    local last_backup=$(ls -t "$metadata_dir"/${backup_type}-*.json 2>/dev/null | head -1)
+    
+    if [[ -n "$last_backup" ]]; then
+        # Extract backup ID from filename
+        basename "$last_backup" .json
+        return 0
+    fi
+    
+    return 1
+}
+
+# 10. Restore Backup (wrapper with validation)
+restore_backup() {
+    local backup_id="$1"
+    
+    if ! validate_backup_id "$backup_id"; then
+        log_error "Invalid backup ID: $backup_id"
+        return 1
+    fi
+    
+    log_info "Restoring backup: $backup_id"
+    
+    # Find restore script
+    local restore_script="${SCRIPT_DIR}/restore.sh"
+    if [[ ! -f "$restore_script" ]]; then
+        restore_script="${BASE_DIR}/devops/scripts/docker-infra/restore.sh"
+    fi
+    
+    if [[ ! -f "$restore_script" ]]; then
+        log_error "restore.sh not found"
+        return 1
+    fi
+    
+    # Execute restore
+    if "$restore_script" "$backup_id"; then
+        log_success "Backup restored successfully: $backup_id"
+        return 0
+    else
+        log_error "Backup restore failed: $backup_id"
+        return 1
+    fi
+}
+
 # Initialize on source
 ensure_directories
 # Load environment variables (with validation warnings but no auto-fix by default)

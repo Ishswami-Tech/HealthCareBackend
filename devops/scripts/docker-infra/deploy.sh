@@ -232,34 +232,184 @@ deploy_application() {
     local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
     cd "$(dirname "$compose_file")" || return 1
     
-    # Zero-downtime deployment
-    # Start new containers with different names
-    local api_new="${CONTAINER_PREFIX}api-new"
-    local worker_new="${CONTAINER_PREFIX}worker-new"
-    
-    # Security: Validate container names
-    if ! validate_container_name "$api_new"; then
-        log_error "Invalid API container name: ${api_new}"
+    # Validate container dependencies before deployment
+    if ! validate_container_dependencies; then
+        log_error "Container dependencies not ready"
         return 1
     fi
-    if ! validate_container_name "$worker_new"; then
-        log_error "Invalid worker container name: ${worker_new}"
+    
+    # Security: Validate container names
+    if ! validate_container_name "${CONTAINER_PREFIX}api"; then
+        log_error "Invalid API container name"
+        return 1
+    fi
+    if ! validate_container_name "${CONTAINER_PREFIX}worker"; then
+        log_error "Invalid worker container name"
         return 1
     fi
     
     # Pull latest images
     docker compose -f docker-compose.prod.yml pull api worker || return 1
     
+    # Run database migrations safely
+    if ! run_migrations_safely; then
+        log_error "Database migrations failed - aborting deployment"
+        return 1
+    fi
+    
     # Start new containers
     if docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api worker; then
         # Wait for health
-        wait_for_health "${CONTAINER_PREFIX}api" 120 || return 1
-        
-        # Stop old containers (they will be replaced)
-        log_success "Application deployed"
-        return 0
+        if wait_for_health "${CONTAINER_PREFIX}api" 120; then
+            # Create success backup after successful deployment
+            log_info "Creating success backup after successful deployment..."
+            local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
+            [[ ! -f "$backup_script" ]] && backup_script="${SCRIPT_DIR}/backup.sh"
+            [[ ! -f "$backup_script" ]] && backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
+            
+            if [[ -f "$backup_script" ]]; then
+                SUCCESS_BACKUP_ID=$("$backup_script" "success") || {
+                    log_warning "Success backup failed (deployment still succeeded)"
+                }
+                if [[ -n "$SUCCESS_BACKUP_ID" ]]; then
+                    log_success "Success backup created: ${SUCCESS_BACKUP_ID}"
+                fi
+            fi
+            
+            log_success "Application deployed successfully"
+            return 0
+        else
+            log_error "Application health check failed - triggering rollback"
+            rollback_deployment
+            return 1
+        fi
     else
-        log_error "Application deployment failed"
+        log_error "Application deployment failed - triggering rollback"
+        rollback_deployment
+        return 1
+    fi
+}
+
+# Validate container dependencies
+validate_container_dependencies() {
+    log_info "Validating container dependencies..."
+    
+    # Check postgres is healthy before starting api
+    if ! wait_for_health "postgres" 120; then
+        log_error "PostgreSQL not healthy - cannot start application"
+        return 1
+    fi
+    
+    # Check dragonfly is healthy
+    if ! wait_for_health "dragonfly" 60; then
+        log_error "Dragonfly not healthy - cannot start application"
+        return 1
+    fi
+    
+    # Check coturn is healthy (for video calls)
+    if ! wait_for_health "coturn" 30; then
+        log_warning "Coturn not healthy - video calls may not work"
+        # Non-critical, continue
+    fi
+    
+    log_success "All dependencies are healthy"
+    return 0
+}
+
+# Run database migrations safely with backup and rollback
+run_migrations_safely() {
+    log_info "Running database migrations safely..."
+    
+    # Create pre-migration backup
+    log_info "Creating pre-migration backup..."
+    local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
+    [[ ! -f "$backup_script" ]] && backup_script="${SCRIPT_DIR}/backup.sh"
+    [[ ! -f "$backup_script" ]] && backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
+    
+    local PRE_MIGRATION_BACKUP=""
+    if [[ -f "$backup_script" ]]; then
+        PRE_MIGRATION_BACKUP=$("$backup_script" "pre-migration") || {
+            log_warning "Pre-migration backup failed, but continuing..."
+        }
+        if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
+            log_success "Pre-migration backup created: ${PRE_MIGRATION_BACKUP}"
+        fi
+    fi
+    
+    # Check if api container exists (for running migrations)
+    if ! container_running "${CONTAINER_PREFIX}api"; then
+        log_info "API container not running, starting temporarily for migrations..."
+        docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api || {
+            log_error "Failed to start API container for migrations"
+            return 1
+        }
+        sleep 5
+    fi
+    
+    # Run migrations
+    log_info "Running Prisma migrations..."
+    if docker exec "${CONTAINER_PREFIX}api" npx prisma migrate deploy 2>&1 | tee /tmp/migration.log; then
+        log_success "Migrations completed successfully"
+        
+        # Verify schema
+        if docker exec "${CONTAINER_PREFIX}api" npx prisma validate 2>&1; then
+            log_success "Schema validation passed"
+            return 0
+        else
+            log_error "Schema validation failed after migration"
+            if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
+                log_warning "Rolling back to pre-migration backup..."
+                restore_backup "$PRE_MIGRATION_BACKUP"
+            fi
+            return 1
+        fi
+    else
+        log_error "Migration failed"
+        if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
+            log_warning "Rolling back to pre-migration backup..."
+            restore_backup "$PRE_MIGRATION_BACKUP"
+        fi
+        return 1
+    fi
+}
+
+# Rollback deployment
+rollback_deployment() {
+    log_warning "Initiating automatic rollback..."
+    
+    # Find last success backup
+    local last_success_backup=$(find_last_backup "success")
+    
+    if [[ -n "$last_success_backup" ]]; then
+        log_info "Rolling back to last success backup: ${last_success_backup}"
+        if restore_backup "$last_success_backup"; then
+            log_success "Rollback to success backup completed"
+            return 0
+        else
+            log_error "Rollback to success backup failed"
+            # Try pre-deployment backup as fallback
+            rollback_to_pre_deployment
+            return 1
+        fi
+    else
+        log_warning "No success backup found - rolling back to pre-deployment backup"
+        rollback_to_pre_deployment
+    fi
+}
+
+# Rollback to pre-deployment backup
+rollback_to_pre_deployment() {
+    if [[ -n "$BACKUP_ID" ]]; then
+        log_info "Rolling back to pre-deployment backup: ${BACKUP_ID}"
+        if restore_backup "$BACKUP_ID"; then
+            log_success "Rollback to pre-deployment backup completed"
+            return 0
+        else
+            log_error "Rollback to pre-deployment backup failed"
+            return 1
+        fi
+    else
+        log_error "No pre-deployment backup available for rollback"
         return 1
     fi
 }
