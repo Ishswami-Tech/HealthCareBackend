@@ -1,12 +1,16 @@
 # Docker Deployment Guides
 
-Complete guides for deploying, monitoring, and scaling the Healthcare Backend using Docker Compose.
+Complete guides for deploying, monitoring, and scaling the Healthcare Backend
+using Docker Compose.
 
 ## 📚 Available Environments
 
-- **Production** - Production deployment with pre-built images (see [Production Deployment](#-production-deployment))
-- **Local-Prod** - Local production-like environment for testing (see [Local-Prod Environment](#-local-prod-environment))
-- **Development** - Development environment with hot-reload (see `docker-compose.dev.yml`)
+- **Production** - Production deployment with pre-built images (see
+  [Production Deployment](#-production-deployment))
+- **Local-Prod** - Local production-like environment for testing (see
+  [Local-Prod Environment](#-local-prod-environment))
+- **Development** - Development environment with hot-reload (see
+  `docker-compose.dev.yml`)
 
 ---
 
@@ -25,6 +29,99 @@ docker compose -f docker-compose.prod.yml up -d --build
 cd devops/docker
 docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
 ```
+
+### Docker Management UI (Portainer)
+
+**Portainer** provides a comprehensive web-based UI for managing Docker (similar
+to Vercel's dashboard). It shows:
+
+- ✅ **Containers**: View, start, stop, restart, remove containers
+- ✅ **Images**: Manage Docker images, view layers, pull/push
+- ✅ **Networks**: View and manage Docker networks
+- ✅ **Volumes**: Manage Docker volumes and data
+- ✅ **Logs**: Real-time container logs with filtering
+- ✅ **Stats**: CPU, memory, network I/O monitoring
+- ✅ **Stacks**: Manage docker-compose stacks
+- ✅ **Events**: Docker daemon events
+- ✅ **Resource Usage**: Per-container resource monitoring
+
+**Access Portainer:**
+
+- **Development**: http://localhost:9000
+- **Production**: http://your-server:9000 (or configure via Nginx reverse proxy)
+
+**First-time Setup:**
+
+1. Open Portainer in your browser
+2. Create an admin account (first time only)
+3. Select "Docker" environment
+4. Start managing your containers!
+
+**Note**: Portainer is included in the `infrastructure` profile, so it starts
+automatically with infrastructure services.
+
+#### 🎯 Disk Usage Optimization
+
+Portainer is **optimized for minimal disk usage**:
+
+- ✅ **Minimal Logging**: Only WARN and ERROR level logs (reduces log file size)
+- ✅ **No Analytics**: Analytics disabled via `--no-analytics` flag
+- ✅ **No Telemetry**: Telemetry disabled (no data collection)
+- ✅ **Strict Resource Limits**: 256MB memory limit, 0.5 CPU limit
+- ✅ **Reduced Health Checks**: Less frequent checks (30s interval instead of
+  10s)
+- ✅ **Small Data Volume**: Only stores user preferences and settings (not
+  container data)
+
+**Expected Disk Usage:**
+
+- **Portainer Data Volume**: < 50MB (only stores user preferences, settings, and
+  authentication data)
+- **No Growing Data**: Portainer doesn't store container logs or snapshots by
+  default
+- **Minimal Logs**: WARN-level logging keeps container log files small
+- **Total Footprint**: Typically < 100MB including image and data
+
+**What Portainer Stores:**
+
+- User accounts and authentication data
+- User preferences (theme, language, etc.)
+- Environment configurations
+- **NOT stored**: Container logs, images, volumes (these are managed by Docker,
+  not Portainer)
+
+**Monitor Disk Usage:**
+
+```bash
+# Check Portainer volume size
+docker system df -v | grep portainer
+
+# Check Portainer container disk usage
+docker exec healthcare-portainer du -sh /data
+
+# Check all Docker disk usage
+docker system df
+```
+
+**If Disk Usage Grows:**
+
+1. Check Portainer logs: `docker logs healthcare-portainer --tail 100`
+2. Check Docker system usage: `docker system df` (Portainer itself is small, but
+   Docker images/containers might be large)
+3. Clean unused Docker resources: `docker system prune -a --volumes` (⚠️ removes
+   unused images, containers, volumes)
+4. Reset Portainer data (if needed):
+   `docker volume rm healthcare_portainer_data` (⚠️ removes all Portainer
+   settings and users)
+
+**Important Notes:**
+
+- Portainer's own disk usage is minimal (< 100MB)
+- Most disk usage comes from Docker images, containers, and volumes (not
+  Portainer)
+- Use `docker system prune` regularly to clean up unused Docker resources
+- Portainer data volume only grows if you have many users or complex
+  configurations
 
 ### Check Status
 
@@ -86,14 +183,18 @@ docker compose -f docker-compose.local-prod.yml restart
 
 ### 📊 Overview
 
-This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can run on **6 vCPU, 12GB RAM** initially. Docker will enforce resource limits automatically.
+This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can
+run on **6 vCPU, 12GB RAM** initially. Docker will enforce resource limits
+automatically.
 
 **Target Capacity (8 vCPU/24GB RAM):**
+
 - **Concurrent Users**: 700-900
 - **Requests/Second**: 1,200-1,800 req/s
 - **Requests/Day**: 104M-156M requests/day
 
 **Initial Capacity (6 vCPU/12GB RAM):**
+
 - **Concurrent Users**: 300-400
 - **Requests/Second**: 500-800 req/s
 - **Requests/Day**: 43M-69M requests/day
@@ -104,15 +205,19 @@ This Docker Compose configuration is optimized for **8 vCPU, 24GB RAM** but can 
 
 1. **Docker Engine** (v20.10+) or **Docker Desktop** installed and running
 2. **Docker Compose** (v2.0+) installed
-3. **Production environment file** (`.env.production`) configured with all required secrets
+3. **Production environment file** (`.env.production`) configured with all
+   required secrets
 4. **SSL Certificates** mounted at `/etc/letsencrypt` (for HTTPS)
 5. **Server**: Minimum 6 vCPU, 12GB RAM (recommended: 8 vCPU, 24GB RAM)
 
 ### 🔐 Required Environment Variables
 
-Before deploying, ensure `.env.production` contains all required variables. See [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) for complete list.
+Before deploying, ensure `.env.production` contains all required variables. See
+[GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) for complete
+list.
 
 #### Critical (Must be changed from defaults):
+
 - `JWT_SECRET` - Secure JWT signing secret (minimum 32 characters)
 - `SESSION_SECRET` - Fastify session secret (minimum 32 characters)
 - `COOKIE_SECRET` - Cookie signing secret (minimum 32 characters)
@@ -120,10 +225,12 @@ Before deploying, ensure `.env.production` contains all required variables. See 
 - `JWT_REFRESH_SECRET` - JWT refresh token secret
 
 #### Database:
+
 - `DATABASE_URL` - PostgreSQL connection string
 - `DIRECT_URL` - Direct PostgreSQL connection (for migrations)
 
 #### External Services (if used):
+
 - `GOOGLE_CLIENT_ID` - Google OAuth client ID
 - `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
 - `FIREBASE_PROJECT_ID` - Firebase project ID
@@ -135,20 +242,23 @@ Before deploying, ensure `.env.production` contains all required variables. See 
 
 #### Target Configuration (8 vCPU, 24GB RAM)
 
-| Service | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
-|---------|-----------|-----------|-------------|-------------|
-| **API** | 3.0 | 6GB | 1.5 | 2GB |
-| **PostgreSQL** | 3.0 | 10GB | 1.5 | 3GB |
-| **Dragonfly** | 1.5 | 4GB | 0.5 | 1GB |
-| **Worker** | 1.0 | 2GB | 0.5 | 512MB |
-| **OpenVidu** | 2.0 | 4GB | 1.0 | 2GB |
-| **Total** | **10.5** | **26GB** | **5.0** | **8.5GB** |
+| Service        | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
+| -------------- | --------- | --------- | ----------- | ----------- |
+| **API**        | 3.0       | 6GB       | 1.5         | 2GB         |
+| **PostgreSQL** | 3.0       | 10GB      | 1.5         | 3GB         |
+| **Dragonfly**  | 1.5       | 4GB       | 0.5         | 1GB         |
+| **Worker**     | 1.0       | 2GB       | 0.5         | 512MB       |
+| **OpenVidu**   | 2.0       | 4GB       | 1.0         | 2GB         |
+| **Total**      | **10.5**  | **26GB**  | **5.0**     | **8.5GB**   |
 
-**Note**: Total limits slightly exceed server capacity to allow Docker to manage resource allocation efficiently. Docker will enforce actual limits based on available resources.
+**Note**: Total limits slightly exceed server capacity to allow Docker to manage
+resource allocation efficiently. Docker will enforce actual limits based on
+available resources.
 
 #### Current Server (6 vCPU, 12GB RAM)
 
 When running on 6 vCPU/12GB RAM:
+
 - Docker enforces limits based on available resources
 - Services will use what's available within their limits
 - Performance will be reduced but functional
@@ -159,29 +269,35 @@ When running on 6 vCPU/12GB RAM:
 #### API Service
 
 **Resources:**
+
 - CPU: 3.0 limit / 1.5 reserve
 - RAM: 6GB limit / 2GB reserve
 
 **Database Connections:**
+
 - `connection_limit=60`
 - `pool_size=30`
 - `max_connections=60`
 
 **Rate Limiting:**
+
 - `SECURITY_RATE_LIMIT_MAX: 4000`
 - `RATE_LIMIT_MAX: 600`
 - `API_RATE_LIMIT: 1000`
 
 **Node.js Memory:**
+
 - `--max-old-space-size=6144` (6GB heap)
 
 #### PostgreSQL Service
 
 **Resources:**
+
 - CPU: 3.0 limit / 1.5 reserve
 - RAM: 10GB limit / 3GB reserve
 
 **Configuration:**
+
 - `max_connections=120`
 - `shared_buffers=2GB`
 - `effective_cache_size=12GB`
@@ -192,10 +308,12 @@ When running on 6 vCPU/12GB RAM:
 #### Dragonfly Cache
 
 **Resources:**
+
 - CPU: 1.5 limit / 0.5 reserve
 - RAM: 4GB limit / 1GB reserve
 
 **Configuration:**
+
 - `--maxmemory=4gb`
 - `--proactor_threads=6`
 - `net.core.somaxconn=2048`
@@ -205,10 +323,12 @@ When running on 6 vCPU/12GB RAM:
 #### Worker Service
 
 **Resources:**
+
 - CPU: 1.0 limit / 0.5 reserve
 - RAM: 2GB limit / 512MB reserve
 
 **Configuration:**
+
 - `connection_limit=30`
 - `pool_size=15`
 - `BULL_WORKER_CONCURRENCY: 10`
@@ -217,10 +337,12 @@ When running on 6 vCPU/12GB RAM:
 #### OpenVidu Service
 
 **Resources:**
+
 - CPU: 2.0 limit / 1.0 reserve
 - RAM: 4GB limit / 2GB reserve
 
 **Configuration:**
+
 - Port: 4443 (HTTP internally, SSL handled by Nginx)
 - WebSocket support for video streaming
 - Depends on Coturn for TURN/STUN
@@ -268,28 +390,32 @@ curl https://api.ishswami.in/health
 
 ### 📊 Services Overview
 
-| Service | Container Name | Description | Ports |
-|---------|---------------|-------------|-------|
-| **API** | `latest-api` | Main API service | 8088 |
-| **Worker** | `latest-worker` | Background job processor | - |
-| **PostgreSQL** | `latest-postgres` | Database | 5432 |
-| **Dragonfly** | `latest-dragonfly` | Cache provider | 6380 |
-| **OpenVidu** | `latest-openvidu-server` | Video conferencing | 4443 |
-| **Coturn** | `latest-coturn` | TURN/STUN server | 3478 |
+| Service        | Container Name           | Description              | Ports |
+| -------------- | ------------------------ | ------------------------ | ----- |
+| **API**        | `latest-api`             | Main API service         | 8088  |
+| **Worker**     | `latest-worker`          | Background job processor | -     |
+| **PostgreSQL** | `latest-postgres`        | Database                 | 5432  |
+| **Dragonfly**  | `latest-dragonfly`       | Cache provider           | 6380  |
+| **OpenVidu**   | `latest-openvidu-server` | Video conferencing       | 4443  |
+| **Coturn**     | `latest-coturn`          | TURN/STUN server         | 3478  |
+| **Portainer**  | `portainer`              | Docker Management UI     | 9000  |
 
 #### Network Configuration
 
 Services use a custom network (`app-network`) with fixed IP addresses:
+
 - API: `172.18.0.5`
 - PostgreSQL: `172.18.0.2`
 - Dragonfly: `172.18.0.4`
 - Worker: `172.18.0.6`
 - OpenVidu: `172.18.0.7`
 - Coturn: `172.18.0.8`
+- Portainer: `172.18.0.9`
 
 #### Volume Persistence
 
 Data is persisted in Docker volumes:
+
 - `latest_postgres_data` - PostgreSQL data
 - `latest_dragonfly_data` - Dragonfly data
 - `latest_openvidu_recordings` - OpenVidu recordings
@@ -473,13 +599,13 @@ docker logs latest-postgres --tail 50 | grep -i error
 
 #### Expected Improvements After Scaling
 
-| Metric | Before (6/12) | After (8/24) | Improvement |
-|--------|---------------|--------------|-------------|
-| **Concurrent Users** | 300-400 | 700-900 | **2.5x** |
-| **Requests/Second** | 500-800 | 1,200-1,800 | **2.25x** |
-| **Response Time (p95)** | 200-300ms | 150-200ms | **25% faster** |
-| **CPU Usage** | 70-80% | 50-70% | **Lower** |
-| **RAM Usage** | 75-85% | 55-75% | **Lower** |
+| Metric                  | Before (6/12) | After (8/24) | Improvement    |
+| ----------------------- | ------------- | ------------ | -------------- |
+| **Concurrent Users**    | 300-400       | 700-900      | **2.5x**       |
+| **Requests/Second**     | 500-800       | 1,200-1,800  | **2.25x**      |
+| **Response Time (p95)** | 200-300ms     | 150-200ms    | **25% faster** |
+| **CPU Usage**           | 70-80%        | 50-70%       | **Lower**      |
+| **RAM Usage**           | 75-85%        | 55-75%       | **Lower**      |
 
 #### Rollback Procedure
 
@@ -503,23 +629,23 @@ docker exec -i latest-postgres psql -U postgres -d userdb < backup_pre_scale_*.s
 
 #### On 6 vCPU/12GB RAM (Initial)
 
-| Metric | Value |
-|--------|-------|
-| Concurrent Users | 300-400 |
-| Requests/Second | 500-800 |
-| CPU Usage | 60-75% |
-| RAM Usage | 65-80% |
+| Metric              | Value     |
+| ------------------- | --------- |
+| Concurrent Users    | 300-400   |
+| Requests/Second     | 500-800   |
+| CPU Usage           | 60-75%    |
+| RAM Usage           | 65-80%    |
 | Response Time (p95) | 200-300ms |
 
 #### On 8 vCPU/24GB RAM (After Scaling)
 
-| Metric | Value |
-|--------|-------|
-| Concurrent Users | 700-900 |
-| Requests/Second | 1,200-1,800 |
-| CPU Usage | 50-70% |
-| RAM Usage | 55-75% |
-| Response Time (p95) | 150-200ms |
+| Metric              | Value       |
+| ------------------- | ----------- |
+| Concurrent Users    | 700-900     |
+| Requests/Second     | 1,200-1,800 |
+| CPU Usage           | 50-70%      |
+| RAM Usage           | 55-75%      |
+| Response Time (p95) | 150-200ms   |
 
 ---
 
@@ -527,7 +653,8 @@ docker exec -i latest-postgres psql -U postgres -d userdb < backup_pre_scale_*.s
 
 ### 📊 Overview
 
-This local-prod Docker Compose configuration is **optimized for local testing** and mirrors the production setup with:
+This local-prod Docker Compose configuration is **optimized for local testing**
+and mirrors the production setup with:
 
 - **Reduced resource limits** (suitable for local development machines)
 - **Local builds** instead of pre-built images
@@ -537,15 +664,15 @@ This local-prod Docker Compose configuration is **optimized for local testing** 
 
 **Key Differences from Production:**
 
-| Aspect | Production | Local-Prod |
-|--------|-----------|---------|
-| **Image Source** | Pre-built from registry | Local build |
+| Aspect              | Production                | Local-Prod                |
+| ------------------- | ------------------------- | ------------------------- |
+| **Image Source**    | Pre-built from registry   | Local build               |
 | **Resource Limits** | 8 vCPU/24GB RAM optimized | Reduced for local testing |
-| **Environment** | `.env.production` | `.env.local-prod` |
-| **Cache Prefix** | `healthcare:` | `healthcare:local-prod:` |
-| **Rate Limits** | Higher (production scale) | Lower (testing scale) |
-| **Network Name** | `app-network` | `local-prod_app_network` |
-| **Container Names** | `latest-*` | `local-prod-*` |
+| **Environment**     | `.env.production`         | `.env.local-prod`         |
+| **Cache Prefix**    | `healthcare:`             | `healthcare:local-prod:`  |
+| **Rate Limits**     | Higher (production scale) | Lower (testing scale)     |
+| **Network Name**    | `app-network`             | `local-prod_app_network`  |
+| **Container Names** | `latest-*`                | `local-prod-*`            |
 
 ### 📋 Prerequisites
 
@@ -556,7 +683,8 @@ This local-prod Docker Compose configuration is **optimized for local testing** 
 
 ### 🔐 Required Environment Variables
 
-Create `.env.local-prod` file in the project root with local-prod-specific values:
+Create `.env.local-prod` file in the project root with local-prod-specific
+values:
 
 ```bash
 # Copy from .env.production and adjust for local-prod
@@ -599,16 +727,17 @@ OPENVIDU_SECRET=MY_SECRET
 
 #### Local-Prod Configuration (Local Testing)
 
-| Service | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
-|---------|-----------|-----------|-------------|--------------|
-| **API** | 2.0 | 4GB | 1.0 | 1GB |
-| **PostgreSQL** | 2.0 | 4GB | 1.0 | 2GB |
-| **Dragonfly** | 1.0 | 2GB | 0.5 | 512MB |
-| **Worker** | 0.5 | 1GB | 0.25 | 256MB |
-| **OpenVidu** | 1.5 | 2GB | 0.5 | 1GB |
-| **Total** | **7.0** | **13GB** | **3.25** | **4.75GB** |
+| Service        | CPU Limit | RAM Limit | CPU Reserve | RAM Reserve |
+| -------------- | --------- | --------- | ----------- | ----------- |
+| **API**        | 2.0       | 4GB       | 1.0         | 1GB         |
+| **PostgreSQL** | 2.0       | 4GB       | 1.0         | 2GB         |
+| **Dragonfly**  | 1.0       | 2GB       | 0.5         | 512MB       |
+| **Worker**     | 0.5       | 1GB       | 0.25        | 256MB       |
+| **OpenVidu**   | 1.5       | 2GB       | 0.5         | 1GB         |
+| **Total**      | **7.0**   | **13GB**  | **3.25**    | **4.75GB**  |
 
-**Note**: These limits are suitable for local development machines. Docker will enforce limits based on available resources.
+**Note**: These limits are suitable for local development machines. Docker will
+enforce limits based on available resources.
 
 ### 🚀 Deployment Steps
 
@@ -675,28 +804,33 @@ open http://localhost:8088/docs
 
 ### 📊 Services Overview
 
-| Service | Container Name | Description | Ports |
-|---------|---------------|-------------|-------|
-| **API** | `local-prod-api` | Main API service | 8088 |
-| **Worker** | `local-prod-worker` | Background job processor | - |
-| **PostgreSQL** | `local-prod-postgres` | Database | 5432 |
-| **Dragonfly** | `local-prod-dragonfly` | Cache provider | 6380 |
-| **OpenVidu** | `local-prod-openvidu-server` | Video conferencing | 4443 |
-| **Coturn** | `local-prod-coturn` | TURN/STUN server | 3478 |
+| Service        | Container Name               | Description              | Ports |
+| -------------- | ---------------------------- | ------------------------ | ----- |
+| **API**        | `local-prod-api`             | Main API service         | 8088  |
+| **Worker**     | `local-prod-worker`          | Background job processor | -     |
+| **PostgreSQL** | `local-prod-postgres`        | Database                 | 5432  |
+| **Dragonfly**  | `local-prod-dragonfly`       | Cache provider           | 6380  |
+| **OpenVidu**   | `local-prod-openvidu-server` | Video conferencing       | 4443  |
+| **Coturn**     | `local-prod-coturn`          | TURN/STUN server         | 3478  |
+| **Portainer**  | `local-prod-portainer`       | Docker Management UI     | 9000  |
 
 #### Network Configuration
 
-Services use a custom network (`local-prod_app_network`) with fixed IP addresses:
+Services use a custom network (`local-prod_app_network`) with fixed IP
+addresses:
+
 - API: `172.18.0.5`
 - PostgreSQL: `172.18.0.2`
 - Dragonfly: `172.18.0.4`
 - Worker: `172.18.0.6`
 - OpenVidu: `172.18.0.7`
 - Coturn: `172.18.0.8`
+- Portainer: `172.18.0.9`
 
 #### Volume Persistence
 
 Data is persisted in local directories:
+
 - `./data/postgres` - PostgreSQL data
 - `./data/dragonfly` - Dragonfly data
 - `./logs` - Application logs
@@ -705,12 +839,12 @@ Data is persisted in local directories:
 
 #### Local-Prod (Local Testing)
 
-| Metric | Value |
-|--------|-------|
-| Concurrent Users | 50-100 |
-| Requests/Second | 100-200 |
-| CPU Usage | 40-60% |
-| RAM Usage | 50-70% |
+| Metric              | Value     |
+| ------------------- | --------- |
+| Concurrent Users    | 50-100    |
+| Requests/Second     | 100-200   |
+| CPU Usage           | 40-60%    |
+| RAM Usage           | 50-70%    |
 | Response Time (p95) | 150-250ms |
 
 **Note**: Performance will vary based on your local machine resources.
@@ -718,6 +852,7 @@ Data is persisted in local directories:
 ### 🔒 Security Notes
 
 Local-prod environment uses:
+
 - **HTTP** instead of HTTPS (for local testing)
 - **Insecure cookies** (`SESSION_SECURE_COOKIES=false`)
 - **Lax same-site** (`SESSION_SAME_SITE=lax`)
@@ -746,6 +881,30 @@ docker compose -f docker-compose.local-prod.yml ps
 
 # Expected: All containers should show "healthy" status
 ```
+
+### Automated Health Checks
+
+For **automated health monitoring** of all infrastructure containers
+(PostgreSQL, Dragonfly, OpenVidu, Coturn, Portainer), use the production
+automation scripts:
+
+```bash
+# Navigate to scripts directory
+cd devops/scripts/docker-infra
+
+# Check all infrastructure containers
+./health-check.sh
+
+# Expected output:
+# ✓ PostgreSQL - healthy
+# ✓ Dragonfly - healthy
+# ✓ OpenVidu - healthy
+# ✓ Coturn - healthy
+# ✓ Portainer - healthy
+```
+
+See [Docker Infrastructure Scripts](../scripts/docker-infra/README.md) for
+complete automation guide.
 
 ---
 
@@ -812,12 +971,50 @@ yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma
 
 ### Backup Database
 
+**Manual Backup:**
+
 ```bash
 # Production
 docker exec -it latest-postgres pg_dump -U postgres userdb > backup_$(date +%Y%m%d_%H%M%S).sql
 docker exec -i latest-postgres psql -U postgres userdb < backup_20240101_120000.sql
+```
 
-# Local-Prod - Database Reset (Local-Prod Only)
+**Automated Backups (Recommended for Production):**
+
+For production deployments, use the automated backup system with local + S3
+storage:
+
+```bash
+# Navigate to scripts directory
+cd devops/scripts/docker-infra
+
+# Create pre-deployment backup
+./backup.sh pre-deployment
+
+# Create success backup (after deployment)
+./backup.sh success
+
+# Setup automated backups (hourly, daily, weekly)
+./backup.sh setup-cron
+
+# Restore from backup
+./restore.sh <backup-id>
+```
+
+**Backup Types:**
+
+- **Hourly**: Every hour (24h retention, local only)
+- **Daily**: 2 AM daily (7d retention, local + S3)
+- **Weekly**: Sunday 3 AM (4w retention, local + S3)
+- **Pre-Deployment**: Before deployments (3 backups, local + S3)
+- **Success**: After successful deployments (5 backups, local + S3)
+
+See [Docker Infrastructure Scripts](../scripts/docker-infra/README.md) for
+complete backup documentation.
+
+**Local-Prod - Database Reset (Local-Prod Only):**
+
+```bash
 docker compose -f docker-compose.local-prod.yml down
 docker compose -f docker-compose.local-prod.yml down -v
 rm -rf data/postgres data/dragonfly
@@ -963,22 +1160,28 @@ If ports are already in use:
 
 ### Overview
 
-This project uses **committed generated files** with automated validation to prevent merge conflicts and stale files. Prisma Client is generated during development, committed to the repository, and validated at multiple stages.
+This project uses **committed generated files** with automated validation to
+prevent merge conflicts and stale files. Prisma Client is generated during
+development, committed to the repository, and validated at multiple stages.
 
 ### How It Works with Docker
 
 **Build Stage:**
+
 - Dockerfile runs `yarn prisma:generate` during build (line 31)
 - Regenerates Prisma Client (overwrites committed files)
 - Copies generated files to `dist/` for production
 
 **Runtime Stage:**
+
 - Entrypoint script runs `prisma generate` again (safety net)
 - Copies JavaScript files from `node_modules/.prisma/client` to custom location
 - Creates symlink for `@prisma/client`
-- Application code checks multiple paths (`dist/`, `src/`, relative, `@prisma/client`)
+- Application code checks multiple paths (`dist/`, `src/`, relative,
+  `@prisma/client`)
 
 **Result:**
+
 - ✅ Committed files act as backup/fallback
 - ✅ Docker always regenerates (ensures fresh files)
 - ✅ Multiple path checks (works in all scenarios)
@@ -1004,12 +1207,14 @@ yarn prisma:validate-generated
 The project uses Husky for automated Prisma Client management:
 
 **Pre-commit Hook** (`.husky/pre-commit`):
+
 - Detects schema changes
 - Automatically regenerates Prisma Client
 - Validates generated files
 - Blocks commit if validation fails
 
 **Post-merge Hook** (`.husky/post-merge`):
+
 - Detects schema changes after merge
 - Automatically regenerates Prisma Client
 - Prevents merge conflicts
@@ -1038,6 +1243,7 @@ yarn prisma:validate-generated
 ### Troubleshooting
 
 **Issue: Pre-commit hook not running**
+
 ```bash
 # Reinstall Husky
 yarn husky install
@@ -1048,6 +1254,7 @@ chmod +x .husky/post-merge
 ```
 
 **Issue: Prisma generated files are missing**
+
 ```bash
 # Regenerate Prisma Client
 yarn prisma:regenerate
@@ -1057,6 +1264,7 @@ ls -la src/libs/infrastructure/database/prisma/generated/client/
 ```
 
 **Issue: CI fails with "Prisma generated files are stale"**
+
 ```bash
 # Pull latest changes
 git pull
@@ -1071,6 +1279,7 @@ git add . && git commit -m "Update Prisma generated files" && git push
 ### Docker Compatibility
 
 ✅ **Docker works perfectly** with this setup because:
+
 - Dockerfile regenerates Prisma Client at build time
 - Entrypoint script regenerates at runtime (safety net)
 - Code checks multiple paths (works in all scenarios)
@@ -1081,13 +1290,16 @@ git add . && git commit -m "Update Prisma generated files" && git push
 ### Files Created/Modified
 
 **New Files:**
+
 - `scripts/validate-prisma-generated.js` - Validation script
 - `.lintstagedrc.js` - Lint-staged configuration
 - `.husky/pre-commit` - Pre-commit hook
 - `.husky/post-merge` - Post-merge hook
-- `docs/PRISMA_COMPLETE_GUIDE.md` - Complete Prisma guide (generation, Docker, troubleshooting)
+- `docs/PRISMA_COMPLETE_GUIDE.md` - Complete Prisma guide (generation, Docker,
+  troubleshooting)
 
 **Modified Files:**
+
 - `package.json` - Added Husky, lint-staged, and new scripts
 - `.gitattributes` - Added merge strategy for generated files
 - `.github/workflows/ci.yml` - Added Prisma validation step
@@ -1102,24 +1314,85 @@ git add . && git commit -m "Update Prisma generated files" && git push
 - ✅ **Automated workflow** (no manual steps)
 - ✅ **Clear error messages** (easy troubleshooting)
 
-For detailed information, see [Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md).
+For detailed information, see
+[Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md).
 
 ---
 
 ## 📚 Additional Resources
 
+- [Docker Infrastructure Scripts](../scripts/docker-infra/README.md) -
+  **Production deployment automation, backups, health checks, and monitoring**
 - [Nginx Configuration](../nginx/README.md) - Reverse proxy and SSL setup
 - [Server Setup Guide](../../docs/SERVER_SETUP_GUIDE.md) - Complete server setup
 - [Deployment Guide](../../docs/DEPLOYMENT_GUIDE.md) - CI/CD deployment
-- [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) - Environment variables
-- [Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md) - Complete Prisma guide (generation, Docker, troubleshooting)
+- [GitHub Secrets Reference](../../docs/GITHUB_SECRETS_REFERENCE.md) -
+  Environment variables
+- [Prisma Complete Guide](../../docs/PRISMA_COMPLETE_GUIDE.md) - Complete Prisma
+  guide (generation, Docker, troubleshooting)
 - [Main README](../../README.md) - Project overview
+
+---
+
+## 🔧 Production Deployment Automation
+
+For **production deployments** with automated backups, health checks, and
+monitoring, see the comprehensive
+[Docker Infrastructure Scripts](../scripts/docker-infra/README.md) guide.
+
+### Key Features
+
+- ✅ **Automated Backups**: Hourly, daily, weekly, pre-deployment, and success
+  backups (local + S3)
+- ✅ **Health Monitoring**: Automated health checks for all 5 infrastructure
+  containers (PostgreSQL, Dragonfly, OpenVidu, Coturn, Portainer)
+- ✅ **Deployment Safety**: Pre-deployment backups, automatic rollback on
+  failure, deployment locks
+- ✅ **Disaster Recovery**: Full server restoration from S3 backups
+- ✅ **Performance Monitoring**: Automated monitoring and alerts for CPU,
+  memory, disk, and response times
+- ✅ **Incident Response**: Quick resolution scripts for common issues
+
+### Quick Start with Automation Scripts
+
+```bash
+# Navigate to scripts directory
+cd devops/scripts/docker-infra
+
+# Check infrastructure health (all 5 containers)
+./health-check.sh
+
+# Create pre-deployment backup
+./backup.sh pre-deployment
+
+# Deploy with safety features (includes automatic backups and rollback)
+./deploy.sh
+
+# Setup automated backups (cron jobs)
+./backup.sh setup-cron
+```
+
+### Infrastructure Containers Monitored
+
+The automation scripts monitor all 5 infrastructure containers:
+
+| Container           | Port | Health Check           | Status       |
+| ------------------- | ---- | ---------------------- | ------------ |
+| **postgres**        | 5432 | `pg_isready`           | ✅ Monitored |
+| **dragonfly**       | 6379 | `redis-cli ping`       | ✅ Monitored |
+| **openvidu-server** | 4443 | HTTP check             | ✅ Monitored |
+| **coturn**          | 3478 | `turnutils_stunclient` | ✅ Monitored |
+| **portainer**       | 9000 | HTTP check             | ✅ Monitored |
+
+For complete documentation, see
+[Docker Infrastructure Scripts README](../scripts/docker-infra/README.md).
 
 ---
 
 ## 🆘 Support
 
 For issues:
+
 1. Check container logs
 2. Verify environment variables
 3. Check network connectivity
@@ -1133,48 +1406,58 @@ For issues:
 ### Production
 
 **Deploy:**
+
 ```bash
 cd devops/docker && docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 **Monitor:**
+
 ```bash
 docker stats
 ```
 
 **Scale When:**
+
 - CPU or RAM >80% for 15+ minutes
 
 **Upgrade To:**
+
 - 8 vCPU, 24GB RAM
 
 **Expected Capacity:**
+
 - 700-900 concurrent users
 - 1,200-1,800 req/s
 
 ### Local-Prod
 
 **Deploy:**
+
 ```bash
 cd devops/docker && docker compose -f docker-compose.local-prod.yml --profile infrastructure --profile app up -d --build
 ```
 
 **Monitor:**
+
 ```bash
 docker stats
 ```
 
 **Logs:**
+
 ```bash
 docker compose -f docker-compose.local-prod.yml logs -f api
 ```
 
 **Health:**
+
 ```bash
 curl http://localhost:8088/health
 ```
 
 **Stop:**
+
 ```bash
 docker compose -f docker-compose.local-prod.yml down
 ```
@@ -1185,13 +1468,17 @@ docker compose -f docker-compose.local-prod.yml down
 
 ### Production
 
-This configuration is optimized for **8 vCPU/24GB RAM** but runs on **6 vCPU/12GB RAM** initially. Monitor resources and scale vertically when utilization reaches 80%. Dragonfly is the only cache provider (Redis removed). OpenVidu is included for video conferencing.
+This configuration is optimized for **8 vCPU/24GB RAM** but runs on **6
+vCPU/12GB RAM** initially. Monitor resources and scale vertically when
+utilization reaches 80%. Dragonfly is the only cache provider (Redis removed).
+OpenVidu is included for video conferencing.
 
 **Ready for production deployment!**
 
 ### Local-Prod
 
-This local-prod configuration mirrors production architecture with reduced resource limits suitable for local testing. Use it to:
+This local-prod configuration mirrors production architecture with reduced
+resource limits suitable for local testing. Use it to:
 
 - ✅ Test production-like deployments locally
 - ✅ Verify Docker builds work correctly

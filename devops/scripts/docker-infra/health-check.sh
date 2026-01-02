@@ -133,6 +133,84 @@ check_dragonfly() {
     fi
 }
 
+# Check Coturn
+check_coturn() {
+    local container="${COTURN_CONTAINER}"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        SERVICE_STATUS["coturn"]="invalid"
+        SERVICE_DETAILS["coturn"]='{"status":"invalid","error":"Invalid container name"}'
+        return 1
+    fi
+    
+    local status="unhealthy"
+    local details="{}"
+    
+    if ! container_running "$container"; then
+        SERVICE_STATUS["coturn"]="missing"
+        SERVICE_DETAILS["coturn"]='{"status":"missing","error":"Container not running"}'
+        return 1
+    fi
+    
+    # Check TURN/STUN server via turnutils_stunclient
+    if docker exec "$container" turnutils_stunclient -p 3478 localhost > /dev/null 2>&1; then
+        status="healthy"
+        details="{\"status\":\"healthy\",\"port\":\"3478\",\"protocol\":\"STUN/TURN\"}"
+    else
+        status="unhealthy"
+        details="{\"status\":\"unhealthy\",\"error\":\"STUN/TURN check failed\"}"
+    fi
+    
+    SERVICE_STATUS["coturn"]="$status"
+    SERVICE_DETAILS["coturn"]="$details"
+    
+    if [[ "$status" == "healthy" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Check Portainer
+check_portainer() {
+    local container="portainer"
+    
+    # Security: Validate container name
+    if ! validate_container_name "$container"; then
+        SERVICE_STATUS["portainer"]="invalid"
+        SERVICE_DETAILS["portainer"]='{"status":"invalid","error":"Invalid container name"}'
+        return 1
+    fi
+    
+    local status="unhealthy"
+    local details="{}"
+    
+    if ! container_running "$container"; then
+        SERVICE_STATUS["portainer"]="missing"
+        SERVICE_DETAILS["portainer"]='{"status":"missing","error":"Container not running"}'
+        return 1
+    fi
+    
+    # Check if Portainer API is responding
+    if docker exec "$container" wget -q --spider http://localhost:9000 2>/dev/null; then
+        status="healthy"
+        details="{\"status\":\"healthy\",\"port\":\"9000\",\"ui\":\"accessible\"}"
+    else
+        status="unhealthy"
+        details="{\"status\":\"unhealthy\",\"error\":\"API not responding\"}"
+    fi
+    
+    SERVICE_STATUS["portainer"]="$status"
+    SERVICE_DETAILS["portainer"]="$details"
+    
+    if [[ "$status" == "healthy" ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 # Check OpenVidu
 check_openvidu() {
     local container="${OPENVIDU_CONTAINER}"
@@ -201,6 +279,27 @@ main() {
         all_healthy=false
     }
     
+    # Check Coturn
+    check_coturn || {
+        if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
+            any_missing=true
+        else
+            any_unhealthy=true
+        fi
+        all_healthy=false
+    }
+    
+    # Check Portainer
+    check_portainer || {
+        if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
+            any_missing=true
+        else
+            any_unhealthy=true
+        fi
+        all_healthy=false
+    }
+    
+    # Check OpenVidu
     check_openvidu || {
         if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
             any_missing=true

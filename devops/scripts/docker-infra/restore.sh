@@ -261,8 +261,155 @@ restore_dragonfly() {
     return 0
 }
 
-# Main execution
-main() {
+# ============================================================================
+# SUBCOMMAND: Disaster Recovery (S3-only restore)
+# ============================================================================
+
+disaster_recovery() {
+    local backup_id="${1:-}"
+    
+    if [[ -z "$backup_id" ]]; then
+        echo "Usage: $0 disaster <backup-id|latest>"
+        echo ""
+        echo "Examples:"
+        echo "  $0 disaster success-2026-01-02-120000"
+        echo "  $0 disaster latest"
+        exit 1
+    fi
+    
+    log_info "=== DISASTER RECOVERY ==="
+    log_info "Restoring from S3 backup: $backup_id"
+    
+    # Validate backup ID
+    if ! validate_backup_id "$backup_id"; then
+        log_error "Invalid backup ID"
+        exit 1
+    fi
+    
+    # Check S3 is enabled
+    if [[ -z "${S3_ENABLED:-}" ]] || [[ "${S3_ENABLED}" != "true" ]]; then
+        log_error "S3 is not enabled - cannot perform disaster recovery"
+        exit 1
+    fi
+    
+    # Find backup metadata
+    log_info "Downloading backup metadata from S3..."
+    METADATA_FILE="/tmp/disaster-recovery-${backup_id}.json"
+    
+    if [[ "$backup_id" == "latest" ]]; then
+        # Find latest success backup
+        log_info "Finding latest success backup..."
+        # TODO: Implement S3 listing to find latest
+        log_error "Latest backup discovery not yet implemented"
+        exit 1
+    fi
+    
+    # Download metadata
+    if ! s3_download "backups/metadata/${backup_id}.json" "$METADATA_FILE"; then
+        log_error "Failed to download backup metadata from S3"
+        exit 1
+    fi
+    
+    # Parse metadata
+    if ! command_exists jq; then
+        log_error "jq is required for disaster recovery"
+        exit 1
+    fi
+    
+    POSTGRES_S3_PATH=$(jq -r '.postgres.s3_path' "$METADATA_FILE")
+    DRAGONFLY_S3_PATH=$(jq -r '.dragonfly.s3_path' "$METADATA_FILE")
+    
+    log_info "Backup details:"
+    log_info "  Postgres: $POSTGRES_S3_PATH"
+    log_info "  Dragonfly: $DRAGONFLY_S3_PATH"
+    
+    # Download backup files
+    log_info "Downloading PostgreSQL backup from S3..."
+    POSTGRES_BACKUP="/tmp/postgres-disaster-recovery.sql.gz"
+    if ! s3_download "$POSTGRES_S3_PATH" "$POSTGRES_BACKUP"; then
+        log_error "Failed to download PostgreSQL backup"
+        exit 1
+    fi
+    
+    log_info "Downloading Dragonfly backup from S3..."
+    DRAGONFLY_BACKUP="/tmp/dragonfly-disaster-recovery.rdb.gz"
+    if ! s3_download "$DRAGONFLY_S3_PATH" "$DRAGONFLY_BACKUP"; then
+        log_warning "Failed to download Dragonfly backup (non-critical)"
+    fi
+    
+    # Verify backups
+    log_info "Verifying downloaded backups..."
+    if ! verify_backup "$POSTGRES_BACKUP" "$METADATA_FILE"; then
+        log_error "PostgreSQL backup verification failed"
+        exit 1
+    fi
+    
+    if [[ -f "$DRAGONFLY_BACKUP" ]]; then
+        verify_backup "$DRAGONFLY_BACKUP" "$METADATA_FILE" || log_warning "Dragonfly backup verification failed"
+    fi
+    
+    # Ensure infrastructure is running
+    log_info "Ensuring infrastructure containers are running..."
+    cd "${BASE_DIR}/devops/docker" || exit 1
+    
+    if ! docker compose -f docker-compose.prod.yml --profile infrastructure up -d; then
+        log_error "Failed to start infrastructure containers"
+        exit 1
+    fi
+    
+    # Wait for containers to be healthy
+    log_info "Waiting for containers to be healthy..."
+    wait_for_health "postgres" 300 || exit 1
+    wait_for_health "dragonfly" 300 || log_warning "Dragonfly not healthy"
+    
+    # Restore PostgreSQL
+    log_info "Restoring PostgreSQL database..."
+    if gunzip -c "$POSTGRES_BACKUP" | docker exec -i postgres psql -U postgres -d userdb; then
+        log_success "PostgreSQL restored successfully"
+    else
+        log_error "PostgreSQL restore failed"
+        exit 1
+    fi
+    
+    # Restore Dragonfly
+    if [[ -f "$DRAGONFLY_BACKUP" ]]; then
+        log_info "Restoring Dragonfly data..."
+        
+        # Stop dragonfly
+        docker stop dragonfly
+        
+        # Extract RDB file
+        gunzip -c "$DRAGONFLY_BACKUP" > /tmp/dump.rdb
+        
+        # Copy to container volume
+        docker cp /tmp/dump.rdb dragonfly:/data/dump.rdb
+        
+        # Start dragonfly
+        docker start dragonfly
+        
+        # Wait for health
+        wait_for_health "dragonfly" 120 || log_warning "Dragonfly not healthy after restore"
+        
+        rm -f /tmp/dump.rdb
+        log_success "Dragonfly restored successfully"
+    fi
+    
+    # Cleanup
+    rm -f "$POSTGRES_BACKUP" "$DRAGONFLY_BACKUP" "$METADATA_FILE"
+    
+    log_success "=== DISASTER RECOVERY COMPLETED ==="
+    log_info "Infrastructure has been restored from backup: $backup_id"
+    log_info "Next steps:"
+    log_info "  1. Verify data integrity"
+    log_info "  2. Deploy application containers"
+    log_info "  3. Run health checks"
+}
+
+# ============================================================================
+# MAIN RESTORE EXECUTION
+# ============================================================================
+
+main_restore() {
     log_info "Starting restore process (Backup ID: ${BACKUP_ID})..."
     
     check_docker || exit 1
@@ -287,6 +434,43 @@ main() {
     docker start "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
     
     log_success "Restore process completed"
+}
+
+# ============================================================================
+# MAIN DISPATCHER
+# ============================================================================
+
+usage() {
+    echo "Usage: $0 [disaster] <backup-id|latest>"
+    echo ""
+    echo "Commands:"
+    echo "  <backup-id>     Restore from local backup (falls back to S3 if not found)"
+    echo "  latest          Restore from latest local backup"
+    echo "  disaster <id>   Disaster recovery: restore from S3 only (for complete server loss)"
+    echo ""
+    echo "Examples:"
+    echo "  $0 success-2026-01-02-120000    # Restore specific backup"
+    echo "  $0 latest                       # Restore latest backup"
+    echo "  $0 disaster success-2026-01-02-120000  # Disaster recovery from S3"
+    exit 1
+}
+
+main() {
+    local command="${1:-}"
+    
+    case "$command" in
+        disaster)
+            shift || true
+            disaster_recovery "$@"
+            ;;
+        ""|help|--help|-h)
+            usage
+            ;;
+        *)
+            # Default: treat as backup-id for backward compatibility
+            main_restore "$@"
+            ;;
+    esac
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

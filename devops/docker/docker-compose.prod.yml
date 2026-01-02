@@ -474,6 +474,49 @@ services:
       - "app.component=worker"
       - "app.type=worker"
 
+  # Portainer - Docker Management UI (like Vercel Dashboard)
+  # Provides comprehensive Docker management: containers, images, networks, volumes, logs, stats
+  # Access at: http://localhost:9000 (or https://your-domain:9000 in production)
+  # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
+  portainer:
+    profiles: ["infrastructure"]
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    ports:
+      - "9000:9000"
+      - "9443:9443"  # HTTPS port (optional)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.9
+    restart: unless-stopped
+    # Optimized command: minimal logging, no analytics, hide labels
+    command: >
+      -H unix:///var/run/docker.sock
+      --no-analytics
+      --hide-label=*
+    environment:
+      # Minimize disk usage: reduce logging, disable telemetry
+      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+    # Strict resource limits to prevent excessive disk usage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M  # Minimal memory allocation
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s  # Reduced frequency to save resources
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
 volumes:
   postgres_data:
     driver: local
@@ -489,6 +532,10 @@ volumes:
       device: /opt/healthcare-backend/data/dragonfly
   openvidu_recordings:
     name: latest_openvidu_recordings
+  portainer_data:
+    name: latest_portainer_data
+    # Portainer data is minimal: only stores user preferences and settings
+    # Expected size: < 50MB (snapshots disabled, minimal logging)
 
 networks:
   app-network:

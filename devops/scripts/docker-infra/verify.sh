@@ -1,6 +1,12 @@
 #!/bin/bash
-# Verification Script - Comprehensive post-deployment verification
-# Verifies infrastructure health, data integrity, and application readiness
+# Unified Verification Script
+# Supports both deployment verification and backup verification
+#
+# Usage:
+#   ./verify.sh                    # Post-deployment verification (default)
+#   ./verify.sh deployment         # Post-deployment verification
+#   ./verify.sh backup <backup-id>  # Verify specific backup
+#   ./verify.sh backup all         # Verify all backups
 
 set -euo pipefail
 
@@ -28,6 +34,10 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
+
+# ============================================================================
+# DEPLOYMENT VERIFICATION FUNCTIONS
+# ============================================================================
 
 # Verify infrastructure
 verify_infrastructure() {
@@ -124,9 +134,9 @@ verify_application() {
     fi
 }
 
-# Main execution
-main() {
-    log_info "Starting verification..."
+# Post-deployment verification (default mode)
+verify_deployment() {
+    log_info "Starting deployment verification..."
     
     check_docker || exit 1
     
@@ -146,15 +156,185 @@ main() {
     } | json_fix_trailing
     
     if [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "ready" ]]; then
-        log_success "Verification passed"
+        log_success "Deployment verification passed"
         exit 0
     else
-        log_error "Verification failed"
+        log_error "Deployment verification failed"
         exit 1
     fi
+}
+
+# ============================================================================
+# BACKUP VERIFICATION FUNCTIONS
+# ============================================================================
+
+# Verify single backup
+verify_single_backup() {
+    local backup_id="$1"
+    
+    log_info "Verifying backup: $backup_id"
+    
+    # Find metadata
+    local metadata_file="${BACKUP_DIR}/metadata/${backup_id}.json"
+    if [[ ! -f "$metadata_file" ]]; then
+        log_error "Metadata not found: $metadata_file"
+        return 1
+    fi
+    
+    # Parse metadata to find backup files
+    local postgres_file=$(jq -r '.postgres.local_path' "$metadata_file" 2>/dev/null)
+    local dragonfly_file=$(jq -r '.dragonfly.local_path' "$metadata_file" 2>/dev/null)
+    
+    local status="PASS"
+    
+    # Verify PostgreSQL backup
+    if [[ -n "$postgres_file" ]] && [[ -f "$postgres_file" ]]; then
+        if verify_backup "$postgres_file" "$metadata_file"; then
+            log_success "✓ PostgreSQL backup verified"
+        else
+            log_error "✗ PostgreSQL backup verification failed"
+            status="FAIL"
+        fi
+    else
+        log_warning "PostgreSQL backup file not found"
+        status="PARTIAL"
+    fi
+    
+    # Verify Dragonfly backup
+    if [[ -n "$dragonfly_file" ]] && [[ -f "$dragonfly_file" ]]; then
+        if verify_backup "$dragonfly_file" "$metadata_file"; then
+            log_success "✓ Dragonfly backup verified"
+        else
+            log_error "✗ Dragonfly backup verification failed"
+            status="FAIL"
+        fi
+    else
+        log_warning "Dragonfly backup file not found"
+        if [[ "$status" != "FAIL" ]]; then
+            status="PARTIAL"
+        fi
+    fi
+    
+    echo "$status"
+}
+
+# Backup verification mode
+verify_backup_mode() {
+    if [[ $# -lt 1 ]]; then
+        echo "Usage: $0 backup <backup-id|all>"
+        echo ""
+        echo "Examples:"
+        echo "  $0 backup success-2026-01-02-120000"
+        echo "  $0 backup all"
+        exit 1
+    fi
+    
+    local BACKUP_ID="$1"
+    
+    if [[ "$BACKUP_ID" == "all" ]]; then
+        log_info "Verifying all backups..."
+        
+        TOTAL=0
+        PASSED=0
+        FAILED=0
+        PARTIAL=0
+        
+        for metadata_file in "${BACKUP_DIR}/metadata"/*.json; do
+            if [[ ! -f "$metadata_file" ]]; then
+                continue
+            fi
+            
+            backup_id=$(basename "$metadata_file" .json)
+            TOTAL=$((TOTAL + 1))
+            
+            result=$(verify_single_backup "$backup_id")
+            
+            case "$result" in
+                "PASS")
+                    PASSED=$((PASSED + 1))
+                    ;;
+                "FAIL")
+                    FAILED=$((FAILED + 1))
+                    ;;
+                "PARTIAL")
+                    PARTIAL=$((PARTIAL + 1))
+                    ;;
+            esac
+            
+            echo "---"
+        done
+        
+        log_info "=== VERIFICATION SUMMARY ==="
+        log_info "Total backups: $TOTAL"
+        log_success "Passed: $PASSED"
+        log_warning "Partial: $PARTIAL"
+        log_error "Failed: $FAILED"
+        
+        if [[ $FAILED -gt 0 ]]; then
+            send_alert "ERROR" "Backup verification: $FAILED backups failed"
+            exit 1
+        elif [[ $PARTIAL -gt 0 ]]; then
+            send_alert "WARNING" "Backup verification: $PARTIAL backups incomplete"
+            exit 0
+        else
+            log_success "All backups verified successfully!"
+            exit 0
+        fi
+    else
+        # Verify single backup
+        if ! validate_backup_id "$BACKUP_ID"; then
+            log_error "Invalid backup ID"
+            exit 1
+        fi
+        
+        result=$(verify_single_backup "$BACKUP_ID")
+        
+        if [[ "$result" == "PASS" ]]; then
+            log_success "Backup verification passed!"
+            exit 0
+        else
+            log_error "Backup verification failed!"
+            exit 1
+        fi
+    fi
+}
+
+# ============================================================================
+# MAIN DISPATCHER
+# ============================================================================
+
+usage() {
+    echo "Usage: $0 [deployment|backup] [backup-id|all]"
+    echo ""
+    echo "Modes:"
+    echo "  deployment (default) - Post-deployment verification"
+    echo "  backup              - Backup integrity verification"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Post-deployment verification"
+    echo "  $0 deployment         # Post-deployment verification"
+    echo "  $0 backup success-2026-01-02-120000  # Verify specific backup"
+    echo "  $0 backup all        # Verify all backups"
+    exit 1
+}
+
+main() {
+    local mode="${1:-deployment}"
+    
+    case "$mode" in
+        deployment|"")
+            verify_deployment
+            ;;
+        backup)
+            shift || true
+            verify_backup_mode "$@"
+            ;;
+        *)
+            usage
+            ;;
+    esac
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
-
