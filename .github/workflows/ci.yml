@@ -286,6 +286,7 @@ jobs:
           S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
@@ -296,8 +297,72 @@ jobs:
             export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
             export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            cd /opt/healthcare-backend/devops/docker || exit 1
+            
+            # CRITICAL: Ensure containers are running before backup
+            echo "🔍 Ensuring PostgreSQL and Dragonfly containers are running for backup..."
+            
+            # Check and start PostgreSQL if needed
+            if ! docker ps --format '{{.Names}}' | grep -q "^latest-postgres$"; then
+              echo "⚠️  PostgreSQL container not running - starting for backup..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                echo "❌ Failed to start PostgreSQL for backup"
+                exit 1
+              }
+              echo "⏳ Waiting for PostgreSQL to be ready..."
+              MAX_RETRIES=30
+              RETRY_COUNT=0
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if docker exec latest-postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+                  echo "✅ PostgreSQL is ready for backup"
+                  break
+                fi
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2
+              done
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "❌ PostgreSQL did not become ready for backup"
+                exit 1
+              fi
+            else
+              echo "✅ PostgreSQL container is running"
+            fi
+            
+            # Check and start Dragonfly if needed
+            if ! docker ps --format '{{.Names}}' | grep -q "^latest-dragonfly$"; then
+              echo "⚠️  Dragonfly container not running - starting for backup..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                echo "❌ Failed to start Dragonfly for backup"
+                exit 1
+              }
+              echo "⏳ Waiting for Dragonfly to be ready..."
+              MAX_RETRIES=20
+              RETRY_COUNT=0
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if docker exec latest-dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+                  echo "✅ Dragonfly is ready for backup"
+                  break
+                fi
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2
+              done
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "⚠️  Dragonfly did not become ready (backup may fail for Dragonfly)"
+              fi
+            else
+              echo "✅ Dragonfly container is running"
+            fi
+            
+            # CRITICAL: Create backup of PostgreSQL and Dragonfly data
+            echo "💾 Creating backup of PostgreSQL and Dragonfly data..."
+            echo "⚠️  This backup is CRITICAL - data will be lost if backup fails!"
             chmod +x /tmp/backup.sh
-            BACKUP_ID=\$(/tmp/backup.sh)
+            BACKUP_ID=\$(/tmp/backup.sh) || {
+              echo "❌ Backup failed - ABORTING to prevent data loss"
+              exit 1
+            }
+            echo "✅ Backup created successfully (ID: \${BACKUP_ID})"
             echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
           ENDSSH
           
@@ -391,20 +456,135 @@ jobs:
             set -e
             cd /opt/healthcare-backend/devops/docker || exit 1
             
-            # Stop existing infrastructure containers gracefully
-            echo "Stopping existing infrastructure containers..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure stop || true
+            # CRITICAL: Verify data volumes are preserved before recreation
+            echo "🔍 Verifying data volumes are preserved..."
+            VOLUMES=("postgres_data" "dragonfly_data")
+            VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
             
-            # Recreate infrastructure containers
-            echo "Recreating infrastructure containers..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure up -d
+            for i in "${!VOLUMES[@]}"; do
+              VOLUME="${VOLUMES[$i]}"
+              VOLUME_PATH="${VOLUME_PATHS[$i]}"
+              
+              # Check if volume exists
+              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
+                echo "✅ Volume ${VOLUME} exists"
+                
+                # For bind mounts, verify the host path exists
+                if [[ -d "$VOLUME_PATH" ]]; then
+                  echo "✅ Volume path verified: ${VOLUME_PATH}"
+                else
+                  echo "⚠️  Volume path missing: ${VOLUME_PATH} (creating...)"
+                  mkdir -p "$VOLUME_PATH" || {
+                    echo "❌ Failed to create volume path: ${VOLUME_PATH}"
+                    exit 1
+                  }
+                fi
+              else
+                echo "⚠️  Volume ${VOLUME} does not exist (will be created)"
+              fi
+            done
+            
+            # CRITICAL: Ensure containers are running before graceful stop (for data flush)
+            echo "🔍 Ensuring containers are running for graceful shutdown..."
+            CONTAINERS=("latest-postgres" "latest-dragonfly")
+            
+            for CONTAINER in "${CONTAINERS[@]}"; do
+              if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+                echo "⚠️  Container ${CONTAINER} not running - starting for graceful shutdown..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER#latest-}" || {
+                  echo "❌ Failed to start ${CONTAINER}"
+                  exit 1
+                }
+                # Wait for container to be ready
+                echo "⏳ Waiting for ${CONTAINER} to be ready..."
+                sleep 5
+              fi
+            done
+            
+            # CRITICAL: Stop existing infrastructure containers gracefully
+            echo "🛑 Stopping infrastructure containers gracefully (ensuring data flush)..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure stop || {
+              echo "⚠️  Graceful stop had issues, forcing stop..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure kill || true
+            }
+            
+            # Wait for data to flush to disk
+            echo "⏳ Waiting for data to flush to disk..."
+            sleep 3
+            
+            # CRITICAL: Recreate infrastructure containers (volumes are preserved)
+            echo "🔄 Recreating infrastructure containers (volumes will be preserved)..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
+              echo "❌ Infrastructure recreation failed"
+              exit 1
+            }
             
             # Wait for containers to be healthy
-            echo "Waiting for infrastructure containers to be healthy..."
-            sleep 10
+            echo "⏳ Waiting for infrastructure containers to be healthy..."
+            sleep 15
+            
+            # Wait for PostgreSQL to be ready
+            echo "⏳ Waiting for PostgreSQL to be ready..."
+            MAX_RETRIES=30
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec latest-postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+                echo "✅ PostgreSQL is ready"
+                break
+              fi
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "⏳ Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
+              sleep 2
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "❌ PostgreSQL did not become ready"
+              exit 1
+            fi
+            
+            # Wait for Dragonfly to be ready
+            echo "⏳ Waiting for Dragonfly to be ready..."
+            MAX_RETRIES=20
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec latest-dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+                echo "✅ Dragonfly is ready"
+                break
+              fi
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "⏳ Waiting for Dragonfly... (${RETRY_COUNT}/${MAX_RETRIES})"
+              sleep 2
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "❌ Dragonfly did not become ready"
+              exit 1
+            fi
             
             # Check container status
+            echo "📊 Container status:"
             docker compose -f docker-compose.prod.yml --profile infrastructure ps
+            
+            # Verify volumes still exist
+            echo "🔍 Verifying volumes after recreation..."
+            for i in "${!VOLUMES[@]}"; do
+              VOLUME="${VOLUMES[$i]}"
+              VOLUME_PATH="${VOLUME_PATHS[$i]}"
+              
+              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
+                echo "✅ Volume ${VOLUME} preserved"
+              else
+                echo "⚠️  Volume ${VOLUME} not found (may be created on first use)"
+              fi
+              
+              if [[ -d "$VOLUME_PATH" ]]; then
+                echo "✅ Volume path preserved: ${VOLUME_PATH}"
+              else
+                echo "⚠️  Volume path missing: ${VOLUME_PATH}"
+              fi
+            done
+            
+            echo "✅ Infrastructure recreation completed successfully"
           ENDSSH
 
   # Restore Backup
