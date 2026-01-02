@@ -27,8 +27,10 @@ RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines
 COPY . .
 RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration files verified" || (echo "[ERROR] SWC config files missing!" && exit 1)
 
-# Generate Prisma Client before type checking
+# Generate Prisma Client during Docker build (ONLY time it's generated)
 # This ensures TypeScript can resolve @prisma/client types
+# Prisma client is NOT generated in CI or at container startup - only here during build
+# Build script (yarn build) expects Prisma Client to already be generated
 RUN yarn prisma:generate
 
 # Verify Prisma Client was generated correctly
@@ -162,6 +164,9 @@ RUN mkdir -p /app/node_modules_real/@prisma && \
 # Build using SWC compiler (configured in nest-cli.json with explicit configFile path)
 # Type checking runs in parallel with SWC compilation
 # Works on all platforms: Windows, Linux (Docker), macOS
+# Prisma Client is already generated above (line 33) - no need to regenerate
+# Use yarn build to run all optimizations, linting, and formatting ONCE in Docker
+# CI skips linting for production, so this is the only place it runs (no duplication)
 RUN yarn build
 
 # Ensure Prisma schema is available in dist
@@ -235,8 +240,20 @@ COPY --from=builder /app/scripts ./scripts
 # Copy Prisma schema, config, and generated client to expected paths
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
+# Copy Prisma generated client from builder stage (generated during build, not at runtime)
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src/libs/infrastructure/database/prisma/generated
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
+
+# Verify Prisma Client was copied correctly from builder stage
+RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated/client ]; then \
+  echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
+  elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ] && \
+       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/client/index.mjs ] && \
+       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/client/client.ts ]; then \
+  echo "[ERROR] Prisma Client entry point not found!" && exit 1; \
+  else \
+  echo "[OK] Prisma Client verified - generated during build, copied to production stage"; \
+  fi
 
 # Create entrypoint script inline (devops/docker/ is excluded by .dockerignore)
 # This script ensures Prisma Client is available and symlink points to standard location
@@ -248,15 +265,24 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo 'echo "Healthcare Backend - Container Startup"' >> /app/entrypoint.sh && \
   echo 'echo "=========================================="' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
-  echo '# Always run prisma generate to ensure Prisma Client is available' >> /app/entrypoint.sh && \
+  echo '# Check if Prisma Client is already generated (from Docker build)' >> /app/entrypoint.sh && \
+  echo '# Only regenerate if client is missing or invalid' >> /app/entrypoint.sh && \
   echo '# Prisma 7 generates TypeScript files in custom output, but JavaScript in standard location' >> /app/entrypoint.sh && \
-  echo '# We point the symlink to the standard location which has the complete JavaScript runtime' >> /app/entrypoint.sh && \
-  echo 'echo "[INFO] Ensuring Prisma Client is fully generated..."' >> /app/entrypoint.sh && \
-  echo 'if [ ! -f /app/node_modules/.bin/prisma ]; then' >> /app/entrypoint.sh && \
-  echo '  echo "[ERROR] Prisma CLI not found!"' >> /app/entrypoint.sh && \
-  echo '  exit 1' >> /app/entrypoint.sh && \
+  echo 'echo "[INFO] Checking Prisma Client availability..."' >> /app/entrypoint.sh && \
+  echo '# Check if Prisma Client exists in standard location (from build)' >> /app/entrypoint.sh && \
+  echo 'if [ -f /app/node_modules/.prisma/client/index.js ] && [ -d /app/node_modules/.prisma/client/runtime ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Prisma Client already generated during Docker build - skipping regeneration"' >> /app/entrypoint.sh && \
+  echo 'elif [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ] || [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.mjs ]; then' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Prisma Client found in custom location (from build) - skipping regeneration"' >> /app/entrypoint.sh && \
+  echo 'else' >> /app/entrypoint.sh && \
+  echo '  echo "[WARN] Prisma Client not found - generating now..."' >> /app/entrypoint.sh && \
+  echo '  if [ ! -f /app/node_modules/.bin/prisma ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[ERROR] Prisma CLI not found!"' >> /app/entrypoint.sh && \
+  echo '    exit 1' >> /app/entrypoint.sh && \
+  echo '  fi' >> /app/entrypoint.sh && \
+  echo '  /app/node_modules/.bin/prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || exit 1' >> /app/entrypoint.sh && \
+  echo '  echo "[OK] Prisma Client generated successfully"' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
-  echo '/app/node_modules/.bin/prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || exit 1' >> /app/entrypoint.sh && \
   echo '# Prisma 7 generates JavaScript files in node_modules/.prisma/client (standard location)' >> /app/entrypoint.sh && \
   echo '# The custom output path only contains TypeScript files for development' >> /app/entrypoint.sh && \
   echo '# We point the symlink to the standard location which has the complete JavaScript runtime' >> /app/entrypoint.sh && \
@@ -416,7 +442,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD wget -q --spider http://localhost:8088/health || exit 1
 
 # Set entrypoint (runs before CMD)
-# Entrypoint will ensure Prisma Client is generated if needed
+# Entrypoint will verify Prisma Client exists (generated during build)
+# Only regenerates if missing (should not happen in normal operation)
 ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Run migrations automatically before starting the app

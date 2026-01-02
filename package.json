@@ -31,7 +31,7 @@
     "outdated:check": "node scripts/validate-code.js --outdated-only",
     "todo:check": "node scripts/validate-code.js --todos-only",
     "pre-commit": "yarn validate:all",
-    "pre-push": "yarn validate:build",
+    "pre-push": "yarn build",
     "start": "nest start",
     "start:dev": "cross-env NODE_ENV=development nest start --watch --watchAssets",
     "start:dev:nodemon": "cross-env NODE_ENV=development nodemon",

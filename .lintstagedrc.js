@@ -18,15 +18,15 @@ module.exports = {
   // Markdown files
   '**/*.md': ['prettier --write'],
 
-  // Prisma schema changes trigger client regeneration
+  // Prisma schema changes - format only (skip validation due to generation issues)
+  // Prisma Client is generated during Docker build, not in pre-commit
   '**/schema.prisma': [
     'prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js',
-    'node scripts/validate-prisma-generated.js --regenerate',
   ],
 
-  // Prisma config changes also trigger regeneration
-  '**/prisma.config.js': ['node scripts/validate-prisma-generated.js --regenerate'],
+  // Prisma config changes - no action needed (validation handled in Docker build)
+  // '**/prisma.config.js': [],
 
-  // If generated files are modified, validate them
-  '**/prisma/generated/**': ['node scripts/validate-prisma-generated.js --skip-comparison'],
+  // If generated files are modified - no action needed (validation handled in Docker build)
+  // '**/prisma/generated/**': [],
 };

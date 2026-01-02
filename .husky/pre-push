@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-push hook for comprehensive validation
+# Runs full build to ensure code builds successfully before pushing
+# This catches all issues: linting, formatting, type checking, compilation
+# Prisma Client is generated during Docker build, not here
+
+echo "🔍 Running pre-push validation (full build)..."
+
+# Run full build - this ensures code builds successfully before pushing
+# yarn build runs: linting, formatting, type checking, security, compilation
+# Only code that builds successfully can be pushed
+yarn build || {
+  echo ""
+  echo "❌ Build failed! Please fix the errors above before pushing."
+  echo "💡 The build includes: linting, formatting, type checking, and compilation"
+  echo "💡 Prisma Client is generated during Docker build, not in pre-push"
+  exit 1
+}
+
+echo ""
+echo "✅ Pre-push validation passed! Code builds successfully."
+echo "🚀 Ready to push (CI will skip validation - already done here)"
+
