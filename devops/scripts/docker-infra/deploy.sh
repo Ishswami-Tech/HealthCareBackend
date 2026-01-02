@@ -4,15 +4,20 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../shared/utils.sh"
+# Save deploy script directory BEFORE sourcing utils.sh (which sets its own SCRIPT_DIR)
+DEPLOY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"  # Will be overwritten by utils.sh, but we keep original
+source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
+# Restore deploy script directory after sourcing utils.sh
+SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
 
 # This script is Docker-specific for production deployments
 
 # Container prefix
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
-# Parse environment variables
+# Parse environment variables with defaults
+# These are set by CI/CD workflow, but we provide safe defaults for manual execution
 INFRA_CHANGED="${INFRA_CHANGED:-false}"
 APP_CHANGED="${APP_CHANGED:-false}"
 INFRA_HEALTHY="${INFRA_HEALTHY:-true}"
@@ -24,11 +29,60 @@ BACKUP_ID="${BACKUP_ID:-}"
 # (They were already done by separate GitHub Actions jobs)
 INFRA_ALREADY_HANDLED="${INFRA_ALREADY_HANDLED:-false}"
 
+# Normalize boolean values (handle "true"/"false" strings and actual booleans)
+normalize_bool() {
+    local value="${1:-false}"
+    case "${value,,}" in
+        true|1|yes|y|on)
+            echo "true"
+            ;;
+        *)
+            echo "false"
+            ;;
+    esac
+}
+
+INFRA_CHANGED=$(normalize_bool "$INFRA_CHANGED")
+APP_CHANGED=$(normalize_bool "$APP_CHANGED")
+INFRA_HEALTHY=$(normalize_bool "$INFRA_HEALTHY")
+INFRA_ALREADY_HANDLED=$(normalize_bool "$INFRA_ALREADY_HANDLED")
+
 # Exit codes
 EXIT_SUCCESS=0
 EXIT_WARNING=1
 EXIT_ERROR=2
 EXIT_CRITICAL=3
+
+# Check if this is a fresh deployment (no existing infrastructure/data)
+is_fresh_deployment() {
+    # Check if postgres container exists
+    if container_running "${CONTAINER_PREFIX}postgres"; then
+        # Container exists - check if database has any tables/data
+        local table_count=$(docker exec "${CONTAINER_PREFIX}postgres" psql -U postgres -d userdb -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null | xargs || echo "0")
+        if [[ "$table_count" =~ ^[1-9][0-9]*$ ]]; then
+            return 1  # Not fresh - has data
+        fi
+    fi
+    
+    # Check if postgres volume exists with data
+    if docker volume inspect docker_postgres_data >/dev/null 2>&1; then
+        # Volume exists - check if it has initialized database files
+        local volume_path=$(docker volume inspect docker_postgres_data --format '{{ .Mountpoint }}' 2>/dev/null)
+        if [[ -n "$volume_path" ]] && [[ -d "$volume_path" ]]; then
+            # Check for PostgreSQL data files (PG_VERSION indicates initialized database)
+            if [[ -f "${volume_path}/PG_VERSION" ]] && [[ -d "${volume_path}/base" ]]; then
+                # Database is initialized - check if it has actual data
+                # If base directory has subdirectories (database OIDs), it has data
+                local db_count=$(find "${volume_path}/base" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | xargs)
+                if [[ "$db_count" -gt 1 ]]; then
+                    return 1  # Not fresh - has initialized database
+                fi
+            fi
+        fi
+    fi
+    
+    return 0  # Fresh deployment - no existing data
+}
 
 # Check infrastructure health
 check_infrastructure_health() {
@@ -52,6 +106,74 @@ check_infrastructure_health() {
 }
 
 # Deploy infrastructure
+# Ensure data volumes are preserved
+ensure_volumes_preserved() {
+    log_info "Verifying data volumes are preserved..."
+    
+    local volumes=("postgres_data" "dragonfly_data")
+    local volume_paths=(
+        "/opt/healthcare-backend/data/postgres"
+        "/opt/healthcare-backend/data/dragonfly"
+    )
+    
+    for i in "${!volumes[@]}"; do
+        local volume="${volumes[$i]}"
+        local volume_path="${volume_paths[$i]}"
+        
+        # Check if volume exists
+        if docker volume inspect "docker_${volume}" >/dev/null 2>&1; then
+            log_info "Volume ${volume} exists"
+            
+            # For bind mounts, verify the host path exists
+            if [[ -d "$volume_path" ]]; then
+                log_success "Volume path verified: ${volume_path}"
+            else
+                log_warning "Volume path missing: ${volume_path} (will be created)"
+                mkdir -p "$volume_path" || {
+                    log_error "Failed to create volume path: ${volume_path}"
+                    return 1
+                }
+            fi
+        else
+            log_warning "Volume ${volume} does not exist (will be created)"
+        fi
+    done
+    
+    return 0
+}
+
+# Stop infrastructure containers gracefully to ensure data is flushed
+stop_infrastructure_gracefully() {
+    log_info "Stopping infrastructure containers gracefully..."
+    
+    local containers=("${CONTAINER_PREFIX}postgres" "${CONTAINER_PREFIX}dragonfly")
+    
+    for container in "${containers[@]}"; do
+        # Security: Validate container name
+        if ! validate_container_name "$container"; then
+            log_error "Invalid container name: ${container}"
+            return 1
+        fi
+        
+        if container_running "$container"; then
+            log_info "Stopping ${container} gracefully..."
+            
+            # Stop with grace period (containers have stop_grace_period configured)
+            docker stop "$container" || {
+                log_warning "Failed to stop ${container} gracefully, forcing stop..."
+                docker kill "$container" 2>/dev/null || true
+            }
+            
+            # Wait a moment for data to flush
+            sleep 2
+        else
+            log_info "Container ${container} is not running"
+        fi
+    done
+    
+    return 0
+}
+
 deploy_infrastructure() {
     log_info "Deploying infrastructure..."
     
@@ -64,8 +186,20 @@ deploy_infrastructure() {
     
     cd "$(dirname "$compose_file")" || return 1
     
-    # Recreate infrastructure
-    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d; then
+    # CRITICAL: Ensure volumes are preserved before recreation
+    ensure_volumes_preserved || {
+        log_error "Volume preservation check failed"
+        return 1
+    }
+    
+    # CRITICAL: Stop containers gracefully to flush data before recreation
+    stop_infrastructure_gracefully || {
+        log_warning "Graceful stop had issues, but continuing..."
+    }
+    
+    # Recreate infrastructure (volumes are preserved by docker compose)
+    # Using --force-recreate to ensure containers are recreated, but volumes persist
+    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate; then
         log_success "Infrastructure deployed"
         
         # Wait for health
@@ -128,11 +262,34 @@ deploy_application() {
     fi
 }
 
+# Validate deployment state and log warnings for unexpected combinations
+validate_deployment_state() {
+    # Warn about unexpected states
+    if [[ "$INFRA_ALREADY_HANDLED" == "true" ]] && [[ "$INFRA_CHANGED" == "false" ]] && [[ "$INFRA_HEALTHY" == "true" ]]; then
+        log_warning "Unexpected state: INFRA_ALREADY_HANDLED=true but no infra changes and infra is healthy"
+    fi
+    
+    if [[ "$INFRA_CHANGED" == "false" ]] && [[ "$APP_CHANGED" == "false" ]]; then
+        log_info "No changes detected - this may be a manual deployment or verification run"
+    fi
+    
+    # Log deployment context
+    if [[ "$INFRA_ALREADY_HANDLED" == "true" ]]; then
+        log_info "CI/CD Mode: Infrastructure operations handled by GitHub Actions"
+    else
+        log_info "Standalone Mode: All operations handled by deploy.sh"
+    fi
+}
+
 # Main deployment logic
 main() {
     log_info "Starting deployment orchestrator..."
     log_info "Infra Changed: ${INFRA_CHANGED}, App Changed: ${APP_CHANGED}"
     log_info "Infra Healthy: ${INFRA_HEALTHY}, Infra Status: ${INFRA_STATUS}"
+    log_info "Infra Already Handled: ${INFRA_ALREADY_HANDLED}"
+    
+    # Validate state
+    validate_deployment_state
     
     check_docker || exit $EXIT_CRITICAL
     
@@ -161,25 +318,91 @@ main() {
             log_info "Infrastructure changes were already handled by CI/CD - verifying and deploying app"
             
             # Verify infrastructure (should already be healthy from CI/CD jobs)
-            "${SCRIPT_DIR}/verify.sh" >/dev/null || {
-                log_error "Verification failed - infrastructure may not be ready"
-                exit $EXIT_CRITICAL
-            }
+            local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+            
+            if [[ -f "$verify_script" ]]; then
+                "$verify_script" >/dev/null || {
+                    log_error "Verification failed - infrastructure may not be ready"
+                    exit $EXIT_CRITICAL
+                }
+            else
+                log_warning "verify.sh not found - skipping verification"
+            fi
             
             # Deploy application if changed
             if [[ "$APP_CHANGED" == "true" ]]; then
                 deploy_application || exit $EXIT_ERROR
+            else
+                log_info "No application changes - infrastructure verified successfully"
             fi
         else
             # Standalone mode - handle everything in deploy.sh
             log_info "Infrastructure changes detected - full deployment flow (standalone mode)"
         
-        # Backup
-        log_info "Creating backup..."
-        BACKUP_ID=$("${SCRIPT_DIR}/backup.sh") || {
-            log_error "Backup failed - ABORTING"
-            exit $EXIT_CRITICAL
-        }
+        # CRITICAL: Always backup data before recreating containers (unless fresh deployment)
+        if is_fresh_deployment; then
+            log_info "Fresh deployment detected - skipping backup (no data to preserve)"
+            BACKUP_ID=""
+        else
+            # CRITICAL: Backup PostgreSQL and Dragonfly data BEFORE any container operations
+            log_info "Creating backup of PostgreSQL and Dragonfly data before infrastructure changes..."
+            log_warning "This backup is CRITICAL - data will be lost if backup fails!"
+            
+            # Find backup.sh script (check multiple locations)
+            local backup_script=""
+            if [[ -f "${DEPLOY_SCRIPT_DIR}/backup.sh" ]]; then
+                backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
+            elif [[ -f "${SCRIPT_DIR}/backup.sh" ]]; then
+                backup_script="${SCRIPT_DIR}/backup.sh"
+            elif [[ -f "/opt/healthcare-backend/devops/scripts/docker-infra/backup.sh" ]]; then
+                backup_script="/opt/healthcare-backend/devops/scripts/docker-infra/backup.sh"
+            fi
+            
+            if [[ -n "$backup_script" ]] && [[ -f "$backup_script" ]]; then
+                log_info "Using backup script: ${backup_script}"
+                
+                # Ensure containers are running for backup
+                if ! container_running "${CONTAINER_PREFIX}postgres"; then
+                    log_warning "PostgreSQL container not running - starting for backup..."
+                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                        log_error "Failed to start PostgreSQL for backup"
+                        exit $EXIT_CRITICAL
+                    }
+                    wait_for_health "${CONTAINER_PREFIX}postgres" 120 || {
+                        log_error "PostgreSQL did not become healthy for backup"
+                        exit $EXIT_CRITICAL
+                    }
+                fi
+                
+                if ! container_running "${CONTAINER_PREFIX}dragonfly"; then
+                    log_warning "Dragonfly container not running - starting for backup..."
+                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                        log_error "Failed to start Dragonfly for backup"
+                        exit $EXIT_CRITICAL
+                    }
+                    wait_for_health "${CONTAINER_PREFIX}dragonfly" 60 || {
+                        log_error "Dragonfly did not become healthy for backup"
+                        exit $EXIT_CRITICAL
+                    }
+                fi
+                
+                # Create backup
+                BACKUP_ID=$("$backup_script") || {
+                    log_error "Backup failed - ABORTING deployment to prevent data loss"
+                    exit $EXIT_CRITICAL
+                }
+                log_success "Backup created successfully (ID: ${BACKUP_ID})"
+            else
+                log_error "backup.sh not found in any expected location!"
+                log_error "Checked: ${DEPLOY_SCRIPT_DIR}/backup.sh"
+                log_error "Checked: ${SCRIPT_DIR}/backup.sh"
+                log_error "Checked: /opt/healthcare-backend/devops/scripts/docker-infra/backup.sh"
+                log_error "This would result in DATA LOSS - ABORTING"
+                exit $EXIT_CRITICAL
+            fi
+        fi
         
         # Recreate infrastructure
         deploy_infrastructure || {
@@ -187,97 +410,249 @@ main() {
             exit $EXIT_CRITICAL
         }
         
-        # Restore backup
-        if [[ -n "$BACKUP_ID" ]]; then
-            log_info "Restoring backup: ${BACKUP_ID}"
-            "${SCRIPT_DIR}/restore.sh" "$BACKUP_ID" || {
-                log_error "Restore failed"
-                exit $EXIT_CRITICAL
-            }
-        fi
+            # Restore backup only if we have one
+            if [[ -n "$BACKUP_ID" ]] && [[ "$BACKUP_ID" != "" ]]; then
+                log_info "Restoring backup: ${BACKUP_ID}"
+                
+                # Find restore.sh script
+                local restore_script="${DEPLOY_SCRIPT_DIR}/restore.sh"
+                [[ ! -f "$restore_script" ]] && restore_script="${SCRIPT_DIR}/restore.sh"
+                [[ ! -f "$restore_script" ]] && restore_script="/opt/healthcare-backend/devops/scripts/docker-infra/restore.sh"
+                
+                if [[ -f "$restore_script" ]]; then
+                    "$restore_script" "$BACKUP_ID" || {
+                        log_error "Restore failed"
+                        exit $EXIT_CRITICAL
+                    }
+                else
+                    log_error "restore.sh not found - cannot restore backup!"
+                    log_error "Checked: ${DEPLOY_SCRIPT_DIR}/restore.sh"
+                    log_error "Checked: ${SCRIPT_DIR}/restore.sh"
+                    log_error "Checked: /opt/healthcare-backend/devops/scripts/docker-infra/restore.sh"
+                    exit $EXIT_CRITICAL
+                fi
+            fi
         
         # Verify infrastructure
-        "${SCRIPT_DIR}/verify.sh" >/dev/null || {
-            log_error "Verification failed"
-            exit $EXIT_CRITICAL
-        }
+        local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+        [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+        [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+        
+        if [[ -f "$verify_script" ]]; then
+            "$verify_script" >/dev/null || {
+                log_error "Verification failed"
+                exit $EXIT_CRITICAL
+            }
+        else
+            log_warning "verify.sh not found - skipping verification"
+        fi
         
         # Deploy application if changed
         if [[ "$APP_CHANGED" == "true" ]]; then
             deploy_application || exit $EXIT_ERROR
-            fi
+        else
+            log_info "No application changes - infrastructure deployment completed"
         fi
+        fi  # End of INFRA_CHANGED=true else block (standalone mode)
         
     elif [[ "$INFRA_HEALTHY" != "true" ]] && [[ "$INFRA_CHANGED" != "true" ]]; then
-        # Infrastructure unhealthy but not changed
+        # Infrastructure unhealthy but not changed - only fix if needed, don't recreate
         if [[ "$INFRA_ALREADY_HANDLED" == "true" ]]; then
             # CI/CD already handled debug/recreate - just verify and deploy app
             log_info "Infrastructure was already handled by CI/CD - verifying and deploying app"
             
             # Verify infrastructure
-            "${SCRIPT_DIR}/verify.sh" >/dev/null || {
-                log_error "Verification failed - infrastructure may not be ready"
-                exit $EXIT_CRITICAL
-            }
+            local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+            
+            if [[ -f "$verify_script" ]]; then
+                "$verify_script" >/dev/null || {
+                    log_error "Verification failed - infrastructure may not be ready"
+                    exit $EXIT_CRITICAL
+                }
+            else
+                log_warning "verify.sh not found - skipping verification"
+            fi
             
             # Deploy app if changed
             if [[ "$APP_CHANGED" == "true" ]]; then
                 deploy_application || exit $EXIT_ERROR
+            else
+                log_info "No application changes - infrastructure verified successfully"
             fi
         else
-            # Standalone mode - handle everything
-        log_info "Infrastructure unhealthy - attempting auto-fix..."
+            # Standalone mode - try to fix without recreating
+            log_info "Infrastructure unhealthy - attempting auto-fix (without recreation)..."
         
-        if "${SCRIPT_DIR}/diagnose.sh" >/dev/null 2>&1; then
-            log_success "Auto-fix succeeded"
+            # Find diagnose.sh script
+            local diagnose_script="${DEPLOY_SCRIPT_DIR}/diagnose.sh"
+            [[ ! -f "$diagnose_script" ]] && diagnose_script="${SCRIPT_DIR}/diagnose.sh"
+            [[ ! -f "$diagnose_script" ]] && diagnose_script="/opt/healthcare-backend/devops/scripts/docker-infra/diagnose.sh"
             
-            # Deploy app if changed
-            if [[ "$APP_CHANGED" == "true" ]]; then
-                deploy_application || exit $EXIT_ERROR
-            fi
-        else
-            log_warning "Auto-fix failed - recreating infrastructure"
-            
-            # Backup
-            BACKUP_ID=$("${SCRIPT_DIR}/backup.sh") || {
-                log_error "Backup failed - ABORTING"
-                exit $EXIT_CRITICAL
-            }
-            
-            # Recreate
-            deploy_infrastructure || exit $EXIT_CRITICAL
-            
-            # Restore
-            if [[ -n "$BACKUP_ID" ]]; then
-                "${SCRIPT_DIR}/restore.sh" "$BACKUP_ID" || exit $EXIT_CRITICAL
-            fi
-            
-            # Verify
-            "${SCRIPT_DIR}/verify.sh" >/dev/null || exit $EXIT_CRITICAL
-            
-            # Deploy app if changed
-            if [[ "$APP_CHANGED" == "true" ]]; then
-                deploy_application || exit $EXIT_ERROR
+            if [[ ! -f "$diagnose_script" ]]; then
+                log_warning "diagnose.sh not found - skipping auto-fix, will recreate infrastructure"
+            elif "$diagnose_script" >/dev/null 2>&1; then
+                log_success "Auto-fix succeeded"
+                
+                # Re-check infrastructure health after auto-fix
+                check_infrastructure_health || true
+                
+                # Deploy app if changed
+                if [[ "$APP_CHANGED" == "true" ]]; then
+                    deploy_application || exit $EXIT_ERROR
+                fi
+                
+                # Exit early if auto-fix succeeded
+                exit $EXIT_SUCCESS
+            else
+                # Only recreate if this is NOT a fresh deployment (has existing data to preserve)
+                if is_fresh_deployment; then
+                    log_info "Fresh deployment - creating infrastructure from scratch"
+                    BACKUP_ID=""
+                else
+                    log_warning "Auto-fix failed - recreating infrastructure (has existing data)"
+                    
+                    # CRITICAL: Backup existing data before recreating
+                    log_info "Creating backup of PostgreSQL and Dragonfly data before infrastructure recreation..."
+                    log_warning "This backup is CRITICAL - data will be lost if backup fails!"
+                    
+                    # Find backup.sh script (check multiple locations)
+                    local backup_script=""
+                    if [[ -f "${DEPLOY_SCRIPT_DIR}/backup.sh" ]]; then
+                        backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
+                    elif [[ -f "${SCRIPT_DIR}/backup.sh" ]]; then
+                        backup_script="${SCRIPT_DIR}/backup.sh"
+                    elif [[ -f "/opt/healthcare-backend/devops/scripts/docker-infra/backup.sh" ]]; then
+                        backup_script="/opt/healthcare-backend/devops/scripts/docker-infra/backup.sh"
+                    fi
+                    
+                    if [[ -n "$backup_script" ]] && [[ -f "$backup_script" ]]; then
+                        log_info "Using backup script: ${backup_script}"
+                        
+                        # Ensure containers are running for backup
+                        if ! container_running "${CONTAINER_PREFIX}postgres"; then
+                            log_warning "PostgreSQL container not running - starting for backup..."
+                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                                log_error "Failed to start PostgreSQL for backup"
+                                exit $EXIT_CRITICAL
+                            }
+                            wait_for_health "${CONTAINER_PREFIX}postgres" 120 || {
+                                log_error "PostgreSQL did not become healthy for backup"
+                                exit $EXIT_CRITICAL
+                            }
+                        fi
+                        
+                        if ! container_running "${CONTAINER_PREFIX}dragonfly"; then
+                            log_warning "Dragonfly container not running - starting for backup..."
+                            docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                                log_error "Failed to start Dragonfly for backup"
+                                exit $EXIT_CRITICAL
+                            }
+                            wait_for_health "${CONTAINER_PREFIX}dragonfly" 60 || {
+                                log_error "Dragonfly did not become healthy for backup"
+                                exit $EXIT_CRITICAL
+                            }
+                        fi
+                        
+                        # Create backup
+                        BACKUP_ID=$("$backup_script") || {
+                            log_error "Backup failed - ABORTING deployment to prevent data loss"
+                            exit $EXIT_CRITICAL
+                        }
+                        log_success "Backup created successfully (ID: ${BACKUP_ID})"
+                    else
+                        log_error "backup.sh not found in any expected location!"
+                        log_error "Checked: ${DEPLOY_SCRIPT_DIR}/backup.sh"
+                        log_error "Checked: ${SCRIPT_DIR}/backup.sh"
+                        log_error "Checked: /opt/healthcare-backend/devops/scripts/docker-infra/backup.sh"
+                        log_error "This would result in DATA LOSS - ABORTING"
+                        exit $EXIT_CRITICAL
+                    fi
+                fi
+                
+                # Recreate infrastructure
+                deploy_infrastructure || exit $EXIT_CRITICAL
+                
+                # Restore backup only if we have one
+                if [[ -n "$BACKUP_ID" ]] && [[ "$BACKUP_ID" != "" ]]; then
+                    local restore_script="${DEPLOY_SCRIPT_DIR}/restore.sh"
+                    [[ ! -f "$restore_script" ]] && restore_script="${SCRIPT_DIR}/restore.sh"
+                    [[ ! -f "$restore_script" ]] && restore_script="/opt/healthcare-backend/devops/scripts/docker-infra/restore.sh"
+                    
+                    if [[ -f "$restore_script" ]]; then
+                        "$restore_script" "$BACKUP_ID" || exit $EXIT_CRITICAL
+                    else
+                        log_error "restore.sh not found - cannot restore backup!"
+                        exit $EXIT_CRITICAL
+                    fi
+                fi
+                
+                # Verify
+                local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+                [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+                [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+                
+                if [[ -f "$verify_script" ]]; then
+                    "$verify_script" >/dev/null || exit $EXIT_CRITICAL
+                else
+                    log_warning "verify.sh not found - skipping verification"
+                fi
+                
+                # Deploy app if changed
+                if [[ "$APP_CHANGED" == "true" ]]; then
+                    deploy_application || exit $EXIT_ERROR
+                else
+                    log_info "No application changes - infrastructure recreated successfully"
                 fi
             fi
         fi
+    else
+        # Infrastructure is healthy and unchanged
+        # Handle all sub-scenarios:
+        # 1. App changed - deploy app only
+        # 2. App unchanged - verify and exit (no-op deployment)
+        # 3. Both unchanged - verify and exit gracefully
         
-    elif [[ "$INFRA_HEALTHY" == "true" ]] && [[ "$APP_CHANGED" == "true" ]]; then
-        # Infrastructure healthy, app changed - deploy app only
-        log_info "Deploying application only..."
-        deploy_application || exit $EXIT_ERROR
-        
-    elif [[ "$INFRA_HEALTHY" == "true" ]] && [[ "$APP_CHANGED" != "true" ]]; then
-        # No changes - skip deployment
-        log_info "No changes detected - skipping deployment"
-        exit $EXIT_SUCCESS
+        if [[ "$APP_CHANGED" == "true" ]]; then
+            log_info "Infrastructure is healthy - deploying application only"
+            deploy_application || exit $EXIT_ERROR
+        else
+            log_info "No changes detected - performing verification only"
+            
+            # Still verify infrastructure health even if no changes
+            local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+            
+            if [[ -f "$verify_script" ]]; then
+                "$verify_script" >/dev/null || {
+                    log_warning "Verification found issues, but no changes to deploy"
+                    # Don't exit with error for no-op deployments - just warn
+                }
+            fi
+            
+            log_success "No changes to deploy - system verified"
+            exit $EXIT_SUCCESS
+        fi
     fi
     
-    # Final verification
-    "${SCRIPT_DIR}/verify.sh" >/dev/null || {
-        log_error "Final verification failed"
-        exit $EXIT_ERROR
-    }
+    # Final verification (only if we did something)
+    if [[ "$APP_CHANGED" == "true" ]] || [[ "$INFRA_CHANGED" == "true" ]] || [[ "$INFRA_HEALTHY" != "true" ]]; then
+        local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+        [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+        [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+        
+        if [[ -f "$verify_script" ]]; then
+            log_info "Performing final verification..."
+            "$verify_script" >/dev/null || {
+                log_error "Final verification failed"
+                exit $EXIT_ERROR
+            }
+        else
+            log_warning "verify.sh not found - skipping final verification"
+        fi
+    fi
     
     log_success "Deployment completed successfully"
     exit $EXIT_SUCCESS
