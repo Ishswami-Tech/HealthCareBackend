@@ -39,7 +39,7 @@ declare -A SERVICE_DETAILS
 
 # Check PostgreSQL
 check_postgres() {
-    local container="${CONTAINER_PREFIX}postgres"
+    local container="${POSTGRES_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then
@@ -86,7 +86,7 @@ check_postgres() {
 
 # Check Dragonfly
 check_dragonfly() {
-    local container="${CONTAINER_PREFIX}dragonfly"
+    local container="${DRAGONFLY_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then
@@ -130,7 +130,7 @@ check_dragonfly() {
 
 # Check OpenVidu
 check_openvidu() {
-    local container="${CONTAINER_PREFIX}openvidu-server"
+    local container="${OPENVIDU_CONTAINER}"
     
     # Security: Validate container name
     if ! validate_container_name "$container"; then

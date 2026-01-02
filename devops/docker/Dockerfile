@@ -269,30 +269,45 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo '# Prisma Client is generated once during yarn build in the builder stage' >> /app/entrypoint.sh && \
   echo '# and copied to production stage - no regeneration needed at runtime' >> /app/entrypoint.sh && \
   echo 'echo "[INFO] Verifying Prisma Client (generated during Docker build)..."' >> /app/entrypoint.sh && \
-  echo '# Check if Prisma Client exists in standard location (copied from builder stage)' >> /app/entrypoint.sh && \
-  echo 'if [ -f /app/node_modules/.prisma/client/index.js ] && [ -d /app/node_modules/.prisma/client/runtime ]; then' >> /app/entrypoint.sh && \
-  echo '  echo "[OK] Prisma Client found in standard location (from Docker build)"' >> /app/entrypoint.sh && \
-  echo '  # Create package.json for Node.js module resolution if needed' >> /app/entrypoint.sh && \
-  echo '  if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
-  echo '    echo "[INFO] Creating package.json for module resolution..."' >> /app/entrypoint.sh && \
-  echo '    echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '# Check if Prisma Client exists - Prisma 7 may generate index.js, client.js, or index.mjs' >> /app/entrypoint.sh && \
+  echo 'PRISMA_FOUND=0' >> /app/entrypoint.sh && \
+  echo '# Check standard location first' >> /app/entrypoint.sh && \
+  echo 'if [ -d /app/node_modules/.prisma/client ] && [ -d /app/node_modules/.prisma/client/runtime ]; then' >> /app/entrypoint.sh && \
+  echo '  if [ -f /app/node_modules/.prisma/client/index.js ] || [ -f /app/node_modules/.prisma/client/client.js ] || [ -f /app/node_modules/.prisma/client/index.mjs ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[OK] Prisma Client found in standard location (from Docker build)"' >> /app/entrypoint.sh && \
+  echo '    PRISMA_FOUND=1' >> /app/entrypoint.sh && \
+  echo '    if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
+  echo '      echo "[INFO] Creating package.json for module resolution..."' >> /app/entrypoint.sh && \
+  echo '      echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '    fi' >> /app/entrypoint.sh && \
   echo '  fi' >> /app/entrypoint.sh && \
-  echo '# Check if Prisma Client exists in custom location (also copied from builder stage)' >> /app/entrypoint.sh && \
-  echo 'elif [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ] || [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.mjs ]; then' >> /app/entrypoint.sh && \
-  echo '  echo "[OK] Prisma Client found in custom location (from Docker build)"' >> /app/entrypoint.sh && \
-  echo '  # Copy to standard location for module resolution' >> /app/entrypoint.sh && \
-  echo '  mkdir -p /app/node_modules/.prisma/client' >> /app/entrypoint.sh && \
-  echo '  cp -r /app/src/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/ 2>/dev/null || true' >> /app/entrypoint.sh && \
-  echo '  if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
-  echo '    echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '# Check custom location if not found in standard location' >> /app/entrypoint.sh && \
+  echo 'if [ "$PRISMA_FOUND" -eq 0 ] && [ -d /app/src/libs/infrastructure/database/prisma/generated/client ]; then' >> /app/entrypoint.sh && \
+  echo '  if [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.js ] || [ -f /app/src/libs/infrastructure/database/prisma/generated/client/client.js ] || [ -f /app/src/libs/infrastructure/database/prisma/generated/client/index.mjs ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[OK] Prisma Client found in custom location (from Docker build)"' >> /app/entrypoint.sh && \
+  echo '    PRISMA_FOUND=1' >> /app/entrypoint.sh && \
+  echo '    mkdir -p /app/node_modules/.prisma/client' >> /app/entrypoint.sh && \
+  echo '    cp -r /app/src/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/ 2>/dev/null || true' >> /app/entrypoint.sh && \
+  echo '    if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
+  echo '      echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '    fi' >> /app/entrypoint.sh && \
   echo '  fi' >> /app/entrypoint.sh && \
-  echo '# Prisma Client should already be in dist (copied during build), but verify' >> /app/entrypoint.sh && \
-  echo '  if [ ! -f /app/dist/libs/infrastructure/database/prisma/generated/client/index.js ]; then' >> /app/entrypoint.sh && \
-  echo '    echo "[INFO] Copying Prisma Client to dist location..."' >> /app/entrypoint.sh && \
-  echo '    mkdir -p /app/dist/libs/infrastructure/database/prisma/generated/client' >> /app/entrypoint.sh && \
-  echo '    cp -r /app/node_modules/.prisma/client/* /app/dist/libs/infrastructure/database/prisma/generated/client/ 2>/dev/null || true' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '# Check dist location as last resort (Prisma Client should be there from build)' >> /app/entrypoint.sh && \
+  echo 'if [ "$PRISMA_FOUND" -eq 0 ] && [ -d /app/dist/libs/infrastructure/database/prisma/generated/client ]; then' >> /app/entrypoint.sh && \
+  echo '  if [ -f /app/dist/libs/infrastructure/database/prisma/generated/client/index.js ] || [ -f /app/dist/libs/infrastructure/database/prisma/generated/client/client.js ] || [ -f /app/dist/libs/infrastructure/database/prisma/generated/client/index.mjs ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[OK] Prisma Client found in dist location (from Docker build)"' >> /app/entrypoint.sh && \
+  echo '    PRISMA_FOUND=1' >> /app/entrypoint.sh && \
+  echo '    mkdir -p /app/node_modules/.prisma/client' >> /app/entrypoint.sh && \
+  echo '    cp -r /app/dist/libs/infrastructure/database/prisma/generated/client/* /app/node_modules/.prisma/client/ 2>/dev/null || true' >> /app/entrypoint.sh && \
+  echo '    if [ ! -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
+  echo '      echo "{\"name\":\"@prisma/client\",\"main\":\"index.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '    fi' >> /app/entrypoint.sh && \
   echo '  fi' >> /app/entrypoint.sh && \
-  echo 'else' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '# If still not found, exit with error' >> /app/entrypoint.sh && \
+  echo 'if [ "$PRISMA_FOUND" -eq 0 ]; then' >> /app/entrypoint.sh && \
   echo '  echo "[ERROR] Prisma Client not found! It should have been generated during Docker build."' >> /app/entrypoint.sh && \
   echo '  echo "[ERROR] This is a build-time issue, not a runtime issue."' >> /app/entrypoint.sh && \
   echo '  echo "[DEBUG] Standard location: /app/node_modules/.prisma/client/"' >> /app/entrypoint.sh && \

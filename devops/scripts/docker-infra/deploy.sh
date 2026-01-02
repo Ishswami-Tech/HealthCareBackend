@@ -13,8 +13,14 @@ SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
 
 # This script is Docker-specific for production deployments
 
-# Container prefix
+# Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
+DRAGONFLY_CONTAINER="dragonfly"
+OPENVIDU_CONTAINER="openvidu-server"
+COTURN_CONTAINER="coturn"
 
 # Parse environment variables with defaults
 # These are set by CI/CD workflow, but we provide safe defaults for manual execution
@@ -56,9 +62,9 @@ EXIT_CRITICAL=3
 # Check if this is a fresh deployment (no existing infrastructure/data)
 is_fresh_deployment() {
     # Check if postgres container exists
-    if container_running "${CONTAINER_PREFIX}postgres"; then
+    if container_running "${POSTGRES_CONTAINER}"; then
         # Container exists - check if database has any tables/data
-        local table_count=$(docker exec "${CONTAINER_PREFIX}postgres" psql -U postgres -d userdb -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null | xargs || echo "0")
+        local table_count=$(docker exec "${POSTGRES_CONTAINER}" psql -U postgres -d userdb -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE';" 2>/dev/null | xargs || echo "0")
         if [[ "$table_count" =~ ^[1-9][0-9]*$ ]]; then
             return 1  # Not fresh - has data
         fi
@@ -146,7 +152,7 @@ ensure_volumes_preserved() {
 stop_infrastructure_gracefully() {
     log_info "Stopping infrastructure containers gracefully..."
     
-    local containers=("${CONTAINER_PREFIX}postgres" "${CONTAINER_PREFIX}dragonfly")
+    local containers=("${POSTGRES_CONTAINER}" "${DRAGONFLY_CONTAINER}")
     
     for container in "${containers[@]}"; do
         # Security: Validate container name
@@ -202,19 +208,15 @@ deploy_infrastructure() {
     if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate; then
         log_success "Infrastructure deployed"
         
-        # Wait for health
-        for service in postgres dragonfly; do
-            local container="${CONTAINER_PREFIX}${service}"
-            # Security: Validate container name
-            if ! validate_container_name "$container"; then
-                log_error "Invalid container name: ${container}"
-                return 1
-            fi
-            wait_for_health "$container" 300 || {
-                log_error "${service} did not become healthy"
-                return 1
-            }
-        done
+        # Wait for health (using fixed container names)
+        wait_for_health "${POSTGRES_CONTAINER}" 300 || {
+            log_error "PostgreSQL did not become healthy"
+            return 1
+        }
+        wait_for_health "${DRAGONFLY_CONTAINER}" 300 || {
+            log_error "Dragonfly did not become healthy"
+            return 1
+        }
         
         return 0
     else
@@ -364,25 +366,25 @@ main() {
                 log_info "Using backup script: ${backup_script}"
                 
                 # Ensure containers are running for backup
-                if ! container_running "${CONTAINER_PREFIX}postgres"; then
+                if ! container_running "${POSTGRES_CONTAINER}"; then
                     log_warning "PostgreSQL container not running - starting for backup..."
                     docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
                         log_error "Failed to start PostgreSQL for backup"
                         exit $EXIT_CRITICAL
                     }
-                    wait_for_health "${CONTAINER_PREFIX}postgres" 120 || {
+                    wait_for_health "${POSTGRES_CONTAINER}" 120 || {
                         log_error "PostgreSQL did not become healthy for backup"
                         exit $EXIT_CRITICAL
                     }
                 fi
                 
-                if ! container_running "${CONTAINER_PREFIX}dragonfly"; then
+                if ! container_running "${DRAGONFLY_CONTAINER}"; then
                     log_warning "Dragonfly container not running - starting for backup..."
                     docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
                         log_error "Failed to start Dragonfly for backup"
                         exit $EXIT_CRITICAL
                     }
-                    wait_for_health "${CONTAINER_PREFIX}dragonfly" 60 || {
+                    wait_for_health "${DRAGONFLY_CONTAINER}" 60 || {
                         log_error "Dragonfly did not become healthy for backup"
                         exit $EXIT_CRITICAL
                     }
@@ -531,25 +533,25 @@ main() {
                         log_info "Using backup script: ${backup_script}"
                         
                         # Ensure containers are running for backup
-                        if ! container_running "${CONTAINER_PREFIX}postgres"; then
+                        if ! container_running "${POSTGRES_CONTAINER}"; then
                             log_warning "PostgreSQL container not running - starting for backup..."
                             docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
                                 log_error "Failed to start PostgreSQL for backup"
                                 exit $EXIT_CRITICAL
                             }
-                            wait_for_health "${CONTAINER_PREFIX}postgres" 120 || {
+                            wait_for_health "${POSTGRES_CONTAINER}" 120 || {
                                 log_error "PostgreSQL did not become healthy for backup"
                                 exit $EXIT_CRITICAL
                             }
                         fi
                         
-                        if ! container_running "${CONTAINER_PREFIX}dragonfly"; then
+                        if ! container_running "${DRAGONFLY_CONTAINER}"; then
                             log_warning "Dragonfly container not running - starting for backup..."
                             docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
                                 log_error "Failed to start Dragonfly for backup"
                                 exit $EXIT_CRITICAL
                             }
-                            wait_for_health "${CONTAINER_PREFIX}dragonfly" 60 || {
+                            wait_for_health "${DRAGONFLY_CONTAINER}" 60 || {
                                 log_error "Dragonfly did not become healthy for backup"
                                 exit $EXIT_CRITICAL
                             }

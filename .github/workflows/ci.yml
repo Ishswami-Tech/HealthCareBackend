@@ -304,7 +304,7 @@ jobs:
             echo "🔍 Ensuring PostgreSQL and Dragonfly containers are running for backup..."
             
             # Check and start PostgreSQL if needed
-            if ! docker ps --format '{{.Names}}' | grep -q "^latest-postgres$"; then
+            if ! docker ps --format '{{.Names}}' | grep -q "^postgres$"; then
               echo "⚠️  PostgreSQL container not running - starting for backup..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
                 echo "❌ Failed to start PostgreSQL for backup"
@@ -314,7 +314,7 @@ jobs:
               MAX_RETRIES=30
               RETRY_COUNT=0
               while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-                if docker exec latest-postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+                if docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
                   echo "✅ PostgreSQL is ready for backup"
                   break
                 fi
@@ -330,7 +330,7 @@ jobs:
             fi
             
             # Check and start Dragonfly if needed
-            if ! docker ps --format '{{.Names}}' | grep -q "^latest-dragonfly$"; then
+            if ! docker ps --format '{{.Names}}' | grep -q "^dragonfly$"; then
               echo "⚠️  Dragonfly container not running - starting for backup..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
                 echo "❌ Failed to start Dragonfly for backup"
@@ -340,7 +340,7 @@ jobs:
               MAX_RETRIES=20
               RETRY_COUNT=0
               while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-                if docker exec latest-dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+                if docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
                   echo "✅ Dragonfly is ready for backup"
                   break
                 fi
@@ -486,12 +486,12 @@ jobs:
             
             # CRITICAL: Ensure containers are running before graceful stop (for data flush)
             echo "🔍 Ensuring containers are running for graceful shutdown..."
-            CONTAINERS=("latest-postgres" "latest-dragonfly")
+            CONTAINERS=("postgres" "dragonfly")
             
             for CONTAINER in "${CONTAINERS[@]}"; do
               if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
                 echo "⚠️  Container ${CONTAINER} not running - starting for graceful shutdown..."
-                docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER#latest-}" || {
+                docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER}" || {
                   echo "❌ Failed to start ${CONTAINER}"
                   exit 1
                 }
@@ -528,7 +528,7 @@ jobs:
             MAX_RETRIES=30
             RETRY_COUNT=0
             while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              if docker exec latest-postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+              if docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
                 echo "✅ PostgreSQL is ready"
                 break
               fi
@@ -547,7 +547,7 @@ jobs:
             MAX_RETRIES=20
             RETRY_COUNT=0
             while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              if docker exec latest-dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+              if docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
                 echo "✅ Dragonfly is ready"
                 break
               fi

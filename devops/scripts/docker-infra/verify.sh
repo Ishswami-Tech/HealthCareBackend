@@ -23,8 +23,11 @@ if ! command -v log_info &>/dev/null; then
     fi
 fi
 
-# Container prefix
+# Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
+
+# Fixed container names for infrastructure (never change)
+POSTGRES_CONTAINER="postgres"
 
 # Verify infrastructure
 verify_infrastructure() {
@@ -34,7 +37,12 @@ verify_infrastructure() {
     
     # Check containers
     for service in postgres dragonfly; do
-        local container="${CONTAINER_PREFIX}${service}"
+        # Use fixed name for postgres, prefix for others
+        if [[ "$service" == "postgres" ]]; then
+            local container="${POSTGRES_CONTAINER}"
+        else
+            local container="${CONTAINER_PREFIX}${service}"
+        fi
         if ! container_running "$container"; then
             log_error "${container} is not running"
             all_ok=false
@@ -60,7 +68,7 @@ verify_infrastructure() {
 verify_data_integrity() {
     log_info "Verifying data integrity..."
     
-    local container="${CONTAINER_PREFIX}postgres"
+    local container="${POSTGRES_CONTAINER}"
     
     # Test query
     if docker exec "$container" psql -U postgres -d userdb -c "SELECT 1" >/dev/null 2>&1; then
