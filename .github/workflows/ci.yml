@@ -359,7 +359,7 @@ jobs:
             echo "💾 Creating backup of PostgreSQL and Dragonfly data..."
             echo "⚠️  This backup is CRITICAL - data will be lost if backup fails!"
             chmod +x /tmp/backup.sh
-            BACKUP_ID=\$(/tmp/backup.sh) || {
+            BACKUP_ID=\$(/tmp/backup.sh pre-deployment) || {
               echo "❌ Backup failed - ABORTING to prevent data loss"
               exit 1
             }

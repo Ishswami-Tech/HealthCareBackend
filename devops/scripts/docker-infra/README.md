@@ -208,7 +208,7 @@ flowchart TD
     Keep5 --> Done
 ```
 
-### Health Check Flow
+### Health Check Flow (with Auto-Recovery)
 
 ```mermaid
 flowchart TD
@@ -217,63 +217,59 @@ flowchart TD
     DockerOK -->|No| Exit1[Exit code 2: Docker error]
     DockerOK -->|Yes| InitVars[Initialize status arrays]
 
-    InitVars --> CheckPostgres[Check PostgreSQL]
-    CheckPostgres --> PostgresRunning{Container running?}
-    PostgresRunning -->|No| PostgresMissing[Status: missing]
-    PostgresRunning -->|Yes| PostgresHealth[Check pg_isready]
-    PostgresHealth --> PostgresOK{Healthy?}
-    PostgresOK -->|Yes| PostgresHealthy[Status: healthy]
-    PostgresOK -->|No| PostgresUnhealthy[Status: unhealthy]
+    InitVars --> CheckAll[Check All Services]
+    CheckAll --> EvaluateStatus[Evaluate overall status]
 
-    PostgresMissing --> CheckDragonfly
-    PostgresHealthy --> CheckDragonfly
-    PostgresUnhealthy --> CheckDragonfly
-
-    CheckDragonfly[Check Dragonfly] --> DragonflyRunning{Container running?}
-    DragonflyRunning -->|No| DragonflyMissing[Status: missing]
-    DragonflyRunning -->|Yes| DragonflyHealth[Check redis-cli ping]
-    DragonflyHealth --> DragonflyOK{Healthy?}
-    DragonflyOK -->|Yes| DragonflyHealthy[Status: healthy]
-    DragonflyOK -->|No| DragonflyUnhealthy[Status: unhealthy]
-
-    DragonflyMissing --> CheckOpenVidu
-    DragonflyHealthy --> CheckOpenVidu
-    DragonflyUnhealthy --> CheckOpenVidu
-
-    CheckOpenVidu[Check OpenVidu] --> OpenViduRunning{Container running?}
-    OpenViduRunning -->|No| OpenViduMissing[Status: missing]
-    OpenViduRunning -->|Yes| OpenViduHealthy[Status: healthy]
-
-    OpenViduMissing --> CheckCoturn
-    OpenViduHealthy --> CheckCoturn
-
-    CheckCoturn[Check Coturn] --> CoturnRunning{Container running?}
-    CoturnRunning -->|No| CoturnMissing[Status: missing]
-    CoturnRunning -->|Yes| CoturnHealth[Check STUN/TURN]
-    CoturnHealth --> CoturnOK{Healthy?}
-    CoturnOK -->|Yes| CoturnHealthy[Status: healthy]
-    CoturnOK -->|No| CoturnUnhealthy[Status: unhealthy]
-
-    CoturnMissing --> CheckPortainer
-    CoturnHealthy --> CheckPortainer
-    CoturnUnhealthy --> CheckPortainer
-
-    CheckPortainer[Check Portainer] --> PortainerRunning{Container running?}
-    PortainerRunning -->|No| PortainerMissing[Status: missing]
-    PortainerRunning -->|Yes| PortainerHealth[Check HTTP :9000]
-    PortainerHealth --> PortainerOK{Healthy?}
-    PortainerOK -->|Yes| PortainerHealthy[Status: healthy]
-    PortainerOK -->|No| PortainerUnhealthy[Status: unhealthy]
-
-    PortainerMissing --> EvaluateStatus
-    PortainerHealthy --> EvaluateStatus
-    PortainerUnhealthy --> EvaluateStatus
-
-    EvaluateStatus[Evaluate overall status] --> AnyMissing{Any missing?}
-    AnyMissing -->|Yes| Exit3[Exit code 3: Missing containers]
+    EvaluateStatus --> AnyMissing{Any missing?}
+    AnyMissing -->|Yes| AutoRecover{AUTO_RECREATE_MISSING?}
     AnyMissing -->|No| AnyUnhealthy{Any unhealthy?}
-    AnyUnhealthy -->|Yes| Exit1B[Exit code 1: Unhealthy]
-    AnyUnhealthy -->|No| Exit0[Exit code 0: All healthy]
+
+    AutoRecover -->|Yes| Recovery[Recovery Workflow]
+    AutoRecover -->|No| Exit3[Exit code 3: Missing containers]
+
+    Recovery --> Backup[STEP 1: Backup data]
+    Backup --> Recreate[STEP 2: Recreate containers]
+    Recreate --> Restore[STEP 3: Restore backup]
+    Restore --> WaitHealth[STEP 4: Wait for health]
+    WaitHealth --> Recheck[STEP 5: Re-check all services]
+
+    Recheck --> RecoverySuccess{Recovery Success?}
+    RecoverySuccess -->|Yes| RetryCheck{Retry < 2?}
+    RecoverySuccess -->|No| RetryRecovery{Retry < 2?}
+
+    RetryRecovery -->|Yes| WaitRetry[Wait & Retry Recovery]
+    WaitRetry --> Recovery
+    RetryRecovery -->|No| Exit3
+
+    RetryCheck -->|Yes| WaitRetry2[Wait & Re-check]
+    WaitRetry2 --> CheckAll
+    RetryCheck -->|No| Exit0[Exit code 0: All healthy]
+
+    AnyUnhealthy -->|Yes| AutoFix{AUTO_RECREATE_MISSING?}
+    AnyUnhealthy -->|No| Exit0
+
+    AutoFix -->|Yes| FixWorkflow[Fix Workflow]
+    AutoFix -->|No| Exit1B[Exit code 1: Unhealthy]
+
+    FixWorkflow --> FixBackup[STEP 1: Backup data]
+    FixBackup --> Diagnose[STEP 2: Run diagnose.sh]
+    Diagnose --> Restart[STEP 3: Restart containers]
+    Restart --> FixRestore[STEP 4: Restore if needed]
+    FixRestore --> FixWait[STEP 5: Wait for health]
+    FixWait --> FixRecheck[STEP 6: Re-check all services]
+
+    FixRecheck --> FixSuccess{Fix Success?}
+    FixSuccess -->|Yes| RetryFixCheck{Retry < 2?}
+    FixSuccess -->|No| RetryFix{Retry < 2?}
+
+    RetryFix -->|Yes| WaitFixRetry[Wait & Retry Fix]
+    WaitFixRetry --> FixWorkflow
+    RetryFix -->|No| MarkMissing[Mark as Missing]
+    MarkMissing --> Recovery
+
+    RetryFixCheck -->|Yes| WaitFixRetry2[Wait & Re-check]
+    WaitFixRetry2 --> CheckAll
+    RetryFixCheck -->|No| Exit0
 ```
 
 ---

@@ -48,19 +48,20 @@ verify_infrastructure() {
     
     local all_ok=true
     
-    # Check containers
-    for service in postgres dragonfly; do
-        # Use fixed name for postgres, prefix for others
-        if [[ "$service" == "postgres" ]]; then
-            local container="${POSTGRES_CONTAINER}"
-        else
-            local container="${CONTAINER_PREFIX}${service}"
-        fi
-        if ! container_running "$container"; then
-            log_error "${container} is not running"
-            all_ok=false
-        fi
-    done
+    # Check containers (INFRASTRUCTURE ONLY - use fixed names)
+    # Infrastructure containers: postgres, dragonfly (fixed names, no prefix)
+    # Application containers: api, worker (use prefix, checked separately)
+    if ! container_running "${POSTGRES_CONTAINER}"; then
+        log_error "${POSTGRES_CONTAINER} is not running"
+        all_ok=false
+    fi
+    
+    # Use fixed name for dragonfly (infrastructure container)
+    local dragonfly_container="dragonfly"
+    if ! container_running "$dragonfly_container"; then
+        log_error "${dragonfly_container} is not running"
+        all_ok=false
+    fi
     
     # Check health
     "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1 || {
