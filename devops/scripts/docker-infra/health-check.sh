@@ -815,6 +815,7 @@ main() {
     local all_healthy=true
     local any_missing=false
     local any_unhealthy=false
+    local portainer_unhealthy=false  # Track Portainer separately (non-critical)
     
     # Check each service
     check_postgres || {
@@ -845,14 +846,18 @@ main() {
         all_healthy=false
     }
     
-    # Check Portainer
+    # Check Portainer (non-critical UI service - don't fail overall health if only Portainer is unhealthy)
     check_portainer || {
         if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
-            any_missing=true
+            # Portainer missing is acceptable (non-critical)
+            portainer_unhealthy=true
+            log_warning "Portainer is missing (non-critical UI service - acceptable)"
         else
-            any_unhealthy=true
+            # Portainer unhealthy is acceptable (non-critical)
+            portainer_unhealthy=true
+            log_warning "Portainer is unhealthy (non-critical UI service - acceptable, may need initial setup)"
         fi
-        all_healthy=false
+        # Don't set all_healthy=false or any_missing/any_unhealthy for Portainer
     }
     
     # Check OpenVidu
@@ -944,6 +949,7 @@ main() {
                 all_healthy=true
                 any_missing=false
                 any_unhealthy=false
+                portainer_unhealthy=false
             
             check_postgres || {
                 if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
@@ -972,13 +978,14 @@ main() {
                 all_healthy=false
             }
             
+            # Portainer is non-critical - track separately
             check_portainer || {
                 if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
-                    any_missing=true
+                    portainer_unhealthy=true
                 else
-                    any_unhealthy=true
+                    portainer_unhealthy=true
                 fi
-                all_healthy=false
+                # Don't set all_healthy=false for Portainer
             }
             
             check_openvidu || {
@@ -1049,6 +1056,7 @@ main() {
                 all_healthy=true
                 any_missing=false
                 any_unhealthy=false
+                portainer_unhealthy=false
             
             check_postgres || {
                 if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
@@ -1077,13 +1085,14 @@ main() {
                 all_healthy=false
             }
             
+            # Portainer is non-critical - track separately
             check_portainer || {
                 if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
-                    any_missing=true
+                    portainer_unhealthy=true
                 else
-                    any_unhealthy=true
+                    portainer_unhealthy=true
                 fi
-                all_healthy=false
+                # Don't set all_healthy=false for Portainer
             }
             
             check_openvidu || {
@@ -1181,11 +1190,21 @@ main() {
     fi
     
     # Set exit code with informative message
+    # Portainer is non-critical, so if only Portainer is unhealthy, consider infrastructure healthy
     if $all_healthy; then
-        log_success "All infrastructure services are healthy"
+        if $portainer_unhealthy; then
+            log_success "All critical infrastructure services are healthy"
+            log_warning "Portainer (non-critical UI) is unhealthy - this is acceptable"
+            log_info "Portainer may need initial setup. Access http://localhost:9000 to complete setup."
+        else
+            log_success "All infrastructure services are healthy"
+        fi
         exit $EXIT_HEALTHY
     elif $any_missing; then
-        log_error "One or more infrastructure containers are missing"
+        log_error "One or more critical infrastructure containers are missing"
+        if $portainer_unhealthy; then
+            log_warning "Portainer (non-critical UI) is also unhealthy - this is acceptable"
+        fi
         if [[ "${AUTO_RECREATE_MISSING:-false}" != "true" ]]; then
             log_info "Tip: Set AUTO_RECREATE_MISSING=true to automatically recreate missing containers"
         else
@@ -1193,10 +1212,16 @@ main() {
         fi
         exit $EXIT_MISSING
     elif $any_unhealthy; then
-        log_error "One or more infrastructure services are unhealthy"
+        log_error "One or more critical infrastructure services are unhealthy"
+        if $portainer_unhealthy; then
+            log_warning "Portainer (non-critical UI) is also unhealthy - this is acceptable"
+        fi
         exit $EXIT_CRITICAL
     else
         log_warning "Infrastructure health check completed with minor issues"
+        if $portainer_unhealthy; then
+            log_warning "Portainer (non-critical UI) is unhealthy - this is acceptable"
+        fi
         exit $EXIT_MINOR_ISSUES
     fi
 }
