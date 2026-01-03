@@ -550,7 +550,8 @@ sanitize_filename() {
     echo "$filename" | sed 's/[^a-zA-Z0-9_.-]//g'
 }
 
-# S3 helper functions (using s3cmd for S3-compatible storage like Contabo)
+# S3 helper functions (using rclone as primary, s3cmd as fallback for Contabo S3)
+# Contabo recommends rclone: https://help.contabo.com/en/support/solutions/articles/103000305592-what-is-the-rclone-tool-
 s3_upload() {
     local local_file="$1"
     local s3_path="$2"
@@ -572,14 +573,73 @@ s3_upload() {
         return 0
     fi
     
-    # Check for s3cmd (preferred for S3-compatible storage like Contabo)
-    if ! command_exists s3cmd; then
-        log_error "s3cmd is not installed. Install it to use S3 backups."
-        log_info "For Contabo S3, install s3cmd:"
-        log_info "  sudo apt-get update && sudo apt-get install -y s3cmd"
-        log_info "Or: pip3 install s3cmd"
+    # Try rclone first (Contabo's recommended tool)
+    if command_exists rclone; then
+        _s3_upload_rclone "$local_file" "$s3_path" && return 0
+        log_warning "rclone upload failed, trying s3cmd fallback..."
+    fi
+    
+    # Fallback to s3cmd
+    if command_exists s3cmd; then
+        _s3_upload_s3cmd "$local_file" "$s3_path" && return 0
+    fi
+    
+    # Neither tool available
+    log_error "Neither rclone nor s3cmd is installed. Install one to use S3 backups."
+    log_info "For Contabo S3, Contabo recommends rclone:"
+    log_info "  curl https://rclone.org/install.sh | sudo bash"
+    log_info "Or install s3cmd:"
+    log_info "  sudo apt-get update && sudo apt-get install -y s3cmd"
+    return 1
+}
+
+# Upload using rclone (Contabo's recommended tool)
+_s3_upload_rclone() {
+    local local_file="$1"
+    local s3_path="$2"
+    
+    # Configure rclone remote if not exists
+    local remote_name="contabo-s3"
+    if ! rclone listremotes | grep -q "^${remote_name}:$"; then
+        log_info "Configuring rclone for Contabo S3..."
+        
+        # Create rclone config directory
+        mkdir -p "${HOME}/.config/rclone"
+        
+        # Generate rclone config for Contabo S3 (Ceph Object Storage)
+        # Based on: https://help.contabo.com/en/support/solutions/articles/103000305592-what-is-the-rclone-tool-
+        cat > "${HOME}/.config/rclone/rclone.conf" << EOF
+[${remote_name}]
+type = s3
+provider = Ceph
+access_key_id = ${S3_ACCESS_KEY_ID}
+secret_access_key = ${S3_SECRET_ACCESS_KEY}
+endpoint = ${S3_ENDPOINT}
+region = ${S3_REGION:-eu-central-1}
+EOF
+        chmod 600 "${HOME}/.config/rclone/rclone.conf"
+        log_success "rclone configured for Contabo S3"
+    fi
+    
+    log_info "Uploading ${local_file} to ${remote_name}:${S3_BUCKET}/${s3_path} using rclone..."
+    
+    # Use rclone to upload (Contabo S3 compatible)
+    if rclone copy "$local_file" "${remote_name}:${S3_BUCKET}/${s3_path}" \
+        --s3-no-head \
+        --s3-no-head-object \
+        --quiet; then
+        log_success "Uploaded to S3 using rclone: ${s3_path}"
+        return 0
+    else
+        log_error "Failed to upload to S3 using rclone: ${s3_path}"
         return 1
     fi
+}
+
+# Upload using s3cmd (fallback)
+_s3_upload_s3cmd() {
+    local local_file="$1"
+    local s3_path="$2"
     
     # Configure s3cmd if not already configured
     local s3cmd_config="${HOME}/.s3cfg"
@@ -609,17 +669,17 @@ EOF
         log_success "s3cmd configured for Contabo S3"
     fi
     
-    log_info "Uploading ${local_file} to s3://${S3_BUCKET}/${s3_path}..."
+    log_info "Uploading ${local_file} to s3://${S3_BUCKET}/${s3_path} using s3cmd..."
     
     # Use s3cmd to upload (Contabo S3 compatible)
     if s3cmd put "$local_file" "s3://${S3_BUCKET}/${s3_path}" \
         --no-mime-magic \
         --guess-mime-type \
         --quiet; then
-        log_success "Uploaded to S3: ${s3_path}"
+        log_success "Uploaded to S3 using s3cmd: ${s3_path}"
         return 0
     else
-        log_error "Failed to upload to S3: ${s3_path}"
+        log_error "Failed to upload to S3 using s3cmd: ${s3_path}"
         return 1
     fi
 }
@@ -646,17 +706,67 @@ s3_download() {
         return 1
     fi
     
-    if ! command_exists s3cmd; then
-        log_error "s3cmd is not installed"
-        return 1
+    # Try rclone first (Contabo's recommended tool)
+    if command_exists rclone; then
+        _s3_download_rclone "$s3_path" "$local_file" && return 0
+        log_warning "rclone download failed, trying s3cmd fallback..."
     fi
     
-    # Ensure s3cmd is configured (same as upload function)
+    # Fallback to s3cmd
+    if command_exists s3cmd; then
+        _s3_download_s3cmd "$s3_path" "$local_file" && return 0
+    fi
+    
+    log_error "Neither rclone nor s3cmd is installed"
+    return 1
+}
+
+# Download using rclone
+_s3_download_rclone() {
+    local s3_path="$1"
+    local local_file="$2"
+    local remote_name="contabo-s3"
+    
+    # Ensure rclone is configured (same as upload)
+    if ! rclone listremotes | grep -q "^${remote_name}:$"; then
+        mkdir -p "${HOME}/.config/rclone"
+        cat > "${HOME}/.config/rclone/rclone.conf" << EOF
+[${remote_name}]
+type = s3
+provider = Ceph
+access_key_id = ${S3_ACCESS_KEY_ID}
+secret_access_key = ${S3_SECRET_ACCESS_KEY}
+endpoint = ${S3_ENDPOINT}
+region = ${S3_REGION:-eu-central-1}
+EOF
+        chmod 600 "${HOME}/.config/rclone/rclone.conf"
+    fi
+    
+    log_info "Downloading ${remote_name}:${S3_BUCKET}/${s3_path} to ${local_file} using rclone..."
+    
+    if rclone copy "${remote_name}:${S3_BUCKET}/${s3_path}" "$(dirname "$local_file")" \
+        --include "$(basename "$s3_path")" \
+        --s3-no-head \
+        --quiet; then
+        # rclone copies to directory, move to final location
+        mv "$(dirname "$local_file")/$(basename "$s3_path")" "$local_file" 2>/dev/null || true
+        log_success "Downloaded from S3 using rclone: ${s3_path}"
+        return 0
+    else
+        log_error "Failed to download from S3 using rclone: ${s3_path}"
+        return 1
+    fi
+}
+
+# Download using s3cmd (fallback)
+_s3_download_s3cmd() {
+    local s3_path="$1"
+    local local_file="$2"
+    
+    # Ensure s3cmd is configured
     local s3cmd_config="${HOME}/.s3cfg"
     if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
-        log_info "Configuring s3cmd for Contabo S3..."
         mkdir -p "$(dirname "$s3cmd_config")"
-        
         cat > "$s3cmd_config" << EOF
 [default]
 access_key = ${S3_ACCESS_KEY_ID}
@@ -667,23 +777,20 @@ bucket_location = ${S3_REGION:-eu-central-1}
 use_https = True
 signature_v2 = False
 EOF
-        
         if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
             echo "use_https = True" >> "$s3cmd_config"
             echo "signature_v2 = False" >> "$s3cmd_config"
         fi
-        
         chmod 600 "$s3cmd_config"
     fi
     
-    log_info "Downloading s3://${S3_BUCKET}/${s3_path} to ${local_file}..."
+    log_info "Downloading s3://${S3_BUCKET}/${s3_path} to ${local_file} using s3cmd..."
     
-    # Use s3cmd to download
     if s3cmd get "s3://${S3_BUCKET}/${s3_path}" "$local_file" --quiet; then
-        log_success "Downloaded from S3: ${s3_path}"
+        log_success "Downloaded from S3 using s3cmd: ${s3_path}"
         return 0
     else
-        log_error "Failed to download from S3: ${s3_path}"
+        log_error "Failed to download from S3 using s3cmd: ${s3_path}"
         return 1
     fi
 }
@@ -700,15 +807,20 @@ s3_exists() {
         return 1
     fi
     
-    if ! command_exists s3cmd; then
-        return 1
+    # Try rclone first
+    if command_exists rclone; then
+        local remote_name="contabo-s3"
+        if rclone listremotes | grep -q "^${remote_name}:$"; then
+            rclone ls "${remote_name}:${S3_BUCKET}/${s3_path}" --quiet >/dev/null 2>&1 && return 0
+        fi
     fi
     
-    # Ensure s3cmd is configured
-    local s3cmd_config="${HOME}/.s3cfg"
-    if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
-        mkdir -p "$(dirname "$s3cmd_config")"
-        cat > "$s3cmd_config" << EOF
+    # Fallback to s3cmd
+    if command_exists s3cmd; then
+        local s3cmd_config="${HOME}/.s3cfg"
+        if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
+            mkdir -p "$(dirname "$s3cmd_config")"
+            cat > "$s3cmd_config" << EOF
 [default]
 access_key = ${S3_ACCESS_KEY_ID}
 secret_key = ${S3_SECRET_ACCESS_KEY}
@@ -718,10 +830,12 @@ bucket_location = ${S3_REGION:-eu-central-1}
 use_https = True
 signature_v2 = False
 EOF
-        chmod 600 "$s3cmd_config"
+            chmod 600 "$s3cmd_config"
+        fi
+        s3cmd ls "s3://${S3_BUCKET}/${s3_path}" --quiet >/dev/null 2>&1 && return 0
     fi
     
-    s3cmd ls "s3://${S3_BUCKET}/${s3_path}" --quiet >/dev/null 2>&1
+    return 1
 }
 
 # ============================================================================

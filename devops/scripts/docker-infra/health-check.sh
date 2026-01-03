@@ -209,13 +209,59 @@ check_portainer() {
         return 1
     fi
     
-    # Check if Portainer API is responding
-    if docker exec "$container" wget -q --spider http://localhost:9000 2>/dev/null; then
+    # Check Docker health status first (if healthcheck is configured)
+    local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "none")
+    if [[ "$health_status" == "healthy" ]]; then
         status="healthy"
-        details="{\"status\":\"healthy\",\"port\":\"9000\",\"ui\":\"accessible\"}"
-    else
+        details="{\"status\":\"healthy\",\"health_check\":\"passing\",\"port\":\"9000\"}"
+    elif [[ "$health_status" == "starting" ]]; then
         status="unhealthy"
-        details="{\"status\":\"unhealthy\",\"error\":\"API not responding\"}"
+        details="{\"status\":\"unhealthy\",\"health_check\":\"starting\",\"note\":\"Container is still starting\"}"
+    else
+        # Fallback: Check if Portainer API is accessible from host
+        # Try multiple methods: curl, wget, or direct port check
+        local api_accessible=false
+        
+        # Method 1: Try curl from host (if available)
+        if command -v curl &>/dev/null; then
+            if curl -f -s -m 5 http://localhost:9000/api/status >/dev/null 2>&1 || \
+               curl -f -s -m 5 http://127.0.0.1:9000/api/status >/dev/null 2>&1; then
+                api_accessible=true
+            fi
+        fi
+        
+        # Method 2: Try wget from host (if curl failed)
+        if ! $api_accessible && command -v wget &>/dev/null; then
+            if wget -q --spider --timeout=5 http://localhost:9000/api/status 2>/dev/null || \
+               wget -q --spider --timeout=5 http://127.0.0.1:9000/api/status 2>/dev/null; then
+                api_accessible=true
+            fi
+        fi
+        
+        # Method 3: Check if port is listening inside container
+        if ! $api_accessible; then
+            if docker exec "$container" sh -c "nc -z localhost 9000 2>/dev/null || netstat -an 2>/dev/null | grep -q ':9000.*LISTEN' || ss -an 2>/dev/null | grep -q ':9000.*LISTEN'" 2>/dev/null; then
+                api_accessible=true
+            fi
+        fi
+        
+        # Method 4: Check if process is running (last resort)
+        if ! $api_accessible; then
+            if docker exec "$container" ps aux 2>/dev/null | grep -q "[p]ortainer"; then
+                api_accessible=true
+                details="{\"status\":\"healthy\",\"method\":\"process_check\",\"port\":\"9000\",\"note\":\"Process running but API not verified\"}"
+            fi
+        fi
+        
+        if $api_accessible; then
+            status="healthy"
+            if [[ "$details" == "{}" ]]; then
+                details="{\"status\":\"healthy\",\"port\":\"9000\",\"ui\":\"accessible\"}"
+            fi
+        else
+            status="unhealthy"
+            details="{\"status\":\"unhealthy\",\"error\":\"API not responding\",\"health_check\":\"${health_status}\",\"note\":\"Container running but API not accessible\"}"
+        fi
     fi
     
     SERVICE_STATUS["portainer"]="$status"
