@@ -521,11 +521,21 @@ main() {
                 log_warning "verify.sh not found - skipping verification"
             fi
             
-            # Deploy application if changed
+            # Always ensure application containers are running (even if no changes)
             if [[ "$APP_CHANGED" == "true" ]]; then
                 deploy_application || exit $EXIT_ERROR
             else
-                log_info "No application changes - infrastructure verified successfully"
+                log_info "No application changes detected - ensuring application containers are running..."
+                # Check if containers are running, start them if not
+                local api_container="${CONTAINER_PREFIX}api"
+                local worker_container="${CONTAINER_PREFIX}worker"
+                
+                if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                    log_info "Application containers not running - starting them..."
+                    deploy_application || exit $EXIT_ERROR
+                else
+                    log_info "Application containers are already running - no action needed"
+                fi
             fi
         else
             # Standalone mode - handle everything in deploy.sh
@@ -657,11 +667,21 @@ main() {
             log_warning "verify.sh not found - skipping verification"
         fi
         
-        # Deploy application if changed
+        # Always ensure application containers are running (even if no changes)
         if [[ "$APP_CHANGED" == "true" ]]; then
             deploy_application || exit $EXIT_ERROR
         else
-            log_info "No application changes - infrastructure deployment completed"
+            log_info "No application changes detected - ensuring application containers are running..."
+            # Check if containers are running, start them if not
+            local api_container="${CONTAINER_PREFIX}api"
+            local worker_container="${CONTAINER_PREFIX}worker"
+            
+            if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                log_info "Application containers not running - starting them..."
+                deploy_application || exit $EXIT_ERROR
+            else
+                log_info "Application containers are already running - no action needed"
+            fi
         fi
         fi  # End of INFRA_CHANGED=true else block (standalone mode)
         
@@ -686,10 +706,21 @@ main() {
             fi
             
             # Deploy app if changed
+            # Always ensure application containers are running (even if no changes)
             if [[ "$APP_CHANGED" == "true" ]]; then
                 deploy_application || exit $EXIT_ERROR
             else
-                log_info "No application changes - infrastructure verified successfully"
+                log_info "No application changes detected - ensuring application containers are running..."
+                # Check if containers are running, start them if not
+                local api_container="${CONTAINER_PREFIX}api"
+                local worker_container="${CONTAINER_PREFIX}worker"
+                
+                if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                    log_info "Application containers not running - starting them..."
+                    deploy_application || exit $EXIT_ERROR
+                else
+                    log_info "Application containers are already running - no action needed"
+                fi
             fi
         else
             # Standalone mode - try to fix without recreating
@@ -859,11 +890,22 @@ main() {
                 fi
                 
                 # Deploy app if changed
-                if [[ "$APP_CHANGED" == "true" ]]; then
-                    deploy_application || exit $EXIT_ERROR
-                else
-                    log_info "No application changes - infrastructure recreated successfully"
-                fi
+        # Always ensure application containers are running (even if no changes)
+        if [[ "$APP_CHANGED" == "true" ]]; then
+            deploy_application || exit $EXIT_ERROR
+        else
+            log_info "No application changes detected - ensuring application containers are running..."
+            # Check if containers are running, start them if not
+            local api_container="${CONTAINER_PREFIX}api"
+            local worker_container="${CONTAINER_PREFIX}worker"
+            
+            if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                log_info "Application containers not running - starting them..."
+                deploy_application || exit $EXIT_ERROR
+            else
+                log_info "Application containers are already running - no action needed"
+            fi
+        fi
             fi
         fi
     else
