@@ -332,11 +332,10 @@ services:
     networks:
       - healthcare-network
     restart: unless-stopped
-    # Optimized command: minimal logging, no analytics, hide labels
+    # Optimized command: minimal logging, no analytics
     command: >
       -H unix:///var/run/docker.sock
       --no-analytics
-      --hide-label=*
     environment:
       # Minimize disk usage: reduce logging, disable telemetry
       - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
