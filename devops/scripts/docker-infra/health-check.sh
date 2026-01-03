@@ -545,13 +545,53 @@ fix_unhealthy_containers() {
     fi
 }
 
-# Full recovery workflow: backup → recreate → restore → verify health
-recover_missing_containers() {
-    log_info "=== Starting Full Recovery Workflow ==="
+# Recover a single missing container (backup → recreate → restore → verify)
+# This function handles ONE container at a time
+recover_single_missing_container() {
+    local service="$1"
+    local container=""
+    local compose_service=""
+    local needs_data_backup=false
+    local needs_data_restore=false
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    # Map service to container and compose service names
+    case "$service" in
+        postgres)
+            container="${POSTGRES_CONTAINER}"
+            compose_service="postgres"
+            needs_data_backup=true
+            needs_data_restore=true
+            ;;
+        dragonfly)
+            container="${DRAGONFLY_CONTAINER}"
+            compose_service="dragonfly"
+            needs_data_backup=true
+            needs_data_restore=true
+            ;;
+        coturn)
+            container="${COTURN_CONTAINER}"
+            compose_service="coturn"
+            ;;
+        portainer)
+            container="portainer"
+            compose_service="portainer"
+            ;;
+        openvidu)
+            container="${OPENVIDU_CONTAINER}"
+            compose_service="openvidu-server"
+            ;;
+        *)
+            log_error "Unknown service: ${service}"
+            return 1
+            ;;
+    esac
+    
+    log_info "=== Recovering Missing Container: ${service} (${container}) ==="
+    
     local backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
     local restore_script="${BASE_DIR}/devops/scripts/docker-infra/restore.sh"
+    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    local backup_id=""
     
     if [[ ! -f "$compose_file" ]]; then
         log_error "Docker compose file not found: ${compose_file}"
@@ -560,190 +600,179 @@ recover_missing_containers() {
     
     cd "$(dirname "$compose_file")" || return 1
     
-    # Check which critical containers are missing
-    local needs_postgres=false
-    local needs_dragonfly=false
+    # STEP 1: Create backup (if this is a data container and we can access it)
+    if $needs_data_backup && [[ -f "$backup_script" ]]; then
+        log_info "=== STEP 1: Creating Backup for ${service} ==="
+        
+        # Try to start container temporarily if it's not running
+        if ! container_running "$container"; then
+            log_info "Starting ${container} temporarily for backup..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d "$compose_service" >/dev/null 2>&1 || {
+                log_warning "Failed to start ${container} for backup"
+            }
+            
+            # Wait a bit for container to start
+            sleep 5
+            
+            # Wait for health if it's a critical service
+            if [[ "$service" == "postgres" ]]; then
+                wait_for_health "${POSTGRES_CONTAINER}" 120 || {
+                    log_warning "${service} not healthy, but attempting backup anyway"
+                }
+            elif [[ "$service" == "dragonfly" ]]; then
+                wait_for_health "${DRAGONFLY_CONTAINER}" 60 || {
+                    log_warning "${service} not healthy, but attempting backup anyway"
+                }
+            fi
+        fi
+        
+        if container_running "$container"; then
+            log_info "Creating backup for ${service}..."
+            backup_id=$("$backup_script" pre-deployment 2>&1 | tail -1) || {
+                log_warning "Backup failed for ${service}, but continuing with recreation"
+                backup_id=""
+            }
+            
+            if [[ -n "$backup_id" ]] && [[ "$backup_id" =~ ^pre-deployment- ]]; then
+                log_success "Backup created successfully for ${service} (ID: ${backup_id})"
+            else
+                log_warning "Backup may have failed for ${service}"
+                backup_id=""
+            fi
+        else
+            log_warning "Cannot backup ${service} (container not accessible)"
+        fi
+    fi
+    
+    # STEP 2: Recreate the container
+    log_info "=== STEP 2: Recreating ${service} ==="
+    
+    # Stop container gracefully if it's running
+    if container_running "$container"; then
+        log_info "Stopping ${container} gracefully..."
+        docker compose -f docker-compose.prod.yml --profile infrastructure stop "$compose_service" >/dev/null 2>&1 || true
+        sleep 3
+    fi
+    
+    # Remove container
+    log_info "Removing ${container}..."
+    docker rm -f "$container" >/dev/null 2>&1 || true
+    
+    # Recreate container
+    log_info "Recreating ${compose_service}..."
+    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate "$compose_service"; then
+        log_success "Container ${compose_service} recreated successfully"
+    else
+        log_error "Failed to recreate ${compose_service}"
+        return 1
+    fi
+    
+    # Wait for container to start
+    log_info "Waiting for ${container} to start..."
+    sleep 15
+    
+    # STEP 3: Restore backup (if we have one and this is a data container)
+    if $needs_data_restore && [[ -n "$backup_id" ]] && [[ -f "$restore_script" ]]; then
+        log_info "=== STEP 3: Restoring Backup for ${service} ==="
+        log_info "Restoring from backup: ${backup_id}"
+        if "$restore_script" "$backup_id" >/dev/null 2>&1; then
+            log_success "Backup restored successfully for ${service}"
+        else
+            log_warning "Backup restore failed for ${service} (but container is recreated)"
+        fi
+    fi
+    
+    # STEP 4: Verify health
+    log_info "=== STEP 4: Verifying Health of ${service} ==="
+    
+    # Wait for health with timeout
+    local health_timeout=300
+    case "$service" in
+        postgres)
+            wait_for_health "${POSTGRES_CONTAINER}" "$health_timeout" && return 0
+            ;;
+        dragonfly)
+            wait_for_health "${DRAGONFLY_CONTAINER}" "$health_timeout" && return 0
+            ;;
+        coturn)
+            wait_for_health "${COTURN_CONTAINER}" "$health_timeout" && return 0
+            ;;
+        portainer)
+            # Portainer doesn't have wait_for_health, check directly
+            sleep 10
+            check_portainer && return 0
+            ;;
+        openvidu)
+            wait_for_health "${OPENVIDU_CONTAINER}" "$health_timeout" && return 0
+            ;;
+    esac
+    
+    log_warning "Container ${service} is not healthy after recreation"
+    return 1
+}
+
+# Full recovery workflow: processes each missing container individually
+recover_missing_containers() {
+    log_info "=== Processing Missing Containers (One by One) ==="
+    
     local missing_services=()
     
-    if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
-        log_info "Container ${POSTGRES_CONTAINER} is missing"
-        needs_postgres=true
-        missing_services+=("postgres")
-    fi
-    
-    if [[ "${SERVICE_STATUS[dragonfly]}" == "missing" ]]; then
-        log_info "Container ${DRAGONFLY_CONTAINER} is missing"
-        needs_dragonfly=true
-        missing_services+=("dragonfly")
-    fi
-    
-    if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
-        log_info "Container ${COTURN_CONTAINER} is missing"
-        missing_services+=("coturn")
-    fi
-    
-    if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
-        log_info "Container portainer is missing"
-        missing_services+=("portainer")
-    fi
-    
-    if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
-        log_info "Container ${OPENVIDU_CONTAINER} is missing"
-        missing_services+=("openvidu-server")
-    fi
+    # Identify missing services
+    for service in postgres dragonfly coturn portainer openvidu; do
+        if [[ "${SERVICE_STATUS[$service]}" == "missing" ]]; then
+            log_info "Service ${service} is missing"
+            missing_services+=("$service")
+        fi
+    done
     
     if [[ ${#missing_services[@]} -eq 0 ]]; then
         log_info "No missing containers to recover"
         return 0
     fi
     
-    local backup_id=""
+    local all_recovered=true
     
-    # STEP 1: Take backup (if containers are running, even if unhealthy)
-    log_info "=== STEP 1: Creating Backup ==="
-    
-    # Check if we can take a backup (containers might be running but unhealthy)
-    local can_backup_postgres=false
-    local can_backup_dragonfly=false
-    
-    # Check if postgres is running (even if unhealthy, we can try to backup)
-    if container_running "${POSTGRES_CONTAINER}"; then
-        log_info "PostgreSQL container is running, attempting backup..."
-        can_backup_postgres=true
-    elif ! $needs_postgres; then
-        # Postgres is not missing, so it should be running
-        log_info "PostgreSQL should be running, checking..."
-        can_backup_postgres=true
-    fi
-    
-    # Check if dragonfly is running
-    if container_running "${DRAGONFLY_CONTAINER}"; then
-        log_info "Dragonfly container is running, attempting backup..."
-        can_backup_dragonfly=true
-    elif ! $needs_dragonfly; then
-        log_info "Dragonfly should be running, checking..."
-        can_backup_dragonfly=true
-    fi
-    
-    # Start containers temporarily if they're missing but we need to backup
-    if ($needs_postgres || $needs_dragonfly) && [[ -f "$backup_script" ]]; then
-        if $needs_postgres && ! container_running "${POSTGRES_CONTAINER}"; then
-            log_info "Starting PostgreSQL temporarily for backup..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
-                log_warning "Failed to start PostgreSQL for backup"
-            }
-            if container_running "${POSTGRES_CONTAINER}"; then
-                wait_for_health "${POSTGRES_CONTAINER}" 120 || {
-                    log_warning "PostgreSQL not healthy, but attempting backup anyway"
-                }
-                can_backup_postgres=true
-            fi
-        fi
+    # Process each missing container individually
+    for service in "${missing_services[@]}"; do
+        log_info ""
+        log_info "═══════════════════════════════════════════════════════════"
+        log_info "Recovering: ${service}"
+        log_info "═══════════════════════════════════════════════════════════"
         
-        if $needs_dragonfly && ! container_running "${DRAGONFLY_CONTAINER}"; then
-            log_info "Starting Dragonfly temporarily for backup..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
-                log_warning "Failed to start Dragonfly for backup"
-            }
-            if container_running "${DRAGONFLY_CONTAINER}"; then
-                wait_for_health "${DRAGONFLY_CONTAINER}" 60 || {
-                    log_warning "Dragonfly not healthy, but attempting backup anyway"
-                }
-                can_backup_dragonfly=true
-            fi
-        fi
-    fi
-    
-    # Create backup if we can
-    if ($can_backup_postgres || $can_backup_dragonfly) && [[ -f "$backup_script" ]]; then
-        log_info "Creating pre-recovery backup..."
-        backup_id=$("$backup_script" pre-deployment 2>&1 | tail -1) || {
-            log_warning "Backup failed, but continuing with recovery (data may be lost)"
-            backup_id=""
-        }
-        
-        if [[ -n "$backup_id" ]] && [[ "$backup_id" =~ ^pre-deployment- ]]; then
-            log_success "Backup created successfully (ID: ${backup_id})"
+        if recover_single_missing_container "$service"; then
+            log_success "✓ ${service} recovered successfully"
         else
-            log_warning "Backup may have failed (invalid backup ID: ${backup_id:-none})"
-            backup_id=""
+            log_error "✗ ${service} failed to recover"
+            all_recovered=false
         fi
-    else
-        log_warning "Cannot create backup (containers not accessible or backup script not found)"
-        log_info "Continuing with recovery without backup (new containers will be empty)"
-    fi
-    
-    # STEP 2: Recreate missing containers
-    log_info "=== STEP 2: Recreating Missing Containers ==="
-    
-    # Stop containers gracefully if they're running
-    if [[ ${#missing_services[@]} -gt 0 ]]; then
-        log_info "Stopping containers gracefully before recreation..."
-        docker compose -f docker-compose.prod.yml --profile infrastructure stop "${missing_services[@]}" 2>/dev/null || true
-        sleep 3
-    fi
-    
-    # Recreate infrastructure containers
-    log_info "Recreating infrastructure containers: ${missing_services[*]}..."
-    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate "${missing_services[@]}"; then
-        log_success "Containers recreated successfully"
-    else
-        log_error "Failed to recreate containers"
-        return 1
-    fi
-    
-    # Wait for containers to start
-    log_info "Waiting for containers to start..."
-    sleep 15
-    
-    # STEP 3: Restore backup (if we have one and critical services were recreated)
-    if [[ -n "$backup_id" ]] && ($needs_postgres || $needs_dragonfly); then
-        log_info "=== STEP 3: Restoring Backup ==="
         
-        if [[ -f "$restore_script" ]]; then
-            log_info "Restoring from backup: ${backup_id}"
-            if "$restore_script" "$backup_id" >/dev/null 2>&1; then
-                log_success "Backup restored successfully"
-            else
-                log_warning "Backup restore failed, but containers are recreated"
-            fi
-        else
-            log_warning "Restore script not found, skipping restore"
-        fi
-    else
-        log_info "No backup to restore (backup_id: ${backup_id:-none})"
-    fi
-    
-    # STEP 4: Wait for containers to be healthy
-    log_info "=== STEP 4: Waiting for Containers to be Healthy ==="
-    
-    if [[ " ${missing_services[@]} " =~ " postgres " ]]; then
-        log_info "Waiting for PostgreSQL to be healthy..."
-        wait_for_health "${POSTGRES_CONTAINER}" 300 || {
-            log_error "PostgreSQL did not become healthy after recovery"
-            return 1
-        }
-        log_success "PostgreSQL is healthy"
-    fi
-    
-    if [[ " ${missing_services[@]} " =~ " dragonfly " ]]; then
-        log_info "Waiting for Dragonfly to be healthy..."
-        wait_for_health "${DRAGONFLY_CONTAINER}" 300 || {
-            log_warning "Dragonfly did not become healthy after recovery"
-        }
-        log_success "Dragonfly is healthy"
-    fi
-    
-    # Wait for other services
-    for service in coturn portainer openvidu-server; do
-        if [[ " ${missing_services[@]} " =~ " ${service} " ]]; then
-            log_info "Waiting for ${service} to be ready..."
-            sleep 10
-        fi
+        # Re-check status after processing
+        case "$service" in
+            postgres)
+                check_postgres || all_recovered=false
+                ;;
+            dragonfly)
+                check_dragonfly || all_recovered=false
+                ;;
+            coturn)
+                check_coturn || all_recovered=false
+                ;;
+            portainer)
+                check_portainer || all_recovered=false
+                ;;
+            openvidu)
+                check_openvidu || all_recovered=false
+                ;;
+        esac
     done
     
-    log_success "=== Recovery Workflow Completed ==="
-    return 0
+    if $all_recovered; then
+        log_success "All missing containers have been recovered"
+        return 0
+    else
+        log_warning "Some containers failed to recover"
+        return 1
+    fi
 }
 
 # Main execution
