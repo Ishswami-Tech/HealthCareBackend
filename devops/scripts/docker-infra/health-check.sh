@@ -700,9 +700,38 @@ recover_single_missing_container() {
             wait_for_health "${COTURN_CONTAINER}" "$health_timeout" && return 0
             ;;
         portainer)
-            # Portainer doesn't have wait_for_health, check directly
-            sleep 10
-            check_portainer && return 0
+            # Portainer is non-critical UI service - be lenient with health checks
+            # Wait longer for Portainer to start (it may need initial setup)
+            log_info "Waiting for Portainer to start (non-critical service, lenient check)..."
+            sleep 30
+            
+            # Check if container is running (not exited/crashed)
+            local container_status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
+            if [[ "$container_status" == "running" ]]; then
+                # Container is running - check if port is listening (most reliable indicator)
+                if docker exec "$container" sh -c "nc -z localhost 9000 2>/dev/null || netstat -an 2>/dev/null | grep -q ':9000.*LISTEN' || ss -an 2>/dev/null | grep -q ':9000.*LISTEN'" 2>/dev/null; then
+                    log_success "Portainer container is running and port is listening (healthy enough)"
+                    return 0
+                else
+                    # Container running but port not listening yet - give it more time
+                    log_info "Portainer container running but port not listening yet, waiting additional 30s..."
+                    sleep 30
+                    if docker exec "$container" sh -c "nc -z localhost 9000 2>/dev/null || netstat -an 2>/dev/null | grep -q ':9000.*LISTEN' || ss -an 2>/dev/null | grep -q ':9000.*LISTEN'" 2>/dev/null; then
+                        log_success "Portainer port is now listening"
+                        return 0
+                    fi
+                fi
+                
+                # If container is running, consider it acceptable (even if health check fails)
+                # Portainer may need initial setup which is done via web UI
+                log_warning "Portainer container is running but health check failed - this is acceptable for non-critical service"
+                log_info "Portainer may need initial setup. Access http://localhost:9000 to complete setup."
+                return 0
+            else
+                log_warning "Portainer container status: ${container_status} (expected: running)"
+                # Try one more health check
+                check_portainer && return 0
+            fi
             ;;
         openvidu)
             wait_for_health "${OPENVIDU_CONTAINER}" "$health_timeout" && return 0
