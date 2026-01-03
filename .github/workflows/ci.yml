@@ -299,6 +299,37 @@ jobs:
             export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
             
+            # Install s3cmd if not installed (required for Contabo S3 - S3-compatible storage)
+            if ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing s3cmd for Contabo S3..."
+              if command -v apt-get &> /dev/null; then
+                sudo apt-get update -qq
+                sudo apt-get install -y s3cmd || {
+                  echo "⚠️  apt-get install failed, trying pip3..."
+                  if command -v pip3 &> /dev/null; then
+                    pip3 install --user s3cmd || {
+                      echo "❌ Failed to install s3cmd"
+                      exit 1
+                    }
+                    export PATH="$HOME/.local/bin:$PATH"
+                  else
+                    echo "❌ Cannot install s3cmd automatically (apt-get and pip3 not available)"
+                    exit 1
+                  }
+                }
+              elif command -v pip3 &> /dev/null; then
+                pip3 install --user s3cmd || {
+                  echo "❌ Failed to install s3cmd"
+                  exit 1
+                }
+                export PATH="$HOME/.local/bin:$PATH"
+              else
+                echo "❌ Cannot install s3cmd automatically (apt-get and pip3 not available)"
+                exit 1
+              fi
+              echo "✅ s3cmd installed successfully"
+            fi
+            
             cd /opt/healthcare-backend/devops/docker || exit 1
             
             # CRITICAL: Ensure containers are running before backup
@@ -643,6 +674,38 @@ jobs:
             export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
             export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            # Install s3cmd if not installed (required for Contabo S3)
+            if ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing s3cmd for Contabo S3..."
+              if command -v apt-get &> /dev/null; then
+                sudo apt-get update -qq
+                sudo apt-get install -y s3cmd || {
+                  echo "⚠️  apt-get install failed, trying pip3..."
+                  if command -v pip3 &> /dev/null; then
+                    pip3 install --user s3cmd || {
+                      echo "❌ Failed to install s3cmd"
+                      exit 1
+                    }
+                    export PATH="$HOME/.local/bin:$PATH"
+                  else
+                    echo "❌ Cannot install s3cmd automatically"
+                    exit 1
+                  }
+                }
+              elif command -v pip3 &> /dev/null; then
+                pip3 install --user s3cmd || {
+                  echo "❌ Failed to install s3cmd"
+                  exit 1
+                }
+                export PATH="$HOME/.local/bin:$PATH"
+              else
+                echo "❌ Cannot install s3cmd automatically"
+                exit 1
+              fi
+              echo "✅ s3cmd installed successfully"
+            fi
+            
             chmod +x /tmp/restore.sh
             # Validate backup-id to prevent command injection
             BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id }}"

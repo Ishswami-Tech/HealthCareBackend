@@ -550,7 +550,7 @@ sanitize_filename() {
     echo "$filename" | sed 's/[^a-zA-Z0-9_.-]//g'
 }
 
-# S3 helper functions (using AWS CLI or direct API)
+# S3 helper functions (using s3cmd for S3-compatible storage like Contabo)
 s3_upload() {
     local local_file="$1"
     local s3_path="$2"
@@ -572,34 +572,49 @@ s3_upload() {
         return 0
     fi
     
-    if ! command_exists aws; then
-        log_error "AWS CLI is not installed. Install it to use S3 backups."
+    # Check for s3cmd (preferred for S3-compatible storage like Contabo)
+    if ! command_exists s3cmd; then
+        log_error "s3cmd is not installed. Install it to use S3 backups."
+        log_info "For Contabo S3, install s3cmd:"
+        log_info "  sudo apt-get update && sudo apt-get install -y s3cmd"
+        log_info "Or: pip3 install s3cmd"
         return 1
     fi
     
-    local endpoint_url=""
-    if [[ -n "${S3_ENDPOINT:-}" ]]; then
-        # Security: Validate endpoint URL format
-        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
-            log_error "Invalid S3 endpoint format: ${S3_ENDPOINT}"
-            return 1
+    # Configure s3cmd if not already configured
+    local s3cmd_config="${HOME}/.s3cfg"
+    if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
+        log_info "Configuring s3cmd for Contabo S3..."
+        mkdir -p "$(dirname "$s3cmd_config")"
+        
+        # Create s3cmd config file
+        cat > "$s3cmd_config" << EOF
+[default]
+access_key = ${S3_ACCESS_KEY_ID}
+secret_key = ${S3_SECRET_ACCESS_KEY}
+host_base = $(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+host_bucket = %(bucket)s.$(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+bucket_location = ${S3_REGION:-eu-central-1}
+use_https = True
+signature_v2 = False
+EOF
+        
+        # Add path-style if needed (Contabo S3 requires this)
+        if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
+            echo "use_https = True" >> "$s3cmd_config"
+            echo "signature_v2 = False" >> "$s3cmd_config"
         fi
-        endpoint_url="--endpoint-url ${S3_ENDPOINT}"
-    fi
-    
-    # Configure path-style for Contabo S3 compatibility
-    local path_style=""
-    if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
-        # AWS CLI v2 uses --force-path-style flag
-        path_style="--force-path-style"
+        
+        chmod 600 "$s3cmd_config"
+        log_success "s3cmd configured for Contabo S3"
     fi
     
     log_info "Uploading ${local_file} to s3://${S3_BUCKET}/${s3_path}..."
     
-    if aws s3 cp "$local_file" "s3://${S3_BUCKET}/${s3_path}" \
-        ${endpoint_url} \
-        ${path_style} \
-        --region "${S3_REGION:-eu-central-1}" \
+    # Use s3cmd to upload (Contabo S3 compatible)
+    if s3cmd put "$local_file" "s3://${S3_BUCKET}/${s3_path}" \
+        --no-mime-magic \
+        --guess-mime-type \
         --quiet; then
         log_success "Uploaded to S3: ${s3_path}"
         return 0
@@ -631,35 +646,40 @@ s3_download() {
         return 1
     fi
     
-    if ! command_exists aws; then
-        log_error "AWS CLI is not installed"
+    if ! command_exists s3cmd; then
+        log_error "s3cmd is not installed"
         return 1
     fi
     
-    local endpoint_url=""
-    if [[ -n "${S3_ENDPOINT:-}" ]]; then
-        # Security: Validate endpoint URL format
-        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
-            log_error "Invalid S3 endpoint format: ${S3_ENDPOINT}"
-            return 1
+    # Ensure s3cmd is configured (same as upload function)
+    local s3cmd_config="${HOME}/.s3cfg"
+    if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
+        log_info "Configuring s3cmd for Contabo S3..."
+        mkdir -p "$(dirname "$s3cmd_config")"
+        
+        cat > "$s3cmd_config" << EOF
+[default]
+access_key = ${S3_ACCESS_KEY_ID}
+secret_key = ${S3_SECRET_ACCESS_KEY}
+host_base = $(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+host_bucket = %(bucket)s.$(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+bucket_location = ${S3_REGION:-eu-central-1}
+use_https = True
+signature_v2 = False
+EOF
+        
+        if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
+            echo "use_https = True" >> "$s3cmd_config"
+            echo "signature_v2 = False" >> "$s3cmd_config"
         fi
-        endpoint_url="--endpoint-url ${S3_ENDPOINT}"
-    fi
-    
-    # Configure path-style for Contabo S3 compatibility
-    local path_style=""
-    if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
-        # AWS CLI v2 uses --force-path-style flag
-        path_style="--force-path-style"
+        
+        chmod 600 "$s3cmd_config"
     fi
     
     log_info "Downloading s3://${S3_BUCKET}/${s3_path} to ${local_file}..."
     
-    if aws s3 cp "s3://${S3_BUCKET}/${s3_path}" "$local_file" \
-        ${endpoint_url} \
-        ${path_style} \
-        --region "${S3_REGION:-eu-central-1}" \
-        --quiet; then
+    # Use s3cmd to download
+    if s3cmd get "s3://${S3_BUCKET}/${s3_path}" "$local_file" --quiet; then
         log_success "Downloaded from S3: ${s3_path}"
         return 0
     else
@@ -680,31 +700,28 @@ s3_exists() {
         return 1
     fi
     
-    if ! command_exists aws; then
+    if ! command_exists s3cmd; then
         return 1
     fi
     
-    local endpoint_url=""
-    if [[ -n "${S3_ENDPOINT:-}" ]]; then
-        # Security: Validate endpoint URL format
-        if [[ ! "${S3_ENDPOINT}" =~ ^https?:// ]]; then
-            return 1
-        fi
-        endpoint_url="--endpoint-url ${S3_ENDPOINT}"
+    # Ensure s3cmd is configured
+    local s3cmd_config="${HOME}/.s3cfg"
+    if [[ ! -f "$s3cmd_config" ]] || ! grep -q "access_key" "$s3cmd_config" 2>/dev/null; then
+        mkdir -p "$(dirname "$s3cmd_config")"
+        cat > "$s3cmd_config" << EOF
+[default]
+access_key = ${S3_ACCESS_KEY_ID}
+secret_key = ${S3_SECRET_ACCESS_KEY}
+host_base = $(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+host_bucket = %(bucket)s.$(echo "${S3_ENDPOINT}" | sed 's|https\?://||')
+bucket_location = ${S3_REGION:-eu-central-1}
+use_https = True
+signature_v2 = False
+EOF
+        chmod 600 "$s3cmd_config"
     fi
     
-    # Configure path-style for Contabo S3 compatibility
-    local path_style=""
-    if [[ -n "${S3_FORCE_PATH_STYLE:-}" ]] && [[ "${S3_FORCE_PATH_STYLE}" == "true" ]]; then
-        # AWS CLI v2 uses --force-path-style flag
-        path_style="--force-path-style"
-    fi
-    
-    aws s3 ls "s3://${S3_BUCKET}/${s3_path}" \
-        ${endpoint_url} \
-        ${path_style} \
-        --region "${S3_REGION:-eu-central-1}" \
-        >/dev/null 2>&1
+    s3cmd ls "s3://${S3_BUCKET}/${s3_path}" --quiet >/dev/null 2>&1
 }
 
 # ============================================================================
@@ -796,10 +813,18 @@ s3_upload_with_retry() {
         fi
     done
     
-    # Store failed upload for later retry
+    # Store failed upload for later retry (use backup directory if /var/log is not accessible)
     local failed_uploads_log="/var/log/backups/failed-uploads.txt"
-    mkdir -p "$(dirname "$failed_uploads_log")"
-    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$file|$s3_path" >> "$failed_uploads_log"
+    local failed_uploads_dir="$(dirname "$failed_uploads_log")"
+    
+    # Try to create directory, fall back to backup directory if permission denied
+    if ! mkdir -p "$failed_uploads_dir" 2>/dev/null; then
+        failed_uploads_log="${BACKUP_DIR}/failed-uploads.txt"
+        failed_uploads_dir="$(dirname "$failed_uploads_log")"
+        mkdir -p "$failed_uploads_dir" 2>/dev/null || true
+    fi
+    
+    echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)|$file|$s3_path" >> "$failed_uploads_log" 2>/dev/null || true
     
     log_error "S3 upload failed after $max_retries attempts"
     send_alert "WARNING" "S3 upload failed for: $s3_path"
