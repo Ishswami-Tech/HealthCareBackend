@@ -765,10 +765,12 @@ jobs:
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      needs.docker-build.result == 'success' &&
+      needs.ensure-infrastructure-health.result == 'success'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure, recreate-infrastructure, restore-backup, verify-infrastructure, docker-build]
+    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure, recreate-infrastructure, restore-backup, verify-infrastructure, docker-build, ensure-infrastructure-health]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -1249,8 +1251,10 @@ jobs:
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main'
+      github.ref == 'refs/heads/main' &&
+      needs.docker-build.result == 'success'
     environment: production
+    needs: [docker-build]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
