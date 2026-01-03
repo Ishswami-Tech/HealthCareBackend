@@ -1296,8 +1296,10 @@ jobs:
 
       - name: Make infrastructure healthy (aggressive recovery)
         id: ensure-health
+        continue-on-error: false
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          SSH_EXIT=0
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH' || SSH_EXIT=$?
             set -e
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
@@ -1439,20 +1441,37 @@ jobs:
           ENDSSH
           
           # Download results
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-result.txt /tmp/health-result.txt || true
+          # Note: The SSH command above exits with 0 if health check passed, 1 if failed
+          # We need to capture the SSH exit code, but since it's in a heredoc, we check the result file
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-result.txt /tmp/health-result.txt 2>&1 || SCP_FAILED=true
           
           if [[ -f /tmp/health-result.txt ]]; then
             HEALTHY=$(grep "^HEALTHY=" /tmp/health-result.txt | cut -d= -f2 || echo "false")
             STATUS=$(grep "^STATUS=" /tmp/health-result.txt | cut -d= -f2 || echo "unknown")
             echo "infra-healthy=${HEALTHY}" >> $GITHUB_OUTPUT
             echo "infra-status=${STATUS}" >> $GITHUB_OUTPUT
-            echo "Downloaded health result: HEALTHY=${HEALTHY}, STATUS=${STATUS}"
+            echo "✅ Downloaded health result: HEALTHY=${HEALTHY}, STATUS=${STATUS}"
+            
+            # If health check failed according to file, fail this step
+            if [[ "${HEALTHY}" != "true" ]]; then
+              echo "❌ Health check failed according to result file"
+              exit 1
+            fi
           else
-            # If file doesn't exist, check if health check succeeded by exit code
-            # The SSH command above should have exited with 0 if health check passed
-            echo "⚠️  Health result file not found, but health check may have succeeded"
-            echo "infra-healthy=true" >> $GITHUB_OUTPUT
-            echo "infra-status=healthy" >> $GITHUB_OUTPUT
+            # File not found - this could mean:
+            # 1. SSH command failed (health check failed) - step would have already failed
+            # 2. File wasn't written or scp failed - but SSH succeeded, so assume healthy
+            if [[ "${SCP_FAILED:-false}" == "true" ]]; then
+              echo "⚠️  Could not download health-result.txt, but SSH command succeeded - assuming healthy"
+              echo "infra-healthy=true" >> $GITHUB_OUTPUT
+              echo "infra-status=healthy" >> $GITHUB_OUTPUT
+            else
+              # SSH command must have failed (step would exit with error)
+              echo "❌ Health check failed - SSH command exited with non-zero code"
+              echo "infra-healthy=false" >> $GITHUB_OUTPUT
+              echo "infra-status=unknown" >> $GITHUB_OUTPUT
+              exit 1
+            fi
           fi
 
       - name: Display final status
