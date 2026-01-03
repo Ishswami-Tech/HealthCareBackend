@@ -1022,7 +1022,55 @@ main() {
         
         if ! $recovery_succeeded; then
             log_error "Failed to recreate missing containers after $max_recovery_retries attempts"
-            # Still exit with error, but we tried our best
+            # Re-check one more time to see final status
+            all_healthy=true
+            any_missing=false
+            any_unhealthy=false
+            
+            check_postgres || {
+                if [[ "${SERVICE_STATUS[postgres]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_dragonfly || {
+                if [[ "${SERVICE_STATUS[dragonfly]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_coturn || {
+                if [[ "${SERVICE_STATUS[coturn]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_portainer || {
+                if [[ "${SERVICE_STATUS[portainer]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
+            
+            check_openvidu || {
+                if [[ "${SERVICE_STATUS[openvidu]}" == "missing" ]]; then
+                    any_missing=true
+                else
+                    any_unhealthy=true
+                fi
+                all_healthy=false
+            }
         fi
     fi
     
@@ -1034,6 +1082,8 @@ main() {
         log_error "One or more infrastructure containers are missing"
         if [[ "${AUTO_RECREATE_MISSING:-false}" != "true" ]]; then
             log_info "Tip: Set AUTO_RECREATE_MISSING=true to automatically recreate missing containers"
+        else
+            log_error "Auto-recovery was enabled but failed to fix missing containers"
         fi
         exit $EXIT_MISSING
     elif $any_unhealthy; then
