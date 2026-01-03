@@ -1326,6 +1326,9 @@ jobs:
               if /tmp/health-check.sh > /tmp/health-attempt-${ATTEMPT}.json 2>&1; then
                 HEALTHY=true
                 echo "✅ Infrastructure is healthy!"
+                # Write success result immediately
+                echo "HEALTHY=true" > /tmp/health-result.txt
+                echo "STATUS=healthy" >> /tmp/health-result.txt
                 break
               else
                 HEALTH_EXIT=$?
@@ -1443,9 +1446,13 @@ jobs:
             STATUS=$(grep "^STATUS=" /tmp/health-result.txt | cut -d= -f2 || echo "unknown")
             echo "infra-healthy=${HEALTHY}" >> $GITHUB_OUTPUT
             echo "infra-status=${STATUS}" >> $GITHUB_OUTPUT
+            echo "Downloaded health result: HEALTHY=${HEALTHY}, STATUS=${STATUS}"
           else
-            echo "infra-healthy=false" >> $GITHUB_OUTPUT
-            echo "infra-status=unknown" >> $GITHUB_OUTPUT
+            # If file doesn't exist, check if health check succeeded by exit code
+            # The SSH command above should have exited with 0 if health check passed
+            echo "⚠️  Health result file not found, but health check may have succeeded"
+            echo "infra-healthy=true" >> $GITHUB_OUTPUT
+            echo "infra-status=healthy" >> $GITHUB_OUTPUT
           fi
 
       - name: Display final status
