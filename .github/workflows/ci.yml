@@ -770,7 +770,7 @@ jobs:
       needs.ensure-infrastructure-health.result == 'success'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure, recreate-infrastructure, restore-backup, verify-infrastructure, docker-build, ensure-infrastructure-health]
+    needs: [docker-build, ensure-infrastructure-health]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -1245,16 +1245,15 @@ jobs:
           echo "Server: [REDACTED]"
 
   # Ensure Infrastructure Health (At Any Cost)
+  # Runs independently to make infrastructure healthy regardless of other job status
   ensure-infrastructure-health:
     name: Ensure Infrastructure Health
     runs-on: ubuntu-latest
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' &&
-      needs.docker-build.result == 'success'
+      github.ref == 'refs/heads/main'
     environment: production
-    needs: [docker-build]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
