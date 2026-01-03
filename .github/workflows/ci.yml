@@ -686,35 +686,41 @@ jobs:
             export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
             export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
             
-            # Install s3cmd if not installed (required for Contabo S3)
-            if ! command -v s3cmd &> /dev/null; then
-              echo "📦 Installing s3cmd for Contabo S3..."
-              if command -v apt-get &> /dev/null; then
-                sudo apt-get update -qq
-                sudo apt-get install -y s3cmd || {
-                  echo "⚠️  apt-get install failed, trying pip3..."
-                  if command -v pip3 &> /dev/null; then
-                    pip3 install --user s3cmd || {
-                      echo "❌ Failed to install s3cmd"
+            # Install rclone (Contabo's recommended tool) or s3cmd as fallback
+            if ! command -v rclone &> /dev/null && ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing rclone for Contabo S3 (Contabo's recommended tool)..."
+              if curl -fsSL https://rclone.org/install.sh | sudo bash; then
+                echo "✅ rclone installed successfully"
+              else
+                echo "⚠️  rclone installation failed, trying s3cmd fallback..."
+                if command -v apt-get &> /dev/null; then
+                  sudo apt-get update -qq
+                  sudo apt-get install -y s3cmd || {
+                    if command -v pip3 &> /dev/null; then
+                      pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                        echo "❌ Failed to install both rclone and s3cmd"
+                        exit 1
+                      }
+                    else
+                      echo "❌ Cannot install rclone or s3cmd automatically"
                       exit 1
                     }
-                    export PATH="$HOME/.local/bin:$PATH"
-                  else
-                    echo "❌ Cannot install s3cmd automatically"
+                  }
+                elif command -v pip3 &> /dev/null; then
+                  pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                    echo "❌ Failed to install both rclone and s3cmd"
                     exit 1
                   }
-                }
-              elif command -v pip3 &> /dev/null; then
-                pip3 install --user s3cmd || {
-                  echo "❌ Failed to install s3cmd"
+                else
+                  echo "❌ Cannot install rclone or s3cmd automatically"
                   exit 1
-                }
-                export PATH="$HOME/.local/bin:$PATH"
-              else
-                echo "❌ Cannot install s3cmd automatically"
-                exit 1
+                fi
+                echo "✅ s3cmd installed as fallback"
               fi
-              echo "✅ s3cmd installed successfully"
+            elif command -v rclone &> /dev/null; then
+              echo "✅ rclone is already installed"
+            elif command -v s3cmd &> /dev/null; then
+              echo "✅ s3cmd is already installed (rclone preferred but s3cmd will work)"
             fi
             
             chmod +x /tmp/restore.sh
