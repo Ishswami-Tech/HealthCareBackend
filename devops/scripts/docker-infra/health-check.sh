@@ -787,7 +787,7 @@ main() {
     # Skip if all healthy (no backup/fix/restore needed)
     if $all_healthy; then
         log_success "All infrastructure services are healthy - no action needed"
-        # Generate JSON output
+    # Generate JSON output
         {
             json_start
             json_string "status" "$overall_status"

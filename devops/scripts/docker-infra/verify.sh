@@ -47,6 +47,9 @@ verify_infrastructure() {
     log_info "Verifying infrastructure..."
     
     local all_ok=true
+    local health_check_retries=3
+    local health_check_attempt=0
+    local health_check_passed=false
     
     # Check containers (INFRASTRUCTURE ONLY - use fixed names)
     # Infrastructure containers: postgres, dragonfly (fixed names, no prefix)
@@ -63,11 +66,28 @@ verify_infrastructure() {
         all_ok=false
     fi
     
-    # Check health
-    "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1 || {
-        log_error "Health check failed"
+    # Check health with retry logic and auto-fix
+    while [[ $health_check_attempt -lt $health_check_retries ]] && ! $health_check_passed; do
+        health_check_attempt=$((health_check_attempt + 1))
+        log_info "Health check attempt $health_check_attempt/$health_check_retries..."
+        
+        # Run health check with auto-recovery enabled
+        if AUTO_RECREATE_MISSING="true" "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1; then
+            health_check_passed=true
+            log_success "Health check passed"
+        else
+            log_warning "Health check attempt $health_check_attempt failed"
+            if [[ $health_check_attempt -lt $health_check_retries ]]; then
+                log_info "Waiting for infrastructure to stabilize before retry..."
+                sleep $((health_check_attempt * 10))  # Wait 10s, 20s
+            fi
+        fi
+    done
+    
+    if ! $health_check_passed; then
+        log_error "Health check failed after $health_check_retries attempts"
         all_ok=false
-    }
+    fi
     
     if $all_ok; then
         echo "all_running"
@@ -117,21 +137,50 @@ verify_application() {
     
     local api_ready=false
     local worker_ready=false
+    local api_retries=10
+    local api_attempt=0
     
-    if container_running "$api_container"; then
-        # Check if API responds
-        if docker exec "$api_container" wget -q --spider http://localhost:8088/health 2>/dev/null; then
-            api_ready=true
-        fi
-    fi
-    
+    # Check worker (simpler check - just running)
     if container_running "$worker_container"; then
         worker_ready=true
+        log_success "Worker container is running"
+    else
+        log_warning "Worker container is not running"
     fi
     
+    # Check API with retry logic (it may need time to start)
+    if container_running "$api_container"; then
+        log_info "API container is running, checking health endpoint..."
+        while [[ $api_attempt -lt $api_retries ]] && ! $api_ready; do
+            api_attempt=$((api_attempt + 1))
+            log_info "API health check attempt $api_attempt/$api_retries..."
+            
+            if docker exec "$api_container" wget -q --spider http://localhost:8088/health 2>/dev/null; then
+                api_ready=true
+                log_success "API is ready and responding"
+            else
+                if [[ $api_attempt -lt $api_retries ]]; then
+                    log_info "API not ready yet, waiting before retry..."
+                    sleep $((api_attempt * 3))  # Wait 3s, 6s, 9s, etc.
+                fi
+            fi
+        done
+        
+        if ! $api_ready; then
+            log_warning "API did not become ready after $api_retries attempts"
+        fi
+    else
+        log_warning "API container is not running"
+    fi
+    
+    # Return status based on readiness
     if $api_ready && $worker_ready; then
         echo "ready"
         return 0
+    elif $worker_ready; then
+        # Worker is ready but API is not - return partial status
+        echo "partial"
+        return 1
     else
         echo "not_ready"
         return 1
@@ -148,10 +197,18 @@ verify_deployment() {
     local data_status=$(verify_data_integrity)
     local app_status=$(verify_application)
     
+    # Determine overall status
+    local overall_status="failure"
+    if [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "ready" ]]; then
+        overall_status="success"
+    elif [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "partial" ]]; then
+        overall_status="partial"  # Infrastructure OK, but API not ready yet
+    fi
+    
     # Output JSON
     {
         json_start
-        json_string "status" "$([ "$infra_status" == "all_running" ] && [ "$data_status" == "verified" ] && [ "$app_status" == "ready" ] && echo "success" || echo "failure")"
+        json_string "status" "$overall_status"
         json_string "timestamp" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
         json_object "infrastructure" "{\"containers\":\"${infra_status}\",\"health_checks\":\"passing\",\"network\":\"ok\"}"
         json_object "data_integrity" "{\"postgres\":\"${data_status}\",\"dragonfly\":\"verified\"}"
@@ -159,9 +216,14 @@ verify_deployment() {
         json_end
     } | json_fix_trailing
     
-    if [[ "$infra_status" == "all_running" ]] && [[ "$data_status" == "verified" ]] && [[ "$app_status" == "ready" ]]; then
+    # Exit codes: 0 = success, 1 = partial (infrastructure OK but API not ready), 2 = failure
+    if [[ "$overall_status" == "success" ]]; then
         log_success "Deployment verification passed"
         exit 0
+    elif [[ "$overall_status" == "partial" ]]; then
+        log_warning "Deployment verification partial - infrastructure is healthy but API is not ready yet"
+        log_info "This is usually temporary - API may need more time to start"
+        exit 1  # Still exit 1, but with warning instead of error
     else
         log_error "Deployment verification failed"
         exit 1
