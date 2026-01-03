@@ -71,13 +71,52 @@ verify_infrastructure() {
         health_check_attempt=$((health_check_attempt + 1))
         log_info "Health check attempt $health_check_attempt/$health_check_retries..."
         
-        # Run health check with auto-recovery enabled
-        if AUTO_RECREATE_MISSING="true" "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1; then
+        # Run health check with auto-recovery enabled (capture output to check for recovery)
+        export AUTO_RECREATE_MISSING="true"
+        local health_check_output
+        local health_check_exit
+        
+        # Run health check and capture both stdout and stderr
+        health_check_output=$("${SCRIPT_DIR}/health-check.sh" 2>&1)
+        health_check_exit=$?
+        
+        # Log important messages from health check (filter JSON but keep logs)
+        echo "$health_check_output" | grep -E "^(INFO|WARNING|ERROR|SUCCESS|===|Auto-|Recovery|Recreating|Starting)" | while IFS= read -r line; do
+            if [[ -n "$line" ]]; then
+                echo "$line" >&2
+            fi
+        done || true
+        
+        # Check if health check passed (exit code 0)
+        if [[ $health_check_exit -eq 0 ]]; then
             health_check_passed=true
             log_success "Health check passed"
         else
-            log_warning "Health check attempt $health_check_attempt failed"
-            if [[ $health_check_attempt -lt $health_check_retries ]]; then
+            # Check if recovery was attempted (look for recovery messages in output)
+            local recovery_attempted=false
+            if echo "$health_check_output" | grep -qiE "Auto-recovery|recover_missing_containers|Recreating Missing Containers|Starting Full Recovery"; then
+                recovery_attempted=true
+                log_info "Recovery was attempted, waiting for containers to stabilize..."
+                # Wait longer for containers to stabilize after recovery (recovery takes time)
+                sleep 30
+                
+                # Re-run health check to see if recovery succeeded (without auto-recovery to avoid loops)
+                log_info "Re-checking health after recovery..."
+                if AUTO_RECREATE_MISSING="false" "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1; then
+                    health_check_passed=true
+                    log_success "Health check passed after recovery"
+                else
+                    log_warning "Health check still failing after recovery attempt"
+                fi
+            else
+                log_warning "Health check attempt $health_check_attempt failed (exit code: $health_check_exit)"
+                if echo "$health_check_output" | grep -qiE "missing|unhealthy"; then
+                    log_info "Containers appear to be missing or unhealthy, but auto-recovery was not triggered"
+                    log_info "This may indicate that AUTO_RECREATE_MISSING is not being set correctly"
+                fi
+            fi
+            
+            if [[ $health_check_attempt -lt $health_check_retries ]] && ! $health_check_passed; then
                 log_info "Waiting for infrastructure to stabilize before retry..."
                 sleep $((health_check_attempt * 10))  # Wait 10s, 20s
             fi
