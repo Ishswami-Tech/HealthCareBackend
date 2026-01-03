@@ -94,11 +94,12 @@ verify_infrastructure() {
         else
             # Check if recovery was attempted (look for recovery messages in output)
             local recovery_attempted=false
-            if echo "$health_check_output" | grep -qiE "Auto-recovery|recover_missing_containers|Recreating Missing Containers|Starting Full Recovery"; then
+            if echo "$health_check_output" | grep -qiE "Auto-recovery|Auto-fix|recover_missing_containers|Recreating Missing Containers|Starting Full Recovery|Processing.*Containers|Recovering Missing Container|Fixing Unhealthy Container|Recreating Unhealthy Container"; then
                 recovery_attempted=true
                 log_info "Recovery was attempted, waiting for containers to stabilize..."
                 # Wait longer for containers to stabilize after recovery (recovery takes time)
-                sleep 30
+                # Individual container recovery can take longer, especially for postgres/dragonfly
+                sleep 60
                 
                 # Re-run health check to see if recovery succeeded (without auto-recovery to avoid loops)
                 log_info "Re-checking health after recovery..."
@@ -107,6 +108,10 @@ verify_infrastructure() {
                     log_success "Health check passed after recovery"
                 else
                     log_warning "Health check still failing after recovery attempt"
+                    # Show more details about what's still failing
+                    local recheck_output
+                    recheck_output=$("${SCRIPT_DIR}/health-check.sh" 2>&1) || true
+                    echo "$recheck_output" | grep -E "(ERROR|WARNING|missing|unhealthy)" | head -10 >&2 || true
                 fi
             else
                 log_warning "Health check attempt $health_check_attempt failed (exit code: $health_check_exit)"
