@@ -1229,11 +1229,19 @@ jobs:
             
           ENDSSH
 
+      - name: Wait for containers to start
+        if: always()
+        run: |
+          echo "⏳ Waiting for containers to fully start after deployment..."
+          echo "   This gives application containers time to initialize"
+          sleep 30  # Wait 30 seconds for containers to start and stabilize
+          echo "✅ Wait complete - proceeding to verification"
+
       - name: Verify deployment
         if: always()
         run: |
           echo "🏥 Verifying deployment health..."
-          sleep 15  # Wait for services to fully start
+          sleep 15  # Additional wait for services to fully start
           
           MAX_RETRIES=10
           RETRY_COUNT=0
