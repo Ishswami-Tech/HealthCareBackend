@@ -64,12 +64,19 @@ backup_postgres() {
             BACKUP_RESULTS["postgres_s3"]="failed"
         fi
         
+        # Store metadata - extract backup type from path if present
+        local backup_type_from_path=$(basename $(dirname "$backup_file") 2>/dev/null || echo "")
+        local relative_file_path="postgres-${TIMESTAMP}.sql.gz"
+        if [[ -n "$backup_type_from_path" ]] && [[ "$backup_type_from_path" != "postgres" ]]; then
+            relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
+        fi
+        
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "file": "postgres-${TIMESTAMP}.sql.gz",
+  "file": "${relative_file_path}",
   "size": "${size}",
   "checksum": "sha256:${checksum}",
   "database_size": "${db_size}",
@@ -394,7 +401,19 @@ main_backup() {
     fi
     
     # Create metadata
-    create_metadata
+    if ! create_metadata; then
+        log_error "Failed to create backup metadata - backup may not be restorable"
+        log_error "Backup files were created but metadata is missing"
+        # Don't exit - backup files are still valid, just metadata is missing
+    fi
+    
+    # Verify metadata file was created
+    if [[ ! -f "$METADATA_FILE" ]]; then
+        log_error "Metadata file was not created: ${METADATA_FILE}"
+        log_error "This backup may not be restorable via restore.sh"
+    else
+        log_success "Backup metadata verified: ${METADATA_FILE}"
+    fi
     
     # Cleanup old backups based on retention policy
     cleanup_old_backups_by_type "$backup_type"
@@ -442,12 +461,19 @@ backup_postgres_to_path() {
             BACKUP_RESULTS["postgres_s3"]="failed"
         fi
         
+        # Store metadata - extract backup type from path if present
+        local backup_type_from_path=$(basename $(dirname "$backup_file") 2>/dev/null || echo "")
+        local relative_file_path="postgres-${TIMESTAMP}.sql.gz"
+        if [[ -n "$backup_type_from_path" ]] && [[ "$backup_type_from_path" != "postgres" ]]; then
+            relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
+        fi
+        
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "file": "postgres-${TIMESTAMP}.sql.gz",
+  "file": "${relative_file_path}",
   "size": "${size}",
   "checksum": "sha256:${checksum}",
   "database_size": "${db_size}",
