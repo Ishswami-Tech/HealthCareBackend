@@ -287,7 +287,14 @@ deploy_application() {
     fi
     
     # Pull latest images
-    docker compose -f docker-compose.prod.yml pull api worker || return 1
+    # Note: We need to include infrastructure profile to resolve dependencies (coturn)
+    # but we only pull the app service images
+    log_info "Pulling latest images for api and worker..."
+    if ! docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull api worker 2>&1; then
+        log_error "Failed to pull images for api and worker"
+        return 1
+    fi
+    log_success "Images pulled successfully"
     
     # Run database migrations safely
     if ! run_migrations_safely; then
@@ -296,8 +303,10 @@ deploy_application() {
     fi
     
     # Start new containers
+    # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
+    # but --no-deps ensures we only start api and worker, not their dependencies
     log_info "Starting application containers (api, worker)..."
-    if docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
@@ -429,7 +438,7 @@ run_migrations_safely() {
     # Check if api container exists (for running migrations)
     if ! container_running "${CONTAINER_PREFIX}api"; then
         log_info "API container not running, starting temporarily for migrations..."
-        docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api || {
+        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api || {
             log_error "Failed to start API container for migrations"
             return 1
         }
