@@ -167,9 +167,15 @@ create_metadata() {
     local postgres_meta="${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
     local dragonfly_meta="${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
     
-    if [[ -f "$postgres_meta" ]] && [[ -f "$dragonfly_meta" ]]; then
+    # Always create metadata if postgres backup succeeded (dragonfly is optional)
+    if [[ -f "$postgres_meta" ]]; then
         local postgres_json=$(cat "$postgres_meta")
-        local dragonfly_json=$(cat "$dragonfly_meta")
+        local dragonfly_json="null"
+        
+        # Include dragonfly metadata if available
+        if [[ -f "$dragonfly_meta" ]]; then
+            dragonfly_json=$(cat "$dragonfly_meta")
+        fi
         
         cat > "$METADATA_FILE" <<EOF
 {
@@ -191,6 +197,9 @@ EOF
         s3_upload "$METADATA_FILE" "$s3_meta_path" || log_warning "Failed to upload metadata to S3"
         
         log_success "Backup metadata created: ${METADATA_FILE}"
+    else
+        log_error "Cannot create metadata: PostgreSQL metadata file not found: ${postgres_meta}"
+        return 1
     fi
 }
 

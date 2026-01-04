@@ -700,7 +700,7 @@ jobs:
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' &&
+      github.ref == 'refs/heads/main' && 
       (
         (needs.recreate-infrastructure.result == 'success' && 
          (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped')) ||
@@ -1332,7 +1332,7 @@ jobs:
                     if command -v pip3 &> /dev/null; then
                       pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
                         echo "❌ Failed to install both rclone and s3cmd"
-                        exit 1
+          exit 1
                       }
                     else
                       echo "❌ Cannot install rclone or s3cmd automatically"

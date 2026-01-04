@@ -164,14 +164,37 @@ restore_postgres() {
     # Extract backup file info from metadata (simplified - would use jq in production)
     local backup_file=""
     if [[ "$RESTORE_SOURCE" == "local" ]]; then
+        # Try to extract file path from postgres object first, then fallback to direct file field
         local extracted_file=$(grep -o '"file": "[^"]*"' "$meta_file" | head -1 | cut -d'"' -f4)
-        # Security: Sanitize and validate extracted filename
-        extracted_file=$(sanitize_filename "$extracted_file")
-        if [[ -z "$extracted_file" ]]; then
-            log_error "Invalid filename extracted from metadata"
+        local extracted_local_path=$(grep -o '"local_path": "[^"]*"' "$meta_file" | head -1 | cut -d'"' -f4)
+        
+        # Prefer local_path if available (full path), otherwise use file (relative)
+        if [[ -n "$extracted_local_path" ]] && [[ -f "$extracted_local_path" ]]; then
+            backup_file="$extracted_local_path"
+        elif [[ -n "$extracted_file" ]]; then
+            # Security: Sanitize and validate extracted filename
+            extracted_file=$(sanitize_filename "$extracted_file")
+            if [[ -z "$extracted_file" ]]; then
+                log_error "Invalid filename extracted from metadata"
+                return 1
+            fi
+            # Try to find the file in backup type subdirectories
+            local backup_type=""
+            if [[ "$BACKUP_ID" =~ ^(pre-deployment|success|hourly|daily|weekly)- ]]; then
+                backup_type="${BASH_REMATCH[1]}"
+            fi
+            if [[ -n "$backup_type" ]] && [[ -f "${BACKUP_DIR}/postgres/${backup_type}/${extracted_file}" ]]; then
+                backup_file="${BACKUP_DIR}/postgres/${backup_type}/${extracted_file}"
+            elif [[ -f "${BACKUP_DIR}/postgres/${extracted_file}" ]]; then
+                backup_file="${BACKUP_DIR}/postgres/${extracted_file}"
+            else
+                log_error "Backup file not found: ${extracted_file} (searched in ${BACKUP_DIR}/postgres/${backup_type}/ and ${BACKUP_DIR}/postgres/)"
+                return 1
+            fi
+        else
+            log_error "Could not extract file path from metadata"
             return 1
         fi
-        backup_file="${BACKUP_DIR}/postgres/${extracted_file}"
         # Security: Validate backup file path
         if ! validate_file_path "$backup_file" "$BACKUP_DIR"; then
             log_error "Invalid backup file path: ${backup_file}"

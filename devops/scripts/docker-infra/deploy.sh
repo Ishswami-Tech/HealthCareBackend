@@ -518,7 +518,6 @@ run_migrations_safely() {
     
     # First, verify the connection works with the password from DATABASE_URL
     log_info "Testing connection with password from DATABASE_URL..."
-    log_debug "Extracted password (first 2 chars): ${db_password:0:2}***"
     if ! docker exec -e PGPASSWORD="$db_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
         log_error "Database connection test failed!"
         log_error "Expected DATABASE_URL: ${database_url:0:50}***"
@@ -608,7 +607,14 @@ run_migrations_safely() {
     log_info "Unsetting DIRECT_URL to force Prisma to use verified DATABASE_URL"
     
     # Run migrations - unset DIRECT_URL and use verified DATABASE_URL
-    if docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 50) + '***' : 'NOT SET'); console.log('[DEBUG] DIRECT_URL:', process.env.DIRECT_URL || 'UNSET (correct)')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
+    local migration_output
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 50) + '***' : 'NOT SET'); console.log('[DEBUG] DIRECT_URL:', process.env.DIRECT_URL || 'UNSET (correct)')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
+    local migration_exit_code=$?
+    
+    # Always log the migration output for debugging
+    echo "$migration_output" | tee /tmp/migration.log
+    
+    if [[ $migration_exit_code -eq 0 ]]; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
@@ -625,7 +631,11 @@ run_migrations_safely() {
             return 1
         fi
     else
-        log_error "Migration failed"
+        log_error "Migration failed with exit code: $migration_exit_code"
+        log_error "Migration output:"
+        echo "$migration_output" | while IFS= read -r line; do
+            log_error "  $line"
+        done
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
             log_warning "Rolling back to pre-migration backup..."
             restore_backup "$PRE_MIGRATION_BACKUP"
