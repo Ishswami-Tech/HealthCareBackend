@@ -167,13 +167,13 @@ if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d use
     log_success "=========================================="
     log_success "Database Password Fix Complete"
     log_success "=========================================="
-    return 0
+    exit 0
 else
     log_error "Final database connection failed!"
     log_error "Please check:"
     log_error "  1. PostgreSQL container is running and healthy"
     log_error "  2. Password is correct: ${ACTUAL_PASSWORD:0:2}***"
     log_error "  3. Database 'userdb' exists"
-    return 1
+    exit 1
 fi
 
