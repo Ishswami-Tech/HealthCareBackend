@@ -223,7 +223,15 @@ export class EmailUnsubscribeService {
   private async findUserByEmail(email: string): Promise<{ id: string } | null> {
     try {
       const user = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.user.findUnique({
+        const userClient = client as unknown as {
+          user: {
+            findUnique: (args: {
+              where: { email: string };
+              select: { id: true };
+            }) => Promise<{ id: string } | null>;
+          };
+        };
+        return await userClient.user.findUnique({
           where: { email: email.toLowerCase() },
           select: { id: true },
         });

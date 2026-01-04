@@ -213,7 +213,15 @@ export class BillingEventsListener {
         // Update appointment status to CONFIRMED after successful payment
         await this.databaseService.executeHealthcareWrite(
           async client => {
-            return await client.appointment.update({
+            const appointmentClient = client as unknown as {
+              appointment: {
+                update: (args: {
+                  where: { id: string };
+                  data: { status: string };
+                }) => Promise<unknown>;
+              };
+            };
+            return await appointmentClient.appointment.update({
               where: { id: appointmentId },
               data: {
                 status: AppointmentStatus.CONFIRMED,

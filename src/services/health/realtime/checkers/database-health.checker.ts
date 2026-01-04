@@ -41,7 +41,10 @@ export class DatabaseHealthChecker {
       // Lightweight check: Simple query
       await Promise.race([
         this.databaseService.executeHealthcareRead(async prisma => {
-          await prisma.$queryRaw`SELECT 1`;
+          const queryClient = prisma as unknown as {
+            $queryRaw: (query: TemplateStringsArray) => Promise<unknown>;
+          };
+          await queryClient.$queryRaw`SELECT 1`;
         }),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Database check timeout')), this.TIMEOUT_MS)
