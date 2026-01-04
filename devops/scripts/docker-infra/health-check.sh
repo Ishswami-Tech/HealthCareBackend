@@ -207,7 +207,11 @@ check_portainer() {
     local container_status=$(docker inspect --format='{{.State.Status}}' "$container" 2>/dev/null || echo "unknown")
     if [[ "$container_status" == "restarting" ]]; then
         SERVICE_STATUS["portainer"]="unhealthy"
-        SERVICE_DETAILS["portainer"]='{"status":"unhealthy","error":"Container is restarting (likely command error)","note":"Container needs to be recreated with correct command"}'
+        SERVICE_DETAILS["portainer"]='{"status":"unhealthy","error":"Container is restarting (likely command error)","note":"Container needs to be recreated with correct command","container_status":"restarting"}'
+        # Force stop and remove the restarting container so it can be recreated
+        log_warning "Portainer is restarting - forcing stop and removal for recreation"
+        docker stop "$container" 2>/dev/null || true
+        docker rm -f "$container" 2>/dev/null || true
         return 1
     fi
     

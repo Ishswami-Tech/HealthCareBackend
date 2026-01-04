@@ -198,8 +198,16 @@ jobs:
 
       - name: Copy health check script
         run: |
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          # Copy to temp files first, then move to final location (prevents "Text file busy" error)
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
+          
+          # Move temp files to final location atomically
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            mv /tmp/health-check.sh.tmp /tmp/health-check.sh
+            mv /tmp/utils.sh.tmp /tmp/utils.sh
+            chmod +x /tmp/health-check.sh /tmp/utils.sh
+          ENDSSH
 
       - name: Run health check
         id: health-check
@@ -1302,10 +1310,21 @@ jobs:
 
       - name: Copy infrastructure scripts
         run: |
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+          # Copy to temp files first, then move to final location (prevents "Text file busy" error)
+          # This ensures files are fully written and closed before being executed
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
+          
+          # Move temp files to final location atomically
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            mv /tmp/health-check.sh.tmp /tmp/health-check.sh
+            mv /tmp/deploy.sh.tmp /tmp/deploy.sh
+            mv /tmp/diagnose.sh.tmp /tmp/diagnose.sh
+            mv /tmp/utils.sh.tmp /tmp/utils.sh
+            chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh
+          ENDSSH
 
       - name: Make infrastructure healthy (aggressive recovery)
         id: ensure-health
@@ -1318,11 +1337,15 @@ jobs:
             source /tmp/utils.sh
             export AUTO_RECREATE_MISSING="true"
             
-            chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh
-            
-            # Ensure files are fully written before execution (fix "Text file busy" error)
-            sync
-            sleep 1
+            # Explicitly force-recreate Portainer if it's restarting (fixes old command issue)
+            if docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | grep -q "^portainer.*Restarting"; then
+              echo "🔧 Portainer is restarting - force recreating with correct command..."
+              docker stop portainer 2>/dev/null || true
+              docker rm -f portainer 2>/dev/null || true
+              cd /opt/healthcare-backend/devops/docker 2>/dev/null || cd /opt/healthcare-backend 2>/dev/null || true
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate portainer 2>&1 || true
+              sleep 5
+            fi
             
             echo "🚨 Starting aggressive infrastructure health recovery..."
             echo "📋 This job will make infrastructure healthy at ANY COST"
