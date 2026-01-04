@@ -664,22 +664,64 @@ run_migrations_safely() {
     config_test_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"
 delete require.cache[require.resolve('./src/libs/infrastructure/database/prisma/prisma.config.js')];
 const config = require('./src/libs/infrastructure/database/prisma/prisma.config.js');
-console.log('[DEBUG] Config datasource URL (masked):', config.datasource.url ? (config.datasource.url.substring(0, 50) + '***') : 'EMPTY');
-console.log('[DEBUG] Config datasource URL length:', config.datasource.url ? config.datasource.url.length : 0);
-console.log('[DEBUG] Config datasource URL has @:', config.datasource.url ? config.datasource.url.includes('@') : false);
-console.log('[DEBUG] Config datasource URL starts with postgresql:', config.datasource.url ? config.datasource.url.startsWith('postgresql://') : false);
-console.log('[DEBUG] process.env.DATABASE_URL (masked):', process.env.DATABASE_URL ? (process.env.DATABASE_URL.substring(0, 50) + '***') : 'NOT SET');
+const url = config.datasource.url || '';
+console.log('[DEBUG] Config datasource URL (masked):', url ? (url.substring(0, 30) + '***' + url.substring(url.length - 10)) : 'EMPTY');
+console.log('[DEBUG] Config datasource URL length:', url.length);
+console.log('[DEBUG] Config datasource URL has @:', url.includes('@'));
+console.log('[DEBUG] Config datasource URL starts with postgresql:', url.startsWith('postgresql://'));
+// Extract password from URL to verify it's there
+const passwordMatch = url.match(/postgresql:\/\/[^:]+:([^@]+)@/);
+console.log('[DEBUG] Password in URL (first 2 chars):', passwordMatch ? (passwordMatch[1].substring(0, 2) + '***') : 'NOT FOUND');
+console.log('[DEBUG] Password length:', passwordMatch ? passwordMatch[1].length : 0);
+console.log('[DEBUG] process.env.DATABASE_URL (masked):', process.env.DATABASE_URL ? (process.env.DATABASE_URL.substring(0, 30) + '***' + process.env.DATABASE_URL.substring(process.env.DATABASE_URL.length - 10)) : 'NOT SET');
 console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET');
 \" 2>&1" || true)
     log_info "Config test output:"
     echo "$config_test_output"
     
     # Now run the actual migration
-    # CRITICAL: Prisma CLI might spawn child processes that don't inherit env vars properly
-    # Solution: Use NODE_OPTIONS to ensure DATABASE_URL is available to all Node.js processes
-    # Also, ensure the environment variable is set in the shell AND passed via -e flag
-    log_info "Running Prisma migration with explicit DATABASE_URL..."
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" -e NODE_OPTIONS="--require dotenv/config" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export NODE_OPTIONS='--require dotenv/config' && node -e \"console.log('[PRE-MIGRATION] DATABASE_URL check:', process.env.DATABASE_URL ? 'SET (' + process.env.DATABASE_URL.length + ' chars)' : 'NOT SET');\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
+    # CRITICAL FIX: Prisma CLI spawns child processes that may not inherit environment variables
+    # The issue is that prisma.config.js reads process.env.DATABASE_URL at module load time
+    # Solution: Use node to directly run Prisma with explicit env object (like scripts/run-prisma.js does)
+    # This ensures DATABASE_URL is available to all child processes
+    log_info "Running Prisma migration with explicit environment variable propagation..."
+    
+    # CRITICAL FIX: In production, DIRECT_URL is set in .env.production (from GitHub secrets)
+    # prisma.config.js prioritizes DIRECT_URL over DATABASE_URL
+    # We MUST ensure DIRECT_URL is unset/empty so Prisma uses our verified DATABASE_URL
+    # Use node to run Prisma directly with explicit env object that FORCES DIRECT_URL to be empty
+    log_info "Running Prisma migration with DIRECT_URL explicitly unset..."
+    
+    # Escape the schema and config paths for use in the Node.js command
+    local escaped_schema_path=$(printf '%s\n' "$schema_path" | sed "s/'/'\\\\''/g")
+    local escaped_config_path=$(printf '%s\n' "$config_file_path" | sed "s/'/'\\\\''/g")
+    
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export DIRECT_URL='' && node -e \"
+// CRITICAL: Delete DIRECT_URL from process.env to ensure prisma.config.js doesn't use it
+delete process.env.DIRECT_URL;
+process.env.DATABASE_URL = process.env.DATABASE_URL || '';
+
+const { execSync } = require('child_process');
+const prismaPath = require.resolve('prisma/build/index.js');
+const schemaPath = '$escaped_schema_path';
+const configPath = '$escaped_config_path';
+
+// Create env object WITHOUT DIRECT_URL
+const env = Object.keys(process.env).reduce((acc, key) => {
+  if (key === 'DIRECT_URL') {
+    // Skip DIRECT_URL entirely - don't include it in env object
+    return acc;
+  }
+  acc[key] = process.env[key];
+  return acc;
+}, {});
+// Explicitly set DATABASE_URL and ensure DIRECT_URL is NOT in the env object
+env.DATABASE_URL = process.env.DATABASE_URL;
+
+console.log('[DEBUG] Running Prisma with DATABASE_URL set, DIRECT_URL removed from env');
+const command = 'node ' + prismaPath + ' migrate deploy --schema ' + schemaPath + ' --config ' + configPath;
+execSync(command, { stdio: 'inherit', env: env, cwd: '/app' });
+\" " 2>&1)
     migration_exit_code=$?
     
     # Always log the migration output for debugging
