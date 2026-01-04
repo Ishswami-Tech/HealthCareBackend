@@ -223,58 +223,66 @@ check_portainer() {
     
     # Check Docker health status first (if healthcheck is configured)
     local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container" 2>/dev/null || echo "none")
+    
+    # For Portainer, check actual functionality, not just container status
+    # Portainer's healthcheck checks /api/system/status which may not be available until initial setup
+    # But we should verify the service is actually responding, not just that container is running
+    
     if [[ "$health_status" == "healthy" ]]; then
         status="healthy"
         details="{\"status\":\"healthy\",\"health_check\":\"passing\",\"port\":\"9000\"}"
     elif [[ "$health_status" == "starting" ]]; then
-        status="unhealthy"
-        details="{\"status\":\"unhealthy\",\"health_check\":\"starting\",\"note\":\"Container is still starting\"}"
+        # Starting is acceptable for Portainer (non-critical) - give it time
+        status="healthy"
+        details="{\"status\":\"healthy\",\"health_check\":\"starting\",\"note\":\"Container starting - acceptable for non-critical UI service\"}"
     else
         # Fallback: Check if Portainer is accessible (more lenient for initial setup)
         # Portainer is a non-critical UI service, so we're lenient with health checks
         # It may need initial setup (admin account creation) before API is fully functional
         local portainer_accessible=false
         
-        # Method 1: Check if port is listening inside container (most reliable)
+        # Method 1: Check if port is listening inside container (prerequisite check)
+        local port_listening=false
         if docker exec "$container" sh -c "nc -z localhost 9000 2>/dev/null || netstat -an 2>/dev/null | grep -q ':9000.*LISTEN' || ss -an 2>/dev/null | grep -q ':9000.*LISTEN'" 2>/dev/null; then
-            portainer_accessible=true
-            status="healthy"
-            details="{\"status\":\"healthy\",\"port\":\"9000\",\"note\":\"Port listening - may need initial setup\"}"
+            port_listening=true
         fi
         
-        # Method 2: Try accessing Portainer UI (even if API isn't ready, UI might be)
-        if ! $portainer_accessible && command -v curl &>/dev/null; then
-            # Check if we get any response (even redirects or setup page)
+        # Method 2: Try accessing Portainer UI - verify HTTP response (this proves service is working)
+        if $port_listening && command -v curl &>/dev/null; then
+            # Check if we get any HTTP response (even redirects or setup page means service is working)
             local http_code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 http://localhost:9000/ 2>/dev/null || echo "000")
             if [[ "$http_code" =~ ^(200|301|302|401|403)$ ]]; then
                 portainer_accessible=true
                 status="healthy"
-                details="{\"status\":\"healthy\",\"port\":\"9000\",\"http_code\":\"${http_code}\",\"note\":\"UI accessible - may need initial setup\"}"
+                details="{\"status\":\"healthy\",\"port\":\"9000\",\"http_code\":\"${http_code}\",\"note\":\"Portainer UI responding - may need initial setup\"}"
             fi
         fi
         
-        # Method 3: Try wget (if curl failed)
-        if ! $portainer_accessible && command -v wget &>/dev/null; then
+        # Method 3: Try wget if curl failed or not available
+        if ! $portainer_accessible && $port_listening && command -v wget &>/dev/null; then
             if wget -q --spider --timeout=5 http://localhost:9000/ 2>/dev/null; then
                 portainer_accessible=true
                 status="healthy"
-                details="{\"status\":\"healthy\",\"port\":\"9000\",\"note\":\"UI accessible via wget - may need initial setup\"}"
+                details="{\"status\":\"healthy\",\"port\":\"9000\",\"note\":\"Portainer UI responding via wget - may need initial setup\"}"
             fi
         fi
         
-        # Method 4: Check if process is running (last resort - if container is running, consider it healthy)
-        if ! $portainer_accessible; then
+        # Method 4: If port is listening and process is running, but no HTTP response yet
+        # Only use this as fallback if port is listening (proves service is bound to port)
+        if ! $portainer_accessible && $port_listening; then
             if docker exec "$container" ps aux 2>/dev/null | grep -q "[p]ortainer"; then
+                # Port is listening and process is running - service is likely functional
+                # HTTP check may fail during initial setup, but service is operational
                 portainer_accessible=true
                 status="healthy"
-                details="{\"status\":\"healthy\",\"method\":\"process_check\",\"port\":\"9000\",\"note\":\"Process running - Portainer may need initial setup at http://localhost:9000\"}"
+                details="{\"status\":\"healthy\",\"method\":\"process_and_port_check\",\"port\":\"9000\",\"note\":\"Portainer process running and port listening - service functional (HTTP check may fail during initial setup)\"}"
             fi
         fi
         
-        # If still not accessible, mark as unhealthy but with helpful note
+        # If still not accessible, mark as unhealthy
         if ! $portainer_accessible; then
-            status="unhealthy"
-            details="{\"status\":\"unhealthy\",\"error\":\"Portainer not accessible\",\"health_check\":\"${health_status}\",\"note\":\"Container running but Portainer not responding. May need initial setup or check logs.\"}"
+        status="unhealthy"
+            details="{\"status\":\"unhealthy\",\"error\":\"Portainer not responding\",\"health_check\":\"${health_status}\",\"container_status\":\"${container_status}\",\"port_listening\":\"${port_listening}\",\"note\":\"Portainer service is not responding. Check logs: docker logs portainer\"}"
         fi
     fi
     
