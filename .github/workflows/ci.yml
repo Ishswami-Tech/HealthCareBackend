@@ -785,7 +785,8 @@ jobs:
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             chmod +x /tmp/verify.sh
-            /tmp/verify.sh
+            # Run full deployment verification (infrastructure + application)
+            /tmp/verify.sh deployment
           ENDSSH
 
   # Deploy to Production Server (Main Branch Only)
