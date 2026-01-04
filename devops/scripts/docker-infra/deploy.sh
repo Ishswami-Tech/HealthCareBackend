@@ -576,11 +576,25 @@ run_migrations_safely() {
     
     # Create clean DATABASE_URL (without Prisma-specific query parameters) for Prisma
     # Prisma config.js will clean it, but we'll create a clean version to be safe
-    # Extract the base URL (everything before the first ?) and preserve the password
+    # IMPORTANT: Preserve schema=public parameter as Prisma may need it
+    # Only remove Prisma-specific connection pool parameters
     local clean_database_url
     if [[ "$database_url" == *"?"* ]]; then
-        # URL has query parameters - extract base URL (everything before ?)
-        clean_database_url="${database_url%%\?*}"
+        # URL has query parameters - remove only Prisma-specific ones, preserve schema
+        # Remove: connection_limit, pool_timeout, statement_timeout, etc.
+        # Keep: schema=public (important for Prisma)
+        clean_database_url=$(echo "$database_url" | sed -E 's/[?&](connection_limit|pool_timeout|statement_timeout|idle_in_transaction_session_timeout|connect_timeout|pool_size|max_connections)=[^&]*//g')
+        # Clean up any double ? or & characters
+        clean_database_url=$(echo "$clean_database_url" | sed -E 's/\?&+/?/g' | sed -E 's/&+/&/g' | sed -E 's/[?&]$//')
+        # Ensure schema=public is present if it was in the original
+        if [[ "$database_url" == *"schema=public"* ]] && [[ ! "$clean_database_url" == *"schema="* ]]; then
+            # Add schema=public if it was removed
+            if [[ "$clean_database_url" == *"?"* ]]; then
+                clean_database_url="${clean_database_url}&schema=public"
+            else
+                clean_database_url="${clean_database_url}?schema=public"
+            fi
+        fi
     else
         # URL has no query parameters - use as is
         clean_database_url="$database_url"
@@ -659,9 +673,10 @@ run_migrations_safely() {
     log_info "Running Prisma migration with DATABASE_URL set..."
     
     # Test what the config will see BEFORE running migration
+    # Use -e flag to set DATABASE_URL directly without shell escaping issues
     log_info "Testing what prisma.config.js will read..."
     local config_test_output
-    config_test_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"
+    config_test_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && node -e \"
 delete require.cache[require.resolve('./src/libs/infrastructure/database/prisma/prisma.config.js')];
 const config = require('./src/libs/infrastructure/database/prisma/prisma.config.js');
 const url = config.datasource.url || '';
@@ -703,7 +718,13 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     
     # Run Prisma migration directly with DATABASE_URL set and DIRECT_URL unset
     # The updated prisma.config.js will use DATABASE_URL (which we've verified) instead of DIRECT_URL
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export DIRECT_URL='' && npx prisma migrate deploy --schema '$escaped_schema_path' --config '$escaped_config_path'" 2>&1)
+    # CRITICAL: Use docker exec -e flag to set environment variables directly
+    # This avoids shell escaping issues with special characters in the URL (@, ?, =, etc.)
+    # The -e flag passes the variable directly to the container environment without shell interpretation
+    
+    # Run migration with DATABASE_URL set via docker exec -e flag (most reliable method)
+    # Don't use shell export inside the container - rely on -e flag which handles special chars correctly
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && npx prisma migrate deploy --schema '$escaped_schema_path' --config '$escaped_config_path'" 2>&1)
     migration_exit_code=$?
     
     # Always log the migration output for debugging
@@ -715,9 +736,9 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     if [[ $migration_exit_code -eq 0 ]]; then
         log_success "Migrations completed successfully"
         
-        # Verify schema (DATABASE_URL should still be available from previous exec)
+        # Verify schema (use -e flag to set DATABASE_URL directly without shell escaping issues)
         local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
-        if docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && npx prisma validate --schema '$schema_path' --config '$config_file_path'" 2>&1; then
+        if docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && npx prisma validate --schema '$schema_path' --config '$config_file_path'" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
