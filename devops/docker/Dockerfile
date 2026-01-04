@@ -319,6 +319,22 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo '  exit 1' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
+  echo '# CRITICAL: Ensure client.js is copied from dist to standard location' >> /app/entrypoint.sh && \
+  echo '# Prisma 7 generates client.js in dist/ which exports PrismaClient' >> /app/entrypoint.sh && \
+  echo '# Standard location index.js only has error classes, not PrismaClient' >> /app/entrypoint.sh && \
+  echo 'if [ -f /app/dist/libs/infrastructure/database/prisma/generated/client/client.js ]; then' >> /app/entrypoint.sh && \
+  echo '  if [ ! -f /app/node_modules/.prisma/client/client.js ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[INFO] Copying client.js from dist to standard location..."' >> /app/entrypoint.sh && \
+  echo '    cp /app/dist/libs/infrastructure/database/prisma/generated/client/client.js /app/node_modules/.prisma/client/client.js' >> /app/entrypoint.sh && \
+  echo '    echo "[OK] client.js copied to standard location"' >> /app/entrypoint.sh && \
+  echo '  fi' >> /app/entrypoint.sh && \
+  echo '  # Update package.json to use client.js as main entry point' >> /app/entrypoint.sh && \
+  echo '  if [ -f /app/node_modules/.prisma/client/package.json ]; then' >> /app/entrypoint.sh && \
+  echo '    echo "[INFO] Updating package.json to use client.js as main entry..."' >> /app/entrypoint.sh && \
+  echo '    echo "{\"name\":\"@prisma/client\",\"main\":\"client.js\",\"types\":\"index.d.ts\"}" > /app/node_modules/.prisma/client/package.json' >> /app/entrypoint.sh && \
+  echo '  fi' >> /app/entrypoint.sh && \
+  echo 'fi' >> /app/entrypoint.sh && \
+  echo '' >> /app/entrypoint.sh && \
   echo '# Ensure symlink points to standard location (has complete JavaScript runtime)' >> /app/entrypoint.sh && \
   echo '# Prisma 7 custom output only has TypeScript, standard location has JavaScript' >> /app/entrypoint.sh && \
   echo 'if [ -L /app/node_modules/@prisma/client ]; then' >> /app/entrypoint.sh && \
