@@ -48,7 +48,8 @@
       "@payment/*": ["src/libs/payment/*"],
       "@config": ["src/config"],
       "@config/*": ["src/config/*"],
-      "@prisma/client": ["src/libs/infrastructure/database/prisma/generated/client"]
+      "@generated/prisma": ["src/generated/prisma"],
+      "@prisma/client": ["src/generated/prisma"]
     }
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"],
@@ -58,8 +59,7 @@
     "**/prisma.config.js",
     "src/libs/infrastructure/database/generated",
     "src/libs/infrastructure/database/prisma/seed.ts"
-    // Note: src/libs/infrastructure/database/prisma/generated is NOT excluded
-    // to allow TypeScript to resolve types from Prisma Client
+    // Note: src/generated/prisma is NOT excluded to allow TypeScript to resolve types from Prisma Client
     // Note: seed.ts is excluded as it's only used for development/testing
   ]
 }

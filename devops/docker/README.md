@@ -1168,17 +1168,20 @@ development, committed to the repository, and validated at multiple stages.
 
 **Build Stage:**
 
-- Dockerfile runs `yarn prisma:generate` during build (line 31)
-- Regenerates Prisma Client (overwrites committed files)
-- Copies generated files to `dist/` for production
+- Dockerfile runs `yarn prisma:generate` during build (line 34)
+- Generates Prisma Client to `src/generated/prisma` (app-local directory)
+- Copies generated files to `dist/generated/prisma` for production
 
 **Runtime Stage:**
 
-- Entrypoint script runs `prisma generate` again (safety net)
-- Copies JavaScript files from `node_modules/.prisma/client` to custom location
-- Creates symlink for `@prisma/client`
-- Application code checks multiple paths (`dist/`, `src/`, relative,
-  `@prisma/client`)
+- Entrypoint script verifies Prisma Client exists (generated during build, not
+  at runtime)
+- Prisma Client is in `src/generated/prisma` (app-local directory) and compiled
+  to `dist/generated/prisma`
+- Creates symlink from `@prisma/client` to `src/generated/prisma` for module
+  resolution
+- Application code imports from fixed paths: `dist/generated/prisma`
+  (production) or `src/generated/prisma` (development)
 
 **Result:**
 
@@ -1260,7 +1263,7 @@ chmod +x .husky/post-merge
 yarn prisma:regenerate
 
 # Verify files exist
-ls -la src/libs/infrastructure/database/prisma/generated/client/
+ls -la src/generated/prisma/
 ```
 
 **Issue: CI fails with "Prisma generated files are stale"**
