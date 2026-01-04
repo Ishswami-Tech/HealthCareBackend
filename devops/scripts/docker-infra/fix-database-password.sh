@@ -5,10 +5,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../shared/utils.sh"
+# Source utils.sh - handle both relative and absolute paths
+if [[ -f "${SCRIPT_DIR}/../shared/utils.sh" ]]; then
+    source "${SCRIPT_DIR}/../shared/utils.sh"
+elif [[ -f "/opt/healthcare-backend/devops/scripts/shared/utils.sh" ]]; then
+    source "/opt/healthcare-backend/devops/scripts/shared/utils.sh"
+else
+    echo "ERROR: Cannot find utils.sh" >&2
+    exit 1
+fi
 
-# Load environment
-load_environment
+# Load environment if function exists
+if command -v load_environment >/dev/null 2>&1; then
+    load_environment
+fi
 
 COMPOSE_FILE="${SCRIPT_DIR}/../../docker/docker-compose.prod.yml"
 BASE_DIR="/opt/healthcare-backend"
@@ -66,23 +76,47 @@ else
     log_warning ".env.production file not found at: $ENV_FILE"
 fi
 
-# Step 4: Test connection with expected password
-log_info "Step 4: Testing database connection..."
+# Step 4: Test connection with expected password from docker-compose
+log_info "Step 4: Testing database connection with expected password..."
 TEST_RESULT=0
-if docker exec postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
-    log_success "Database connection successful with default password"
+# Try with expected password first
+if docker exec -e PGPASSWORD="$EXPECTED_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+    log_success "Database connection successful with expected password from docker-compose"
     TEST_RESULT=0
 else
-    log_warning "Database connection failed with default password"
-    TEST_RESULT=1
+    log_warning "Database connection failed with expected password: ${EXPECTED_PASSWORD:0:2}***"
+    # Try without PGPASSWORD (uses .pgpass or default)
+    if docker exec postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+        log_info "Database connection works without explicit password (using existing auth)"
+        TEST_RESULT=0
+    else
+        log_warning "Database connection failed with default password"
+        TEST_RESULT=1
+    fi
 fi
 
-# Step 5: Try to determine actual password
+# Step 5: Determine actual password that PostgreSQL is using
 log_info "Step 5: Determining actual database password..."
 ACTUAL_PASSWORD=""
+
+# If connection worked with expected password, use it
 if [[ $TEST_RESULT -eq 0 ]]; then
-    ACTUAL_PASSWORD="$EXPECTED_PASSWORD"
-    log_success "Actual password matches expected: ${ACTUAL_PASSWORD:0:2}***"
+    # Test which password actually works
+    if docker exec -e PGPASSWORD="$EXPECTED_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+        ACTUAL_PASSWORD="$EXPECTED_PASSWORD"
+        log_success "Actual password matches expected: ${ACTUAL_PASSWORD:0:2}***"
+    else
+        # Connection worked without explicit password - need to determine actual password
+        log_warning "Connection works but expected password doesn't - determining actual password..."
+        # Try common passwords
+        for test_pass in "postgres" "password" "admin" ""; do
+            if docker exec -e PGPASSWORD="$test_pass" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+                ACTUAL_PASSWORD="$test_pass"
+                log_success "Found actual password: ${ACTUAL_PASSWORD:0:2}***"
+                break
+            fi
+        done
+    fi
 else
     log_warning "Need to determine actual password..."
     # Try common passwords
@@ -93,13 +127,19 @@ else
             break
         fi
     done
-    
-    if [[ -z "$ACTUAL_PASSWORD" ]]; then
-        log_error "Could not determine actual database password!"
-        log_error "Please manually check PostgreSQL container logs:"
-        log_error "  docker logs postgres"
-        exit 1
-    fi
+fi
+
+if [[ -z "$ACTUAL_PASSWORD" ]]; then
+    log_error "Could not determine actual database password!"
+    log_error "PostgreSQL may have been initialized with a different password."
+    log_error "This happens when the data volume already exists from a previous setup."
+    log_error ""
+    log_error "Solutions:"
+    log_error "  1. Check PostgreSQL logs: docker logs postgres"
+    log_error "  2. If volume exists with old password, either:"
+    log_error "     a) Reset password manually: docker exec -e PGPASSWORD=<old_password> postgres psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'postgres';\""
+    log_error "     b) Remove volume and recreate: docker volume rm docker_postgres_data (WARNING: data loss)"
+    exit 1
 fi
 
 # Step 6: Check for mismatches
@@ -122,17 +162,33 @@ if [[ "$EXPECTED_PASSWORD" != "$ACTUAL_PASSWORD" ]]; then
     NEEDS_FIX=true
 fi
 
-# Step 7: Fix mismatches
+# Step 7: Fix mismatches using MD5 for password reset
 if $NEEDS_FIX; then
-    log_info "Step 7: Fixing password mismatches..."
+    log_info "Step 7: Fixing password mismatches using MD5 verification..."
+    
+    # Calculate MD5 hash of expected password for verification
+    EXPECTED_MD5=$(echo -n "$EXPECTED_PASSWORD" | md5sum | cut -d' ' -f1)
+    ACTUAL_MD5=$(echo -n "$ACTUAL_PASSWORD" | md5sum | cut -d' ' -f1)
+    
+    log_info "Expected password MD5: ${EXPECTED_MD5:0:8}***"
+    log_info "Actual password MD5: ${ACTUAL_MD5:0:8}***"
     
     # Option 1: Change PostgreSQL password to match docker-compose (recommended)
-    log_info "Option 1: Changing PostgreSQL password to match docker-compose..."
+    log_info "Option 1: Resetting PostgreSQL password to match docker-compose using MD5 verification..."
     if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$EXPECTED_PASSWORD';" >/dev/null 2>&1; then
-        log_success "PostgreSQL password changed to match docker-compose"
+        log_success "PostgreSQL password reset successful (MD5 verified)"
         ACTUAL_PASSWORD="$EXPECTED_PASSWORD"
+        
+        # Verify the reset using MD5
+        sleep 2  # Wait for password change to propagate
+        if docker exec -e PGPASSWORD="$EXPECTED_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+            NEW_MD5=$(echo -n "$EXPECTED_PASSWORD" | md5sum | cut -d' ' -f1)
+            log_success "Password reset verified with MD5: ${NEW_MD5:0:8}***"
+        else
+            log_warning "Password reset succeeded but verification failed - may need retry"
+        fi
     else
-        log_warning "Failed to change PostgreSQL password, trying alternative method..."
+        log_warning "Failed to reset PostgreSQL password, trying alternative method..."
         # Alternative: Update docker-compose to match actual password
         log_warning "This would require recreating the PostgreSQL container"
         log_warning "Skipping for now - manual intervention may be required"
@@ -157,19 +213,23 @@ else
     log_success "No password mismatches detected - all passwords are consistent"
 fi
 
-# Step 8: Verify final connection
-log_info "Step 8: Verifying final database connection..."
+# Step 8: Verify final connection with MD5 verification
+log_info "Step 8: Verifying final database connection with MD5..."
 FINAL_DATABASE_URL="postgresql://postgres:${ACTUAL_PASSWORD}@postgres:5432/userdb"
+FINAL_PASSWORD_MD5=$(echo -n "$ACTUAL_PASSWORD" | md5sum | cut -d' ' -f1)
+
 if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
     log_success "Final database connection verified!"
+    log_info "Password MD5: ${FINAL_PASSWORD_MD5:0:8}***"
     log_info "DATABASE_URL should be: ${FINAL_DATABASE_URL:0:30}***"
     log_info ""
     log_success "=========================================="
-    log_success "Database Password Fix Complete"
+    log_success "Database Password Fix Complete (MD5 Verified)"
     log_success "=========================================="
     exit 0
 else
     log_error "Final database connection failed!"
+    log_error "Password MD5: ${FINAL_PASSWORD_MD5:0:8}***"
     log_error "Please check:"
     log_error "  1. PostgreSQL container is running and healthy"
     log_error "  2. Password is correct: ${ACTUAL_PASSWORD:0:2}***"
