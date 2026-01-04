@@ -320,9 +320,9 @@ deploy_application() {
     
     # Start new containers
     # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
-    # but --no-deps ensures we only start api and worker, not their dependencies
+    # Remove --no-deps to ensure dependencies are started (worker depends on api)
     log_info "Starting application containers (api, worker)..."
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
