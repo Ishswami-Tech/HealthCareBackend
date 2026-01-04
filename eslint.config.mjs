@@ -19,6 +19,7 @@ export default [
       'dist',
       'node_modules',
       'prisma.config.js',
+      '**/prisma.config.js',
       '**/generated/**',
       'src/libs/infrastructure/database/generated/**',
       'src/libs/infrastructure/database/prisma/generated/**',
