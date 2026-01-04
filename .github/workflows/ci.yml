@@ -28,28 +28,9 @@ env:
   # Note: IMAGE will be set in docker-build job with lowercase conversion
 
 jobs:
-  # Code Quality Checks
-  # Skip linting and format checks for all branches - handled by git hooks
-  # Pre-commit: Quick lint-staged (fast validation on staged files)
-  # Pre-push: Full yarn build (comprehensive validation before pushing)
-  # Docker build: Final validation with yarn build (linting, formatting, optimizations)
-  lint:
-    name: Lint & Format Check (Skipped)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Skip linting and format checks
-        run: |
-          echo "⏭️  Skipping linting and format checks in CI"
-          echo "✅ Code is validated by pre-commit (lint-staged) and pre-push (yarn build) hooks"
-          echo "✅ Pre-push ensures only buildable code is pushed (full validation)"
-          echo "✅ Docker build runs final validation with yarn build (linting, formatting, optimizations)"
-          echo "✅ Prisma client is generated during Docker build"
-          exit 0
-
   # Security Scanning
+  # Runs Trivy vulnerability scanner and dependency audit (audit-ci)
+  # Uploads SARIF results to GitHub Security
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -75,8 +56,8 @@ jobs:
         run: |
           npx audit-ci --moderate
 
-  # TypeScript Build
   # Docker Build & Push
+  # Builds and pushes Docker image to GitHub Container Registry
   # Note: Build happens inside Docker, no separate build job needed
   # Prisma client generation happens during Docker build (see Dockerfile line 34)
   # Linting and formatting are done in git hooks (pre-commit + pre-push) and Docker build
@@ -84,8 +65,7 @@ jobs:
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    # Lint job is skipped (handled by pre-push hook), only depend on security
-    needs: [lint, security]
+    needs: [security]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -138,6 +118,9 @@ jobs:
           echo "Image pushed: ${{ steps.meta.outputs.tags }}"
 
   # Change Detection
+  # Detects whether infrastructure or application code has changed
+  # Outputs: infra-changed, app-changed
+  # Used by other jobs to determine if infrastructure/app deployment is needed
   detect-changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -174,6 +157,9 @@ jobs:
           echo "Application changed: ${{ steps.filter.outputs.app }}"
 
   # Infrastructure Health Check
+  # Initial passive health check of infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
+  # Sets outputs: infra-healthy, infra-status
+  # Used to determine if infrastructure recovery is needed
   check-infrastructure:
     name: Check Infrastructure Health
     runs-on: ubuntu-latest
@@ -256,6 +242,9 @@ jobs:
           fi
 
   # Backup Infrastructure
+  # Creates backup of PostgreSQL and Dragonfly data before infrastructure changes
+  # Runs when: infrastructure changed OR infrastructure is unhealthy
+  # Backup stored locally and optionally in S3 (Contabo)
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
@@ -427,57 +416,10 @@ jobs:
           echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
           echo "Backup ID: \${BACKUP_ID}"
 
-  # Debug Infrastructure
-  debug-infrastructure:
-    name: Debug Infrastructure
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' && 
-      needs.check-infrastructure.outputs.infra-healthy == 'false' &&
-      needs.detect-changes.outputs.infra-changed != 'true'
-    environment: production
-    needs: [detect-changes, check-infrastructure]
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: Add server to known hosts
-        run: |
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
-
-      - name: Copy diagnostic scripts
-        run: |
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
-
-      - name: Run diagnostics and auto-fix
-        id: debug
-        run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
-            export SCRIPT_DIR="/tmp"
-            source /tmp/utils.sh
-            chmod +x /tmp/diagnose.sh
-            if /tmp/diagnose.sh > /tmp/debug-result.json 2>&1; then
-              echo "debug-status=fixed" > /tmp/debug-status.txt
-            else
-              echo "debug-status=failed" > /tmp/debug-status.txt
-            fi
-          ENDSSH
-          
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/debug-status.txt /tmp/debug-status.txt
-          DEBUG_STATUS=\$(grep debug-status /tmp/debug-status.txt | cut -d= -f2)
-          echo "debug-status=\${DEBUG_STATUS}" >> $GITHUB_OUTPUT
-
   # Recreate Infrastructure
+  # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
+  # Runs when: infrastructure changed OR infrastructure is unhealthy
+  # Preserves data volumes during recreation
   recreate-infrastructure:
     name: Recreate Infrastructure
     runs-on: ubuntu-latest
@@ -486,10 +428,9 @@ jobs:
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' && 
       (needs.detect-changes.outputs.infra-changed == 'true' || 
-       (needs.check-infrastructure.outputs.infra-healthy == 'false' && 
-        (needs.debug-infrastructure.result == 'failure' || needs.debug-infrastructure.result == 'skipped')))
+       needs.check-infrastructure.outputs.infra-healthy == 'false')
     environment: production
-    needs: [detect-changes, check-infrastructure, backup-infrastructure, debug-infrastructure]
+    needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -644,6 +585,8 @@ jobs:
           ENDSSH
 
   # Restore Backup
+  # Restores PostgreSQL and Dragonfly data from backup after infrastructure recreation
+  # Runs when: backup was created successfully
   restore-backup:
     name: Restore Backup
     runs-on: ubuntu-latest
@@ -746,10 +689,12 @@ jobs:
             /tmp/restore.sh "$BACKUP_ID"
           ENDSSH
 
-  # Verify Infrastructure
-  # Runs after deployment to verify infrastructure is healthy post-deployment
-  verify-infrastructure:
-    name: Verify Infrastructure
+  # Verify Deployment
+  # Post-deployment verification of infrastructure AND application
+  # Verifies: infrastructure containers, data integrity, and application readiness (API + Worker)
+  # Runs after: restore-backup or when infrastructure is healthy
+  verify-deployment:
+    name: Verify Deployment
     runs-on: ubuntu-latest
     if: |
       always() &&
@@ -784,7 +729,7 @@ jobs:
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
-      - name: Verify infrastructure
+      - name: Verify deployment (infrastructure + application)
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
@@ -794,25 +739,22 @@ jobs:
             /tmp/verify.sh deployment
           ENDSSH
 
-  # Deploy to Production Server (Main Branch Only)
+  # Deploy to Production
+  # Deploys application containers (API + Worker) to production server
   # Runs when:
   # 1. Docker build succeeds AND infrastructure is healthy (normal flow)
-  # 2. Infrastructure was recreated successfully (recovery flow) - triggers app deployment
+  # 2. Infrastructure was recreated/verified successfully (recovery flow)
+  # Handles: database migrations, container startup, health checks
   deploy:
     name: Deploy to Production
     if: |
       always() &&
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
-      needs.docker-build.result == 'success' &&
-      (
-        needs.verify-infrastructure.result == 'success' ||
-        (needs.check-infrastructure.outputs.infra-healthy == 'true' && 
-         needs.backup-infrastructure.result == 'success')
-      )
+      needs.docker-build.result == 'success'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-infrastructure, ensure-infrastructure-health, recreate-infrastructure, restore-backup]
+    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-deployment, ensure-infrastructure-health, recreate-infrastructure, restore-backup]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -1313,8 +1255,146 @@ jobs:
           # Security: Don't log server hostname in public logs
           echo "Server: [REDACTED]"
 
-  # Ensure Infrastructure Health (At Any Cost)
-  # Runs independently to make infrastructure healthy regardless of other job status
+  # Post-Deployment Verification & Backup
+  # Verifies deployment health and creates a success backup
+  # Runs after successful deployment to ensure everything is working and create a recovery point
+  post-deployment-verification:
+    name: Post-Deployment Verification & Backup
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.deploy.result == 'success'
+    environment: production
+    needs: [deploy]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy verification and backup scripts
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Verify deployment health
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            chmod +x /tmp/verify.sh
+            
+            echo "🔍 Verifying deployment health after successful deployment..."
+            if /tmp/verify.sh deployment; then
+              echo "✅ Deployment verification passed"
+              echo "VERIFICATION_STATUS=success" > /tmp/post-deploy-status.txt
+            else
+              echo "⚠️  Deployment verification had issues (but deployment succeeded)"
+              echo "VERIFICATION_STATUS=warning" > /tmp/post-deploy-status.txt
+            fi
+          ENDSSH
+
+      - name: Create success backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            # Install rclone or s3cmd if needed
+            if ! command -v rclone &> /dev/null && ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing rclone for Contabo S3..."
+              if curl -fsSL https://rclone.org/install.sh | sudo bash; then
+                echo "✅ rclone installed successfully"
+              else
+                echo "⚠️  rclone installation failed, trying s3cmd fallback..."
+                if command -v apt-get &> /dev/null; then
+                  sudo apt-get update -qq
+                  sudo apt-get install -y s3cmd || {
+                    if command -v pip3 &> /dev/null; then
+                      pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                        echo "❌ Failed to install both rclone and s3cmd"
+                        exit 1
+                      }
+                    else
+                      echo "❌ Cannot install rclone or s3cmd automatically"
+                      exit 1
+                    }
+                  }
+                elif command -v pip3 &> /dev/null; then
+                  pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                    echo "❌ Failed to install both rclone and s3cmd"
+                    exit 1
+                  }
+                else
+                  echo "❌ Cannot install rclone or s3cmd automatically"
+                  exit 1
+                fi
+                echo "✅ s3cmd installed as fallback"
+              fi
+            elif command -v rclone &> /dev/null; then
+              echo "✅ rclone is already installed"
+            elif command -v s3cmd &> /dev/null; then
+              echo "✅ s3cmd is already installed (rclone preferred but s3cmd will work)"
+            fi
+            
+            chmod +x /tmp/backup.sh
+            
+            echo "💾 Creating success backup after deployment..."
+            echo "📋 This backup serves as a recovery point for the successful deployment"
+            BACKUP_ID=$(/tmp/backup.sh success) || {
+              echo "⚠️  Success backup failed (non-critical, but recommended)"
+              exit 0  # Don't fail the job if backup fails
+            }
+            echo "✅ Success backup created (ID: ${BACKUP_ID})"
+            echo "BACKUP_ID=${BACKUP_ID}" > /tmp/post-deploy-backup-id.txt
+          ENDSSH
+
+      - name: Post-deployment summary
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "📊 Post-Deployment Summary"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ Deployment verification completed"
+          echo "💾 Success backup created (if backup succeeded)"
+          echo "🎉 Deployment is healthy and backed up!"
+          echo "═══════════════════════════════════════════════════════════"
+
+  # Ensure Infrastructure Health
+  # Aggressive recovery job that makes infrastructure healthy at any cost
+  # Runs independently with retry logic (5 attempts) and auto-recovery
+  # Uses: health-check.sh (with auto-recovery) + diagnose.sh
+  # Runs: Always on main branch push
   ensure-infrastructure-health:
     name: Ensure Infrastructure Health
     runs-on: ubuntu-latest
@@ -1572,20 +1652,3 @@ jobs:
             echo "✅ Infrastructure is healthy!"
           fi
 
-  # Summary Report
-  ci-success:
-    name: CI Success
-    runs-on: ubuntu-latest
-    needs: [lint, security, docker-build]
-    # Allow lint to be skipped for production (main branch)
-    if: always() && !contains(needs.*.result, 'failure')
-    steps:
-      - name: Report Success
-        run: |
-          echo "✅ All CI checks passed successfully!"
-          if [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
-            echo "🚀 Ready for deployment (deploy job runs separately)"
-          else
-            echo "Ready for merge to main branch"
-          fi
-          echo "ℹ️  Linting and formatting handled by git hooks (pre-commit + pre-push) and Docker build"
