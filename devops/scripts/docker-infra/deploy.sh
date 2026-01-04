@@ -608,14 +608,20 @@ run_migrations_safely() {
     
     # Run migrations - unset DIRECT_URL and use verified DATABASE_URL
     log_info "Executing Prisma migration command..."
+    log_info "Command: npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'"
+    log_info "DATABASE_URL (masked): ${clean_database_url:0:50}***"
+    
+    # Run migration and capture both stdout and stderr
     local migration_output
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 50) + '***' : 'NOT SET'); console.log('[DEBUG] DIRECT_URL:', process.env.DIRECT_URL || 'UNSET (correct)')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
-    local migration_exit_code=$?
+    local migration_exit_code
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
+    migration_exit_code=$?
     
     # Always log the migration output for debugging
-    log_info "Prisma migration output:"
+    log_info "=== Prisma Migration Output ==="
     echo "$migration_output"
     echo "$migration_output" > /tmp/migration.log 2>&1 || true
+    log_info "=== End of Migration Output ==="
     
     if [[ $migration_exit_code -eq 0 ]]; then
         log_success "Migrations completed successfully"
@@ -635,10 +641,11 @@ run_migrations_safely() {
         fi
     else
         log_error "Migration failed with exit code: $migration_exit_code"
-        log_error "=== Prisma Migration Error Output ==="
-        echo "$migration_output" | tail -30 >&2
+        log_error "=== Prisma Migration Error Output (Full) ==="
+        echo "$migration_output" >&2
         log_error "=== End of Migration Error Output ==="
         log_error "Full migration log saved to: /tmp/migration.log"
+        log_error "To debug, check the migration output above for Prisma errors"
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
             log_warning "Rolling back to pre-migration backup..."
             restore_backup "$PRE_MIGRATION_BACKUP"
