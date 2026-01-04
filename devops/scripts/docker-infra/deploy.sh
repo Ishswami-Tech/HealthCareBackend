@@ -497,6 +497,36 @@ run_migrations_safely() {
         database_url="postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60"
     fi
     
+    # Verify database connection before running migrations
+    log_info "Verifying database connection..."
+    # Extract password from DATABASE_URL for testing
+    local db_password=$(echo "$database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
+    if ! docker exec -e PGPASSWORD="$db_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+        log_error "Database connection test failed!"
+        log_error "Expected DATABASE_URL: ${database_url:0:50}***"
+        log_error "Please verify:"
+        log_error "  1. PostgreSQL container is running and healthy"
+        log_error "  2. Password in DATABASE_URL matches POSTGRES_PASSWORD in docker-compose"
+        log_error "  3. .env.production file doesn't override DATABASE_URL with wrong password"
+        log_error ""
+        log_info "Attempting to fix database password mismatch..."
+        if [[ -f "${SCRIPT_DIR}/fix-database-password.sh" ]]; then
+            if "${SCRIPT_DIR}/fix-database-password.sh"; then
+                log_success "Database password fixed, retrying connection..."
+                # Get updated DATABASE_URL
+                database_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "$database_url")
+            else
+                log_error "Failed to fix database password - manual intervention required"
+                return 1
+            fi
+        else
+            log_error "fix-database-password.sh not found - cannot auto-fix"
+            return 1
+        fi
+    else
+        log_success "Database connection verified"
+    fi
+    
     # Run migrations with DATABASE_URL explicitly set
     log_info "Running Prisma migrations with schema: $schema_path"
     if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" npx prisma migrate deploy --schema "$schema_path" 2>&1 | tee /tmp/migration.log; then

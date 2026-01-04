@@ -104,6 +104,12 @@ main() {
                 deploy|health-check|backup|restore|diagnose|verify|setup-directories)
                     bash "${SCRIPT_DIR}/docker-infra/${cmd}.sh" "${@:2}"
                     ;;
+                fix-db-password|fix-database-password)
+                    bash "${SCRIPT_DIR}/docker-infra/fix-database-password.sh" "${@:2}"
+                    ;;
+                clean-rebuild|clean-and-rebuild)
+                    bash "${SCRIPT_DIR}/docker-infra/clean-and-rebuild.sh" "${@:2}"
+                    ;;
                 *)
                     # Try as direct script name (with validation)
                     if [[ -f "${SCRIPT_DIR}/docker-infra/${cmd}.sh" ]]; then

@@ -332,6 +332,32 @@ crontab -l | grep healthcare
 
 ## Scripts Reference
 
+### Main Scripts
+
+| Script                     | Purpose                                              | Usage                                                          |
+| -------------------------- | ---------------------------------------------------- | -------------------------------------------------------------- |
+| `deploy.sh`                | Main deployment orchestrator                         | `./deploy.sh [options]`                                        |
+| `health-check.sh`          | Infrastructure health monitoring                     | `./health-check.sh`                                            |
+| `backup.sh`                | Backup management (PostgreSQL + Dragonfly)           | `./backup.sh [hourly\|daily\|weekly\|pre-deployment\|success]` |
+| `restore.sh`               | Restore from backups                                 | `./restore.sh <backup-id>`                                     |
+| `verify.sh`                | Deployment verification                              | `./verify.sh deployment` or `./verify.sh backup <backup-id>`   |
+| `diagnose.sh`              | Diagnostic and troubleshooting                       | `./diagnose.sh`                                                |
+| `setup-directories.sh`     | Setup required directories                           | `./setup-directories.sh`                                       |
+| `fix-database-password.sh` | **NEW**: Verify and fix database password mismatches | `./fix-database-password.sh`                                   |
+| `clean-and-rebuild.sh`     | **NEW**: Clean all containers and rebuild            | `./clean-and-rebuild.sh`                                       |
+
+### Utility Scripts
+
+| Script                       | Purpose                      |
+| ---------------------------- | ---------------------------- |
+| `incident-response.sh`       | Incident response automation |
+| `monitor-and-alert.sh`       | Monitoring and alerting      |
+| `reset-postgres-password.sh` | Reset PostgreSQL password    |
+
+---
+
+## Scripts Reference (Detailed)
+
 ### Core Scripts
 
 | Script            | Purpose                               | Usage                      |
