@@ -513,8 +513,16 @@ run_migrations_safely() {
         if [[ -f "${SCRIPT_DIR}/fix-database-password.sh" ]]; then
             if "${SCRIPT_DIR}/fix-database-password.sh"; then
                 log_success "Database password fixed, retrying connection..."
-                # Get updated DATABASE_URL
+                # Get updated DATABASE_URL from container or use the one we just fixed
                 database_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "$database_url")
+                # Re-extract password after fix
+                db_password=$(echo "$database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
+                # Verify again
+                if ! docker exec -e PGPASSWORD="$db_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+                    log_error "Database connection still failing after password fix"
+                    return 1
+                fi
+                log_success "Database connection verified after password fix"
             else
                 log_error "Failed to fix database password - manual intervention required"
                 return 1
