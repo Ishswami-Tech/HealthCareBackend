@@ -747,18 +747,17 @@ jobs:
           ENDSSH
 
   # Verify Infrastructure
+  # Runs after deployment to verify infrastructure is healthy post-deployment
   verify-infrastructure:
     name: Verify Infrastructure
     runs-on: ubuntu-latest
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' && 
-      (needs.recreate-infrastructure.result == 'success' || 
-       needs.restore-backup.result == 'success' ||
-       (needs.recreate-infrastructure.result == 'skipped' && needs.restore-backup.result == 'skipped'))
+      github.ref == 'refs/heads/main' &&
+      needs.deploy.result == 'success'
     environment: production
-    needs: [recreate-infrastructure, restore-backup]
+    needs: [deploy]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
