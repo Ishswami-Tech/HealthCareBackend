@@ -296,7 +296,37 @@ deploy_application() {
     fi
     
     # Start new containers
-    if docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api worker; then
+    log_info "Starting application containers (api, worker)..."
+    if docker compose -f docker-compose.prod.yml --profile app up -d --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+        log_info "Waiting for containers to start..."
+        sleep 5
+        
+        # Check if containers actually started
+        local api_container="${CONTAINER_PREFIX}api"
+        local worker_container="${CONTAINER_PREFIX}worker"
+        
+        if ! container_running "$api_container"; then
+            log_error "API container ($api_container) failed to start"
+            log_info "=== API Container Status ==="
+            docker ps -a --filter "name=$api_container" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+            log_info "=== API Container Logs (last 50 lines) ==="
+            docker logs --tail 50 "$api_container" 2>&1 || true
+            rollback_deployment
+            return 1
+        fi
+        
+        if ! container_running "$worker_container"; then
+            log_error "Worker container ($worker_container) failed to start"
+            log_info "=== Worker Container Status ==="
+            docker ps -a --filter "name=$worker_container" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+            log_info "=== Worker Container Logs (last 50 lines) ==="
+            docker logs --tail 50 "$worker_container" 2>&1 || true
+            rollback_deployment
+            return 1
+        fi
+        
+        log_success "Application containers started successfully"
+        
         # Wait for health
         if wait_for_health "${CONTAINER_PREFIX}api" 120; then
             # Create success backup after successful deployment
@@ -317,12 +347,34 @@ deploy_application() {
             log_success "Application deployed successfully"
             return 0
         else
-            log_error "Application health check failed - triggering rollback"
+            log_error "Application health check failed"
+            log_info "=== API Container Logs (last 100 lines) ==="
+            docker logs --tail 100 "$api_container" 2>&1 || true
             rollback_deployment
             return 1
         fi
     else
-        log_error "Application deployment failed - triggering rollback"
+        log_error "Application deployment failed - docker compose up returned error"
+        log_info "=== Docker Compose Output ==="
+        cat /tmp/docker-compose-up.log 2>&1 || true
+        
+        # Show container status even if they exist
+        local api_container="${CONTAINER_PREFIX}api"
+        local worker_container="${CONTAINER_PREFIX}worker"
+        
+        log_info "=== Container Status ==="
+        docker ps -a --filter "name=${api_container}" --filter "name=${worker_container}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+        
+        if docker ps -a --format "{{.Names}}" | grep -q "^${api_container}$"; then
+            log_info "=== API Container Logs (last 50 lines) ==="
+            docker logs --tail 50 "$api_container" 2>&1 || true
+        fi
+        
+        if docker ps -a --format "{{.Names}}" | grep -q "^${worker_container}$"; then
+            log_info "=== Worker Container Logs (last 50 lines) ==="
+            docker logs --tail 50 "$worker_container" 2>&1 || true
+        fi
+        
         rollback_deployment
         return 1
     fi
@@ -919,7 +971,18 @@ main() {
             log_info "Infrastructure is healthy - deploying application only"
             deploy_application || exit $EXIT_ERROR
         else
-            log_info "No changes detected - performing verification only"
+            log_info "No changes detected - ensuring application containers are running..."
+            
+            # Always check if application containers are running, start them if not
+            local api_container="${CONTAINER_PREFIX}api"
+            local worker_container="${CONTAINER_PREFIX}worker"
+            
+            if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                log_info "Application containers not running - starting them..."
+                deploy_application || exit $EXIT_ERROR
+            else
+                log_info "Application containers are already running"
+            fi
             
             # Still verify infrastructure health even if no changes
             local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
