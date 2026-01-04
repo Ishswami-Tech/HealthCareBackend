@@ -1342,6 +1342,11 @@ jobs:
               
               # Step 1: Run health check with auto-recovery
               echo "📊 Step 1: Running health check with auto-recovery..."
+              
+              # Ensure files are fully written before execution (fix "Text file busy" error)
+              sync
+              sleep 1
+              
               if /tmp/health-check.sh > /tmp/health-attempt-${ATTEMPT}.json 2>&1; then
                 HEALTHY=true
                 echo "✅ Infrastructure is healthy!"
@@ -1426,6 +1431,10 @@ jobs:
             echo "═══════════════════════════════════════════════════════════"
             echo "🏁 Final Health Check"
             echo "═══════════════════════════════════════════════════════════"
+            
+            # Ensure files are fully written before execution (fix "Text file busy" error)
+            sync
+            sleep 2
             
             if /tmp/health-check.sh > /tmp/final-health.json 2>&1; then
               echo "✅ SUCCESS: Infrastructure is healthy!"
