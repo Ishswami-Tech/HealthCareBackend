@@ -551,15 +551,16 @@ run_migrations_safely() {
         docker exec "${CONTAINER_PREFIX}api" sh -c "echo 'DATABASE_URL=$database_url' > /tmp/.env.prisma && cat /tmp/.env.prisma" >/dev/null 2>&1 || true
     fi
     
-    # Run migrations - Prisma reads DATABASE_URL from environment
-    # Prisma 7 supports --datasource-url flag to pass URL directly
-    # Also set it in environment for prisma.config.js if it exists
-    # Use both approaches for maximum compatibility
-    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && DATABASE_URL='$database_url' npx prisma migrate deploy --schema '$schema_path' --datasource-url '$database_url'" 2>&1 | tee /tmp/migration.log; then
+    # Run migrations - Prisma 7 reads DATABASE_URL from process.env in prisma.config.js
+    # The config file path is relative to the schema directory
+    # Ensure DATABASE_URL is set in the environment for Node.js to access it
+    local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
+    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
-        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && DATABASE_URL='$database_url' npx prisma validate --schema '$schema_path' --datasource-url '$database_url'" 2>&1; then
+        local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
+        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && npx prisma validate --schema '$schema_path' --config '$config_file_path'" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
