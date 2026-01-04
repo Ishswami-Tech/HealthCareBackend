@@ -9,8 +9,21 @@ module.exports = {
   // TypeScript files
   '**/*.ts': ['eslint --fix', 'prettier --write'],
 
-  // JavaScript files
-  '**/*.js': ['eslint --fix', 'prettier --write'],
+  // JavaScript files (exclude scripts from ESLint - they use CommonJS and don't need TypeScript rules)
+  '**/*.js': [
+    (filenames) => {
+      const scriptFiles = filenames.filter((f) => f.includes('scripts/'));
+      const otherFiles = filenames.filter((f) => !f.includes('scripts/'));
+      const commands = [];
+      if (otherFiles.length > 0) {
+        commands.push(`eslint --fix ${otherFiles.map((f) => `"${f}"`).join(' ')}`);
+      }
+      if (scriptFiles.length > 0) {
+        commands.push(`prettier --write ${scriptFiles.map((f) => `"${f}"`).join(' ')}`);
+      }
+      return commands;
+    },
+  ],
 
   // JSON files
   '**/*.json': ['prettier --write'],
