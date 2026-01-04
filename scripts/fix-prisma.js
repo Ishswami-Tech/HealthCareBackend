@@ -38,17 +38,8 @@ const appRoot = path.resolve(__dirname, '..');
 function fixPrismaSourcemaps() {
   log('\n→ Fixing Prisma sourcemaps...', 'cyan');
 
-  const runtimeDir = path.join(
-    appRoot,
-    'src',
-    'libs',
-    'infrastructure',
-    'database',
-    'prisma',
-    'generated',
-    'client',
-    'runtime'
-  );
+  // Prisma 7 generates to src/generated/prisma/runtime
+  const runtimeDir = path.join(appRoot, 'src', 'generated', 'prisma', 'runtime');
 
   if (!fs.existsSync(runtimeDir)) {
     log('  ⚠ Runtime directory not found, skipping sourcemap fixes', 'yellow');
