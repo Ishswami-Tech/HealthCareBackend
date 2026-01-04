@@ -78,7 +78,7 @@ jobs:
   # TypeScript Build
   # Docker Build & Push
   # Note: Build happens inside Docker, no separate build job needed
-  # Prisma client generation happens during Docker build (see Dockerfile line 32)
+  # Prisma client generation happens during Docker build (see Dockerfile line 34)
   # Linting and formatting are done in git hooks (pre-commit + pre-push) and Docker build
   # Pre-push hook runs full yarn build, ensuring only buildable code reaches CI
   docker-build:

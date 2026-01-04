@@ -252,279 +252,60 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static readonly serviceStartTime = Date.now(); // Track when service started
 
   /**
-   * Dynamically import PrismaClient to avoid module caching issues
-   * This ensures PrismaClient is loaded after prisma generate completes
+   * Load PrismaClient from the fixed app-local directory
+   * Prisma Client is generated at build time to src/generated/prisma
+   * and compiled to dist/generated/prisma in production
    */
   private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
+    const requireModule = createRequire(path.join(cwd, 'package.json'));
 
-    // Try dist/client.js first (production - where PrismaClient is actually exported)
-    // Prisma 7 generates client.js in dist/ with PrismaClient export
-    // Use dynamic import first as the compiled file may use ESM exports
-    const distClientJs = path.join(
-      cwd,
-      'dist',
-      'libs',
-      'infrastructure',
-      'database',
-      'prisma',
-      'generated',
-      'client',
-      'client.js'
-    );
-    if (fs.existsSync(distClientJs)) {
-      // Try dynamic import first (works for both ESM and CommonJS)
-      try {
-        const importPath =
-          process.platform === 'win32'
-            ? `file:///${distClientJs.replace(/\\/g, '/')}`
-            : `file://${distClientJs}`;
-        const prismaModule = (await import(importPath)) as {
-          PrismaClient?: PrismaClientConstructor;
-        };
-        if (prismaModule?.PrismaClient) {
-          return prismaModule.PrismaClient;
-        }
-      } catch {
-        // Fall through to require attempt
-      }
-      // Try require as fallback for CommonJS modules
-      try {
-        const requireModule = createRequire(path.join(cwd, 'package.json'));
-        const prismaModule = requireModule(distClientJs) as {
-          PrismaClient?: PrismaClientConstructor;
-        };
-        if (prismaModule?.PrismaClient) {
-          return prismaModule.PrismaClient;
-        }
-      } catch {
-        // Fall through to next path
-      }
-    }
-
-    // Try @prisma/client (standard location with symlink)
-    // Note: index.js doesn't export PrismaClient, but client.ts does (TypeScript only)
-    // So we need to check custom location's client.js instead
-    try {
-      const requireModule = createRequire(path.join(cwd, 'package.json'));
-      const prismaModule = requireModule('@prisma/client') as {
-        PrismaClient?: PrismaClientConstructor;
-      };
-      if (prismaModule?.PrismaClient) {
-        return prismaModule.PrismaClient;
-      }
-    } catch {
-      // Fall through to dynamic import
-    }
-
-    // Try dynamic import of @prisma/client as fallback
-    try {
-      const prismaModule = (await import('@prisma/client')) as {
-        PrismaClient?: PrismaClientConstructor;
-      };
-      if (prismaModule?.PrismaClient) {
-        return prismaModule.PrismaClient;
-      }
-    } catch {
-      // Fall through to custom paths
-    }
-
-    // Try multiple paths in order of preference:
-    // 1. dist/ path (production - where compiled code runs from)
-    // 2. src/ path (development - where source code is)
-    // 3. Relative path (should work if files are in the right place)
-
+    // Try paths in order of preference:
+    // 1. dist/generated/prisma (production - compiled code)
+    // 2. src/generated/prisma (development - source code)
+    // 3. @prisma/client (via path alias)
     const possiblePaths = [
-      // Production path (compiled code runs from dist/)
-      path.join(
-        cwd,
-        'dist',
-        'libs',
-        'infrastructure',
-        'database',
-        'prisma',
-        'generated',
-        'client',
-        'index.js'
-      ),
-      // Development path (source code)
-      path.join(
-        cwd,
-        'src',
-        'libs',
-        'infrastructure',
-        'database',
-        'prisma',
-        'generated',
-        'client',
-        'index.js'
-      ),
-      // Also try dist/ without the full path (in case cwd is dist/)
-      path.join(
-        cwd,
-        'libs',
-        'infrastructure',
-        'database',
-        'prisma',
-        'generated',
-        'client',
-        'index.js'
-      ),
+      path.join(cwd, 'dist', 'generated', 'prisma'),
+      path.join(cwd, 'src', 'generated', 'prisma'),
+      '@prisma/client',
     ];
 
-    // Try absolute paths first (most reliable)
-    for (const customClientIndex of possiblePaths) {
-      if (fs.existsSync(customClientIndex)) {
-        try {
-          // Use file:// URL for absolute path imports in ESM
-          const customModule = (await import(
-            process.platform === 'win32'
-              ? `file:///${customClientIndex.replace(/\\/g, '/')}`
-              : `file://${customClientIndex}`
-          )) as { PrismaClient?: PrismaClientConstructor };
-          if (customModule?.PrismaClient) {
-            return customModule.PrismaClient;
-          }
-        } catch {
-          // Fall through to next path
-        }
-      }
-    }
-
-    try {
-      // Dynamic import to get fresh PrismaClient from generated location
-      // In Prisma 7 with custom output, PrismaClient is exported from client.ts/client.js
-      // Try multiple paths in order of preference
-      let prismaModule: { PrismaClient?: PrismaClientConstructor } | null = null;
-      const cwd = process.cwd();
-
-      // Try custom location's client.js first (where PrismaClient is actually exported)
-      const customClientJsPaths = [
-        path.join(
-          cwd,
-          'dist',
-          'libs',
-          'infrastructure',
-          'database',
-          'prisma',
-          'generated',
-          'client',
-          'client.js'
-        ),
-        path.join(
-          cwd,
-          'src',
-          'libs',
-          'infrastructure',
-          'database',
-          'prisma',
-          'generated',
-          'client',
-          'client.js'
-        ),
-        path.join(
-          cwd,
-          'dist',
-          'libs',
-          'infrastructure',
-          'database',
-          'prisma',
-          'generated',
-          'client',
-          'index.js'
-        ),
-        path.join(
-          cwd,
-          'src',
-          'libs',
-          'infrastructure',
-          'database',
-          'prisma',
-          'generated',
-          'client',
-          'index.js'
-        ),
-        './generated/client/client.js',
-        './generated/client/index.js',
-      ];
-
-      for (const clientPath of customClientJsPaths) {
-        try {
-          const fullPath = path.isAbsolute(clientPath)
-            ? clientPath
-            : path.join(__dirname, clientPath);
-          if (fs.existsSync(fullPath)) {
-            const importPath =
-              process.platform === 'win32'
-                ? `file:///${fullPath.replace(/\\/g, '/')}`
-                : `file://${fullPath}`;
-            prismaModule = (await import(importPath)) as {
-              PrismaClient?: PrismaClientConstructor;
-            };
-            if (prismaModule?.PrismaClient) {
-              return prismaModule.PrismaClient;
-            }
-          }
-        } catch {
-          // Continue to next path
-        }
-      }
-
-      // Fallback to @prisma/client (standard location)
-      // This should work as the symlink points to node_modules/.prisma/client
+    for (const clientPath of possiblePaths) {
       try {
-        // Use require for CommonJS compatibility in Docker
-        const requireModule = createRequire(path.join(process.cwd(), 'package.json'));
-        prismaModule = requireModule('@prisma/client') as {
+        // Try require first (CommonJS)
+        const prismaModule = requireModule(clientPath) as {
           PrismaClient?: PrismaClientConstructor;
         };
         if (prismaModule?.PrismaClient) {
           return prismaModule.PrismaClient;
         }
       } catch {
-        // Try dynamic import as fallback
-        try {
-          prismaModule = (await import('@prisma/client')) as {
-            PrismaClient?: PrismaClientConstructor;
-          };
-          if (prismaModule?.PrismaClient) {
-            return prismaModule.PrismaClient;
-          }
-        } catch {
-          // Continue to error handling
-        }
+        // Fall through to dynamic import
       }
 
-      // If still not found, try standard location directly
-      const standardClientPath = path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js');
-      if (fs.existsSync(standardClientPath)) {
-        try {
-          const importPath =
-            process.platform === 'win32'
-              ? `file:///${standardClientPath.replace(/\\/g, '/')}`
-              : `file://${standardClientPath}`;
-          prismaModule = (await import(importPath)) as {
-            PrismaClient?: PrismaClientConstructor;
-          };
-          if (prismaModule?.PrismaClient) {
-            return prismaModule.PrismaClient;
-          }
-        } catch {
-          // Continue to error
+      // Try dynamic import as fallback (ESM)
+      try {
+        const prismaModule = (await import(clientPath)) as {
+          PrismaClient?: PrismaClientConstructor;
+        };
+        if (prismaModule?.PrismaClient) {
+          return prismaModule.PrismaClient;
         }
+      } catch {
+        // Continue to next path
       }
-
-      throw new Error('PrismaClient not found in any expected location');
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new HealthcareError(
-        ErrorCode.DATABASE_CONNECTION_FAILED,
-        `Failed to load PrismaClient: ${errorMessage}. Please ensure "prisma generate" has been run.`,
-        undefined,
-        { originalError: errorMessage },
-        'PrismaService.loadPrismaClient'
-      );
     }
+
+    // If still not found, throw error
+    throw new HealthcareError(
+      ErrorCode.DATABASE_CONNECTION_FAILED,
+      'Failed to load PrismaClient: PrismaClient not found in any expected location. Please ensure "prisma generate" has been run.',
+      undefined,
+      {
+        checkedPaths: possiblePaths,
+      },
+      'PrismaService.loadPrismaClient'
+    );
   }
 
   /**

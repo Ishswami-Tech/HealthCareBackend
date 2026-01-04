@@ -230,7 +230,7 @@ services:
     profiles: ["app"]
     # Use image from GitHub Container Registry (for CI/CD deployments)
     # DOCKER_IMAGE is set by deploy.sh script
-    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 33)
+    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
     # NOT generated in CI lint job or at container startup - only during build
     image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
     # Local build section (commented out - we use pre-built images from registry)
@@ -378,7 +378,7 @@ services:
     profiles: ["app"]
     # Use same image as API (worker runs from same codebase)
     # DOCKER_IMAGE is set by deploy.sh script
-    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 33)
+    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
     # NOT generated in CI lint job or at container startup - only during build
     image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
     # Local build section (commented out - we use pre-built images from registry)
