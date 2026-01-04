@@ -696,32 +696,14 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     local escaped_schema_path=$(printf '%s\n' "$schema_path" | sed "s/'/'\\\\''/g")
     local escaped_config_path=$(printf '%s\n' "$config_file_path" | sed "s/'/'\\\\''/g")
     
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export DIRECT_URL='' && node -e \"
-// CRITICAL: Delete DIRECT_URL from process.env to ensure prisma.config.js doesn't use it
-delete process.env.DIRECT_URL;
-process.env.DATABASE_URL = process.env.DATABASE_URL || '';
-
-const { execSync } = require('child_process');
-const prismaPath = require.resolve('prisma/build/index.js');
-const schemaPath = '$escaped_schema_path';
-const configPath = '$escaped_config_path';
-
-// Create env object WITHOUT DIRECT_URL
-const env = Object.keys(process.env).reduce((acc, key) => {
-  if (key === 'DIRECT_URL') {
-    // Skip DIRECT_URL entirely - don't include it in env object
-    return acc;
-  }
-  acc[key] = process.env[key];
-  return acc;
-}, {});
-// Explicitly set DATABASE_URL and ensure DIRECT_URL is NOT in the env object
-env.DATABASE_URL = process.env.DATABASE_URL;
-
-console.log('[DEBUG] Running Prisma with DATABASE_URL set, DIRECT_URL removed from env');
-const command = 'node ' + prismaPath + ' migrate deploy --schema ' + schemaPath + ' --config ' + configPath;
-execSync(command, { stdio: 'inherit', env: env, cwd: '/app' });
-\" " 2>&1)
+    # CRITICAL FIX: Changed prisma.config.js to prioritize DATABASE_URL over DIRECT_URL
+    # This ensures Prisma uses the verified DATABASE_URL instead of potentially wrong DIRECT_URL
+    # Now we just need to ensure DATABASE_URL is set and DIRECT_URL is unset
+    log_info "Running Prisma migration (prisma.config.js now prioritizes DATABASE_URL over DIRECT_URL)..."
+    
+    # Run Prisma migration directly with DATABASE_URL set and DIRECT_URL unset
+    # The updated prisma.config.js will use DATABASE_URL (which we've verified) instead of DIRECT_URL
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export DIRECT_URL='' && npx prisma migrate deploy --schema '$escaped_schema_path' --config '$escaped_config_path'" 2>&1)
     migration_exit_code=$?
     
     # Always log the migration output for debugging
