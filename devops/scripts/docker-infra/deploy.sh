@@ -286,12 +286,28 @@ deploy_application() {
         return 1
     fi
     
+    # Authenticate with GitHub Container Registry if credentials are available
+    if [[ -n "${GITHUB_TOKEN:-}" ]] && [[ -n "${GITHUB_USERNAME:-}" ]]; then
+        log_info "Authenticating with GitHub Container Registry..."
+        if echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_USERNAME}" --password-stdin 2>&1; then
+            log_success "Authenticated with GitHub Container Registry"
+        else
+            log_warning "Failed to authenticate with GHCR, attempting to pull anyway (package may be public)"
+        fi
+    else
+        log_info "No GHCR credentials provided, attempting to pull (package may be public)"
+    fi
+    
     # Pull latest images
     # Note: We need to include infrastructure profile to resolve dependencies (coturn)
     # but we only pull the app service images
     log_info "Pulling latest images for api and worker..."
     if ! docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull api worker 2>&1; then
         log_error "Failed to pull images for api and worker"
+        if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+            log_error "No GITHUB_TOKEN provided - cannot authenticate with GHCR"
+            log_error "Either provide GITHUB_TOKEN and GITHUB_USERNAME, or make the package public in GitHub"
+        fi
         return 1
     fi
     log_success "Images pulled successfully"
