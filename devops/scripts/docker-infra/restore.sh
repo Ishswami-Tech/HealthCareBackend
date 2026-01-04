@@ -7,6 +7,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../shared/utils.sh"
 
+# Ensure command_exists is available (from utils.sh)
+if ! type command_exists >/dev/null 2>&1; then
+    command_exists() {
+        command -v "$1" >/dev/null 2>&1
+    }
+fi
+
 # Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 
@@ -27,7 +34,7 @@ find_backup() {
     
     log_info "Looking for backup: ${BACKUP_ID}..."
     
-    # Try local first
+    # Try local first - check all backup type directories
     if [[ "$BACKUP_ID" == "latest" ]]; then
         local latest_meta=$(ls -t "${BACKUP_DIR}/metadata"/*.json 2>/dev/null | head -1)
         if [[ -n "$latest_meta" ]]; then
@@ -53,34 +60,60 @@ find_backup() {
             log_success "Found local backup: ${BACKUP_ID}"
             return 0
         fi
+        
+        # Also check if backup ID might be in a subdirectory (e.g., pre-deployment/pre-deployment-2026-01-04-084414)
+        # Extract the actual backup ID if it includes a type prefix
+        local backup_type=""
+        local actual_backup_id="$BACKUP_ID"
+        if [[ "$BACKUP_ID" =~ ^(pre-deployment|success|hourly|daily|weekly)- ]]; then
+            backup_type="${BASH_REMATCH[1]}"
+            actual_backup_id="${BACKUP_ID#${backup_type}-}"
+        fi
+        
+        # Try finding in backup type subdirectories
+        for backup_type_dir in pre-deployment success hourly daily weekly; do
+            local type_meta_file="${BACKUP_DIR}/metadata/${backup_type_dir}/${BACKUP_ID}.json"
+            if [[ -f "$type_meta_file" ]]; then
+                RESTORE_SOURCE="local"
+                log_success "Found local backup in ${backup_type_dir}/: ${BACKUP_ID}"
+                return 0
+            fi
+        done
     fi
     
-    # Try S3
+    # Try S3 only if S3 is enabled AND local backup not found
     if [[ -n "${S3_ENABLED:-}" ]] && [[ "${S3_ENABLED}" == "true" ]]; then
-        local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
-        # Security: Validate S3 path
-        if ! validate_s3_path "$s3_meta_path"; then
-            log_error "Invalid S3 path: ${s3_meta_path}"
-            return 1
-        fi
-        # Security: Sanitize filename for temp file
-        local sanitized_id=$(sanitize_filename "$BACKUP_ID")
-        local temp_meta="/tmp/${sanitized_id}.json"
-        
-        if s3_download "$s3_meta_path" "$temp_meta"; then
-            RESTORE_SOURCE="s3"
-            mkdir -p "${BACKUP_DIR}/metadata"
-            # Security: Validate destination path
-            local dest_meta="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
-            if ! validate_file_path "$dest_meta" "$BACKUP_DIR"; then
-                log_error "Invalid destination path: ${dest_meta}"
-                rm -f "$temp_meta"
+        # Check if rclone or s3cmd is available before trying S3
+        if command_exists rclone || command_exists s3cmd; then
+            local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
+            # Security: Validate S3 path
+            if ! validate_s3_path "$s3_meta_path"; then
+                log_error "Invalid S3 path: ${s3_meta_path}"
                 return 1
             fi
-            cp "$temp_meta" "$dest_meta"
-            rm -f "$temp_meta"
-            log_success "Found S3 backup: ${BACKUP_ID}"
-            return 0
+            # Security: Sanitize filename for temp file
+            local sanitized_id=$(sanitize_filename "$BACKUP_ID")
+            local temp_meta="/tmp/${sanitized_id}.json"
+            
+            if s3_download "$s3_meta_path" "$temp_meta" 2>/dev/null; then
+                RESTORE_SOURCE="s3"
+                mkdir -p "${BACKUP_DIR}/metadata"
+                # Security: Validate destination path
+                local dest_meta="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
+                if ! validate_file_path "$dest_meta" "$BACKUP_DIR"; then
+                    log_error "Invalid destination path: ${dest_meta}"
+                    rm -f "$temp_meta"
+                    return 1
+                fi
+                cp "$temp_meta" "$dest_meta"
+                rm -f "$temp_meta"
+                log_success "Found S3 backup: ${BACKUP_ID}"
+                return 0
+            else
+                log_warning "S3 backup not found or S3 tools not available, skipping S3 check"
+            fi
+        else
+            log_warning "S3 is enabled but neither rclone nor s3cmd is installed - skipping S3 check"
         fi
     fi
     

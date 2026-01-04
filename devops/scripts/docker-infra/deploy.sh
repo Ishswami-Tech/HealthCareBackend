@@ -529,11 +529,26 @@ run_migrations_safely() {
     
     # Run migrations with DATABASE_URL explicitly set
     log_info "Running Prisma migrations with schema: $schema_path"
-    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" npx prisma migrate deploy --schema "$schema_path" 2>&1 | tee /tmp/migration.log; then
+    log_info "Using DATABASE_URL: ${database_url:0:40}***"
+    
+    # Prisma needs DATABASE_URL in the environment. Since the container should already have it,
+    # we'll verify it's set, and if not, we'll set it explicitly.
+    # First, check if DATABASE_URL is already in the container
+    local container_has_db_url
+    container_has_db_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "")
+    
+    if [[ -z "$container_has_db_url" ]] || [[ "$container_has_db_url" != "$database_url" ]]; then
+        log_info "Setting DATABASE_URL in container environment..."
+        # Create a temporary .env file in the container with DATABASE_URL
+        docker exec "${CONTAINER_PREFIX}api" sh -c "echo 'DATABASE_URL=$database_url' > /tmp/.env.prisma && cat /tmp/.env.prisma" >/dev/null 2>&1 || true
+    fi
+    
+    # Run migrations - Prisma will read DATABASE_URL from environment or .env file
+    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && npx prisma migrate deploy --schema '$schema_path'" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
-        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" npx prisma validate --schema "$schema_path" 2>&1; then
+        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && npx prisma validate --schema '$schema_path'" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
