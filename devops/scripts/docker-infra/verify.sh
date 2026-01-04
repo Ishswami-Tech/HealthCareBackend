@@ -162,6 +162,47 @@ verify_data_integrity() {
     fi
 }
 
+# Show container logs for debugging
+show_container_logs() {
+    local container_name="$1"
+    local lines="${2:-50}"  # Default to last 50 lines
+    
+    if [[ -z "$container_name" ]]; then
+        return 1
+    fi
+    
+    # Check if container exists (even if stopped)
+    if docker ps -a --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        log_info "=== Container Logs: ${container_name} (last ${lines} lines) ==="
+        docker logs --tail "$lines" "$container_name" 2>&1 | while IFS= read -r line; do
+            echo "  $line" >&2
+        done || true
+        log_info "=== End of logs for ${container_name} ==="
+    else
+        log_warning "Container ${container_name} does not exist (never created)"
+    fi
+}
+
+# Show container status
+show_container_status() {
+    local container_name="$1"
+    
+    if [[ -z "$container_name" ]]; then
+        return 1
+    fi
+    
+    log_info "=== Container Status: ${container_name} ==="
+    if docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(NAMES|${container_name})" || true; then
+        # Show exit code if container exited
+        local exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$container_name" 2>/dev/null || echo "unknown")
+        if [[ "$exit_code" != "0" ]] && [[ "$exit_code" != "unknown" ]]; then
+            log_warning "Container ${container_name} exited with code: ${exit_code}"
+        fi
+    else
+        log_warning "Container ${container_name} not found"
+    fi
+}
+
 # Verify application readiness
 verify_application() {
     log_info "Verifying application readiness..."
@@ -190,6 +231,8 @@ verify_application() {
         log_success "Worker container is running"
     else
         log_warning "Worker container is not running"
+        show_container_status "$worker_container"
+        show_container_logs "$worker_container" 30
     fi
     
     # Check API with retry logic (it may need time to start)
@@ -212,9 +255,12 @@ verify_application() {
         
         if ! $api_ready; then
             log_warning "API did not become ready after $api_retries attempts"
+            show_container_logs "$api_container" 50
         fi
     else
         log_warning "API container is not running"
+        show_container_status "$api_container"
+        show_container_logs "$api_container" 50
     fi
     
     # Return status based on readiness
@@ -267,9 +313,40 @@ verify_deployment() {
     elif [[ "$overall_status" == "partial" ]]; then
         log_warning "Deployment verification partial - infrastructure is healthy but API is not ready yet"
         log_info "This is usually temporary - API may need more time to start"
+        
+        # Show API container logs for debugging
+        local api_container="${CONTAINER_PREFIX}api"
+        if [[ -n "$api_container" ]]; then
+            show_container_logs "$api_container" 50
+        fi
+        
         exit 1  # Still exit 1, but with warning instead of error
     else
         log_error "Deployment verification failed"
+        
+        # Show logs for all failed containers
+        log_info "=== Showing diagnostic information for failed containers ==="
+        
+        # Show application container logs
+        local api_container="${CONTAINER_PREFIX}api"
+        local worker_container="${CONTAINER_PREFIX}worker"
+        
+        if ! container_running "$api_container"; then
+            log_error "API container ($api_container) is not running"
+            show_container_status "$api_container"
+            show_container_logs "$api_container" 100
+        fi
+        
+        if ! container_running "$worker_container"; then
+            log_error "Worker container ($worker_container) is not running"
+            show_container_status "$worker_container"
+            show_container_logs "$worker_container" 100
+        fi
+        
+        # Show all container statuses
+        log_info "=== All Container Statuses ==="
+        docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20 || true
+        
         exit 1
     fi
 }
