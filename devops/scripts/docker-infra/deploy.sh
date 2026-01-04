@@ -551,15 +551,15 @@ run_migrations_safely() {
         docker exec "${CONTAINER_PREFIX}api" sh -c "echo 'DATABASE_URL=$database_url' > /tmp/.env.prisma && cat /tmp/.env.prisma" >/dev/null 2>&1 || true
     fi
     
-    # Run migrations - Prisma 7 reads DATABASE_URL from process.env in prisma.config.js
-    # We need to explicitly export it in the shell environment for Node.js to access it
-    # Prisma 7 auto-detects prisma.config.js in the schema directory, so we don't need --config
-    # Use both -e flag and export to ensure DATABASE_URL is available to Node.js process
-    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "export DATABASE_URL=\"\$DATABASE_URL\" && cd /app && npx prisma migrate deploy --schema '$schema_path'" 2>&1 | tee /tmp/migration.log; then
+    # Run migrations - Prisma reads DATABASE_URL from environment
+    # Prisma 7 supports --datasource-url flag to pass URL directly
+    # Also set it in environment for prisma.config.js if it exists
+    # Use both approaches for maximum compatibility
+    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && DATABASE_URL='$database_url' npx prisma migrate deploy --schema '$schema_path' --datasource-url '$database_url'" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
-        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "export DATABASE_URL=\"\$DATABASE_URL\" && cd /app && npx prisma validate --schema '$schema_path'" 2>&1; then
+        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && DATABASE_URL='$database_url' npx prisma validate --schema '$schema_path' --datasource-url '$database_url'" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
