@@ -8,8 +8,8 @@
  * All types are strictly typed without using 'any' or 'unknown'.
  */
 
-// Prisma 7: Import from generated client location
-import type { PrismaClient } from '../../infrastructure/database/prisma/generated/client/client';
+// Prisma 7: Import from @prisma/client (resolved via symlink or path mapping)
+import type { PrismaClient } from '@prisma/client';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { HttpStatus } from '@nestjs/common';
@@ -258,15 +258,15 @@ export interface Counselor {
 // during compilation in Docker containers where types aren't available initially
 
 // Prisma 7: Export types from generated client location
-export type { MedicalHistory } from '../../infrastructure/database/prisma/generated/client/client';
-export type { LabReport } from '../../infrastructure/database/prisma/generated/client/client';
-export type { RadiologyReport } from '../../infrastructure/database/prisma/generated/client/client';
-export type { Vital } from '../../infrastructure/database/prisma/generated/client/client';
-export type { Allergy } from '../../infrastructure/database/prisma/generated/client/client';
-export type { Medication } from '../../infrastructure/database/prisma/generated/client/client';
-export type { Immunization } from '../../infrastructure/database/prisma/generated/client/client';
-export type { FamilyHistory } from '../../infrastructure/database/prisma/generated/client/client';
-export type { LifestyleAssessment } from '../../infrastructure/database/prisma/generated/client/client';
+export type { MedicalHistory } from '@prisma/client';
+export type { LabReport } from '@prisma/client';
+export type { RadiologyReport } from '@prisma/client';
+export type { Vital } from '@prisma/client';
+export type { Allergy } from '@prisma/client';
+export type { Medication } from '@prisma/client';
+export type { Immunization } from '@prisma/client';
+export type { FamilyHistory } from '@prisma/client';
+export type { LifestyleAssessment } from '@prisma/client';
 // SurgicalRecord is defined in ehr.types.ts to avoid ambiguity
 
 // Explicit base entity interfaces to avoid Prisma's 'any' in union types
