@@ -34,10 +34,23 @@ log_info "Step 1: Checking PostgreSQL container status..."
 if ! container_running "postgres"; then
     log_error "PostgreSQL container is not running!"
     log_info "Starting PostgreSQL container..."
-    cd "${BASE_DIR}/devops/docker" || cd "${SCRIPT_DIR}/../../docker" || {
+    
+    # Find docker-compose directory
+    DOCKER_DIR=""
+    if [[ -d "${BASE_DIR}/devops/docker" ]]; then
+        DOCKER_DIR="${BASE_DIR}/devops/docker"
+    elif [[ -d "${SCRIPT_DIR}/../../docker" ]]; then
+        DOCKER_DIR="${SCRIPT_DIR}/../../docker"
+    else
         log_error "Cannot find docker-compose directory"
         exit 1
+    fi
+    
+    cd "$DOCKER_DIR" || {
+        log_error "Failed to change to docker directory: $DOCKER_DIR"
+        exit 1
     }
+    
     docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
         log_error "Failed to start PostgreSQL container"
         exit 1
@@ -130,16 +143,44 @@ else
 fi
 
 if [[ -z "$ACTUAL_PASSWORD" ]]; then
-    log_error "Could not determine actual database password!"
-    log_error "PostgreSQL may have been initialized with a different password."
-    log_error "This happens when the data volume already exists from a previous setup."
-    log_error ""
-    log_error "Solutions:"
-    log_error "  1. Check PostgreSQL logs: docker logs postgres"
-    log_error "  2. If volume exists with old password, either:"
-    log_error "     a) Reset password manually: docker exec -e PGPASSWORD=<old_password> postgres psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'postgres';\""
-    log_error "     b) Remove volume and recreate: docker volume rm docker_postgres_data (WARNING: data loss)"
-    exit 1
+    log_warning "Could not determine actual database password by testing common passwords."
+    log_info "Attempting to connect without password (peer/trust authentication)..."
+    
+    # Try to connect without password - this works if peer/trust auth is enabled
+    if docker exec postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+        log_success "Connection successful without password (peer/trust auth enabled)"
+        log_info "Will reset password using this connection method..."
+        # Set ACTUAL_PASSWORD to empty to indicate we can connect without password
+        ACTUAL_PASSWORD=""
+        # We can still reset the password even without knowing the old one
+        log_info "Resetting PostgreSQL password to match docker-compose..."
+        if docker exec postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$EXPECTED_PASSWORD';" >/dev/null 2>&1; then
+            log_success "Password reset successful using peer/trust authentication"
+            ACTUAL_PASSWORD="$EXPECTED_PASSWORD"
+        else
+            log_error "Failed to reset password even with peer/trust authentication"
+            log_error "PostgreSQL may have been initialized with a different password."
+            log_error "This happens when the data volume already exists from a previous setup."
+            log_error ""
+            log_error "Solutions:"
+            log_error "  1. Check PostgreSQL logs: docker logs postgres"
+            log_error "  2. If volume exists with old password, either:"
+            log_error "     a) Reset password manually: docker exec -e PGPASSWORD=<old_password> postgres psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'postgres';\""
+            log_error "     b) Remove volume and recreate: docker volume rm docker_postgres_data (WARNING: data loss)"
+            exit 1
+        fi
+    else
+        log_error "Could not determine actual database password and cannot connect without password!"
+        log_error "PostgreSQL may have been initialized with a different password."
+        log_error "This happens when the data volume already exists from a previous setup."
+        log_error ""
+        log_error "Solutions:"
+        log_error "  1. Check PostgreSQL logs: docker logs postgres"
+        log_error "  2. If volume exists with old password, either:"
+        log_error "     a) Reset password manually: docker exec -e PGPASSWORD=<old_password> postgres psql -U postgres -c \"ALTER USER postgres WITH PASSWORD 'postgres';\""
+        log_error "     b) Remove volume and recreate: docker volume rm docker_postgres_data (WARNING: data loss)"
+        exit 1
+    fi
 fi
 
 # Step 6: Check for mismatches
