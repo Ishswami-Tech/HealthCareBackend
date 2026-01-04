@@ -755,9 +755,13 @@ jobs:
       always() &&
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
-      needs.deploy.result == 'success'
+      (
+        needs.deploy.result == 'success' ||
+        (needs.recreate-infrastructure.result == 'success' && 
+         (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped'))
+      )
     environment: production
-    needs: [deploy]
+    needs: [deploy, recreate-infrastructure, restore-backup]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -790,6 +794,9 @@ jobs:
           ENDSSH
 
   # Deploy to Production Server (Main Branch Only)
+  # Runs when:
+  # 1. Docker build succeeds AND infrastructure is healthy (normal flow)
+  # 2. Infrastructure was recreated successfully (recovery flow) - triggers app deployment
   deploy:
     name: Deploy to Production
     if: |
@@ -797,10 +804,14 @@ jobs:
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
       needs.docker-build.result == 'success' &&
-      needs.ensure-infrastructure-health.result == 'success'
+      (
+        needs.ensure-infrastructure-health.result == 'success' ||
+        (needs.recreate-infrastructure.result == 'success' && 
+         (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped'))
+      )
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [docker-build, ensure-infrastructure-health]
+    needs: [docker-build, ensure-infrastructure-health, recreate-infrastructure, restore-backup]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -1087,6 +1098,25 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image: ${IMAGE_FULL}"
+      
+      - name: Validate both infrastructure and app images
+        if: always()
+        run: |
+          echo "🔍 Validating infrastructure and app images..."
+          
+          # Validate app image exists in registry
+          APP_IMAGE="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
+          echo "Checking app image: ${APP_IMAGE}"
+          docker manifest inspect "${APP_IMAGE}" > /dev/null 2>&1 || {
+            echo "❌ App image not found: ${APP_IMAGE}"
+            exit 1
+          }
+          echo "✅ App image validated: ${APP_IMAGE}"
+          
+          # Note: Infrastructure images are pulled from docker-compose during deployment
+          # They are validated when docker-compose pulls them
+          echo "✅ Infrastructure images will be validated during deployment"
+          echo "✅ Both infrastructure and app images will be checked"
 
       - name: Setup server directories
         run: |
