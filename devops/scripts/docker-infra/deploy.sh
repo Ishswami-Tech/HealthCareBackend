@@ -457,7 +457,7 @@ run_migrations_safely() {
             extracted_id=$(echo "$backup_output" | grep -oE "pre-deployment-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}" | head -1)
             if [[ -n "$extracted_id" ]]; then
                 PRE_MIGRATION_BACKUP="$extracted_id"
-                log_success "Pre-migration backup created: ${PRE_MIGRATION_BACKUP}"
+            log_success "Pre-migration backup created: ${PRE_MIGRATION_BACKUP}"
             else
                 log_warning "Could not extract backup ID from backup output"
                 PRE_MIGRATION_BACKUP=""
@@ -511,11 +511,14 @@ run_migrations_safely() {
     
     # Verify database connection before running migrations
     log_info "Verifying database connection..."
-    # Extract password from DATABASE_URL for testing
+    # Extract password from DATABASE_URL for testing (handle URL encoding)
     local db_password=$(echo "$database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
+    # URL decode the password in case it's encoded
+    db_password=$(printf '%b' "${db_password//%/\\x}" 2>/dev/null || echo "$db_password")
     
     # First, verify the connection works with the password from DATABASE_URL
     log_info "Testing connection with password from DATABASE_URL..."
+    log_debug "Extracted password (first 2 chars): ${db_password:0:2}***"
     if ! docker exec -e PGPASSWORD="$db_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
         log_error "Database connection test failed!"
         log_error "Expected DATABASE_URL: ${database_url:0:50}***"
@@ -568,16 +571,49 @@ run_migrations_safely() {
         log_info "Using verified: ${database_url:0:40}***"
     fi
     
+    # Check if DIRECT_URL is set (Prisma config prioritizes DIRECT_URL over DATABASE_URL)
+    local direct_url
+    direct_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DIRECT_URL 2>/dev/null || echo "")
+    
+    # Create clean DATABASE_URL (without Prisma-specific query parameters) for Prisma
+    # Prisma config.js will clean it, but we'll create a clean version to be safe
+    local clean_database_url
+    clean_database_url=$(echo "$database_url" | sed 's/[?&]\(connection_limit\|pool_timeout\|statement_timeout\|idle_in_transaction_session_timeout\|connect_timeout\|pool_size\|max_connections\)=[^&]*//g' || echo "$database_url")
+    
+    # If DIRECT_URL is set, we need to either unset it or ensure it matches our verified DATABASE_URL
+    # Since prisma.config.js prioritizes DIRECT_URL, we'll unset it if it doesn't match
+    if [[ -n "$direct_url" ]]; then
+        log_info "DIRECT_URL is set in container - Prisma will use this instead of DATABASE_URL"
+        log_info "DIRECT_URL (masked): ${direct_url:0:40}***"
+        
+        # Extract password from DIRECT_URL to verify it matches
+        local direct_password=$(echo "$direct_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "")
+        local db_password=$(echo "$clean_database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
+        
+        if [[ "$direct_password" != "$db_password" ]]; then
+            log_warning "DIRECT_URL password doesn't match DATABASE_URL - will unset DIRECT_URL for migrations"
+            # Unset DIRECT_URL so Prisma uses DATABASE_URL
+            direct_url=""
+        else
+            log_info "DIRECT_URL password matches - will use DIRECT_URL for Prisma"
+            # Use DIRECT_URL (clean version) for Prisma
+            clean_database_url="$direct_url"
+        fi
+    fi
+    
     local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
-    # Use both -e flag and explicit export to ensure DATABASE_URL is available
-    # The -e flag should override the container's environment variable
-    # Also add debug output to see what Prisma is actually receiving
-    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && node -e \"console.log('[DEBUG] process.env.DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 40) + '***' : 'NOT SET')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
+    # Run Prisma migrations with proper environment variables
+    # Always unset DIRECT_URL to force Prisma to use DATABASE_URL (which we've verified)
+    # This ensures Prisma uses the correct password that we verified
+    log_info "Unsetting DIRECT_URL to force Prisma to use verified DATABASE_URL"
+    
+    # Run migrations - unset DIRECT_URL and use verified DATABASE_URL
+    if docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 50) + '***' : 'NOT SET'); console.log('[DEBUG] DIRECT_URL:', process.env.DIRECT_URL || 'UNSET (correct)')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
         local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
-        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && npx prisma validate --schema '$schema_path' --config '$config_file_path'" 2>&1; then
+        if docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && npx prisma validate --schema '$schema_path' --config '$config_file_path'" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
@@ -1078,9 +1114,9 @@ main() {
                 
                 # Deploy app if changed
         # Always ensure application containers are running (even if no changes)
-        if [[ "$APP_CHANGED" == "true" ]]; then
-            deploy_application || exit $EXIT_ERROR
-        else
+                if [[ "$APP_CHANGED" == "true" ]]; then
+                    deploy_application || exit $EXIT_ERROR
+                else
             log_info "No application changes detected - ensuring application containers are running..."
             # Check if containers are running, start them if not
             local api_container="${CONTAINER_PREFIX}api"
@@ -1092,7 +1128,7 @@ main() {
             else
                 log_info "Application containers are already running - no action needed"
             fi
-        fi
+                fi
             fi
         fi
     else

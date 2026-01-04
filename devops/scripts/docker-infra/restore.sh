@@ -61,6 +61,23 @@ find_backup() {
             return 0
         fi
         
+        # Debug: List available metadata files to help diagnose
+        log_info "Metadata file not found at: ${meta_file}"
+        log_info "Checking for available metadata files in: ${BACKUP_DIR}/metadata/"
+        if [[ -d "${BACKUP_DIR}/metadata" ]]; then
+            local available_files=$(ls -1 "${BACKUP_DIR}/metadata"/*.json 2>/dev/null | head -5 || echo "none")
+            if [[ "$available_files" != "none" ]]; then
+                log_info "Available metadata files:"
+                echo "$available_files" | while read -r file; do
+                    log_info "  - $(basename "$file")"
+                done
+            else
+                log_warning "No metadata files found in ${BACKUP_DIR}/metadata/"
+            fi
+        else
+            log_warning "Metadata directory does not exist: ${BACKUP_DIR}/metadata/"
+        fi
+        
         # Also check if backup ID might be in a subdirectory (e.g., pre-deployment/pre-deployment-2026-01-04-084414)
         # Extract the actual backup ID if it includes a type prefix
         local backup_type=""
