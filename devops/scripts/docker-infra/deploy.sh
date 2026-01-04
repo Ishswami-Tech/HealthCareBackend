@@ -576,8 +576,23 @@ run_migrations_safely() {
     
     # Create clean DATABASE_URL (without Prisma-specific query parameters) for Prisma
     # Prisma config.js will clean it, but we'll create a clean version to be safe
+    # Extract the base URL (everything before the first ?) and preserve the password
     local clean_database_url
-    clean_database_url=$(echo "$database_url" | sed 's/[?&]\(connection_limit\|pool_timeout\|statement_timeout\|idle_in_transaction_session_timeout\|connect_timeout\|pool_size\|max_connections\)=[^&]*//g' || echo "$database_url")
+    if [[ "$database_url" == *"?"* ]]; then
+        # URL has query parameters - extract base URL (everything before ?)
+        clean_database_url="${database_url%%\?*}"
+    else
+        # URL has no query parameters - use as is
+        clean_database_url="$database_url"
+    fi
+    
+    # Verify the clean URL still has the password
+    if [[ ! "$clean_database_url" == *"@"* ]]; then
+        log_error "ERROR: Clean DATABASE_URL is missing password or @ symbol!"
+        log_error "Original: ${database_url:0:60}***"
+        log_error "Clean: ${clean_database_url:0:60}***"
+        return 1
+    fi
     
     # If DIRECT_URL is set, we need to either unset it or ensure it matches our verified DATABASE_URL
     # Since prisma.config.js prioritizes DIRECT_URL, we'll unset it if it doesn't match
@@ -611,10 +626,32 @@ run_migrations_safely() {
     log_info "Command: npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'"
     log_info "DATABASE_URL (masked): ${clean_database_url:0:50}***"
     
+    # Verify clean_database_url has password before running migration
+    local url_password=$(echo "$clean_database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "")
+    if [[ -z "$url_password" ]]; then
+        log_error "ERROR: Clean DATABASE_URL is missing password!"
+        log_error "Clean URL (masked): ${clean_database_url:0:80}***"
+        return 1
+    fi
+    log_info "Verified clean DATABASE_URL contains password (first 2 chars: ${url_password:0:2}***)"
+    
+    # Test connection with clean_database_url to ensure it works
+    log_info "Testing database connection with clean DATABASE_URL..."
+    local clean_password=$(printf '%b' "${url_password//%/\\x}" 2>/dev/null || echo "$url_password")
+    if ! docker exec -e PGPASSWORD="$clean_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+        log_error "ERROR: Database connection test failed with clean DATABASE_URL!"
+        log_error "This suggests the clean URL is malformed or password is incorrect"
+        return 1
+    fi
+    log_success "Database connection test passed with clean DATABASE_URL"
+    
     # Run migration and capture both stdout and stderr
+    # CRITICAL: Use -e flag to set environment variables for the docker exec command
+    # This ensures Node.js process.env.DATABASE_URL is set when prisma.config.js loads
+    # Also explicitly export it in the shell to ensure it's available to Node.js
     local migration_output
     local migration_exit_code
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] process.env.DATABASE_URL:', process.env.DATABASE_URL ? (process.env.DATABASE_URL.substring(0, 50) + '***') : 'NOT SET'); console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'); console.log('[DEBUG] DATABASE_URL length:', process.env.DATABASE_URL ? process.env.DATABASE_URL.length : 0); console.log('[DEBUG] DATABASE_URL has @:', process.env.DATABASE_URL ? process.env.DATABASE_URL.includes('@') : false)\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
     migration_exit_code=$?
     
     # Always log the migration output for debugging
