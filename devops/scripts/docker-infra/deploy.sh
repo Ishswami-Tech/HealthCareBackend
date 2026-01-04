@@ -646,12 +646,40 @@ run_migrations_safely() {
     log_success "Database connection test passed with clean DATABASE_URL"
     
     # Run migration and capture both stdout and stderr
-    # CRITICAL: Use -e flag to set environment variables for the docker exec command
-    # This ensures Node.js process.env.DATABASE_URL is set when prisma.config.js loads
-    # Also explicitly export it in the shell to ensure it's available to Node.js
+    # CRITICAL: The issue is that prisma.config.js reads process.env.DATABASE_URL at module load time
+    # We need to ensure DATABASE_URL is set BEFORE Node.js loads the config file
+    # Use both -e flag (sets env for docker exec) AND explicit export (sets env for Node.js process)
     local migration_output
     local migration_exit_code
-    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"console.log('[DEBUG] process.env.DATABASE_URL:', process.env.DATABASE_URL ? (process.env.DATABASE_URL.substring(0, 50) + '***') : 'NOT SET'); console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'); console.log('[DEBUG] DATABASE_URL length:', process.env.DATABASE_URL ? process.env.DATABASE_URL.length : 0); console.log('[DEBUG] DATABASE_URL has @:', process.env.DATABASE_URL ? process.env.DATABASE_URL.includes('@') : false)\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
+    
+    # CRITICAL FIX: The issue is that prisma.config.js reads process.env.DATABASE_URL at module load time
+    # When Node.js requires() the config file, it executes getCleanDatabaseUrl() immediately
+    # We need to ensure DATABASE_URL is set BEFORE the module is loaded
+    # Solution: Use NODE_OPTIONS to set env vars, or create a wrapper script that sets env before requiring config
+    log_info "Running Prisma migration with DATABASE_URL set..."
+    
+    # Test what the config will see BEFORE running migration
+    log_info "Testing what prisma.config.js will read..."
+    local config_test_output
+    config_test_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && node -e \"
+delete require.cache[require.resolve('./src/libs/infrastructure/database/prisma/prisma.config.js')];
+const config = require('./src/libs/infrastructure/database/prisma/prisma.config.js');
+console.log('[DEBUG] Config datasource URL (masked):', config.datasource.url ? (config.datasource.url.substring(0, 50) + '***') : 'EMPTY');
+console.log('[DEBUG] Config datasource URL length:', config.datasource.url ? config.datasource.url.length : 0);
+console.log('[DEBUG] Config datasource URL has @:', config.datasource.url ? config.datasource.url.includes('@') : false);
+console.log('[DEBUG] Config datasource URL starts with postgresql:', config.datasource.url ? config.datasource.url.startsWith('postgresql://') : false);
+console.log('[DEBUG] process.env.DATABASE_URL (masked):', process.env.DATABASE_URL ? (process.env.DATABASE_URL.substring(0, 50) + '***') : 'NOT SET');
+console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET');
+\" 2>&1" || true)
+    log_info "Config test output:"
+    echo "$config_test_output"
+    
+    # Now run the actual migration
+    # CRITICAL: Prisma CLI might spawn child processes that don't inherit env vars properly
+    # Solution: Use NODE_OPTIONS to ensure DATABASE_URL is available to all Node.js processes
+    # Also, ensure the environment variable is set in the shell AND passed via -e flag
+    log_info "Running Prisma migration with explicit DATABASE_URL..."
+    migration_output=$(docker exec -e DATABASE_URL="$clean_database_url" -e DIRECT_URL="" -e NODE_OPTIONS="--require dotenv/config" "${CONTAINER_PREFIX}api" sh -c "cd /app && unset DIRECT_URL && export DATABASE_URL='$clean_database_url' && export NODE_OPTIONS='--require dotenv/config' && node -e \"console.log('[PRE-MIGRATION] DATABASE_URL check:', process.env.DATABASE_URL ? 'SET (' + process.env.DATABASE_URL.length + ' chars)' : 'NOT SET');\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1)
     migration_exit_code=$?
     
     # Always log the migration output for debugging
