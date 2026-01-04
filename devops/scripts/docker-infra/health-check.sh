@@ -660,9 +660,10 @@ recover_single_missing_container() {
     log_info "Removing ${container}..."
     docker rm -f "$container" >/dev/null 2>&1 || true
     
-    # Recreate container
+    # Recreate container with --force-recreate and --no-deps to ensure fresh start
     log_info "Recreating ${compose_service}..."
-    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate "$compose_service"; then
+    # For Portainer, ensure we use the correct command (no --hide-label=* flag)
+    if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate --no-deps "$compose_service"; then
         log_success "Container ${compose_service} recreated successfully"
     else
         log_error "Failed to recreate ${compose_service}"
