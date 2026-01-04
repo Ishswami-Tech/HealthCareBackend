@@ -209,6 +209,11 @@ jobs:
             export SCRIPT_DIR="/tmp"
             export AUTO_RECREATE_MISSING="true"
             source /tmp/utils.sh
+            
+            # Ensure files are fully written before execution (fix "Text file busy" error)
+            sync
+            sleep 1
+            
             /tmp/health-check.sh > /tmp/health-status.json 2>&1
             echo "EXIT_CODE=$?" > /tmp/health-exit.txt
           ENDSSH
@@ -1314,6 +1319,10 @@ jobs:
             export AUTO_RECREATE_MISSING="true"
             
             chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh
+            
+            # Ensure files are fully written before execution (fix "Text file busy" error)
+            sync
+            sleep 1
             
             echo "🚨 Starting aggressive infrastructure health recovery..."
             echo "📋 This job will make infrastructure healthy at ANY COST"
