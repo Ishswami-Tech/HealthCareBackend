@@ -472,18 +472,38 @@ run_migrations_safely() {
             log_error "Failed to start API container for migrations"
             return 1
         }
-        sleep 5
+        log_info "Waiting for API container to initialize..."
+        sleep 10  # Give container time to load environment variables
+    fi
+    
+    # Verify container has DATABASE_URL before proceeding
+    log_info "Verifying container environment..."
+    if ! docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL >/dev/null 2>&1; then
+        log_warning "DATABASE_URL not found in container environment - this may cause migration issues"
     fi
     
     # Run migrations
     log_info "Running Prisma migrations..."
     # Use PRISMA_SCHEMA_PATH from environment or default path
     local schema_path="${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}"
-    if docker exec "${CONTAINER_PREFIX}api" npx prisma migrate deploy --schema "$schema_path" 2>&1 | tee /tmp/migration.log; then
+    
+    # Get DATABASE_URL from container environment (it should be set by docker-compose)
+    local database_url
+    database_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "")
+    
+    # If DATABASE_URL is not in container, try to get it from docker-compose or use default
+    if [[ -z "$database_url" ]]; then
+        log_warning "DATABASE_URL not found in container environment, using default..."
+        database_url="postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60"
+    fi
+    
+    # Run migrations with DATABASE_URL explicitly set
+    log_info "Running Prisma migrations with schema: $schema_path"
+    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" npx prisma migrate deploy --schema "$schema_path" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
-        # Verify schema
-        if docker exec "${CONTAINER_PREFIX}api" npx prisma validate --schema "$schema_path" 2>&1; then
+        # Verify schema (DATABASE_URL should still be available from previous exec)
+        if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" npx prisma validate --schema "$schema_path" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
