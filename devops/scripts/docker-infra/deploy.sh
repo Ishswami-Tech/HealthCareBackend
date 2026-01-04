@@ -443,11 +443,25 @@ run_migrations_safely() {
     
     local PRE_MIGRATION_BACKUP=""
     if [[ -f "$backup_script" ]]; then
-        PRE_MIGRATION_BACKUP=$("$backup_script" "pre-migration") || {
+        # Use pre-deployment backup type (backup.sh doesn't have pre-migration command)
+        local backup_output
+        backup_output=$("$backup_script" "pre-deployment" 2>&1) || {
             log_warning "Pre-migration backup failed, but continuing..."
+            backup_output=""
         }
-        if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
-            log_success "Pre-migration backup created: ${PRE_MIGRATION_BACKUP}"
+        # Extract backup ID from output (backup.sh outputs the backup ID on stdout)
+        # The backup ID format is: pre-deployment-YYYY-MM-DD-HHMMSS
+        if [[ -n "$backup_output" ]]; then
+            # Extract backup ID pattern from output (may be mixed with log messages)
+            local extracted_id
+            extracted_id=$(echo "$backup_output" | grep -oE "pre-deployment-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{6}" | head -1)
+            if [[ -n "$extracted_id" ]]; then
+                PRE_MIGRATION_BACKUP="$extracted_id"
+                log_success "Pre-migration backup created: ${PRE_MIGRATION_BACKUP}"
+            else
+                log_warning "Could not extract backup ID from backup output"
+                PRE_MIGRATION_BACKUP=""
+            fi
         fi
     fi
     
@@ -463,11 +477,13 @@ run_migrations_safely() {
     
     # Run migrations
     log_info "Running Prisma migrations..."
-    if docker exec "${CONTAINER_PREFIX}api" npx prisma migrate deploy 2>&1 | tee /tmp/migration.log; then
+    # Use PRISMA_SCHEMA_PATH from environment or default path
+    local schema_path="${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}"
+    if docker exec "${CONTAINER_PREFIX}api" npx prisma migrate deploy --schema "$schema_path" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema
-        if docker exec "${CONTAINER_PREFIX}api" npx prisma validate 2>&1; then
+        if docker exec "${CONTAINER_PREFIX}api" npx prisma validate --schema "$schema_path" 2>&1; then
             log_success "Schema validation passed"
             return 0
         else
