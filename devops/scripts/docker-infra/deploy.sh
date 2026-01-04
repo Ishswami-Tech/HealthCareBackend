@@ -545,17 +545,38 @@ run_migrations_safely() {
     local container_has_db_url
     container_has_db_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "")
     
+    # Always ensure the container has the correct DATABASE_URL before running Prisma
+    # Update the container's environment if it doesn't match
     if [[ -z "$container_has_db_url" ]] || [[ "$container_has_db_url" != "$database_url" ]]; then
-        log_info "Setting DATABASE_URL in container environment..."
-        # Create a temporary .env file in the container with DATABASE_URL
-        docker exec "${CONTAINER_PREFIX}api" sh -c "echo 'DATABASE_URL=$database_url' > /tmp/.env.prisma && cat /tmp/.env.prisma" >/dev/null 2>&1 || true
+        log_info "Updating DATABASE_URL in container environment to match verified connection..."
+        # Update the container's environment variable by recreating it with the correct env var
+        # Or use docker exec to set it in the running container's environment
+        # For now, we'll pass it explicitly via -e flag which should override container's env
+    else
+        log_info "Container DATABASE_URL matches verified connection string"
     fi
     
     # Run migrations - Prisma 7 reads DATABASE_URL from process.env in prisma.config.js
     # The config file path is relative to the schema directory
     # Ensure DATABASE_URL is set in the environment for Node.js to access it
+    # Debug: Log what DATABASE_URL will be used (masked)
+    log_info "DATABASE_URL for Prisma (masked): ${database_url:0:30}***"
+    
+    # Verify DATABASE_URL is accessible in container before running Prisma
+    # Check what DATABASE_URL the container currently has
+    local container_current_db_url
+    container_current_db_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "")
+    if [[ -n "$container_current_db_url" ]] && [[ "$container_current_db_url" != "$database_url" ]]; then
+        log_warning "Container DATABASE_URL differs from verified one - will override with verified URL"
+        log_info "Container has: ${container_current_db_url:0:40}***"
+        log_info "Using verified: ${database_url:0:40}***"
+    fi
+    
     local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
-    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
+    # Use both -e flag and explicit export to ensure DATABASE_URL is available
+    # The -e flag should override the container's environment variable
+    # Also add debug output to see what Prisma is actually receiving
+    if docker exec -e DATABASE_URL="$database_url" "${CONTAINER_PREFIX}api" sh -c "cd /app && export DATABASE_URL='$database_url' && node -e \"console.log('[DEBUG] process.env.DATABASE_URL:', process.env.DATABASE_URL ? process.env.DATABASE_URL.substring(0, 40) + '***' : 'NOT SET')\" && npx prisma migrate deploy --schema '$schema_path' --config '$config_file_path'" 2>&1 | tee /tmp/migration.log; then
         log_success "Migrations completed successfully"
         
         # Verify schema (DATABASE_URL should still be available from previous exec)
