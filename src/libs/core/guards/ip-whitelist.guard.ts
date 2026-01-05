@@ -230,7 +230,11 @@ export class IpWhitelistGuard implements CanActivate {
       const firstIP = ips[0]?.trim();
       if (firstIP && firstIP !== 'unknown') {
         // Remove port if present (e.g., "192.168.1.1:12345" -> "192.168.1.1")
-        return firstIP.split(':')[0];
+        const ipParts = firstIP.split(':');
+        const ipWithoutPort = ipParts[0];
+        if (ipWithoutPort && ipWithoutPort.trim() !== '') {
+          return ipWithoutPort.trim();
+        }
       }
     }
 
