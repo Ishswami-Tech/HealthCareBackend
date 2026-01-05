@@ -1199,7 +1199,16 @@ restore_backup() {
 # Ensure docker-compose.prod.yml exists
 # Restores from /tmp (CI/CD deployment) or git repository if missing
 ensure_compose_file() {
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    # Ensure BASE_DIR is set (fallback to default if not set)
+    local base_dir="${BASE_DIR:-/opt/healthcare-backend}"
+    local compose_file="${base_dir}/devops/docker/docker-compose.prod.yml"
+    
+    # Validate compose_file path is not empty
+    if [[ -z "$compose_file" ]] || [[ "$compose_file" == "/devops/docker/docker-compose.prod.yml" ]]; then
+        log_error "Cannot determine compose file path - BASE_DIR is not set or empty"
+        log_error "BASE_DIR='${BASE_DIR:-<not set>}', base_dir='${base_dir}', compose_file='${compose_file}'"
+        return 1
+    fi
     
     if [[ -f "$compose_file" ]]; then
         return 0
@@ -1209,8 +1218,14 @@ ensure_compose_file() {
     log_info "Attempting to restore..."
     
     # Ensure directory exists
-    mkdir -p "$(dirname "$compose_file")" || {
-        log_error "Failed to create directory: $(dirname "$compose_file")"
+    local compose_dir="$(dirname "$compose_file")"
+    if [[ -z "$compose_dir" ]]; then
+        log_error "Cannot determine compose file directory"
+        return 1
+    fi
+    
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
         return 1
     }
     
@@ -1220,16 +1235,26 @@ ensure_compose_file() {
     
     if [[ -f "$tmp_file" ]]; then
         log_info "Found docker-compose.prod.yml in /tmp, moving to correct location..."
+        # Remove destination if it exists as a directory (shouldn't happen, but safety check)
+        if [[ -d "$compose_file" ]]; then
+            log_warning "Removing existing directory at compose file location: ${compose_file}"
+            rm -rf "$compose_file"
+        fi
         mv "$tmp_file" "$compose_file" || {
-            log_error "Failed to move docker-compose.prod.yml from /tmp"
+            log_error "Failed to move docker-compose.prod.yml from /tmp to ${compose_file}"
             return 1
         }
         log_success "Restored docker-compose.prod.yml from /tmp"
         return 0
     elif [[ -f "$tmp_file_atomic" ]]; then
         log_info "Found docker-compose.prod.yml.tmp in /tmp, moving to correct location..."
+        # Remove destination if it exists as a directory (shouldn't happen, but safety check)
+        if [[ -d "$compose_file" ]]; then
+            log_warning "Removing existing directory at compose file location: ${compose_file}"
+            rm -rf "$compose_file"
+        fi
         mv "$tmp_file_atomic" "$compose_file" || {
-            log_error "Failed to move docker-compose.prod.yml.tmp from /tmp"
+            log_error "Failed to move docker-compose.prod.yml.tmp from /tmp to ${compose_file}"
             return 1
         }
         log_success "Restored docker-compose.prod.yml from /tmp (.tmp version)"
