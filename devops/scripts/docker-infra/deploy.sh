@@ -609,32 +609,16 @@ run_migrations_safely() {
         return 1
     fi
     
-    # If DIRECT_URL is set, log it for debugging (we'll unset it during migration)
-    # Both prisma.config.js and run-prisma.js now prioritize DATABASE_URL, but we still unset DIRECT_URL for cleanliness
+    # Log DIRECT_URL if set (for debugging only - we will always use DATABASE_URL)
     if [[ -n "$direct_url" ]]; then
-        log_info "DIRECT_URL is set in container - will be unset during migration"
+        log_info "DIRECT_URL is set in container - will be unset during migration (using DATABASE_URL instead)"
         log_info "DIRECT_URL (masked): ${direct_url:0:40}***"
-        
-        # Extract password from DIRECT_URL to verify it matches
-        local direct_password=$(echo "$direct_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "")
-        local db_password=$(echo "$clean_database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
-        
-        if [[ "$direct_password" != "$db_password" ]]; then
-            log_warning "DIRECT_URL password doesn't match DATABASE_URL - will unset DIRECT_URL for migrations"
-            # Unset DIRECT_URL so Prisma uses DATABASE_URL
-            direct_url=""
-        else
-            log_info "DIRECT_URL password matches - will use DIRECT_URL for Prisma"
-            # Use DIRECT_URL (clean version) for Prisma
-            clean_database_url="$direct_url"
-        fi
     fi
     
+    # CRITICAL: Always use DATABASE_URL, never DIRECT_URL
+    # Both prisma.config.js and run-prisma.js prioritize DATABASE_URL, but we unset DIRECT_URL for safety
     local config_file_path="/app/src/libs/infrastructure/database/prisma/prisma.config.js"
-    # Run Prisma migrations with proper environment variables
-    # Always unset DIRECT_URL to force Prisma to use DATABASE_URL (which we've verified)
-    # This ensures Prisma uses the correct password that we verified
-    log_info "Unsetting DIRECT_URL to force Prisma to use verified DATABASE_URL"
+    log_info "Using verified DATABASE_URL for Prisma migrations (DIRECT_URL will be unset)"
     
     # Run migrations - unset DIRECT_URL and use verified DATABASE_URL
     log_info "Executing Prisma migration command..."
@@ -735,14 +719,29 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     migration_output=$(docker exec "${CONTAINER_PREFIX}api" sh -c "
         # Decode the DATABASE_URL from base64 to avoid shell escaping issues
         export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
-        # Unset DIRECT_URL to ensure clean environment
-        # Both run-prisma.js and prisma.config.js now prioritize DATABASE_URL
+        # CRITICAL: Unset DIRECT_URL completely - don't just set it to empty
         unset DIRECT_URL
         
-        # Debug: Show what URL we're using (masked)
+        # Debug: Show what URL we're using (masked for security)
         echo '[DEBUG] DATABASE_URL set via base64 decode'
         echo '[DEBUG] URL length:' \${#DATABASE_URL}
+        echo '[DEBUG] URL starts with:' \${DATABASE_URL:0:20}***
+        echo '[DEBUG] URL contains @:' \${DATABASE_URL#*@}
         echo '[DEBUG] DIRECT_URL:' \${DIRECT_URL:-UNSET}
+        
+        # Extract and verify password from URL
+        url_password=\$(echo \"\$DATABASE_URL\" | sed -n 's|.*://[^:]*:\\([^@]*\\)@.*|\\1|p' || echo '')
+        echo '[DEBUG] Password extracted (first 2 chars):' \${url_password:0:2}***
+        echo '[DEBUG] Password length:' \${#url_password}
+        
+        # Test connection with extracted password before running Prisma
+        echo '[DEBUG] Testing PostgreSQL connection...'
+        if PGPASSWORD=\"\$url_password\" psql -h postgres -U postgres -d userdb -c 'SELECT 1;' >/dev/null 2>&1; then
+            echo '[DEBUG] PostgreSQL connection test: SUCCESS'
+        else
+            echo '[DEBUG] PostgreSQL connection test: FAILED'
+            echo '[DEBUG] This suggests the password in DATABASE_URL is incorrect'
+        fi
         
         # Run Prisma migration using yarn script (same as package.json)
         cd /app && yarn prisma:migrate
