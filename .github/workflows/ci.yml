@@ -1482,7 +1482,10 @@ jobs:
               echo "🔧 Portainer is restarting - force recreating with correct command..."
               docker stop portainer 2>/dev/null || true
               docker rm -f portainer 2>/dev/null || true
-              cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend 2>/dev/null || true
+              cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend/devops/docker 2>/dev/null || true
+              # Ensure environment variables are set for docker-compose
+              export COTURN_PASSWORD="${COTURN_PASSWORD}"
+              export COTURN_DOMAIN="${COTURN_DOMAIN}"
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate portainer 2>&1 || true
               sleep 5
             fi
@@ -1566,6 +1569,19 @@ jobs:
                 # SECURITY: Environment variables are already set from GitHub Actions env: section above
                 # They are passed securely and automatically masked in logs - no hardcoded values
                 # Infrastructure services don't use .env.production, so we use env vars from GitHub Secrets/Variables
+                
+                # Ensure we're in the correct directory and environment variables are set
+                cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend/devops/docker 2>/dev/null || {
+                  echo "❌ Cannot find docker-compose directory"
+                  exit 1
+                }
+                
+                # Explicitly export environment variables for docker-compose
+                export COTURN_PASSWORD="${COTURN_PASSWORD}"
+                export COTURN_DOMAIN="${COTURN_DOMAIN}"
+                export OPENVIDU_SECRET="${OPENVIDU_SECRET}"
+                export OPENVIDU_URL="${OPENVIDU_URL}"
+                export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
                 
                 docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate --remove-orphans || {
                   echo "⚠️  Docker compose failed, trying individual services..."
