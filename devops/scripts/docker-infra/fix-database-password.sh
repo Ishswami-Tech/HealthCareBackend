@@ -183,8 +183,106 @@ if [[ -z "$ACTUAL_PASSWORD" ]]; then
     fi
 fi
 
-# Step 6: Check for mismatches
-log_info "Step 6: Checking for password mismatches..."
+# Step 6: Check and fix password hash format (MD5, SHA -> scram-sha-256)
+log_info "Step 6: Checking password hash format..."
+PASSWORD_HASH_FORMAT=""
+PASSWORD_ENCRYPTION=""
+
+# Get current password_encryption setting
+PASSWORD_ENCRYPTION=$(docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -t -c "SHOW password_encryption;" 2>/dev/null | tr -d '[:space:]' || echo "")
+
+# Get actual password hash from pg_authid
+PASSWORD_HASH=$(docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -t -c "SELECT rolpassword FROM pg_authid WHERE rolname = 'postgres';" 2>/dev/null | tr -d '[:space:]' || echo "")
+
+if [[ -n "$PASSWORD_HASH" ]]; then
+    # Detect hash format
+    if [[ "$PASSWORD_HASH" == md5* ]]; then
+        PASSWORD_HASH_FORMAT="md5"
+        log_warning "Password hash format detected: MD5 (old format)"
+    elif [[ "$PASSWORD_HASH" == SCRAM-SHA-256* ]]; then
+        PASSWORD_HASH_FORMAT="scram-sha-256"
+        log_success "Password hash format: SCRAM-SHA-256 (correct for PostgreSQL 16)"
+    elif [[ "$PASSWORD_HASH" == sha256* ]] || [[ "$PASSWORD_HASH" == sha* ]]; then
+        PASSWORD_HASH_FORMAT="sha"
+        log_warning "Password hash format detected: SHA (old format)"
+    else
+        PASSWORD_HASH_FORMAT="unknown"
+        log_warning "Password hash format: Unknown (${PASSWORD_HASH:0:20}***)"
+    fi
+    
+    log_info "Current password_encryption setting: ${PASSWORD_ENCRYPTION:-not set}"
+    log_info "Current password hash format: $PASSWORD_HASH_FORMAT"
+    
+    # Fix password hash format if needed
+    if [[ "$PASSWORD_HASH_FORMAT" != "scram-sha-256" ]] || [[ "$PASSWORD_ENCRYPTION" != "scram-sha-256" ]]; then
+        log_info "Converting password hash to scram-sha-256 format..."
+        
+        # Step 1: Set password_encryption to scram-sha-256
+        if [[ "$PASSWORD_ENCRYPTION" != "scram-sha-256" ]]; then
+            log_info "Setting password_encryption to scram-sha-256..."
+            if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "ALTER SYSTEM SET password_encryption = 'scram-sha-256';" >/dev/null 2>&1; then
+                log_success "password_encryption set to scram-sha-256"
+                # Reload configuration (doesn't require restart)
+                docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || {
+                    log_warning "Failed to reload config, may need container restart"
+                }
+            else
+                log_warning "Failed to set password_encryption (may need superuser privileges)"
+            fi
+        fi
+        
+        # Step 2: Reset password to force scram-sha-256 hash
+        log_info "Resetting password to generate scram-sha-256 hash..."
+        if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$ACTUAL_PASSWORD';" >/dev/null 2>&1; then
+            log_success "Password reset successful - should now be scram-sha-256"
+            
+            # Verify the new hash format
+            sleep 2  # Wait for password change to propagate
+            NEW_PASSWORD_HASH=$(docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -t -c "SELECT rolpassword FROM pg_authid WHERE rolname = 'postgres';" 2>/dev/null | tr -d '[:space:]' || echo "")
+            
+            if [[ "$NEW_PASSWORD_HASH" == SCRAM-SHA-256* ]]; then
+                log_success "Password hash format verified: SCRAM-SHA-256"
+                log_info "Hash preview: ${NEW_PASSWORD_HASH:0:30}***"
+            else
+                log_warning "Password reset succeeded but hash format verification failed"
+                log_warning "New hash format: ${NEW_PASSWORD_HASH:0:20}***"
+                log_warning "This may require PostgreSQL container restart to apply password_encryption setting"
+            fi
+            
+            # Verify connection still works with new hash
+            if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+                log_success "Connection verified with new scram-sha-256 password hash"
+            else
+                log_error "Connection failed after password hash conversion!"
+                log_error "This may indicate a compatibility issue"
+                log_error "Trying to reconnect..."
+                sleep 3
+                if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+                    log_success "Connection successful after retry"
+                else
+                    log_error "Connection still failing - may need container restart"
+                fi
+            fi
+        else
+            log_warning "Failed to reset password for hash format conversion"
+            log_warning "Password may remain in old format (MD5/SHA)"
+        fi
+    else
+        log_success "Password hash format is already scram-sha-256 (correct)"
+    fi
+else
+    log_warning "Could not retrieve password hash from pg_authid"
+    log_warning "This may indicate the user doesn't exist or connection issues"
+    # Still try to set password_encryption for future password changes
+    if [[ "$PASSWORD_ENCRYPTION" != "scram-sha-256" ]]; then
+        log_info "Setting password_encryption to scram-sha-256 for future password changes..."
+        docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "ALTER SYSTEM SET password_encryption = 'scram-sha-256';" >/dev/null 2>&1 || true
+        docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+    fi
+fi
+
+# Step 7: Check for mismatches
+log_info "Step 7: Checking for password mismatches..."
 NEEDS_FIX=false
 
 # Check if .env.production DATABASE_URL password matches
@@ -203,9 +301,9 @@ if [[ "$EXPECTED_PASSWORD" != "$ACTUAL_PASSWORD" ]]; then
     NEEDS_FIX=true
 fi
 
-# Step 7: Fix mismatches using MD5 for password reset
+# Step 8: Fix mismatches (password value, not hash format)
 if $NEEDS_FIX; then
-    log_info "Step 7: Fixing password mismatches using MD5 verification..."
+    log_info "Step 8: Fixing password value mismatches..."
     
     # Calculate MD5 hash of expected password for verification
     EXPECTED_MD5=$(echo -n "$EXPECTED_PASSWORD" | md5sum | cut -d' ' -f1)
@@ -215,16 +313,15 @@ if $NEEDS_FIX; then
     log_info "Actual password MD5: ${ACTUAL_MD5:0:8}***"
     
     # Option 1: Change PostgreSQL password to match docker-compose (recommended)
-    log_info "Option 1: Resetting PostgreSQL password to match docker-compose using MD5 verification..."
+    log_info "Resetting PostgreSQL password to match docker-compose..."
     if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -c "ALTER USER postgres WITH PASSWORD '$EXPECTED_PASSWORD';" >/dev/null 2>&1; then
-        log_success "PostgreSQL password reset successful (MD5 verified)"
+        log_success "PostgreSQL password reset successful"
         ACTUAL_PASSWORD="$EXPECTED_PASSWORD"
         
-        # Verify the reset using MD5
+        # Verify the reset
         sleep 2  # Wait for password change to propagate
         if docker exec -e PGPASSWORD="$EXPECTED_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
-            NEW_MD5=$(echo -n "$EXPECTED_PASSWORD" | md5sum | cut -d' ' -f1)
-            log_success "Password reset verified with MD5: ${NEW_MD5:0:8}***"
+            log_success "Password reset verified - connection successful"
         else
             log_warning "Password reset succeeded but verification failed - may need retry"
         fi
@@ -254,27 +351,50 @@ else
     log_success "No password mismatches detected - all passwords are consistent"
 fi
 
-# Step 8: Verify final connection with MD5 verification
-log_info "Step 8: Verifying final database connection with MD5..."
+# Step 9: Verify final connection and hash format
+log_info "Step 9: Verifying final database connection and password hash format..."
 FINAL_DATABASE_URL="postgresql://postgres:${ACTUAL_PASSWORD}@postgres:5432/userdb"
-FINAL_PASSWORD_MD5=$(echo -n "$ACTUAL_PASSWORD" | md5sum | cut -d' ' -f1)
+
+# Get final password hash format
+FINAL_PASSWORD_HASH=$(docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -t -c "SELECT rolpassword FROM pg_authid WHERE rolname = 'postgres';" 2>/dev/null | tr -d '[:space:]' || echo "")
+FINAL_PASSWORD_FORMAT="unknown"
+if [[ "$FINAL_PASSWORD_HASH" == SCRAM-SHA-256* ]]; then
+    FINAL_PASSWORD_FORMAT="scram-sha-256"
+elif [[ "$FINAL_PASSWORD_HASH" == md5* ]]; then
+    FINAL_PASSWORD_FORMAT="md5"
+elif [[ -n "$FINAL_PASSWORD_HASH" ]]; then
+    FINAL_PASSWORD_FORMAT="other"
+fi
 
 if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
     log_success "Final database connection verified!"
-    log_info "Password MD5: ${FINAL_PASSWORD_MD5:0:8}***"
+    log_info "Password hash format: $FINAL_PASSWORD_FORMAT"
+    if [[ "$FINAL_PASSWORD_FORMAT" == "scram-sha-256" ]]; then
+        log_success "Password hash is in correct format (scram-sha-256) for PostgreSQL 16"
+    else
+        log_warning "Password hash format: $FINAL_PASSWORD_FORMAT (should be scram-sha-256)"
+        log_warning "This may cause authentication issues with Prisma"
+        log_warning "Consider restarting PostgreSQL container to apply password_encryption setting"
+    fi
     log_info "DATABASE_URL should be: ${FINAL_DATABASE_URL:0:30}***"
     log_info ""
     log_success "=========================================="
-    log_success "Database Password Fix Complete (MD5 Verified)"
+    log_success "Database Password Fix Complete"
+    if [[ "$FINAL_PASSWORD_FORMAT" == "scram-sha-256" ]]; then
+        log_success "Password Hash Format: SCRAM-SHA-256 ✓"
+    else
+        log_warning "Password Hash Format: $FINAL_PASSWORD_FORMAT (may need container restart)"
+    fi
     log_success "=========================================="
     exit 0
 else
     log_error "Final database connection failed!"
-    log_error "Password MD5: ${FINAL_PASSWORD_MD5:0:8}***"
+    log_error "Password hash format: $FINAL_PASSWORD_FORMAT"
     log_error "Please check:"
     log_error "  1. PostgreSQL container is running and healthy"
     log_error "  2. Password is correct: ${ACTUAL_PASSWORD:0:2}***"
     log_error "  3. Database 'userdb' exists"
+    log_error "  4. Password hash format is compatible (scram-sha-256 recommended)"
     exit 1
 fi
 
