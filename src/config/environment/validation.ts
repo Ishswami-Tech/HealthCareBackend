@@ -6,9 +6,30 @@ import { getEnv } from './utils';
  * Maps each environment to its required environment variables
  */
 const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
-  production: [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET],
-  staging: [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET],
-  'local-prod': [ENV_VARS.DATABASE_URL, ENV_VARS.JWT_SECRET], // Same as staging
+  production: [
+    ENV_VARS.DATABASE_URL,
+    ENV_VARS.JWT_SECRET,
+    ENV_VARS.HOST,
+    ENV_VARS.API_URL,
+    ENV_VARS.BASE_URL,
+    ENV_VARS.FRONTEND_URL,
+  ],
+  staging: [
+    ENV_VARS.DATABASE_URL,
+    ENV_VARS.JWT_SECRET,
+    ENV_VARS.HOST,
+    ENV_VARS.API_URL,
+    ENV_VARS.BASE_URL,
+    ENV_VARS.FRONTEND_URL,
+  ],
+  'local-prod': [
+    ENV_VARS.DATABASE_URL,
+    ENV_VARS.JWT_SECRET,
+    ENV_VARS.HOST,
+    ENV_VARS.API_URL,
+    ENV_VARS.BASE_URL,
+    ENV_VARS.FRONTEND_URL,
+  ], // Same as staging
   development: [], // Development is lenient
   test: [], // Test is lenient
 } as const;

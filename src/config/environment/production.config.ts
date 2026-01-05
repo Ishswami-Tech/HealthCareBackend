@@ -48,15 +48,33 @@ export default function createProductionConfig(): ProductionConfig {
       apiPrefix: getEnvWithDefault('API_PREFIX', DEFAULT_CONFIG.API_PREFIX),
       environment: 'production' as const,
       isDev: false,
-      host: getEnvWithDefault(ENV_VARS.HOST, 'api.ishswami.in'),
+      host:
+        getEnv(ENV_VARS.HOST) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.HOST}. Please set HOST in .env.production`
+          );
+        })(),
       bindAddress: getEnvWithDefault(ENV_VARS.BIND_ADDRESS, '0.0.0.0'),
       // CRITICAL: baseUrl should NOT include trailing slashes for proper URL concatenation
+      // CRITICAL: Must be set via BASE_URL or API_URL environment variable (no hardcoded defaults)
       baseUrl: removeTrailingSlash(
-        getEnvWithDefault(ENV_VARS.BASE_URL, '') ||
-          getEnvWithDefault(ENV_VARS.API_URL, '') ||
-          'https://api.ishswami.in'
+        getEnv(ENV_VARS.BASE_URL) ||
+          getEnv(ENV_VARS.API_URL) ||
+          (() => {
+            throw new Error(
+              `Missing required environment variable: ${ENV_VARS.BASE_URL} or ${ENV_VARS.API_URL}. ` +
+                `Please set BASE_URL or API_URL in .env.production`
+            );
+          })()
       ),
-      apiUrl: getEnvWithDefault(ENV_VARS.API_URL, 'https://api.ishswami.in'),
+      apiUrl:
+        getEnv(ENV_VARS.API_URL) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.API_URL}. Please set API_URL in .env.production`
+          );
+        })(),
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -65,14 +83,26 @@ export default function createProductionConfig(): ProductionConfig {
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, ''),
       prismaStudio: getEnvWithDefault(ENV_VARS.PRISMA_STUDIO_URL, '/prisma'),
-      frontend: getEnvWithDefault(ENV_VARS.FRONTEND_URL, 'https://ishswami.in'),
+      frontend:
+        getEnv(ENV_VARS.FRONTEND_URL) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.FRONTEND_URL}. Please set FRONTEND_URL in .env.production`
+          );
+        })(),
     },
     database: {
       // Use helper functions (which use dotenv) for environment variable access
+      // SECURITY: No hardcoded database URLs with passwords in production
       url:
-        getEnvWithDefault('DATABASE_URL_PROD', '') ||
-        getEnvWithDefault(ENV_VARS.DATABASE_URL, '') ||
-        'postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20',
+        getEnv(ENV_VARS.DATABASE_URL) ||
+        getEnv('DATABASE_URL_PROD') ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.DATABASE_URL}. ` +
+              `Please set DATABASE_URL in .env.production`
+          );
+        })(),
       sqlInjectionPrevention: {
         enabled: getEnvBoolean('DB_SQL_INJECTION_PREVENTION', true),
       },
@@ -105,7 +135,15 @@ export default function createProductionConfig(): ProductionConfig {
     },
     jwt: {
       // Use helper functions (which use dotenv) for environment variable access
-      secret: getEnvWithDefault(ENV_VARS.JWT_SECRET, 'your-super-secret-key-change-in-production'),
+      // SECURITY: No hardcoded JWT secrets in production
+      secret:
+        getEnv(ENV_VARS.JWT_SECRET) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.JWT_SECRET}. ` +
+              `Please set JWT_SECRET in .env.production (minimum 32 characters)`
+          );
+        })(),
       expiration: getEnvWithDefault(ENV_VARS.JWT_EXPIRATION, DEFAULT_CONFIG.JWT_EXPIRATION),
     },
     prisma: {
@@ -142,10 +180,20 @@ export default function createProductionConfig(): ProductionConfig {
     },
     cors: {
       // Use helper functions (which use dotenv) for environment variable access
-      origin: getEnvWithDefault(
-        ENV_VARS.CORS_ORIGIN,
-        'https://ishswami.in,https://www.ishswami.in'
-      ),
+      origin:
+        getEnv(ENV_VARS.CORS_ORIGIN) ||
+        (() => {
+          // CORS_ORIGIN is recommended but not required - derive from FRONTEND_URL if not set
+          const frontendUrl = getEnv(ENV_VARS.FRONTEND_URL);
+          if (frontendUrl) {
+            const domain = frontendUrl.replace(/^https?:\/\//, '').split('/')[0];
+            return `https://${domain},https://www.${domain}`;
+          }
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.CORS_ORIGIN} or ${ENV_VARS.FRONTEND_URL}. ` +
+              `Please set CORS_ORIGIN or FRONTEND_URL in .env.production`
+          );
+        })(),
       credentials: getEnvBoolean('CORS_CREDENTIALS', true),
       methods: getEnvWithDefault('CORS_METHODS', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'),
     },
@@ -176,27 +224,49 @@ export default function createProductionConfig(): ProductionConfig {
     jitsi: createJitsiConfig(),
     video: videoConfig(),
     domains: {
-      // Use helper functions (which use dotenv) for environment variable access
+      // Extract domain from environment variables (no hardcoded defaults)
+      // These will throw if FRONTEND_URL or API_URL are not set (validated above)
       main: (() => {
         const url = getEnv(ENV_VARS.FRONTEND_URL);
-        if (!url) return 'ishswami.in';
+        if (!url) {
+          throw new Error(`Missing required environment variable: ${ENV_VARS.FRONTEND_URL}`);
+        }
         const cleaned = url.replace(/^https?:\/\//, '');
         const parts = cleaned.split('/');
-        return parts[0] || 'ishswami.in';
+        return (
+          parts[0] ||
+          (() => {
+            throw new Error(`Invalid FRONTEND_URL format: ${url}`);
+          })()
+        );
       })(),
       api: (() => {
         const url = getEnv(ENV_VARS.API_URL);
-        if (!url) return 'api.ishswami.in';
+        if (!url) {
+          throw new Error(`Missing required environment variable: ${ENV_VARS.API_URL}`);
+        }
         const cleaned = url.replace(/^https?:\/\//, '');
         const parts = cleaned.split('/');
-        return parts[0] || 'api.ishswami.in';
+        return (
+          parts[0] ||
+          (() => {
+            throw new Error(`Invalid API_URL format: ${url}`);
+          })()
+        );
       })(),
       frontend: (() => {
         const url = getEnv(ENV_VARS.FRONTEND_URL);
-        if (!url) return 'ishswami.in';
+        if (!url) {
+          throw new Error(`Missing required environment variable: ${ENV_VARS.FRONTEND_URL}`);
+        }
         const cleaned = url.replace(/^https?:\/\//, '');
         const parts = cleaned.split('/');
-        return parts[0] || 'ishswami.in';
+        return (
+          parts[0] ||
+          (() => {
+            throw new Error(`Invalid FRONTEND_URL format: ${url}`);
+          })()
+        );
       })(),
     },
   };

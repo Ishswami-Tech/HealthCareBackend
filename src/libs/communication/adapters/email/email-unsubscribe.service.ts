@@ -319,10 +319,15 @@ export class EmailUnsubscribeService {
    */
   generateUnsubscribeUrl(email: string, userId?: string): string {
     const token = this.generateUnsubscribeToken(email, userId);
+    // SECURITY: Use ConfigService instead of hardcoded localhost URL
     const baseUrl =
       this.configService.getEnv('BASE_URL') ||
       this.configService.getEnv('API_URL') ||
-      'http://localhost:8088';
+      (() => {
+        throw new Error(
+          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
+        );
+      })();
     return `${baseUrl}/api/v1/email/unsubscribe?token=${token}`;
   }
 }

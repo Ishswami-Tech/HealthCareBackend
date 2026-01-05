@@ -2,6 +2,13 @@
 # PRODUCTION ENVIRONMENT VARIABLES TEMPLATE
 # Copy this file and replace values with your actual production secrets
 # 
+# ⚠️  SECURITY WARNING ⚠️
+# - NEVER commit actual secrets to version control
+# - NEVER use this template file with real secrets
+# - Replace ALL placeholder values (YOUR_XXX_HERE, CHANGE_THIS, etc.) with actual values
+# - Store actual .env.production file securely (not in git)
+# - Use GitHub Secrets for CI/CD deployment
+# 
 # See also:
 # - docs/ENVIRONMENT_VARIABLES.md - Complete reference for all environment variables
 # - docs/GITHUB_SECRETS_REFERENCE.md - GitHub Secrets for CI/CD deployment
@@ -46,11 +53,11 @@ REDIS_PASSWORD=
 # Application URLs
 PORT=8088
 API_PREFIX=/api/v1
-HOST=api.ishswami.in
+HOST=your-api-domain.com
 BIND_ADDRESS=0.0.0.0
-BASE_URL=https://api.ishswami.in
-API_URL=https://api.ishswami.in
-FRONTEND_URL=https://www.viddhakarma.com
+BASE_URL=https://your-api-domain.com
+API_URL=https://your-api-domain.com
+FRONTEND_URL=https://your-frontend-domain.com
 
 # JWT Configuration (REQUIRED - Replace with secure secrets!)
 JWT_SECRET=CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION
@@ -89,14 +96,19 @@ TRUST_PROXY=1
 # Email Configuration (ZeptoMail)
 EMAIL_PROVIDER=zeptomail
 ZEPTOMAIL_ENABLED=true
-ZEPTOMAIL_SEND_MAIL_TOKEN=PHtE6r0MRrrj2DEp9hYHs/a7H8GhMY54+rljf1UV5NwRDKRQGE1Wr9krxD7jrhd4UaZEFaTOz9putenNt7mFJjm4PW0eXWqyqK3sx/VYSPOZsbq6x00fsV8fckbdV4/mdtNu3SfWs9yX
-ZEPTOMAIL_FROM_EMAIL=noreply@viddhakarma.com
+# Get your Send Mail Token from: Mail Agents >> SMTP/API >> Send Mail Token
+# Documentation: https://www.zoho.com/zeptomail/help/api/email-sending.html
+ZEPTOMAIL_SEND_MAIL_TOKEN=YOUR_ZEPTOMAIL_SEND_MAIL_TOKEN_HERE
+# From email must be from a verified domain in your ZeptoMail Mail Agent
+ZEPTOMAIL_FROM_EMAIL=noreply@yourdomain.com
 ZEPTOMAIL_FROM_NAME=Healthcare App
-ZEPTOMAIL_BOUNCE_ADDRESS=bounces@viddhakarma.com
+# Optional: Bounce address for handling bounces
+ZEPTOMAIL_BOUNCE_ADDRESS=bounces@yourdomain.com
 ZEPTOMAIL_API_BASE_URL=https://api.zeptomail.com/v1.1
 
 # CORS Configuration
-CORS_ORIGIN=https://www.viddhakarma.com,https://viddhakarma.com,https://api.ishswami.in,https://ishswami.in,https://www.ishswami.in
+# Add all allowed origins (frontend domains, API domains, etc.)
+CORS_ORIGIN=https://your-frontend-domain.com,https://your-api-domain.com,https://www.your-domain.com
 CORS_CREDENTIALS=true
 CORS_METHODS=GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS
 
@@ -120,17 +132,26 @@ WHATSAPP_PRESCRIPTION_TEMPLATE_ID=prescription_notification
 # Video Configuration (OpenVidu)
 VIDEO_ENABLED=true
 VIDEO_PROVIDER=openvidu
-OPENVIDU_URL=https://video.ishswami.in
+OPENVIDU_URL=https://your-video-domain.com
 OPENVIDU_SECRET=CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION
-OPENVIDU_DOMAIN=video.ishswami.in
+OPENVIDU_DOMAIN=your-video-domain.com
 OPENVIDU_WEBHOOK_ENABLED=false
-OPENVIDU_WEBHOOK_ENDPOINT=https://api.ishswami.in/api/v1/webhooks/openvidu
+OPENVIDU_WEBHOOK_ENDPOINT=https://your-api-domain.com/api/v1/webhooks/openvidu
 OPENVIDU_WEBHOOK_EVENTS=sessionCreated,sessionDestroyed,participantJoined,participantLeft
 
+# Coturn (TURN/STUN) Security Configuration
+# ⚠️ SECURITY: Coturn is exposed on port 3478 - use strong password!
+# See docs/MASTER_COTURN_GUIDE.md for complete Coturn security setup
+# ✅ PRODUCTION: Using dedicated subdomain for better security isolation
+COTURN_DOMAIN=turn.ishswami.in
+COTURN_PASSWORD=CHANGE_THIS_TO_A_STRONG_PASSWORD_MIN_32_CHARS
+
 # Google OAuth Configuration
-GOOGLE_CLIENT_ID=616510725595-icnj6ql0qie97dp4voi3u9uafbnmhend.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=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
-GOOGLE_REDIRECT_URI=https://api.ishswami.in/auth/google/callback
+# Get credentials from: https://console.cloud.google.com/apis/credentials
+# Create OAuth 2.0 Client ID and add authorized redirect URI: https://your-api-domain.com/auth/google/callback
+GOOGLE_CLIENT_ID=YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=YOUR_GOOGLE_CLIENT_SECRET_HERE
+GOOGLE_REDIRECT_URI=https://your-api-domain.com/auth/google/callback
 
 # Session Configuration (REQUIRED - Replace with secure secrets!)
 SESSION_SECRET=CHANGE_THIS_TO_A_SECURE_SESSION_SECRET_IN_PRODUCTION_MIN_32_CHARS
@@ -147,27 +168,28 @@ FIREBASE_DATABASE_URL=
 FIREBASE_VAPID_KEY=
 
 # Social Auth Configuration (Optional)
-FACEBOOK_APP_ID=
-FACEBOOK_APP_SECRET=
-FACEBOOK_REDIRECT_URI=https://api.ishswami.in/auth/facebook/callback
-APPLE_CLIENT_ID=
-APPLE_CLIENT_SECRET=
-APPLE_REDIRECT_URI=https://api.ishswami.in/auth/apple/callback
+FACEBOOK_APP_ID=YOUR_FACEBOOK_APP_ID_HERE
+FACEBOOK_APP_SECRET=YOUR_FACEBOOK_APP_SECRET_HERE
+FACEBOOK_REDIRECT_URI=https://your-api-domain.com/auth/facebook/callback
+APPLE_CLIENT_ID=YOUR_APPLE_CLIENT_ID_HERE
+APPLE_CLIENT_SECRET=YOUR_APPLE_CLIENT_SECRET_HERE
+APPLE_REDIRECT_URI=https://your-api-domain.com/auth/apple/callback
 
 # Contabo S3 Storage Configuration
 S3_ENABLED=true
 S3_PROVIDER=contabo
 S3_ENDPOINT=https://eu2.contabostorage.com
 S3_REGION=eu-central-1
+# Get credentials from: Contabo Object Storage >> Access Keys
 S3_BUCKET=your-bucket-name
-S3_ACCESS_KEY_ID=your-contabo-access-key-id
-S3_SECRET_ACCESS_KEY=your-contabo-secret-access-key
+S3_ACCESS_KEY_ID=YOUR_CONTABO_ACCESS_KEY_ID_HERE
+S3_SECRET_ACCESS_KEY=YOUR_CONTABO_SECRET_ACCESS_KEY_HERE
 S3_FORCE_PATH_STYLE=true
 S3_PUBLIC_URL_EXPIRATION=3600
 # CDN URL Configuration
 # For Contabo provider: CDN URL is automatically generated from S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_BUCKET
 # Format: https://{endpoint}/{access-key-id}:{bucket}
-# Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata
+# Example: https://eu2.contabostorage.com/{access-key-id}:your-bucket-name
 # Only set this if you want to use a different CDN provider (e.g., Cloudflare, AWS CloudFront)
 CDN_URL=
 

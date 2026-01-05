@@ -18,12 +18,12 @@ metadata:
 spec:
   tls:
   - hosts:
-    - api.ishswami.in
+    - backend-service-v1.ishswami.in
     - video.ishswami.in
     - meet.ishswami.in
     secretName: healthcare-tls
   rules:
-  - host: api.ishswami.in
+  - host: backend-service-v1.ishswami.in
     http:
       paths:
       - path: /

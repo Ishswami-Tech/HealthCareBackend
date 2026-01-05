@@ -630,7 +630,20 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.getUrlsConfig()?.frontend ?? this.configService.getEnv('FRONTEND_URL') ?? 'https://ishswami.in'}/reset-password?token=${resetToken}`,
+          resetUrl: (() => {
+            const frontendUrl =
+              this.configService.getUrlsConfig()?.frontend ??
+              this.configService.getEnv('FRONTEND_URL');
+
+            if (!frontendUrl) {
+              throw new Error(
+                'Missing required environment variable: FRONTEND_URL. ' +
+                  'Cannot generate password reset URL without frontend URL.'
+              );
+            }
+
+            return `${frontendUrl}/reset-password?token=${resetToken}`;
+          })(),
         },
         ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
       });

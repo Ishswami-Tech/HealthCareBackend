@@ -432,8 +432,15 @@ export class InvoicePDFService {
       appConfig.apiUrl ||
       appConfig.baseUrl ||
       this.configService.getEnv('API_URL') ||
-      this.configService.getEnv('BASE_URL') ||
-      'https://api.ishswami.in';
+      this.configService.getEnv('BASE_URL');
+
+    if (!baseUrl) {
+      throw new Error(
+        'Missing API_URL or BASE_URL environment variable. ' +
+          'Cannot generate invoice download URL without base URL.'
+      );
+    }
+
     return `${baseUrl}/api/billing/invoices/download/${fileName}`;
   }
 

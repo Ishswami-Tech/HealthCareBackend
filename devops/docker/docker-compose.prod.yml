@@ -137,8 +137,8 @@ services:
       - "50000-50050:50000-50050/tcp"
     environment:
       - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://video.ishswami.in}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - OPENVIDU_EDITION=ce
       - OPENVIDU_CDR=false
       - SERVER_PORT=4443
@@ -160,7 +160,7 @@ services:
       - OPENVIDU_RECORDING=false
       - COTURN_IP=coturn
       - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-video.ishswami.in}
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - TZ=UTC
     volumes:
       - openvidu_recordings:/opt/openvidu/recordings
@@ -197,24 +197,44 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
       - "49160-49200:49160-49200/udp"
       - "49160-49200:49160-49200/tcp"
     environment:
       - TZ=UTC
+      # Security: Use environment variable for password (set in .env.production)
+      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
+      # Domain configuration: Use same domain as Video service (set in .env.production)
+      - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     command:
       - -n
       - --log-file=stdout
       - --listening-ip=0.0.0.0
       - --listening-port=3478
+      - --tls-listening-port=5349
       - --min-port=49160
       - --max-port=49200
       - --fingerprint
       - --lt-cred-mech
-      - --user=openvidu:openvidu
-      - --realm=openvidu
+      # Security: Use environment variable for password instead of hardcoded
+      - --user=openvidu:${COTURN_PASSWORD}
+      # Use same domain as Video service
+      - --realm=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+      - --server-name=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
       - --no-cli
-      - --no-tls
-      - --no-dtls
+      # TLS Configuration for TURNS
+      - --cert=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem
+      - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
+      # Security: Resource limits to prevent exhaustion attacks
+      - --max-bps=1000000
+      - --max-sessions-per-user=10
+      - --total-quota=1000000
+      - --user-quota=1000000
+      - --no-multicast-peers
+      - --verbose
     networks:
       app-network:
         ipv4_address: 172.18.0.8
@@ -227,6 +247,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    # Security: Resource limits to prevent resource exhaustion attacks
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
   # Application Services (Profile: app)
   api:
@@ -296,7 +325,7 @@ services:
       BASE_URL: ${BASE_URL}
       API_PREFIX: ${API_PREFIX:-/api/v1}
       MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
-      API_DOMAIN: ${API_DOMAIN:-api.ishswami.in}
+      API_DOMAIN: ${API_DOMAIN:-backend-service-v1.ishswami.in}
       FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
       JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       JWT_EXPIRATION: 24h
@@ -337,7 +366,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.5
         aliases:
-          - api.ishswami.in
+          - backend-service-v1.ishswami.in
     dns: []
     extra_hosts:
       - "api:172.18.0.5"

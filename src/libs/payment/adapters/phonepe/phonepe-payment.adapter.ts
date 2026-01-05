@@ -241,11 +241,27 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         amount: amountInPaise,
         redirectUrl:
           (options.metadata?.['redirectUrl'] as string) ||
-          `${(options.metadata?.['baseUrl'] as string) || 'https://your-app.com'}/payment/callback`,
+          (() => {
+            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
+            if (!baseUrl) {
+              throw new Error(
+                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
+              );
+            }
+            return `${baseUrl}/payment/callback`;
+          })(),
         redirectMode: 'REDIRECT',
         callbackUrl:
           (options.metadata?.['callbackUrl'] as string) ||
-          `${(options.metadata?.['baseUrl'] as string) || 'https://your-app.com'}/api/payments/phonepe/webhook`,
+          (() => {
+            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
+            if (!baseUrl) {
+              throw new Error(
+                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
+              );
+            }
+            return `${baseUrl}/api/payments/phonepe/webhook`;
+          })(),
         ...(options.customerPhone && { mobileNumber: options.customerPhone }),
         paymentInstrument: {
           type: 'PAY_PAGE',
@@ -441,7 +457,15 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
         ...(options.amount && { amount: Math.round(options.amount) }), // Only include amount if specified (full refund if omitted)
         callbackUrl:
           (options.metadata?.['callbackUrl'] as string) ||
-          `${(options.metadata?.['baseUrl'] as string) || 'https://your-app.com'}/api/payments/phonepe/refund-webhook`,
+          (() => {
+            const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
+            if (!baseUrl) {
+              throw new Error(
+                'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
+              );
+            }
+            return `${baseUrl}/api/payments/phonepe/refund-webhook`;
+          })(),
       };
 
       // Base64 encode the request payload

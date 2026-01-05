@@ -204,6 +204,9 @@ services:
       - "49160-49200:49160-49200/tcp"
     environment:
       - TZ=UTC
+      # Domain configuration: Use same domain as API (set in .env files)
+      - COTURN_DOMAIN=${COTURN_DOMAIN:-turn.ishswami.in}
+      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
     command:
       - -n
       - --log-file=stdout
@@ -213,8 +216,10 @@ services:
       - --max-port=49200
       - --fingerprint
       - --lt-cred-mech
-      - --user=openvidu:openvidu
-      - --realm=openvidu
+      - --user=openvidu:${COTURN_PASSWORD}
+      # Use dedicated subdomain for TURN server
+      - --realm=${COTURN_DOMAIN:-turn.ishswami.in}
+      - --server-name=${COTURN_DOMAIN:-turn.ishswami.in}
       - --no-cli
       - --no-tls
       - --no-dtls

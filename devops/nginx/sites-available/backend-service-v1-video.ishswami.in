@@ -1,0 +1,87 @@
+# HTTP to HTTPS redirect for backend-service-v1-video.ishswami.in
+server {
+    listen 80;
+    listen [::]:80;
+    server_name backend-service-v1-video.ishswami.in;
+
+    # Let's Encrypt verification
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    # Redirect all HTTP requests to HTTPS
+    location / {
+        return 301 https://$server_name$request_uri;
+    }
+}
+
+# HTTPS server for OpenVidu Video (backend-service-v1-video.ishswami.in)
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name backend-service-v1-video.ishswami.in;
+
+    # SSL certificates (managed by Certbot - includes all SSL settings)
+    ssl_certificate /etc/letsencrypt/live/backend-service-v1-video.ishswami.in/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/backend-service-v1-video.ishswami.in/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    # Security Headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Logging
+    access_log /var/log/nginx/backend-service-v1-video.ishswami.in.access.log;
+    error_log /var/log/nginx/backend-service-v1-video.ishswami.in.error.log;
+
+    # Client body size (for video uploads if needed)
+    client_max_body_size 100M;
+
+    # Timeouts (longer for video streaming)
+    proxy_connect_timeout 60s;
+    proxy_send_timeout 86400s;
+    proxy_read_timeout 86400s;
+
+    # Proxy to OpenVidu Docker container
+    # OpenVidu runs on port 4443 (HTTP internally, SSL handled by Nginx)
+    location / {
+        proxy_pass http://127.0.0.1:4443;
+        proxy_http_version 1.1;
+
+        # Headers
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+
+        # WebSocket support (required for OpenVidu video streaming)
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        # Disable buffering for real-time video streaming
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+
+    # OpenVidu specific WebSocket endpoint
+    location /openvidu {
+        proxy_pass http://127.0.0.1:4443;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        proxy_buffering off;
+    }
+}
+
