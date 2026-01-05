@@ -232,7 +232,8 @@ export class IpWhitelistGuard implements CanActivate {
         // Remove port if present (e.g., "192.168.1.1:12345" -> "192.168.1.1")
         const ipParts = firstIP.split(':');
         const ipWithoutPort = ipParts[0];
-        if (ipWithoutPort && ipWithoutPort.trim() !== '') {
+        // TypeScript safety: split always returns at least one element, but we validate anyway
+        if (ipWithoutPort !== undefined && ipWithoutPort.trim() !== '') {
           return ipWithoutPort.trim();
         }
       }
