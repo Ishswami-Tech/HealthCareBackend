@@ -1237,9 +1237,9 @@ ensure_compose_file() {
     fi
     
     # Try git repository
-    if command -v git &>/dev/null && [[ -d "${BASE_DIR}/.git" ]]; then
+    if command -v git &>/dev/null && [[ -d "${base_dir}/.git" ]]; then
         log_info "Attempting to restore from git repository..."
-        cd "${BASE_DIR}" || return 1
+        cd "${base_dir}" || return 1
         if git checkout HEAD -- devops/docker/docker-compose.prod.yml 2>/dev/null; then
             log_success "Restored docker-compose.prod.yml from git"
             return 0
@@ -1247,6 +1247,8 @@ ensure_compose_file() {
     fi
     
     log_error "Cannot restore docker-compose.prod.yml automatically"
+    log_info "Expected location: ${compose_file}"
+    log_info "BASE_DIR: ${BASE_DIR:-<not set>}, base_dir: ${base_dir}"
     log_info "Please ensure the file is copied during deployment"
     return 1
 }
