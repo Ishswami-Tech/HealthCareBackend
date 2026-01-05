@@ -13,12 +13,16 @@ if ! command -v log_info &>/dev/null; then
     # Try relative path first (normal execution from devops/scripts/docker-infra/)
     if [[ -f "${SCRIPT_DIR}/../shared/utils.sh" ]]; then
         source "${SCRIPT_DIR}/../shared/utils.sh"
+    # Fall back to /opt/healthcare-backend path (production server)
+    elif [[ -f "/opt/healthcare-backend/devops/scripts/shared/utils.sh" ]]; then
+        source "/opt/healthcare-backend/devops/scripts/shared/utils.sh"
     # Fall back to /tmp/utils.sh (when executed from /tmp/ by GitHub Actions)
     elif [[ -f "/tmp/utils.sh" ]]; then
         source "/tmp/utils.sh"
     else
         echo "ERROR: Cannot find utils.sh. Tried:" >&2
         echo "  - ${SCRIPT_DIR}/../shared/utils.sh" >&2
+        echo "  - /opt/healthcare-backend/devops/scripts/shared/utils.sh" >&2
         echo "  - /tmp/utils.sh" >&2
         exit 1
     fi
@@ -347,6 +351,12 @@ fix_unhealthy_containers() {
     local unhealthy_services=()
     local backup_id=""
     
+    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    if ! ensure_compose_file; then
+        log_error "Failed to ensure docker-compose.prod.yml exists"
+        return 1
+    fi
+    
     # Identify unhealthy services
     for service in postgres dragonfly coturn portainer openvidu; do
         if [[ "${SERVICE_STATUS[$service]}" == "unhealthy" ]]; then
@@ -420,7 +430,16 @@ fix_unhealthy_containers() {
     fi
     
     # Try restarting unhealthy containers
-    cd "$(dirname "$compose_file")" 2>/dev/null || return 1
+    # Ensure directory exists before changing into it
+    local compose_dir="$(dirname "$compose_file")"
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
+        return 1
+    }
+    cd "$compose_dir" 2>/dev/null || {
+        log_error "Failed to change to directory: ${compose_dir}"
+        return 1
+    }
     
     for service in "${unhealthy_services[@]}"; do
         local container=""
@@ -615,12 +634,22 @@ recover_single_missing_container() {
     local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
     local backup_id=""
     
-    if [[ ! -f "$compose_file" ]]; then
-        log_error "Docker compose file not found: ${compose_file}"
+    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    if ! ensure_compose_file; then
+        log_error "Failed to ensure docker-compose.prod.yml exists"
         return 1
     fi
     
-    cd "$(dirname "$compose_file")" || return 1
+    # Ensure directory exists before changing into it
+    local compose_dir="$(dirname "$compose_file")"
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
+        return 1
+    }
+    cd "$compose_dir" || {
+        log_error "Failed to change to directory: ${compose_dir}"
+        return 1
+    }
     
     # STEP 1: Create backup (if this is a data container and we can access it)
     if $needs_data_backup && [[ -f "$backup_script" ]]; then

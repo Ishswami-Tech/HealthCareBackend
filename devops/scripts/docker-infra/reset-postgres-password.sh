@@ -36,9 +36,20 @@ check_container() {
         log_error "PostgreSQL container '${POSTGRES_CONTAINER}' is not running"
         log_info "Starting PostgreSQL container..."
         
-        # Try to start the container
-        cd /opt/healthcare-backend/devops/docker || cd "${SCRIPT_DIR}/../../docker" || {
-            log_error "Cannot find docker-compose directory"
+        # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+        if ! ensure_compose_file; then
+            log_error "Failed to ensure docker-compose.prod.yml exists"
+            exit 1
+        fi
+        
+        # Ensure directory exists before changing into it
+        local compose_dir="${BASE_DIR}/devops/docker"
+        mkdir -p "$compose_dir" || {
+            log_error "Failed to create directory: ${compose_dir}"
+            exit 1
+        }
+        cd "$compose_dir" || {
+            log_error "Failed to change to directory: ${compose_dir}"
             exit 1
         }
         

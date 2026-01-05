@@ -1407,22 +1407,27 @@ jobs:
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Copy infrastructure scripts
+      - name: Copy infrastructure scripts and files
         run: |
           # Copy to temp files first, then move to final location (prevents "Text file busy" error)
           # This ensures files are fully written and closed before being executed
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh.tmp
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/fix-missing-files.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/fix-missing-files.sh.tmp
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
+          # Copy docker-compose.prod.yml file (infrastructure containers don't need .env.production)
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml.tmp
           
           # Move temp files to final location atomically
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             mv /tmp/health-check.sh.tmp /tmp/health-check.sh
             mv /tmp/deploy.sh.tmp /tmp/deploy.sh
             mv /tmp/diagnose.sh.tmp /tmp/diagnose.sh
+            mv /tmp/fix-missing-files.sh.tmp /tmp/fix-missing-files.sh
             mv /tmp/utils.sh.tmp /tmp/utils.sh
-            chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh
+            mv /tmp/docker-compose.prod.yml.tmp /tmp/docker-compose.prod.yml
+            chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh /tmp/fix-missing-files.sh
           ENDSSH
 
       - name: Make infrastructure healthy (aggressive recovery)
@@ -1436,12 +1441,49 @@ jobs:
             source /tmp/utils.sh
             export AUTO_RECREATE_MISSING="true"
             
+            # CRITICAL: Ensure docker-compose.prod.yml is in place before recovery
+            # Note: Infrastructure containers (postgres, dragonfly, coturn, portainer, openvidu) 
+            # don't use .env.production - only api/worker services do
+            echo "🔍 Ensuring docker-compose.prod.yml is present before recovery..."
+            SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            
+            # Ensure docker-compose.prod.yml exists
+            COMPOSE_FILE="${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+            if [[ ! -f "$COMPOSE_FILE" ]]; then
+              echo "⚠️  docker-compose.prod.yml not found at ${COMPOSE_FILE}"
+              echo "📄 Restoring from /tmp..."
+              mkdir -p "$(dirname "$COMPOSE_FILE")" || {
+                echo "❌ Failed to create directory: $(dirname "$COMPOSE_FILE")"
+                exit 1
+              }
+              if [[ -f "/tmp/docker-compose.prod.yml" ]]; then
+                mv /tmp/docker-compose.prod.yml "$COMPOSE_FILE" || {
+                  echo "❌ Failed to move docker-compose.prod.yml"
+                  exit 1
+                }
+                echo "✅ Restored docker-compose.prod.yml"
+              else
+                echo "❌ docker-compose.prod.yml not found in /tmp either"
+                # Try fix-missing-files.sh as last resort
+                if [[ -f "/tmp/fix-missing-files.sh" ]]; then
+                  echo "🔧 Running fix-missing-files.sh..."
+                  bash /tmp/fix-missing-files.sh || {
+                    echo "❌ fix-missing-files.sh failed"
+                    exit 1
+                  }
+                else
+                  echo "❌ fix-missing-files.sh not found"
+                  exit 1
+                fi
+              fi
+            fi
+            
             # Explicitly force-recreate Portainer if it's restarting (fixes old command issue)
             if docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | grep -q "^portainer.*Restarting"; then
               echo "🔧 Portainer is restarting - force recreating with correct command..."
               docker stop portainer 2>/dev/null || true
               docker rm -f portainer 2>/dev/null || true
-              cd /opt/healthcare-backend/devops/docker 2>/dev/null || cd /opt/healthcare-backend 2>/dev/null || true
+              cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend 2>/dev/null || true
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate portainer 2>&1 || true
               sleep 5
             fi
@@ -1496,7 +1538,21 @@ jobs:
               if [[ "$HEALTHY" != "true" ]] && [[ $ATTEMPT -ge 2 ]]; then
                 echo ""
                 echo "🔄 Step 3: Force recreating infrastructure (attempt $ATTEMPT)..."
-                cd /opt/healthcare-backend/devops/docker || cd /tmp || true
+                
+                # Ensure docker-compose.prod.yml is available
+                SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+                COMPOSE_FILE="${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+                if [[ ! -f "$COMPOSE_FILE" ]]; then
+                  echo "⚠️  docker-compose.prod.yml not found, restoring..."
+                  mkdir -p "$(dirname "$COMPOSE_FILE")" || true
+                  if [[ -f "/tmp/docker-compose.prod.yml" ]]; then
+                    mv /tmp/docker-compose.prod.yml "$COMPOSE_FILE" || true
+                  elif [[ -f "/tmp/fix-missing-files.sh" ]]; then
+                    bash /tmp/fix-missing-files.sh || true
+                  fi
+                fi
+                
+                cd "${SERVER_DEPLOY_PATH}/devops/docker" || cd /tmp || true
                 
                 # Stop all infrastructure containers
                 echo "⏹️  Stopping infrastructure containers..."
