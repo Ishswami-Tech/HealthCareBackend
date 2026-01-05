@@ -710,6 +710,16 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     # For production, we use the same approach but pass DATABASE_URL via docker exec -e
     # The run-prisma.js script will handle it the same way
     
+    # Ensure schema=public is present (required by Prisma)
+    if [[ ! "$clean_database_url" == *"schema="* ]]; then
+        if [[ "$clean_database_url" == *"?"* ]]; then
+            clean_database_url="${clean_database_url}&schema=public"
+        else
+            clean_database_url="${clean_database_url}?schema=public"
+        fi
+        log_info "Added schema=public to DATABASE_URL"
+    fi
+    
     # Use base64 encoding to avoid any shell escaping issues with special characters
     local encoded_url
     encoded_url=$(echo -n "$clean_database_url" | base64 -w0)
@@ -735,13 +745,18 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         echo '[DEBUG] Password extracted (first 2 chars):' \${url_password:0:2}***
         echo '[DEBUG] Password length:' \${#url_password}
         
-        # Test connection with extracted password before running Prisma
-        echo '[DEBUG] Testing PostgreSQL connection...'
-        if PGPASSWORD=\"\$url_password\" psql -h postgres -U postgres -d userdb -c 'SELECT 1;' >/dev/null 2>&1; then
-            echo '[DEBUG] PostgreSQL connection test: SUCCESS'
-        else
-            echo '[DEBUG] PostgreSQL connection test: FAILED'
-            echo '[DEBUG] This suggests the password in DATABASE_URL is incorrect'
+        # Debug: Show full URL structure (masked)
+        echo '[DEBUG] Full DATABASE_URL structure:'
+        echo '[DEBUG]   Protocol: postgresql://'
+        echo '[DEBUG]   Username: postgres'
+        echo '[DEBUG]   Password: \${url_password:0:2}*** (length: \${#url_password})'
+        echo '[DEBUG]   Host: postgres'
+        echo '[DEBUG]   Port: 5432'
+        echo '[DEBUG]   Database: userdb'
+        echo '[DEBUG]   Has schema param:' \$([[ \"\$DATABASE_URL\" == *\"schema=\"* ]] && echo 'YES' || echo 'NO')
+        if [[ \"\$DATABASE_URL\" == *\"schema=\"* ]]; then
+            schema_value=\$(echo \"\$DATABASE_URL\" | sed -n 's|.*schema=\\([^&]*\\).*|\\1|p')
+            echo '[DEBUG]   Schema value:' \$schema_value
         fi
         
         # Run Prisma migration using yarn script (same as package.json)
