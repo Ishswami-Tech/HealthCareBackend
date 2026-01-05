@@ -637,14 +637,40 @@ run_migrations_safely() {
     log_info "Verified clean DATABASE_URL contains password (first 2 chars: ${url_password:0:2}***)"
     
     # Test connection with clean_database_url to ensure it works
-    log_info "Testing database connection with clean DATABASE_URL..."
+    # Test 1: Direct connection from host (using docker exec on postgres container)
+    log_info "Testing database connection with clean DATABASE_URL (direct from host)..."
     local clean_password=$(printf '%b' "${url_password//%/\\x}" 2>/dev/null || echo "$url_password")
     if ! docker exec -e PGPASSWORD="$clean_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
         log_error "ERROR: Database connection test failed with clean DATABASE_URL!"
         log_error "This suggests the clean URL is malformed or password is incorrect"
         return 1
     fi
-    log_success "Database connection test passed with clean DATABASE_URL"
+    log_success "Database connection test passed with clean DATABASE_URL (direct)"
+    
+    # Test 2: Verify API container can reach PostgreSQL hostname (network connectivity)
+    # This checks if the Docker network is properly configured
+    log_info "Verifying API container can reach PostgreSQL hostname..."
+    if docker exec "${CONTAINER_PREFIX}api" sh -c "timeout 2 bash -c '</dev/tcp/postgres/5432' 2>/dev/null" >/dev/null 2>&1; then
+        log_success "API container can reach PostgreSQL hostname (network OK)"
+    else
+        log_warning "WARNING: API container cannot reach PostgreSQL hostname"
+        log_warning "This might indicate Docker network configuration issues"
+        log_warning "Both containers must be on the same Docker network (app-network)"
+    fi
+    
+    # Test 3: Check PostgreSQL pg_hba.conf allows Docker network connections
+    # This is critical if PostgreSQL is restricted to Docker network only
+    log_info "Checking PostgreSQL pg_hba.conf configuration..."
+    local pg_hba_check
+    pg_hba_check=$(docker exec postgres grep -E "^host\s+all\s+all\s+172\.18\.0\.0/16" /var/lib/postgresql/data/pgdata/pg_hba.conf 2>/dev/null || echo "")
+    if [[ -n "$pg_hba_check" ]]; then
+        log_success "PostgreSQL pg_hba.conf allows Docker network (172.18.0.0/16) connections"
+    else
+        log_warning "WARNING: PostgreSQL pg_hba.conf might not allow Docker network connections"
+        log_warning "If PostgreSQL is restricted to Docker network, ensure pg_hba.conf has:"
+        log_warning "  host    all             all             172.18.0.0/16            scram-sha-256"
+        log_warning "This is required for Prisma to connect from API container"
+    fi
     
     # Run migration and capture both stdout and stderr
     # CRITICAL: The issue is that prisma.config.js reads process.env.DATABASE_URL at module load time
