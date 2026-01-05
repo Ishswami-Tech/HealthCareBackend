@@ -424,13 +424,13 @@ Contabo S3: s3://healthcare-backups/
 
 ## Infrastructure Containers
 
-| Container           | Port | Purpose                | Health Check           |
-| ------------------- | ---- | ---------------------- | ---------------------- |
-| **postgres**        | 5432 | PostgreSQL database    | `pg_isready`           |
-| **dragonfly**       | 6379 | Redis-compatible cache | `redis-cli ping`       |
-| **openvidu-server** | 4443 | Video conferencing     | HTTP check             |
-| **coturn**          | 3478 | TURN/STUN server       | `turnutils_stunclient` |
-| **portainer**       | 9000 | Docker management UI   | HTTP check             |
+| Container           | Port              | Purpose                | Health Check           |
+| ------------------- | ----------------- | ---------------------- | ---------------------- |
+| **postgres**        | - (internal only) | PostgreSQL database    | `pg_isready`           |
+| **dragonfly**       | 6379              | Redis-compatible cache | `redis-cli ping`       |
+| **openvidu-server** | 4443              | Video conferencing     | HTTP check             |
+| **coturn**          | 3478              | TURN/STUN server       | `turnutils_stunclient` |
+| **portainer**       | 9000              | Docker management UI   | HTTP check             |
 
 ---
 

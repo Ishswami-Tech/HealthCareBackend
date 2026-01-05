@@ -5,8 +5,11 @@ services:
     image: postgres:16
     container_name: local-prod-postgres
     hostname: postgres
-    ports:
-      - "5432:5432"
+    # SECURITY: Port 5432 removed from public exposure
+    # PostgreSQL is only accessible from Docker network (172.18.0.0/16)
+    # This prevents external brute force attacks
+    # ports:
+    #   - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
     environment:
