@@ -1199,15 +1199,22 @@ restore_backup() {
 # Ensure docker-compose.prod.yml exists
 # Restores from /tmp (CI/CD deployment) or git repository if missing
 ensure_compose_file() {
-    # Ensure BASE_DIR is set (fallback to default if not set)
-    local base_dir="${BASE_DIR:-/opt/healthcare-backend}"
+    # Ensure BASE_DIR is set (fallback to default if not set or empty)
+    # Handle both unset and empty string cases
+    local base_dir="${BASE_DIR}"
+    if [[ -z "${base_dir}" ]]; then
+        base_dir="/opt/healthcare-backend"
+    fi
     local compose_file="${base_dir}/devops/docker/docker-compose.prod.yml"
     
-    # Validate compose_file path is not empty
-    if [[ -z "$compose_file" ]] || [[ "$compose_file" == "/devops/docker/docker-compose.prod.yml" ]]; then
+    # Validate compose_file path is not empty or malformed
+    if [[ -z "$compose_file" ]] || [[ "$compose_file" == "/devops/docker/docker-compose.prod.yml" ]] || [[ "$compose_file" == "devops/docker/docker-compose.prod.yml" ]]; then
         log_error "Cannot determine compose file path - BASE_DIR is not set or empty"
         log_error "BASE_DIR='${BASE_DIR:-<not set>}', base_dir='${base_dir}', compose_file='${compose_file}'"
-        return 1
+        # Force use default
+        base_dir="/opt/healthcare-backend"
+        compose_file="${base_dir}/devops/docker/docker-compose.prod.yml"
+        log_info "Using fallback: ${compose_file}"
     fi
     
     if [[ -f "$compose_file" ]]; then
