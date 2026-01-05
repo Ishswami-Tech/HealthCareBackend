@@ -1224,17 +1224,27 @@ ensure_compose_file() {
     log_warning "docker-compose.prod.yml not found at: ${compose_file}"
     log_info "Attempting to restore..."
     
-    # Ensure directory exists
+    # Ensure directory exists (with proper permissions)
     local compose_dir="$(dirname "$compose_file")"
     if [[ -z "$compose_dir" ]]; then
         log_error "Cannot determine compose file directory"
         return 1
     fi
     
-    mkdir -p "$compose_dir" || {
-        log_error "Failed to create directory: ${compose_dir}"
-        return 1
-    }
+    # Try to create directory, use sudo if needed (for /opt paths)
+    if ! mkdir -p "$compose_dir" 2>/dev/null; then
+        # If mkdir failed, try with sudo (for system directories)
+        if command -v sudo &>/dev/null && sudo -n true 2>/dev/null; then
+            sudo mkdir -p "$compose_dir" 2>/dev/null || {
+                log_error "Failed to create directory: ${compose_dir} (even with sudo)"
+                return 1
+            }
+            sudo chmod 755 "$compose_dir" 2>/dev/null || true
+        else
+            log_error "Failed to create directory: ${compose_dir} (permission denied, sudo not available)"
+            return 1
+        fi
+    fi
     
     # Check /tmp (from CI/CD deployment)
     local tmp_file="/tmp/docker-compose.prod.yml"
