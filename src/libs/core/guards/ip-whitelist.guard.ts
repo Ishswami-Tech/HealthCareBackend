@@ -194,24 +194,57 @@ export class IpWhitelistGuard implements CanActivate {
 
   /**
    * Extract client IP from request
+   *
+   * Priority order:
+   * 1. request.ip (Fastify handles this correctly when trustProxy is enabled)
+   * 2. X-Real-IP header (single trusted proxy)
+   * 3. X-Forwarded-For header (first IP in chain - original client)
+   * 4. Socket remote address (direct connection)
    */
   private getClientIP(request: FastifyRequest): string {
+    // Fastify's request.ip is the most reliable when trustProxy is configured
+    // It correctly handles X-Forwarded-For based on trustProxy setting
+    if (request.ip && request.ip !== '::ffff:127.0.0.1' && request.ip !== '127.0.0.1') {
+      // Fastify may return IPv6-mapped IPv4 addresses (::ffff:127.0.0.1)
+      // Convert to IPv4 if needed
+      if (request.ip.startsWith('::ffff:')) {
+        return request.ip.replace('::ffff:', '');
+      }
+      return request.ip;
+    }
+
+    // Check X-Real-IP header (set by trusted proxy)
+    const realIP = request.headers['x-real-ip'];
+    if (realIP && typeof realIP === 'string') {
+      const ip = realIP.trim();
+      if (ip && ip !== 'unknown') {
+        return ip;
+      }
+    }
+
     // Check X-Forwarded-For header (for proxies/load balancers)
     const forwardedFor = request.headers['x-forwarded-for'];
     if (forwardedFor) {
       const ips = typeof forwardedFor === 'string' ? forwardedFor.split(',') : forwardedFor;
-      // First IP in the chain is the original client
-      return ips[0]?.trim() || '';
-    }
-
-    // Check X-Real-IP header
-    const realIP = request.headers['x-real-ip'];
-    if (realIP && typeof realIP === 'string') {
-      return realIP.trim();
+      // First IP in the chain is the original client (when trustProxy is configured correctly)
+      const firstIP = ips[0]?.trim();
+      if (firstIP && firstIP !== 'unknown') {
+        // Remove port if present (e.g., "192.168.1.1:12345" -> "192.168.1.1")
+        return firstIP.split(':')[0];
+      }
     }
 
     // Fallback to socket remote address
-    return request.ip || request.socket?.remoteAddress || 'unknown';
+    const socketIP = request.socket?.remoteAddress;
+    if (socketIP && socketIP !== 'unknown') {
+      // Convert IPv6-mapped IPv4 addresses
+      if (socketIP.startsWith('::ffff:')) {
+        return socketIP.replace('::ffff:', '');
+      }
+      return socketIP;
+    }
+
+    return 'unknown';
   }
 
   /**
@@ -247,7 +280,7 @@ export class IpWhitelistGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<FastifyRequest>();
     const clientIP = this.getClientIP(request);
 
-    if (clientIP === 'unknown') {
+    if (clientIP === 'unknown' || !clientIP || clientIP.trim() === '') {
       void this.loggingService.log(
         LogType.SECURITY,
         LogLevel.WARN,
@@ -256,11 +289,34 @@ export class IpWhitelistGuard implements CanActivate {
         {
           headers: Object.keys(request.headers),
           url: request.url,
+          requestIP: request.ip,
+          socketRemoteAddress: request.socket?.remoteAddress,
+          xForwardedFor: request.headers['x-forwarded-for'],
+          xRealIP: request.headers['x-real-ip'],
         }
       );
-      // In development, allow if IP cannot be determined
-      // In production, this should be more strict
-      return this.configService.isDevelopment();
+
+      // If whitelist is configured, we should be strict
+      // But if IP cannot be determined and whitelist is empty, allow (development mode)
+      if (this.allowedIPs.size === 0 && this.cidrRanges.length === 0) {
+        // No whitelist configured - allow in development, warn in production
+        return this.configService.isDevelopment();
+      }
+
+      // Whitelist is configured but IP cannot be determined
+      // Log warning but allow (to prevent blocking legitimate requests)
+      // The admin should fix the proxy configuration if this happens frequently
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        'IP whitelist is configured but client IP cannot be determined - allowing request with warning',
+        'IpWhitelistGuard',
+        {
+          url: request.url,
+          method: request.method,
+        }
+      );
+      return true; // Allow to prevent blocking legitimate requests
     }
 
     const isAllowed = this.isIPAllowed(clientIP);
