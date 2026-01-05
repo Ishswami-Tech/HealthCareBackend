@@ -1499,7 +1499,12 @@ jobs:
             ATTEMPT=0
             HEALTHY=false
             
-            while [[ $ATTEMPT -lt $MAX_ATTEMPTS ]] && [[ "$HEALTHY" != "true" ]]; do
+            # Ensure variables are set before using in conditionals
+            export MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+            export ATTEMPT="${ATTEMPT:-0}"
+            export HEALTHY="${HEALTHY:-false}"
+            
+            while [[ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]] && [[ "${HEALTHY}" != "true" ]]; do
               ATTEMPT=$((ATTEMPT + 1))
               echo ""
               echo "═══════════════════════════════════════════════════════════"
@@ -1537,7 +1542,7 @@ jobs:
               fi
               
               # Step 3: Force infrastructure recreation if still unhealthy
-              if [[ "$HEALTHY" != "true" ]] && [[ $ATTEMPT -ge 2 ]]; then
+              if [[ "$HEALTHY" != "true" ]] && [[ "${ATTEMPT:-0}" -ge 2 ]]; then
                 echo ""
                 echo "🔄 Step 3: Force recreating infrastructure (attempt $ATTEMPT)..."
                 
@@ -1615,7 +1620,7 @@ jobs:
               fi
               
               # Wait before next attempt (exponential backoff)
-              if [[ "$HEALTHY" != "true" ]] && [[ $ATTEMPT -lt $MAX_ATTEMPTS ]]; then
+              if [[ "$HEALTHY" != "true" ]] && [[ "${ATTEMPT:-0}" -lt "${MAX_ATTEMPTS:-5}" ]]; then
                 WAIT_TIME=$((ATTEMPT * 15))
                 echo ""
                 echo "⏳ Waiting ${WAIT_TIME}s before next attempt..."
