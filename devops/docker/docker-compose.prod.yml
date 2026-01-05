@@ -225,9 +225,11 @@ services:
       - --realm=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
       - --server-name=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
       - --no-cli
-      # TLS Configuration for TURNS (only if certificates exist)
-      # Note: Certificates are mounted from host /etc/letsencrypt
-      # If certificates don't exist, coturn will start without TLS (STUN/TURN will still work)
+      # TLS Configuration for TURNS
+      # Certificates are mounted from host /etc/letsencrypt
+      # If certificates don't exist at startup, coturn will log warnings but continue
+      - --cert=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem
+      - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
       # Security: Resource limits to prevent exhaustion attacks
       - --max-bps=1000000
       - --max-sessions-per-user=10
