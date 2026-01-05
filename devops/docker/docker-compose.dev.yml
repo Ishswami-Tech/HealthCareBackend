@@ -197,6 +197,9 @@ services:
     image: postgres:16
     platform: linux/amd64
     container_name: healthcare-postgres
+    # NOTE: Port 5432 exposed for local development convenience
+    # In production/staging, this port should be commented out for security
+    # Access via: docker exec -it healthcare-postgres psql -U postgres
     ports:
       - "5432:5432"
     environment:

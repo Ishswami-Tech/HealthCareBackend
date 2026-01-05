@@ -587,18 +587,20 @@ run_migrations_safely() {
         clean_database_url=$(echo "$database_url" | sed -E 's/[?&](connection_limit|pool_timeout|statement_timeout|idle_in_transaction_session_timeout|connect_timeout|pool_size|max_connections)=[^&]*//g')
         # Clean up any double ? or & characters
         clean_database_url=$(echo "$clean_database_url" | sed -E 's/\?&+/?/g' | sed -E 's/&+/&/g' | sed -E 's/[?&]$//')
-        # Ensure schema=public is present if it was in the original
-        if [[ "$database_url" == *"schema=public"* ]] && [[ ! "$clean_database_url" == *"schema="* ]]; then
-            # Add schema=public if it was removed
-            if [[ "$clean_database_url" == *"?"* ]]; then
-                clean_database_url="${clean_database_url}&schema=public"
-            else
-                clean_database_url="${clean_database_url}?schema=public"
-            fi
-        fi
     else
         # URL has no query parameters - use as is
         clean_database_url="$database_url"
+    fi
+    
+    # CRITICAL: Always ensure schema=public is present (required by Prisma)
+    # Do this AFTER cleaning but BEFORE any tests or config checks
+    if [[ ! "$clean_database_url" == *"schema="* ]]; then
+        if [[ "$clean_database_url" == *"?"* ]]; then
+            clean_database_url="${clean_database_url}&schema=public"
+        else
+            clean_database_url="${clean_database_url}?schema=public"
+        fi
+        log_info "Added schema=public to DATABASE_URL (was missing from original)"
     fi
     
     # Verify the clean URL still has the password
@@ -710,16 +712,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     # For production, we use the same approach but pass DATABASE_URL via docker exec -e
     # The run-prisma.js script will handle it the same way
     
-    # Ensure schema=public is present (required by Prisma)
-    if [[ ! "$clean_database_url" == *"schema="* ]]; then
-        if [[ "$clean_database_url" == *"?"* ]]; then
-            clean_database_url="${clean_database_url}&schema=public"
-        else
-            clean_database_url="${clean_database_url}?schema=public"
-        fi
-        log_info "Added schema=public to DATABASE_URL"
-    fi
-    
+    # Note: schema=public is already ensured above (before connection test and config test)
     # Use base64 encoding to avoid any shell escaping issues with special characters
     local encoded_url
     encoded_url=$(echo -n "$clean_database_url" | base64 -w0)

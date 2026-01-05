@@ -390,15 +390,15 @@ curl https://api.ishswami.in/health
 
 ### 📊 Services Overview
 
-| Service        | Container Name           | Description              | Ports |
-| -------------- | ------------------------ | ------------------------ | ----- |
-| **API**        | `latest-api`             | Main API service         | 8088  |
-| **Worker**     | `latest-worker`          | Background job processor | -     |
-| **PostgreSQL** | `latest-postgres`        | Database                 | 5432  |
-| **Dragonfly**  | `latest-dragonfly`       | Cache provider           | 6380  |
-| **OpenVidu**   | `latest-openvidu-server` | Video conferencing       | 4443  |
-| **Coturn**     | `latest-coturn`          | TURN/STUN server         | 3478  |
-| **Portainer**  | `portainer`              | Docker Management UI     | 9000  |
+| Service        | Container Name           | Description              | Ports             |
+| -------------- | ------------------------ | ------------------------ | ----------------- |
+| **API**        | `latest-api`             | Main API service         | 8088              |
+| **Worker**     | `latest-worker`          | Background job processor | -                 |
+| **PostgreSQL** | `latest-postgres`        | Database                 | - (internal only) |
+| **Dragonfly**  | `latest-dragonfly`       | Cache provider           | 6380              |
+| **OpenVidu**   | `latest-openvidu-server` | Video conferencing       | 4443              |
+| **Coturn**     | `latest-coturn`          | TURN/STUN server         | 3478              |
+| **Portainer**  | `portainer`              | Docker Management UI     | 9000              |
 
 #### Network Configuration
 
@@ -804,15 +804,15 @@ open http://localhost:8088/docs
 
 ### 📊 Services Overview
 
-| Service        | Container Name               | Description              | Ports |
-| -------------- | ---------------------------- | ------------------------ | ----- |
-| **API**        | `local-prod-api`             | Main API service         | 8088  |
-| **Worker**     | `local-prod-worker`          | Background job processor | -     |
-| **PostgreSQL** | `local-prod-postgres`        | Database                 | 5432  |
-| **Dragonfly**  | `local-prod-dragonfly`       | Cache provider           | 6380  |
-| **OpenVidu**   | `local-prod-openvidu-server` | Video conferencing       | 4443  |
-| **Coturn**     | `local-prod-coturn`          | TURN/STUN server         | 3478  |
-| **Portainer**  | `local-prod-portainer`       | Docker Management UI     | 9000  |
+| Service        | Container Name               | Description              | Ports             |
+| -------------- | ---------------------------- | ------------------------ | ----------------- |
+| **API**        | `local-prod-api`             | Main API service         | 8088              |
+| **Worker**     | `local-prod-worker`          | Background job processor | -                 |
+| **PostgreSQL** | `local-prod-postgres`        | Database                 | - (internal only) |
+| **Dragonfly**  | `local-prod-dragonfly`       | Cache provider           | 6380              |
+| **OpenVidu**   | `local-prod-openvidu-server` | Video conferencing       | 4443              |
+| **Coturn**     | `local-prod-coturn`          | TURN/STUN server         | 3478              |
+| **Portainer**  | `local-prod-portainer`       | Docker Management UI     | 9000              |
 
 #### Network Configuration
 
@@ -1379,13 +1379,13 @@ cd devops/scripts/docker-infra
 
 The automation scripts monitor all 5 infrastructure containers:
 
-| Container           | Port | Health Check           | Status       |
-| ------------------- | ---- | ---------------------- | ------------ |
-| **postgres**        | 5432 | `pg_isready`           | ✅ Monitored |
-| **dragonfly**       | 6379 | `redis-cli ping`       | ✅ Monitored |
-| **openvidu-server** | 4443 | HTTP check             | ✅ Monitored |
-| **coturn**          | 3478 | `turnutils_stunclient` | ✅ Monitored |
-| **portainer**       | 9000 | HTTP check             | ✅ Monitored |
+| Container           | Port              | Health Check           | Status       |
+| ------------------- | ----------------- | ---------------------- | ------------ |
+| **postgres**        | - (internal only) | `pg_isready`           | ✅ Monitored |
+| **dragonfly**       | 6379              | `redis-cli ping`       | ✅ Monitored |
+| **openvidu-server** | 4443              | HTTP check             | ✅ Monitored |
+| **coturn**          | 3478              | `turnutils_stunclient` | ✅ Monitored |
+| **portainer**       | 9000              | HTTP check             | ✅ Monitored |
 
 For complete documentation, see
 [Docker Infrastructure Scripts README](../scripts/docker-infra/README.md).
