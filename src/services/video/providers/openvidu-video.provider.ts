@@ -53,7 +53,18 @@ export class OpenViduVideoProvider implements IVideoProvider {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
     this.apiUrl = videoConfig?.openvidu?.url || 'http://openvidu-server:4443';
     this.secret = videoConfig?.openvidu?.secret || '';
-    this.domain = videoConfig?.openvidu?.domain || 'video.ishswami.in';
+    this.domain =
+      videoConfig?.openvidu?.domain ||
+      (() => {
+        const envDomain = this.configService.getEnv('OPENVIDU_DOMAIN');
+        if (!envDomain) {
+          throw new Error(
+            'Missing required environment variable: OPENVIDU_DOMAIN. ' +
+              'Please set OPENVIDU_DOMAIN in your environment configuration.'
+          );
+        }
+        return envDomain;
+      })();
   }
 
   /**

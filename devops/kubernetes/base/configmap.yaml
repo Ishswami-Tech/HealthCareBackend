@@ -51,7 +51,7 @@ data:
   # CORS Configuration
   # ===================
   # ARCHITECTURE: Single Backend API, Multiple Clinic Frontends
-  # - ONE backend API (api.ishswami.in) serves ALL clinics
+  # - ONE backend API (backend-service-v1.ishswami.in) serves ALL clinics
   # - Each clinic can have its own frontend URL (e.g., clinic1.viddhakarma.com, clinic2.viddhakarma.com)
   # - Only clinic-related data and configurations differ
   # - All clinics share the same backend infrastructure (database, cache, services)
@@ -59,7 +59,7 @@ data:
   # IMPORTANT: Include ALL clinic frontend URLs in CORS_ORIGIN
   # Format: Comma-separated list (no spaces after commas)
   # Example: "https://clinic1.viddhakarma.com,https://clinic2.viddhakarma.com,https://www.viddhakarma.com"
-  CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in,https://api.ishswami.in,https://video.ishswami.in,https://meet.ishswami.in"
+  CORS_ORIGIN: "https://ishswami.in,https://www.ishswami.in,https://backend-service-v1.ishswami.in,https://video.ishswami.in,https://meet.ishswami.in"
 
   # Frontend URLs
   # =============
@@ -70,7 +70,7 @@ data:
   # All clinic frontend URLs must also be included in CORS_ORIGIN above
   # All frontends connect to the SAME backend API (API_URL)
   FRONTEND_URL: "https://ishswami.in"
-  API_URL: "https://api.ishswami.in"
+  API_URL: "https://backend-service-v1.ishswami.in"
 
   # API Configuration
   SWAGGER_URL: "/docs"
@@ -128,7 +128,7 @@ data:
   # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
   # Enable webhooks to reduce Socket.IO load for video events
   OPENVIDU_WEBHOOK_ENABLED: "false"
-  OPENVIDU_WEBHOOK_ENDPOINT: "https://api.ishswami.in/api/v1/webhooks/openvidu"
+  OPENVIDU_WEBHOOK_ENDPOINT: "https://backend-service-v1.ishswami.in/api/v1/webhooks/openvidu"
   OPENVIDU_WEBHOOK_EVENTS: "sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped"
   
   # Jitsi Configuration (Fallback)
@@ -144,7 +144,7 @@ data:
   # Google OAuth Configuration
   GOOGLE_CLIENT_ID: ""
   GOOGLE_CLIENT_SECRET: ""
-  GOOGLE_REDIRECT_URI: "https://api.ishswami.in/auth/google/callback"
+  GOOGLE_REDIRECT_URI: "https://backend-service-v1.ishswami.in/auth/google/callback"
 
   # Notification Configuration
   ENABLE_PUSH_NOTIFICATIONS: "true"

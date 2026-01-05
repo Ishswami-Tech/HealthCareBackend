@@ -35,6 +35,7 @@ import {
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PaymentService } from '@payment/payment.service';
+import { ConfigService } from '@config/config.service';
 import type {
   PaymentIntentOptions,
   PaymentResult,
@@ -65,6 +66,7 @@ export class BillingService {
     private readonly invoicePDFService: InvoicePDFService,
     private readonly whatsAppService: WhatsAppService,
     private readonly paymentService: PaymentService,
+    private readonly configService: ConfigService,
     @Optional()
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
@@ -1121,7 +1123,15 @@ export class BillingService {
     const user = await this.databaseService.findUserByIdSafe(subscription.userId);
 
     // Create payment intent via payment service
-    const baseUrl = process.env['APP_URL'] || 'https://your-app.com';
+    // SECURITY: Use ConfigService instead of hardcoded URL
+    const baseUrl =
+      this.configService.getEnv('BASE_URL') ||
+      this.configService.getEnv('API_URL') ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
+        );
+      })();
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: subscription.plan.amount * 100, // Convert to paise
       currency: subscription.plan.currency || 'INR',
@@ -1248,7 +1258,15 @@ export class BillingService {
     });
 
     // Create payment intent via payment service
-    const baseUrl = process.env['APP_URL'] || 'https://your-app.com';
+    // SECURITY: Use ConfigService instead of hardcoded URL
+    const baseUrl =
+      this.configService.getEnv('BASE_URL') ||
+      this.configService.getEnv('API_URL') ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
+        );
+      })();
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: amount * 100, // Convert to paise
       currency: 'INR',
