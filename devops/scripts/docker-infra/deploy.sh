@@ -716,7 +716,8 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
     
     # Run migration using yarn prisma:migrate (same as package.json script)
     # This runs: node scripts/run-prisma.js migrate
-    migration_output=$(docker exec "${CONTAINER_PREFIX}api" sh -c "
+    # Use bash instead of sh for bash-specific syntax (${#var}, ${var:offset:length})
+    migration_output=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
         # Decode the DATABASE_URL from base64 to avoid shell escaping issues
         export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
         # CRITICAL: Unset DIRECT_URL completely - don't just set it to empty
