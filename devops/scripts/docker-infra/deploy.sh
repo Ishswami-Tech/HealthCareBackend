@@ -183,14 +183,24 @@ stop_infrastructure_gracefully() {
 deploy_infrastructure() {
     log_info "Deploying infrastructure..."
     
-    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
-    
-    if [[ ! -f "$compose_file" ]]; then
-        log_error "Docker compose file not found: ${compose_file}"
+    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    if ! ensure_compose_file; then
+        log_error "Failed to ensure docker-compose.prod.yml exists"
         return 1
     fi
     
-    cd "$(dirname "$compose_file")" || return 1
+    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    
+    # Ensure directory exists before changing into it
+    local compose_dir="$(dirname "$compose_file")"
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
+        return 1
+    }
+    cd "$compose_dir" || {
+        log_error "Failed to change to directory: ${compose_dir}"
+        return 1
+    }
     
     # CRITICAL: Ensure volumes are preserved before recreation
     ensure_volumes_preserved || {

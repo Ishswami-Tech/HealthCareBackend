@@ -10,8 +10,8 @@ source "${SCRIPT_DIR}/../shared/utils.sh"
 # Load environment
 load_environment
 
-COMPOSE_FILE="${SCRIPT_DIR}/../../docker/docker-compose.prod.yml"
-BASE_DIR="/opt/healthcare-backend"
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
+COMPOSE_FILE="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
 
 log_info "=========================================="
 log_info "Complete Docker Environment Cleanup"
@@ -19,6 +19,12 @@ log_info "=========================================="
 log_warning "This will STOP and REMOVE ALL containers, networks, and volumes!"
 log_warning "Data will be preserved in volumes, but containers will be recreated"
 log_info ""
+
+# Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+if ! ensure_compose_file; then
+    log_error "Failed to ensure docker-compose.prod.yml exists"
+    exit 1
+fi
 
 # Step 1: Backup data before cleanup
 log_info "Step 1: Creating backup before cleanup..."
@@ -30,12 +36,18 @@ fi
 
 # Step 2: Stop all containers
 log_info "Step 2: Stopping all containers..."
-cd "${BASE_DIR}/devops/docker" || cd "${SCRIPT_DIR}/../../docker" || {
-    log_error "Cannot find docker-compose directory"
+# Ensure directory exists before changing into it
+local compose_dir="$(dirname "$COMPOSE_FILE")"
+mkdir -p "$compose_dir" || {
+    log_error "Failed to create directory: ${compose_dir}"
+    exit 1
+}
+cd "$compose_dir" || {
+    log_error "Failed to change to directory: ${compose_dir}"
     exit 1
 }
 
-docker compose -f "$COMPOSE_FILE" --profile infrastructure --profile app down --remove-orphans || {
+docker compose -f docker-compose.prod.yml --profile infrastructure --profile app down --remove-orphans || {
     log_warning "Some containers may not have stopped cleanly"
 }
 
@@ -70,14 +82,14 @@ fi
 
 # Step 7: Rebuild infrastructure
 log_info "Step 7: Rebuilding infrastructure..."
-if docker compose -f "$COMPOSE_FILE" --profile infrastructure pull; then
+if docker compose -f docker-compose.prod.yml --profile infrastructure pull; then
     log_success "Infrastructure images pulled"
 else
     log_error "Failed to pull infrastructure images"
     exit 1
 fi
 
-if docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d; then
+if docker compose -f docker-compose.prod.yml --profile infrastructure up -d; then
     log_success "Infrastructure containers started"
 else
     log_error "Failed to start infrastructure containers"

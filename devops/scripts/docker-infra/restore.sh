@@ -425,7 +425,23 @@ disaster_recovery() {
     
     # Ensure infrastructure is running
     log_info "Ensuring infrastructure containers are running..."
-    cd "${BASE_DIR}/devops/docker" || exit 1
+    
+    # Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+    if ! ensure_compose_file; then
+        log_error "Failed to ensure docker-compose.prod.yml exists"
+        exit 1
+    fi
+    
+    # Ensure directory exists before changing into it
+    local compose_dir="${BASE_DIR}/devops/docker"
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
+        exit 1
+    }
+    cd "$compose_dir" || {
+        log_error "Failed to change to directory: ${compose_dir}"
+        exit 1
+    }
     
     if ! docker compose -f docker-compose.prod.yml --profile infrastructure up -d; then
         log_error "Failed to start infrastructure containers"

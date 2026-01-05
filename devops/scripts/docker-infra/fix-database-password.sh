@@ -20,8 +20,8 @@ if command -v load_environment >/dev/null 2>&1; then
     load_environment
 fi
 
-COMPOSE_FILE="${SCRIPT_DIR}/../../docker/docker-compose.prod.yml"
-BASE_DIR="/opt/healthcare-backend"
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
+COMPOSE_FILE="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
 ENV_FILE="${BASE_DIR}/.env.production"
 
 log_info "=========================================="
@@ -29,29 +29,30 @@ log_info "Database Password Verification & Fix"
 log_info "=========================================="
 log_info ""
 
+# Ensure docker-compose.prod.yml exists (restores from /tmp or git if missing)
+if ! ensure_compose_file; then
+    log_error "Failed to ensure docker-compose.prod.yml exists"
+    exit 1
+fi
+
 # Step 1: Check PostgreSQL container status
 log_info "Step 1: Checking PostgreSQL container status..."
 if ! container_running "postgres"; then
     log_error "PostgreSQL container is not running!"
     log_info "Starting PostgreSQL container..."
     
-    # Find docker-compose directory
-    DOCKER_DIR=""
-    if [[ -d "${BASE_DIR}/devops/docker" ]]; then
-        DOCKER_DIR="${BASE_DIR}/devops/docker"
-    elif [[ -d "${SCRIPT_DIR}/../../docker" ]]; then
-        DOCKER_DIR="${SCRIPT_DIR}/../../docker"
-    else
-        log_error "Cannot find docker-compose directory"
+    # Ensure directory exists before changing into it
+    local compose_dir="$(dirname "$COMPOSE_FILE")"
+    mkdir -p "$compose_dir" || {
+        log_error "Failed to create directory: ${compose_dir}"
         exit 1
-    fi
-    
-    cd "$DOCKER_DIR" || {
-        log_error "Failed to change to docker directory: $DOCKER_DIR"
+    }
+    cd "$compose_dir" || {
+        log_error "Failed to change to docker directory: $compose_dir"
         exit 1
     }
     
-    docker compose -f "$COMPOSE_FILE" --profile infrastructure up -d postgres || {
+    docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
         log_error "Failed to start PostgreSQL container"
         exit 1
     }

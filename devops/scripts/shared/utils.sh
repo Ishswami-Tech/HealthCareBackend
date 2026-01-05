@@ -1193,6 +1193,127 @@ restore_backup() {
     fi
 }
 
+# File Restoration Functions
+# These functions ensure critical files exist, restoring them from /tmp or git if missing
+
+# Ensure docker-compose.prod.yml exists
+# Restores from /tmp (CI/CD deployment) or git repository if missing
+ensure_compose_file() {
+    local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+    
+    if [[ -f "$compose_file" ]]; then
+        return 0
+    fi
+    
+    log_warning "docker-compose.prod.yml not found at: ${compose_file}"
+    log_info "Attempting to restore..."
+    
+    # Ensure directory exists
+    mkdir -p "$(dirname "$compose_file")" || {
+        log_error "Failed to create directory: $(dirname "$compose_file")"
+        return 1
+    }
+    
+    # Check /tmp (from CI/CD deployment)
+    local tmp_file="/tmp/docker-compose.prod.yml"
+    local tmp_file_atomic="/tmp/docker-compose.prod.yml.tmp"
+    
+    if [[ -f "$tmp_file" ]]; then
+        log_info "Found docker-compose.prod.yml in /tmp, moving to correct location..."
+        mv "$tmp_file" "$compose_file" || {
+            log_error "Failed to move docker-compose.prod.yml from /tmp"
+            return 1
+        }
+        log_success "Restored docker-compose.prod.yml from /tmp"
+        return 0
+    elif [[ -f "$tmp_file_atomic" ]]; then
+        log_info "Found docker-compose.prod.yml.tmp in /tmp, moving to correct location..."
+        mv "$tmp_file_atomic" "$compose_file" || {
+            log_error "Failed to move docker-compose.prod.yml.tmp from /tmp"
+            return 1
+        }
+        log_success "Restored docker-compose.prod.yml from /tmp (.tmp version)"
+        return 0
+    fi
+    
+    # Try git repository
+    if command -v git &>/dev/null && [[ -d "${BASE_DIR}/.git" ]]; then
+        log_info "Attempting to restore from git repository..."
+        cd "${BASE_DIR}" || return 1
+        if git checkout HEAD -- devops/docker/docker-compose.prod.yml 2>/dev/null; then
+            log_success "Restored docker-compose.prod.yml from git"
+            return 0
+        fi
+    fi
+    
+    log_error "Cannot restore docker-compose.prod.yml automatically"
+    log_info "Please ensure the file is copied during deployment"
+    return 1
+}
+
+# Ensure .env.production exists (for application services)
+# Restores from /tmp (CI/CD deployment) if missing
+# Note: Infrastructure services don't need this file
+ensure_env_file() {
+    if [[ -f "$ENV_FILE" ]]; then
+        return 0
+    fi
+    
+    log_warning ".env.production not found at: ${ENV_FILE}"
+    log_info "Attempting to restore from /tmp..."
+    
+    # Check /tmp (from CI/CD deployment)
+    if [[ -f "/tmp/.env.production" ]]; then
+        mv /tmp/.env.production "$ENV_FILE" || {
+            log_error "Failed to move .env.production from /tmp"
+            return 1
+        }
+        chmod 600 "$ENV_FILE"
+        log_success "Restored .env.production from /tmp"
+        return 0
+    fi
+    
+    log_warning ".env.production is missing"
+    log_info "This file contains sensitive configuration and must be created during deployment"
+    log_info "Expected location: ${ENV_FILE}"
+    return 1
+}
+
+# Ensure critical files exist (compose file and optionally env file)
+# Usage: ensure_critical_files [--with-env]
+ensure_critical_files() {
+    local with_env=false
+    
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --with-env)
+                with_env=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    local failed=0
+    
+    # Always ensure compose file (required for docker compose commands)
+    if ! ensure_compose_file; then
+        failed=$((failed + 1))
+    fi
+    
+    # Optionally ensure env file (only needed for app services)
+    if [[ "$with_env" == "true" ]]; then
+        if ! ensure_env_file; then
+            log_warning ".env.production restoration failed (non-critical for infrastructure)"
+        fi
+    fi
+    
+    return $failed
+}
+
 # Initialize on source
 ensure_directories
 # Load environment variables (with validation warnings but no auto-fix by default)
