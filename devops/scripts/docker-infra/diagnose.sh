@@ -5,7 +5,20 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../shared/utils.sh"
+
+# Source utils.sh - handle both normal directory structure and /tmp/ execution
+if ! command -v log_info &>/dev/null; then
+    if [[ -f "${SCRIPT_DIR}/../shared/utils.sh" ]]; then
+        source "${SCRIPT_DIR}/../shared/utils.sh"
+    elif [[ -f "/opt/healthcare-backend/devops/scripts/shared/utils.sh" ]]; then
+        source "/opt/healthcare-backend/devops/scripts/shared/utils.sh"
+    elif [[ -f "/tmp/utils.sh" ]]; then
+        source "/tmp/utils.sh"
+    else
+        echo "ERROR: Cannot find utils.sh" >&2
+        exit 1
+    fi
+fi
 
 # Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
