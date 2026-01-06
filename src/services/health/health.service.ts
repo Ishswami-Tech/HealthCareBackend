@@ -814,23 +814,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
-          // Determine overall status from CRITICAL services only (cached + checked)
-          // Video is OPTIONAL - it should NOT affect overall health status
-          // Critical services: database, cache, queue, logging
-          const criticalServices = ['database', 'cache', 'queue', 'logging'];
-          const criticalServiceStatuses = criticalServices
-            .map(key => services[key]?.status)
-            .filter((status): status is 'healthy' | 'unhealthy' => status !== undefined);
-          const hasCriticalUnhealthy = criticalServiceStatuses.some(s => s === 'unhealthy');
+          // Determine overall status from all services (cached + checked)
+          // All services including video are critical for healthcare video consultations
+          const allServiceStatuses = Object.values(services).map(s => s.status);
+          const hasUnhealthy = allServiceStatuses.some(s => s === 'unhealthy');
 
           const responseTime = Math.round(performance.now() - startTime);
           const environment = this.config?.getEnvironment() || 'development';
 
           // Get realtime health status from cache if available
           // Map realtime status ('healthy' | 'degraded' | 'unhealthy') to ServiceHealth status ('healthy' | 'unhealthy')
-          // Overall status is 'healthy' if all CRITICAL services are healthy (video is optional)
           let overallStatus: 'healthy' | 'degraded' =
-            terminusStatus === 'ok' && !hasCriticalUnhealthy ? 'healthy' : 'degraded';
+            terminusStatus === 'ok' && !hasUnhealthy ? 'healthy' : 'degraded';
           if (this.healthCacheService) {
             try {
               const cachedStatus: unknown = await this.healthCacheService.getCachedStatus();

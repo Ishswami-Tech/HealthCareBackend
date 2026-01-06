@@ -556,6 +556,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
   /**
    * Check if provider is healthy
    * Real-time check: Verifies OpenVidu container is actually running and accessible
+   * Uses the official OpenVidu health endpoint: /openvidu/api/health
+   * See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
+   * Returns {"status": "UP"} when healthy, 503 with {"status": "DOWN"} when unhealthy
    * Uses retry logic to handle temporary network issues during container startup
    */
   async isHealthy(): Promise<boolean> {
@@ -571,16 +574,17 @@ export class OpenViduVideoProvider implements IVideoProvider {
       return false;
     }
 
-    // Real-time health check with retry logic
+    // Real-time health check with retry logic using official health endpoint
     // OpenVidu may take time to fully start even after container is running
     const maxRetries = 3;
     const retryDelayMs = 2000;
+    const healthEndpoint = `${this.apiUrl}/openvidu/api/health`;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const response = await Promise.race([
           this.httpService.get(
-            `${this.apiUrl}/openvidu/api/config`,
+            healthEndpoint,
             this.getHttpConfig({ timeout: 5000 }) // 5 second timeout
           ),
           new Promise<never>((_, reject) =>
@@ -588,17 +592,38 @@ export class OpenViduVideoProvider implements IVideoProvider {
           ),
         ]);
 
-        // Success - any response means OpenVidu is running
-        if (response.status >= 200 && response.status < 500) {
+        // Check for official health response: {"status": "UP"}
+        const data = response.data as { status?: string } | undefined;
+        const isUp = response.status === 200 && data?.status === 'UP';
+
+        if (isUp) {
           if (attempt > 1) {
             await this.loggingService.log(
               LogType.SYSTEM,
               LogLevel.INFO,
               `OpenVidu health check succeeded on attempt ${attempt}`,
               'OpenViduVideoProvider.isHealthy',
-              { apiUrl: this.apiUrl, status: response.status }
+              { apiUrl: this.apiUrl, status: response.status, healthStatus: data?.status }
             );
           }
+          return true;
+        }
+
+        // OpenVidu responded but reported DOWN status
+        if (response.status === 503 || data?.status === 'DOWN') {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `OpenVidu reported unhealthy status on attempt ${attempt}`,
+            'OpenViduVideoProvider.isHealthy',
+            { apiUrl: this.apiUrl, status: response.status, healthStatus: data?.status }
+          );
+          // Don't retry if OpenVidu explicitly says it's DOWN
+          return false;
+        }
+
+        // Any other 2xx/3xx response indicates OpenVidu is accessible
+        if (response.status >= 200 && response.status < 400) {
           return true;
         }
       } catch (error) {
@@ -622,6 +647,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
             maxRetries,
             error: errorMessage,
             apiUrl: this.apiUrl,
+            healthEndpoint,
             isConnectionError,
           }
         );
