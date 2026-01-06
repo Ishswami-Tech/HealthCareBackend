@@ -370,7 +370,9 @@ check_portainer() {
 }
 
 # Check OpenVidu
-# REAL-TIME CHECK: Tests the actual OpenVidu API endpoint, same as the API does
+# REAL-TIME CHECK: Uses official OpenVidu health endpoint /openvidu/api/health
+# See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
+# Returns {"status": "UP"} when healthy, 503 with {"status": "DOWN"} when unhealthy
 check_openvidu() {
     local container="${OPENVIDU_CONTAINER}"
     
@@ -390,35 +392,53 @@ check_openvidu() {
         return 1
     fi
     
-    # PRIORITY 1: REAL-TIME API CHECK - Test the actual OpenVidu API endpoint
-    # This is the SAME check the API uses (http://openvidu-server:4443/openvidu/api/config)
+    # PRIORITY 1: OFFICIAL HEALTH ENDPOINT - /openvidu/api/health
+    # This is the recommended way to check OpenVidu health per official docs
     # Get OpenVidu secret from environment or use default
     local openvidu_secret="${OPENVIDU_SECRET:-MY_SECRET}"
     local openvidu_url="http://172.18.0.7:4443"  # Direct IP from docker-compose network
+    local health_endpoint="${openvidu_url}/openvidu/api/health"
     
     if command -v curl &>/dev/null; then
-        # Test OpenVidu API with authentication (same as API's isHealthy() method)
+        # Test OpenVidu official health endpoint with authentication
+        local response=$(curl -s -m 5 \
+            -u "OPENVIDUAPP:${openvidu_secret}" \
+            "${health_endpoint}" 2>/dev/null || echo '{"error":"connection_failed"}')
         local http_code=$(curl -s -o /dev/null -w "%{http_code}" -m 5 \
             -u "OPENVIDUAPP:${openvidu_secret}" \
-            "${openvidu_url}/openvidu/api/config" 2>/dev/null || echo "000")
+            "${health_endpoint}" 2>/dev/null || echo "000")
         
-        if [[ "$http_code" == "200" ]]; then
+        # Check for {"status": "UP"} response
+        if [[ "$http_code" == "200" ]] && echo "$response" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
             status="healthy"
-            details="{\"status\":\"healthy\",\"method\":\"api_check\",\"endpoint\":\"${openvidu_url}/openvidu/api/config\",\"http_code\":\"${http_code}\"}"
+            details="{\"status\":\"healthy\",\"method\":\"official_health_api\",\"endpoint\":\"${health_endpoint}\",\"http_code\":\"${http_code}\",\"response\":\"UP\"}"
             SERVICE_STATUS["openvidu"]="$status"
             SERVICE_DETAILS["openvidu"]="$details"
             return 0
+        elif [[ "$http_code" == "503" ]] || echo "$response" | grep -q '"status"[[:space:]]*:[[:space:]]*"DOWN"'; then
+            # OpenVidu explicitly reports DOWN status
+            status="unhealthy"
+            details="{\"status\":\"unhealthy\",\"method\":\"official_health_api\",\"endpoint\":\"${health_endpoint}\",\"http_code\":\"${http_code}\",\"response\":\"DOWN\",\"error\":\"OpenVidu reports unhealthy\"}"
+            SERVICE_STATUS["openvidu"]="$status"
+            SERVICE_DETAILS["openvidu"]="$details"
+            return 1
         elif [[ "$http_code" =~ ^(401|403)$ ]]; then
-            # Auth error but API is responding - service is up but may have auth issues
-            status="healthy"
-            details="{\"status\":\"healthy\",\"method\":\"api_check\",\"endpoint\":\"${openvidu_url}/openvidu/api/config\",\"http_code\":\"${http_code}\",\"note\":\"API responding (auth may need verification)\"}"
+            # Auth error - check if it's due to invalid secret format
+            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
+            if echo "$openvidu_secret" | grep -q '[^a-zA-Z0-9_-]'; then
+                status="unhealthy"
+                details="{\"status\":\"unhealthy\",\"method\":\"official_health_api\",\"http_code\":\"${http_code}\",\"error\":\"OPENVIDU_SECRET contains invalid characters. Only alphanumeric, hyphens, and underscores allowed.\"}"
+            else
+                status="healthy"
+                details="{\"status\":\"healthy\",\"method\":\"official_health_api\",\"http_code\":\"${http_code}\",\"note\":\"API responding (auth credentials may need verification)\"}"
+            fi
             SERVICE_STATUS["openvidu"]="$status"
             SERVICE_DETAILS["openvidu"]="$details"
-            return 0
+            [[ "$status" == "healthy" ]] && return 0 || return 1
         elif [[ "$http_code" != "000" ]]; then
             # Got some response - service is running
             status="healthy"
-            details="{\"status\":\"healthy\",\"method\":\"api_check\",\"endpoint\":\"${openvidu_url}/openvidu/api/config\",\"http_code\":\"${http_code}\",\"note\":\"API responding\"}"
+            details="{\"status\":\"healthy\",\"method\":\"official_health_api\",\"endpoint\":\"${health_endpoint}\",\"http_code\":\"${http_code}\",\"note\":\"API responding\"}"
             SERVICE_STATUS["openvidu"]="$status"
             SERVICE_DETAILS["openvidu"]="$details"
             return 0
@@ -427,13 +447,22 @@ check_openvidu() {
     
     # PRIORITY 2: Try accessing from inside the container (docker network)
     if command -v curl &>/dev/null; then
+        local response=$(docker exec "$container" curl -s -m 5 \
+            -u "OPENVIDUAPP:${openvidu_secret}" \
+            "http://localhost:4443/openvidu/api/health" 2>/dev/null || echo '{"error":"connection_failed"}')
         local http_code=$(docker exec "$container" curl -s -o /dev/null -w "%{http_code}" -m 5 \
             -u "OPENVIDUAPP:${openvidu_secret}" \
-            "http://localhost:4443/openvidu/api/config" 2>/dev/null || echo "000")
+            "http://localhost:4443/openvidu/api/health" 2>/dev/null || echo "000")
         
-        if [[ "$http_code" == "200" ]] || [[ "$http_code" =~ ^(401|403)$ ]]; then
+        if [[ "$http_code" == "200" ]] && echo "$response" | grep -q '"status"[[:space:]]*:[[:space:]]*"UP"'; then
             status="healthy"
-            details="{\"status\":\"healthy\",\"method\":\"internal_api_check\",\"http_code\":\"${http_code}\"}"
+            details="{\"status\":\"healthy\",\"method\":\"internal_health_api\",\"http_code\":\"${http_code}\",\"response\":\"UP\"}"
+            SERVICE_STATUS["openvidu"]="$status"
+            SERVICE_DETAILS["openvidu"]="$details"
+            return 0
+        elif [[ "$http_code" =~ ^(401|403)$ ]]; then
+            status="healthy"
+            details="{\"status\":\"healthy\",\"method\":\"internal_health_api\",\"http_code\":\"${http_code}\",\"note\":\"API responding\"}"
             SERVICE_STATUS["openvidu"]="$status"
             SERVICE_DETAILS["openvidu"]="$details"
             return 0
@@ -456,14 +485,14 @@ check_openvidu() {
         local running_count=$(docker exec "$container" supervisorctl status 2>/dev/null | grep -c "RUNNING" || echo "0")
         if [[ "$running_count" -gt 0 ]]; then
             status="healthy"
-            details="{\"status\":\"healthy\",\"method\":\"supervisor_check\",\"running_processes\":${running_count},\"note\":\"Supervisor processes running but API not verified\"}"
+            details="{\"status\":\"healthy\",\"method\":\"supervisor_check\",\"running_processes\":${running_count},\"note\":\"Supervisor processes running but health API not verified\"}"
         else
             status="unhealthy"
             details="{\"status\":\"unhealthy\",\"error\":\"No supervisor processes running\"}"
         fi
     else
         status="unhealthy"
-        details="{\"status\":\"unhealthy\",\"error\":\"supervisorctl check failed\",\"docker_health\":\"${docker_health}\"}"
+        details="{\"status\":\"unhealthy\",\"error\":\"All health checks failed\",\"docker_health\":\"${docker_health}\"}"
     fi
     
     SERVICE_STATUS["openvidu"]="$status"

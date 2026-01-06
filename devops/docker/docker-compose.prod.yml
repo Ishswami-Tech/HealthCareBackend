@@ -176,10 +176,13 @@ services:
           - openvidu-server
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
+      # Use OpenVidu REST API health endpoint for accurate health check
+      # See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
+      # Returns {"status": "UP"} when healthy, 503 when down
+      test: ["CMD-SHELL", "curl -sf -H 'Authorization: Basic '$(echo -n 'OPENVIDUAPP:'${OPENVIDU_SECRET:-MY_SECRET} | base64 -w0) http://localhost:4443/openvidu/api/health | grep -q UP || exit 1"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
       start_period: 120s
     deploy:
       resources:
