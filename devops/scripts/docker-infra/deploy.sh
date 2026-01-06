@@ -6,10 +6,34 @@ set -euo pipefail
 
 # Save deploy script directory BEFORE sourcing utils.sh (which sets its own SCRIPT_DIR)
 DEPLOY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"  # Will be overwritten by utils.sh, but we keep original
-source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
-# Restore deploy script directory after sourcing utils.sh
-SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+# Source utils.sh - handle both normal directory structure and /tmp/ execution
+# Check if utils.sh functions are already available (sourced by workflow)
+if ! command -v log_info &>/dev/null; then
+    # Try relative path first (normal execution from devops/scripts/docker-infra/)
+    if [[ -f "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh" ]]; then
+        # Save deploy script dir, source utils, then restore deploy script dir
+        # (utils.sh sets SCRIPT_DIR to its own location)
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+        source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+    # Fall back to /opt/healthcare-backend path (production server)
+    elif [[ -f "/opt/healthcare-backend/devops/scripts/shared/utils.sh" ]]; then
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+        source "/opt/healthcare-backend/devops/scripts/shared/utils.sh"
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+    # Fall back to /tmp/utils.sh (when executed from /tmp/ by GitHub Actions)
+    elif [[ -f "/tmp/utils.sh" ]]; then
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+        source "/tmp/utils.sh"
+        SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+    else
+        echo "ERROR: Cannot find utils.sh. Tried:" >&2
+        echo "  - ${DEPLOY_SCRIPT_DIR}/../shared/utils.sh" >&2
+        echo "  - /opt/healthcare-backend/devops/scripts/shared/utils.sh" >&2
+        echo "  - /tmp/utils.sh" >&2
+        exit 1
+    fi
+fi
 
 # This script is Docker-specific for production deployments
 
