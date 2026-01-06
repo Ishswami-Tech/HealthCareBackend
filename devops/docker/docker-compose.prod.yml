@@ -242,9 +242,8 @@ services:
           - coturn
     restart: unless-stopped
     healthcheck:
-      # More resilient health check: check if turnserver process is running
-      # turnutils_stunclient may not be available in all coturn images
-      test: ["CMD-SHELL", "pgrep -x turnserver > /dev/null || exit 1"]
+      # Health check using STUN client test (pgrep not available in this image)
+      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
