@@ -349,7 +349,9 @@ jobs:
             echo "🔍 Ensuring PostgreSQL and Dragonfly containers are running for backup..."
             
             # Check and start PostgreSQL if needed
-            if ! docker ps --format '{{.Names}}' | grep -q "^postgres$"; then
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_NAME_FMT='{{.Names}}'
+            if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^postgres$"; then
               echo "⚠️  PostgreSQL container not running - starting for backup..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
                 echo "❌ Failed to start PostgreSQL for backup"
@@ -375,7 +377,7 @@ jobs:
             fi
             
             # Check and start Dragonfly if needed
-            if ! docker ps --format '{{.Names}}' | grep -q "^dragonfly$"; then
+            if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^dragonfly$"; then
               echo "⚠️  Dragonfly container not running - starting for backup..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
                 echo "❌ Failed to start Dragonfly for backup"
@@ -484,9 +486,11 @@ jobs:
             # CRITICAL: Ensure containers are running before graceful stop (for data flush)
             echo "🔍 Ensuring containers are running for graceful shutdown..."
             CONTAINERS=("postgres" "dragonfly")
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_NAME_FMT='{{.Names}}'
             
             for CONTAINER in "${CONTAINERS[@]}"; do
-              if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
+              if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^${CONTAINER}$"; then
                 echo "⚠️  Container ${CONTAINER} not running - starting for graceful shutdown..."
                 docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER}" || {
                   echo "❌ Failed to start ${CONTAINER}"
@@ -1479,7 +1483,9 @@ jobs:
             }
             
             # Explicitly force-recreate Portainer if it's restarting (fixes old command issue)
-            if docker ps -a --format '{{.Names}}\t{{.Status}}' 2>/dev/null | grep -q "^portainer.*Restarting"; then
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_FMT='{{.Names}}\t{{.Status}}'
+            if docker ps -a --format "$DOCKER_FMT" 2>/dev/null | grep -q "^portainer.*Restarting"; then
               echo "🔧 Portainer is restarting - force recreating with correct command..."
               docker stop portainer 2>/dev/null || true
               docker rm -f portainer 2>/dev/null || true
@@ -1568,7 +1574,8 @@ jobs:
                 
                 # Remove unhealthy containers
                 echo "🗑️  Removing unhealthy containers..."
-                docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "{{.Names}}" | xargs -r docker rm -f || true
+                DOCKER_NAME_FMT='{{.Names}}'
+                docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "$DOCKER_NAME_FMT" | xargs -r docker rm -f || true
                 
                 # Recreate infrastructure
                 echo "🚀 Recreating infrastructure..."
@@ -1656,7 +1663,8 @@ jobs:
               # Show container status
               echo ""
               echo "📊 Current Container Status:"
-              docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+              DOCKER_TABLE_FMT='table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+              docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "$DOCKER_TABLE_FMT" || true
               
               echo ""
               echo "📋 Container Logs (last 20 lines):"
