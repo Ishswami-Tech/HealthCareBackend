@@ -231,7 +231,6 @@ services:
       - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
       # Security: Resource limits to prevent exhaustion attacks
       - --max-bps=1000000
-      - --max-sessions-per-user=10
       - --total-quota=1000000
       - --user-quota=1000000
       - --no-multicast-peers
