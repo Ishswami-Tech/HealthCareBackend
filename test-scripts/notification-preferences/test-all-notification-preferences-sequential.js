@@ -10,10 +10,22 @@ const path = require('path');
 const { logSection, log, logWarning, colors } = require('../_shared-utils');
 
 const testFiles = [
-  { role: 'PATIENT', script: 'test-scripts/notification-preferences/test-patient-notification-preferences.js' },
-  { role: 'DOCTOR', script: 'test-scripts/notification-preferences/test-doctor-notification-preferences.js' },
-  { role: 'RECEPTIONIST', script: 'test-scripts/notification-preferences/test-receptionist-notification-preferences.js' },
-  { role: 'CLINIC_ADMIN', script: 'test-scripts/notification-preferences/test-clinic-admin-notification-preferences.js' },
+  {
+    role: 'PATIENT',
+    script: 'test-scripts/notification-preferences/test-patient-notification-preferences.js',
+  },
+  {
+    role: 'DOCTOR',
+    script: 'test-scripts/notification-preferences/test-doctor-notification-preferences.js',
+  },
+  {
+    role: 'RECEPTIONIST',
+    script: 'test-scripts/notification-preferences/test-receptionist-notification-preferences.js',
+  },
+  {
+    role: 'CLINIC_ADMIN',
+    script: 'test-scripts/notification-preferences/test-clinic-admin-notification-preferences.js',
+  },
 ];
 
 function runScript(scriptPath) {
@@ -95,16 +107,3 @@ runAllNotificationPreferenceTests().catch(error => {
   console.error('Notification preference test runner failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -30,7 +30,8 @@ const clinicAdminEmailTests = {
       subject: 'Test Email',
       body: 'Test email body',
     });
-    const passed = result.ok || result.status === 400 || result.status === 403 || result.status === 500;
+    const passed =
+      result.ok || result.status === 400 || result.status === 403 || result.status === 500;
     ctx.recordTest('Post Email Test Custom', passed);
     return passed;
   },
@@ -64,16 +65,3 @@ runClinicAdminEmailTests().catch(error => {
   console.error('CLINIC_ADMIN email tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-

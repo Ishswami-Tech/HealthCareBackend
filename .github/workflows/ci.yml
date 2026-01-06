@@ -767,7 +767,7 @@ jobs:
       needs.docker-build.result == 'success'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-infrastructure-readiness, ensure-infrastructure-health, recreate-infrastructure, restore-backup]
+    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-infrastructure-readiness, recreate-infrastructure, restore-backup]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -954,6 +954,7 @@ jobs:
           VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}
           OPENVIDU_URL=${{ vars.OPENVIDU_URL }}
           OPENVIDU_SECRET=${{ secrets.OPENVIDU_SECRET }}
+          COTURN_SHARED_SECRET_KEY=${{ secrets.OPENVIDU_SECRET }}
           OPENVIDU_DOMAIN=${{ vars.OPENVIDU_DOMAIN }}
           OPENVIDU_WEBHOOK_ENABLED=${{ vars.OPENVIDU_WEBHOOK_ENABLED }}
           OPENVIDU_WEBHOOK_ENDPOINT=${{ vars.OPENVIDU_WEBHOOK_ENDPOINT }}

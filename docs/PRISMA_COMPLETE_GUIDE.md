@@ -1,6 +1,7 @@
 # Prisma Complete Guide
 
-Complete guide for Prisma Client generation, management, and Docker configuration.
+Complete guide for Prisma Client generation, management, and Docker
+configuration.
 
 ---
 
@@ -18,7 +19,9 @@ Complete guide for Prisma Client generation, management, and Docker configuratio
 
 ## Overview
 
-This document explains how Prisma Client generated files are managed in this project to prevent merge conflicts and stale files across all environments (development, Docker, CI/CD).
+This document explains how Prisma Client generated files are managed in this
+project to prevent merge conflicts and stale files across all environments
+(development, Docker, CI/CD).
 
 ### Key Principles
 
@@ -56,6 +59,7 @@ git commit -m "Update schema"
 ```
 
 **What happens automatically:**
+
 - Pre-commit hook detects schema changes
 - Automatically runs `prisma generate`
 - Validates generated files are correct
@@ -73,19 +77,23 @@ git push
 ## CI/CD Workflow
 
 ### 1. Checkout Code
+
 - GitHub Actions checks out repository
 
 ### 2. Validate Generated Files
+
 - Runs `yarn prisma:validate-generated`
 - Compares generated files with committed files
 - **FAILS** if files are stale (catches missed cases)
 
 ### 3. Build Docker Image
+
 - Runs `prisma generate` again during build (safety net)
 - Overwrites any stale committed files
 - Ensures production always has fresh files
 
 ### 4. Deploy
+
 - Uses committed files (already in Docker image)
 - No runtime generation needed
 - Faster startup
@@ -101,6 +109,7 @@ All Docker configurations are properly set up for Prisma Client management.
 ### Dockerfile Configuration
 
 **Build Stage:**
+
 - ✅ Line 31: Runs `yarn prisma:generate` during build
 - ✅ Line 36-76: Verifies Prisma Client generation
 - ✅ Line 81-86: Creates symlink for TypeScript resolution
@@ -108,19 +117,23 @@ All Docker configurations are properly set up for Prisma Client management.
 - ✅ Line 172-173: Copies generated client to `dist/` for runtime
 
 **Production Stage:**
+
 - ✅ Line 235-238: Copies Prisma schema, config, and generated client
 - ✅ Line 243-293: Creates inline entrypoint script with Prisma generation
 - ✅ Line 258: Entrypoint runs `prisma generate` at runtime
 - ✅ Line 273-285: Entrypoint ensures symlink points to standard location
-- ✅ Line 297-339: Build-time symlink creation (entrypoint will update at runtime)
+- ✅ Line 297-339: Build-time symlink creation (entrypoint will update at
+  runtime)
 
 ### Docker Compose Configuration
 
 **Production (`docker-compose.prod.yml`):**
+
 - ✅ Line 278: `PRISMA_SCHEMA_PATH` set correctly
 - ✅ Line 397: Worker service also has `PRISMA_SCHEMA_PATH` set
 
 **Local-Prod (`docker-compose.local-prod.yml`):**
+
 - ✅ Line 273: `PRISMA_SCHEMA_PATH` set correctly
 - ✅ Line 385: Worker service also has `PRISMA_SCHEMA_PATH` set
 - ✅ Line 237-240: Builds locally using Dockerfile
@@ -130,8 +143,10 @@ All Docker configurations are properly set up for Prisma Client management.
 #### Build Time
 
 1. **Dockerfile line 31**: `yarn prisma:generate`
-   - Generates Prisma Client in custom location (`src/libs/.../generated/client`)
-   - Also generates JavaScript files in standard location (`node_modules/.prisma/client`)
+   - Generates Prisma Client in custom location
+     (`src/libs/.../generated/client`)
+   - Also generates JavaScript files in standard location
+     (`node_modules/.prisma/client`)
 
 2. **Dockerfile line 94-117**: Copy to standard location
    - Copies generated files to `node_modules/.prisma/client`
@@ -158,7 +173,8 @@ All Docker configurations are properly set up for Prisma Client management.
 ### How It Works
 
 1. **Build Stage**:
-   - Generates Prisma Client (TypeScript in custom location, JavaScript in standard location)
+   - Generates Prisma Client (TypeScript in custom location, JavaScript in
+     standard location)
    - Copies to `dist/` for runtime
    - Creates initial symlink (entrypoint will update)
 
@@ -197,6 +213,7 @@ docker run --rm healthcare-api:test sh -c "readlink /app/node_modules/@prisma/cl
 **Location**: `.husky/pre-commit`
 
 **What it does**:
+
 - Detects changes to `schema.prisma` or `prisma.config.js`
 - Automatically runs `prisma generate`
 - Validates generated files
@@ -204,6 +221,7 @@ docker run --rm healthcare-api:test sh -c "readlink /app/node_modules/@prisma/cl
 - Blocks commit if validation fails
 
 **How to bypass** (not recommended):
+
 ```bash
 git commit --no-verify
 ```
@@ -213,6 +231,7 @@ git commit --no-verify
 **Location**: `.husky/post-merge`
 
 **What it does**:
+
 - Runs after `git merge` or `git pull`
 - Detects if schema files changed during merge
 - Automatically regenerates Prisma Client
@@ -223,12 +242,14 @@ git commit --no-verify
 **Location**: `.github/workflows/ci.yml` (lint job)
 
 **What it does**:
+
 - Runs `yarn prisma:validate-generated` in CI
 - Compares generated files with committed files
 - **FAILS the build** if files are stale
 - Forces developers to regenerate and commit
 
 **Error message**:
+
 ```
 ❌ Prisma generated files are stale or invalid
 💡 Regenerating Prisma Client...
@@ -240,6 +261,7 @@ git commit --no-verify
 **Location**: `scripts/build.js`
 
 **What it does**:
+
 - Validates Prisma generated files before build
 - Regenerates if validation fails
 - Ensures build always has fresh files
@@ -249,6 +271,7 @@ git commit --no-verify
 **Location**: `.gitattributes`
 
 **What it does**:
+
 - Marks generated files as "generated"
 - Uses `merge=ours` strategy (always use our version)
 - Prevents merge conflicts on generated files
@@ -258,6 +281,7 @@ git commit --no-verify
 **Location**: `devops/docker/Dockerfile` (entrypoint script)
 
 **What it does**:
+
 - Runs `prisma generate` at container startup
 - Ensures Prisma Client is available even if build-time generation failed
 - Updates symlinks to point to correct location
@@ -304,6 +328,7 @@ node scripts/validate-prisma-generated.js --skip-comparison
 **Error**: `Prisma generated files validation failed!`
 
 **Solution**:
+
 ```bash
 # Regenerate Prisma Client
 yarn prisma:regenerate
@@ -320,6 +345,7 @@ git commit
 **Error**: `Prisma generated files are stale or invalid`
 
 **Solution**:
+
 1. Pull latest changes
 2. Run `yarn prisma:regenerate`
 3. Commit the updated generated files
@@ -328,6 +354,7 @@ git commit
 ### Issue: Merge conflicts on generated files
 
 **Solution**:
+
 1. The post-merge hook should handle this automatically
 2. If not, run manually:
    ```bash
@@ -339,6 +366,7 @@ git commit
 ### Issue: Generated files are missing
 
 **Solution**:
+
 ```bash
 # Regenerate
 yarn prisma:regenerate
@@ -352,14 +380,18 @@ ls -la src/libs/infrastructure/database/prisma/generated/client/
 **Error**: `PrismaClient not found in any expected location`
 
 **Solution**:
+
 1. Check entrypoint script ran: `docker logs <container> | grep prisma`
-2. Verify symlink exists: `docker exec <container> readlink /app/node_modules/@prisma/client`
-3. Check files exist: `docker exec <container> ls -la /app/node_modules/.prisma/client/`
+2. Verify symlink exists:
+   `docker exec <container> readlink /app/node_modules/@prisma/client`
+3. Check files exist:
+   `docker exec <container> ls -la /app/node_modules/.prisma/client/`
 4. Rebuild image if needed: `docker compose build --no-cache`
 
 ### Issue: Docker build fails during Prisma generation
 
 **Solution**:
+
 1. Check Dockerfile has correct Prisma schema path
 2. Verify `PRISMA_SCHEMA_PATH` is set in docker-compose files
 3. Check build logs for specific Prisma errors
@@ -383,12 +415,14 @@ ls -la src/libs/infrastructure/database/prisma/generated/client/
 
 - **Schema**: `src/libs/infrastructure/database/prisma/schema.prisma`
 - **Config**: `src/libs/infrastructure/database/prisma/prisma.config.js`
-- **Generated Client**: `src/libs/infrastructure/database/prisma/generated/client/`
+- **Generated Client**:
+  `src/libs/infrastructure/database/prisma/generated/client/`
 - **Validation Script**: `scripts/validate-prisma-generated.js`
 - **Pre-commit Hook**: `.husky/pre-commit`
 - **Post-merge Hook**: `.husky/post-merge`
 - **Dockerfile**: `devops/docker/Dockerfile`
-- **Docker Compose**: `devops/docker/docker-compose.prod.yml`, `devops/docker/docker-compose.local-prod.yml`
+- **Docker Compose**: `devops/docker/docker-compose.prod.yml`,
+  `devops/docker/docker-compose.local-prod.yml`
 
 ---
 
@@ -413,6 +447,7 @@ ls -la src/libs/infrastructure/database/prisma/generated/client/
 ## Summary
 
 This system ensures:
+
 - ✅ Generated files are always up-to-date
 - ✅ No merge conflicts on generated files
 - ✅ Fast startup (no runtime generation needed in most cases)
@@ -421,13 +456,15 @@ This system ensures:
 - ✅ Automated workflow
 - ✅ Works in all environments (development, Docker, CI/CD)
 
-If you encounter any issues, check the troubleshooting section or run `yarn prisma:regenerate` manually.
+If you encounter any issues, check the troubleshooting section or run
+`yarn prisma:regenerate` manually.
 
 ---
 
 ## Related Documentation
 
-- [Environment Variables](./ENVIRONMENT_VARIABLES.md) - Prisma-related environment variables
+- [Environment Variables](./ENVIRONMENT_VARIABLES.md) - Prisma-related
+  environment variables
 - [Deployment Guide](./DEPLOYMENT_GUIDE.md) - Docker deployment setup
 - [Developer Guide](./DEVELOPER_GUIDE.md) - General development practices
 
@@ -435,4 +472,3 @@ If you encounter any issues, check the troubleshooting section or run `yarn pris
 
 **Last Updated**: January 2025  
 **Maintained By**: Healthcare Backend Team
-
