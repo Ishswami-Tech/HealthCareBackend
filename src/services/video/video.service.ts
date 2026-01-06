@@ -110,20 +110,60 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit(): Promise<void> {
     // Initialize provider (OpenVidu ONLY - no fallback)
-    const initializedProvider: IVideoProvider =
-      await this.providerFactory.getProviderWithFallback();
-    this.provider = initializedProvider;
+    // Wrapped in try-catch to prevent API crash if video services are unavailable
+    try {
+      const initializedProvider: IVideoProvider =
+        await this.providerFactory.getProviderWithFallback();
+      this.provider = initializedProvider;
 
-    await this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Video Service initialized (OpenVidu ONLY - no Jitsi fallback)',
-      'VideoService',
-      {
-        provider: initializedProvider.providerName,
-        fallbackDisabled: true,
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Video Service initialized (OpenVidu ONLY - no Jitsi fallback)',
+        'VideoService',
+        {
+          provider: initializedProvider.providerName,
+          fallbackDisabled: true,
+        }
+      );
+    } catch (error) {
+      // GRACEFUL DEGRADATION: Log warning but don't crash the API
+      // Video features will be unavailable but core healthcare features will work
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Video Service initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}. Attempting to get provider anyway for later availability.`,
+        'VideoService.onModuleInit',
+        {
+          error: error instanceof Error ? error.message : 'Unknown',
+          fallbackDisabled: true,
+          note: 'API will continue. Video features will be checked again when used.',
+        }
+      );
+
+      // Try to get provider instance anyway (for later availability when OpenVidu starts)
+      // This allows video to work once OpenVidu becomes available, even if it wasn't ready at startup
+      try {
+        this.provider = this.providerFactory.getPrimaryProvider();
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Video provider instance obtained for deferred initialization. Video will work when OpenVidu becomes available.',
+          'VideoService.onModuleInit',
+          { provider: this.provider.providerName }
+        );
+      } catch {
+        // Provider instance not available - video will be completely unavailable
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'Could not obtain video provider instance. Video features will be unavailable until restart.',
+          'VideoService.onModuleInit',
+          {}
+        );
       }
-    );
+      // Don't throw - allow API to start without video capabilities
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -139,16 +179,16 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get current provider (OpenVidu only - no fallback)
    * @returns The initialized video provider
-   * @throws HealthcareError if provider is not initialized
+   * @throws HealthcareError if provider is not initialized or video services are unavailable
    */
   private async getProvider(): Promise<IVideoProvider> {
     const currentProvider: IVideoProvider | undefined = this.provider;
     if (!currentProvider) {
       throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Video provider not initialized',
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'Video service is currently unavailable. Please try again later or contact support.',
         undefined,
-        {},
+        { note: 'Video provider failed to initialize. Core healthcare features remain available.' },
         'VideoService.getProvider'
       );
     }
