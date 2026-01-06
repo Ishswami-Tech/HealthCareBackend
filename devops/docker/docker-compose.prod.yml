@@ -554,8 +554,9 @@ services:
           cpus: "0.1"
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status || exit 1"]
-      interval: 30s  # Reduced frequency to save resources
+      # Use /api/status endpoint (doesn't require auth, returns version info)
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/status || curl -sf http://localhost:9000/api/status || exit 1"]
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s

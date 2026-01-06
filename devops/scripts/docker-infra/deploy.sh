@@ -825,6 +825,112 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         echo "$migration_output" >&2
         log_error "=== End of Migration Error Output ==="
         log_error "Full migration log saved to: /tmp/migration.log"
+        
+        # Check if this is the P3005 error (database not empty, needs baseline)
+        if echo "$migration_output" | grep -q "P3005"; then
+            log_warning "Detected P3005 error - database has existing schema but no migration history"
+            log_info "Attempting automatic baseline of existing database..."
+            
+            # Find migration names from the migrations folder
+            local migrations_found=$(docker exec "${CONTAINER_PREFIX}api" sh -c "
+                ls -1 /app/src/libs/infrastructure/database/prisma/migrations/ 2>/dev/null | grep -E '^[0-9]+_' | sort
+            " 2>/dev/null || echo "")
+            
+            if [[ -n "$migrations_found" ]]; then
+                log_info "Found migrations to baseline: $migrations_found"
+                
+                # Baseline each migration
+                local baseline_success=true
+                for migration_name in $migrations_found; do
+                    log_info "Baselining migration: $migration_name"
+                    
+                    if docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                        unset DIRECT_URL
+                        cd /app && npx prisma migrate resolve --applied '$migration_name' \
+                            --schema '/app/src/libs/infrastructure/database/prisma/schema.prisma'
+                    " 2>&1; then
+                        log_success "Baselined migration: $migration_name"
+                    else
+                        log_error "Failed to baseline migration: $migration_name"
+                        baseline_success=false
+                        break
+                    fi
+                done
+                
+                if $baseline_success; then
+                    log_success "All migrations baselined successfully"
+                    log_info "Retrying migration deploy..."
+                    
+                    # Retry migration
+                    local retry_output
+                    retry_output=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                        unset DIRECT_URL
+                        cd /app && yarn prisma:migrate
+                    " 2>&1)
+                    local retry_exit_code=$?
+                    
+                    if [[ $retry_exit_code -eq 0 ]]; then
+                        log_success "Migration succeeded after baseline!"
+                        return 0
+                    else
+                        log_error "Migration still failed after baseline"
+                        echo "$retry_output" >&2
+                    fi
+                fi
+            else
+                log_warning "No migrations found in /app/src/libs/infrastructure/database/prisma/migrations/"
+                log_info "Attempting manual baseline creation..."
+                
+                # Create _prisma_migrations table and mark init as applied
+                if docker exec -i postgres psql -U postgres -d userdb << 'BASELINE_SQL'
+CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
+    id VARCHAR(36) PRIMARY KEY,
+    checksum VARCHAR(64) NOT NULL,
+    finished_at TIMESTAMPTZ,
+    migration_name VARCHAR(255) NOT NULL,
+    logs TEXT,
+    rolled_back_at TIMESTAMPTZ,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    applied_steps_count INTEGER NOT NULL DEFAULT 0
+);
+
+INSERT INTO "_prisma_migrations" (id, checksum, migration_name, finished_at, applied_steps_count)
+SELECT 
+    gen_random_uuid()::text,
+    'baseline_auto_created',
+    '20251111125405_init',
+    NOW(),
+    1
+WHERE NOT EXISTS (
+    SELECT 1 FROM "_prisma_migrations" WHERE migration_name = '20251111125405_init'
+);
+BASELINE_SQL
+                then
+                    log_success "Database baselined via SQL"
+                    log_info "Retrying migration deploy..."
+                    
+                    local retry_output
+                    retry_output=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                        unset DIRECT_URL
+                        cd /app && yarn prisma:migrate
+                    " 2>&1)
+                    
+                    if [[ $? -eq 0 ]]; then
+                        log_success "Migration succeeded after SQL baseline!"
+                        return 0
+                    else
+                        log_error "Migration still failed after SQL baseline"
+                        echo "$retry_output" >&2
+                    fi
+                else
+                    log_error "Failed to create baseline via SQL"
+                fi
+            fi
+        fi
+        
         log_error "To debug, check the migration output above for Prisma errors"
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
             log_warning "Rolling back to pre-migration backup..."
