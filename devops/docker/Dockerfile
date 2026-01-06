@@ -173,9 +173,12 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 COPY --from=builder /app/dist ./dist
 # Copy scripts folder for migration scripts
 COPY --from=builder /app/scripts ./scripts
-# Copy Prisma schema, config, and generated client to expected paths
+# Copy Prisma schema, config, migrations, and generated client to expected paths
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/schema.prisma ./src/libs/infrastructure/database/prisma/schema.prisma
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.js ./src/libs/infrastructure/database/prisma/prisma.config.js
+# Copy migrations folder for prisma migrate deploy (CRITICAL for production deployments)
+# Without this, P3005 error occurs: "database schema is not empty" with no migrations
+COPY --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
 # Copy Prisma generated client from builder stage (generated during build to src/generated/prisma)
 COPY --from=builder /app/src/generated/prisma ./src/generated/prisma
 COPY --from=builder /app/dist/generated/prisma ./dist/generated/prisma

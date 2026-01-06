@@ -208,33 +208,41 @@ services:
       - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
       # Domain configuration: Use same domain as Video service (set in .env.production)
       - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+      # TLS is optional - set to "true" only if Let's Encrypt certificates exist
+      - COTURN_TLS_ENABLED=${COTURN_TLS_ENABLED:-false}
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
+    # Use shell entrypoint to conditionally enable TLS based on certificate availability
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - -n
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --tls-listening-port=5349
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --lt-cred-mech
-      # Security: Use environment variable for password instead of hardcoded
-      - --user=openvidu:${COTURN_PASSWORD}
-      # Use same domain as Video service
-      - --realm=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
-      - --server-name=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
-      - --no-cli
-      # TLS Configuration (using Let's Encrypt certificates)
-      - --cert=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem
-      - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
-      # Security: Resource limits to prevent exhaustion attacks
-      - --max-bps=1000000
-      - --total-quota=1000000
-      - --user-quota=1000000
-      - --no-multicast-peers
-      - --verbose
+      - |
+        # Check if TLS certificates exist and TLS is enabled
+        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
+        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
+        
+        # Base TURN server arguments (always used)
+        TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
+        TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
+        TURN_ARGS="$${TURN_ARGS} --fingerprint --lt-cred-mech"
+        TURN_ARGS="$${TURN_ARGS} --user=openvidu:$${COTURN_PASSWORD:-openvidu}"
+        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
+        TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
+        
+        # Conditionally add TLS configuration if certificates exist
+        if [ "$${COTURN_TLS_ENABLED}" = "true" ] && [ -f "$${CERT_PATH}" ] && [ -f "$${KEY_PATH}" ]; then
+          echo "[COTURN] TLS enabled - certificates found at $${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --tls-listening-port=5349"
+          TURN_ARGS="$${TURN_ARGS} --cert=$${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --pkey=$${KEY_PATH}"
+        else
+          echo "[COTURN] TLS disabled - certificates not found or TLS not enabled"
+          echo "[COTURN] Running in non-TLS mode (STUN/TURN on port 3478 only)"
+        fi
+        
+        echo "[COTURN] Starting turnserver with args: $${TURN_ARGS}"
+        exec turnserver $${TURN_ARGS}
     networks:
       app-network:
         ipv4_address: 172.18.0.8
@@ -242,8 +250,8 @@ services:
           - coturn
     restart: unless-stopped
     healthcheck:
-      # Health check using STUN client test (pgrep not available in this image)
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      # Health check using STUN client test on port 3478 (always available)
+      test: ["CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -380,8 +388,11 @@ services:
         condition: service_healthy
       dragonfly:
         condition: service_healthy
+      # Coturn is optional - API can start without video services
+      # Video calling will be unavailable but core healthcare features will work
       coturn:
-        condition: service_healthy
+        condition: service_started
+        required: false
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
