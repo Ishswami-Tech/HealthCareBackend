@@ -5,7 +5,26 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../shared/utils.sh"
+# Source utils.sh - handle both normal directory structure and /tmp/ execution
+# Check if utils.sh functions are already available (sourced by workflow)
+if ! command -v log_info &>/dev/null; then
+    # Try relative path first (normal execution from devops/scripts/docker-infra/)
+    if [[ -f "${SCRIPT_DIR}/../shared/utils.sh" ]]; then
+        source "${SCRIPT_DIR}/../shared/utils.sh"
+    # Fall back to /opt/healthcare-backend path (production server)
+    elif [[ -f "/opt/healthcare-backend/devops/scripts/shared/utils.sh" ]]; then
+        source "/opt/healthcare-backend/devops/scripts/shared/utils.sh"
+    # Fall back to /tmp/utils.sh (when executed from /tmp/ by GitHub Actions)
+    elif [[ -f "/tmp/utils.sh" ]]; then
+        source "/tmp/utils.sh"
+    else
+        echo "ERROR: Cannot find utils.sh. Tried:" >&2
+        echo "  - ${SCRIPT_DIR}/../shared/utils.sh" >&2
+        echo "  - /opt/healthcare-backend/devops/scripts/shared/utils.sh" >&2
+        echo "  - /tmp/utils.sh" >&2
+        exit 1
+    fi
+fi
 
 # Container prefix (only for app containers, infrastructure uses fixed names)
 CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
