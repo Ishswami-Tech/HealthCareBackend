@@ -111,16 +111,3 @@ runDoctorNotificationPreferenceTests().catch(error => {
   console.error('Doctor notification preference tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-

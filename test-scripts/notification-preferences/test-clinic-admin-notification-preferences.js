@@ -139,16 +139,3 @@ runClinicAdminNotificationPreferenceTests().catch(error => {
   console.error('CLINIC_ADMIN notification preference tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-
-
-

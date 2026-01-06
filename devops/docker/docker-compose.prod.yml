@@ -137,6 +137,7 @@ services:
       - "50000-50050:50000-50050/tcp"
     environment:
       - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
       - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
       - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - OPENVIDU_EDITION=ce
