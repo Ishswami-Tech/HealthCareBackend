@@ -323,7 +323,7 @@ jobs:
                     else
                       echo "❌ Cannot install rclone or s3cmd automatically"
                       exit 1
-                    }
+                    fi
                   }
                 elif command -v pip3 &> /dev/null; then
                   pip3 install --user s3cmd || {
@@ -664,7 +664,7 @@ jobs:
                     else
                       echo "❌ Cannot install rclone or s3cmd automatically"
                       exit 1
-                    }
+                    fi
                   }
                 elif command -v pip3 &> /dev/null; then
                   pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
@@ -736,25 +736,25 @@ jobs:
 
       - name: Verify infrastructure readiness
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
-            export SCRIPT_DIR="/tmp"
-            source /tmp/utils.sh
-            chmod +x /tmp/health-check.sh
+          # Run health check and capture exit code
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -c "
+            export SCRIPT_DIR=\"/tmp\"
+            chmod +x /tmp/health-check.sh /tmp/utils.sh 2>/dev/null || true
             
-            echo "🔍 Verifying infrastructure readiness before deployment..."
-            echo "📋 This verifies that newly recreated infrastructure is healthy"
+            echo \"🔍 Verifying infrastructure readiness before deployment...\"
+            echo \"📋 This verifies that newly recreated infrastructure is healthy\"
             
-            # Run infrastructure health check (infrastructure only, no application checks)
+            # Run infrastructure health check
             if /tmp/health-check.sh > /tmp/infra-readiness.json 2>&1; then
-              echo "✅ Infrastructure is healthy and ready for deployment"
+              echo \"✅ Infrastructure is healthy and ready for deployment\"
               exit 0
             else
-              EXIT_CODE=$?
-              echo "❌ Infrastructure health check failed (exit code: $EXIT_CODE)"
-              cat /tmp/infra-readiness.json || true
+              EXIT_CODE=\$?
+              echo \"❌ Infrastructure health check failed (exit code: \$EXIT_CODE)\"
+              cat /tmp/infra-readiness.json 2>/dev/null || true
               exit 1
             fi
-          ENDSSH
+          "'
 
   # Deploy to Production
   # Deploys application containers (API + Worker) to production server
