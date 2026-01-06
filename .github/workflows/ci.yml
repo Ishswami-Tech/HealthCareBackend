@@ -1222,6 +1222,20 @@ jobs:
             chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/*.sh
             chmod +x /opt/healthcare-backend/devops/scripts/shared/*.sh
             
+            # VALIDATION: Check OPENVIDU_SECRET format before deployment
+            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
+            OPENVIDU_SECRET="${OPENVIDU_SECRET:-}"
+            if [[ -n "${OPENVIDU_SECRET}" ]] && echo "${OPENVIDU_SECRET}" | grep -q '[^a-zA-Z0-9_-]'; then
+              echo "❌ ERROR: OPENVIDU_SECRET contains invalid characters!"
+              echo "📋 OpenVidu requires secret to contain ONLY:"
+              echo "   - Alphanumeric: a-z, A-Z, 0-9"
+              echo "   - Hyphens: - | Underscores: _"
+              echo "❌ NOT allowed: = + / or any other special characters"
+              echo ""
+              echo "🔧 ACTION: Update OPENVIDU_SECRET in GitHub Secrets"
+              exit 1
+            fi
+            
             # Set deployment variables for deploy.sh
             export INFRA_CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
             export APP_CHANGED="${{ needs.detect-changes.outputs.app-changed }}"
@@ -1342,12 +1356,12 @@ jobs:
                     if command -v pip3 &> /dev/null; then
                       pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
                         echo "❌ Failed to install both rclone and s3cmd"
-          exit 1
+                        exit 1
                       }
                     else
                       echo "❌ Cannot install rclone or s3cmd automatically"
                       exit 1
-                    }
+                    fi
                   }
                 elif command -v pip3 &> /dev/null; then
                   pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
@@ -1468,6 +1482,26 @@ jobs:
             export OPENVIDU_SECRET="${OPENVIDU_SECRET}"
             export OPENVIDU_URL="${OPENVIDU_URL}"
             export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
+            
+            # VALIDATION: Check OPENVIDU_SECRET format (OpenVidu requirement)
+            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
+            # NO special characters like = + / or base64 padding allowed
+            if [[ -n "${OPENVIDU_SECRET}" ]] && echo "${OPENVIDU_SECRET}" | grep -q '[^a-zA-Z0-9_-]'; then
+              echo "❌ ERROR: OPENVIDU_SECRET contains invalid characters!"
+              echo "📋 OpenVidu requires secret to contain ONLY:"
+              echo "   - Alphanumeric characters: a-z, A-Z, 0-9"
+              echo "   - Hyphens: -"
+              echo "   - Underscores: _"
+              echo "❌ NOT allowed: = + / or any other special characters"
+              echo ""
+              echo "🔧 ACTION REQUIRED: Update OPENVIDU_SECRET in GitHub Secrets"
+              echo "   Go to: GitHub → Settings → Secrets → Actions → OPENVIDU_SECRET"
+              echo "   Example valid secrets:"
+              echo "   - HealthCare_Video_Secret_2026"
+              echo "   - MySecureOpenViduSecret123"
+              echo "   - VideoService-Production-Key"
+              exit 1
+            fi
             
             # CRITICAL: Ensure docker-compose.prod.yml is in place before recovery
             # Note: Infrastructure containers (postgres, dragonfly, coturn, portainer, openvidu) 
