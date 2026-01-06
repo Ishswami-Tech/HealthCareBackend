@@ -223,8 +223,8 @@ services:
       - --realm=${COTURN_DOMAIN:-turn.ishswami.in}
       - --server-name=${COTURN_DOMAIN:-turn.ishswami.in}
       - --no-cli
-      - --no-tls
-      - --no-dtls
+      # TLS Configuration - Not needed for local-prod environment
+      # Local development uses STUN/TURN over UDP/TCP (port 3478) only
     networks:
       app-network:
         ipv4_address: 172.18.0.8

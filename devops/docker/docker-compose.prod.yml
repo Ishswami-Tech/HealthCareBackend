@@ -198,8 +198,9 @@ services:
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
-      - "5349:5349/udp"
-      - "5349:5349/tcp"
+      # TLS/TURNS ports (5349) - disabled until certificates are configured
+      # - "5349:5349/udp"
+      # - "5349:5349/tcp"
       - "49160-49200:49160-49200/udp"
       - "49160-49200:49160-49200/tcp"
     environment:
@@ -208,14 +209,14 @@ services:
       - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
       # Domain configuration: Use same domain as Video service (set in .env.production)
       - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+    # TLS certificates volume - disabled until Let's Encrypt is configured
+    # volumes:
+    #   - /etc/letsencrypt:/etc/letsencrypt:ro
     command:
       - -n
       - --log-file=stdout
       - --listening-ip=0.0.0.0
       - --listening-port=3478
-      - --tls-listening-port=5349
       - --min-port=49160
       - --max-port=49200
       - --fingerprint
@@ -226,11 +227,11 @@ services:
       - --realm=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
       - --server-name=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
       - --no-cli
-      # TLS Configuration for TURNS
-      # Certificates are mounted from host /etc/letsencrypt
-      # If certificates don't exist at startup, coturn will log warnings but continue
-      - --cert=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem
-      - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
+      # TLS Configuration for TURNS - DISABLED (certificates not yet configured)
+      # To enable TLS/TURNS (port 5349), uncomment the following after setting up Let's Encrypt:
+      # - --tls-listening-port=5349
+      # - --cert=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem
+      # - --pkey=/etc/letsencrypt/live/${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem
       # Security: Resource limits to prevent exhaustion attacks
       - --max-bps=1000000
       - --max-sessions-per-user=10
