@@ -57,6 +57,7 @@ interface DashboardData {
     details: string;
     lastChecked: string;
     metrics: Record<string, unknown>;
+    error?: string;
   }>;
   clusterInfo?:
     | {
@@ -160,6 +161,11 @@ export class AppController {
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
                 },
+                video: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
                 communication: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
@@ -184,7 +190,7 @@ export class AppController {
                 system: 0,
               },
             });
-          }, 10000); // 10 second timeout
+          }, 15000); // 15 second timeout (increased to allow health checks to complete)
         });
         healthData = await Promise.race([healthCheckPromise, timeoutPromise]);
       } catch (healthError) {
@@ -504,13 +510,15 @@ export class AppController {
                 status: serviceData.status || 'unhealthy',
                 isHealthy: serviceData.status === 'healthy',
                 responseTime: serviceData.responseTime || 0,
-                details:
-                  serviceData.details ||
-                  (serviceData.status === 'healthy'
-                    ? 'Service is responding normally'
-                    : 'Service is experiencing issues'),
+                details: serviceData.error
+                  ? serviceData.error
+                  : serviceData.details ||
+                    (serviceData.status === 'healthy'
+                      ? 'Service is responding normally'
+                      : 'Service is experiencing issues'),
                 lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
                 metrics: serviceMetrics || {},
+                ...(serviceData.error && { error: serviceData.error }),
               };
             })
           : [],
@@ -1473,6 +1481,7 @@ export class AppController {
                       details: string;
                       lastChecked: string;
                       metrics: Record<string, unknown>;
+                      error?: string;
                     }) => `
                     <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}" data-service="${service.id}">
                         <div class="service-header">
@@ -1485,6 +1494,14 @@ export class AppController {
                             </span>
                         </div>
                         <p style="color: #64748b; margin: 0.5rem 0;">${service.details}</p>
+                        ${
+                          service.error && !service.isHealthy
+                            ? `<div style="margin-top: 0.5rem; padding: 0.75rem; background: #fee2e2; border-left: 3px solid #ef4444; border-radius: 4px;">
+                            <strong style="color: #991b1b;">Error Details:</strong>
+                            <p style="color: #991b1b; margin: 0.25rem 0 0 0; font-size: 0.9em;">${service.error}</p>
+                        </div>`
+                            : ''
+                        }
                         ${
                           service.metrics && Object.keys(service.metrics).length > 0
                             ? `
