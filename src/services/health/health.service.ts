@@ -1945,6 +1945,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const videoResult = result['video'] as Record<string, unknown>;
+              // Build details string with provider info if available
+              const providerInfo =
+                typeof videoResult?.['primaryProvider'] === 'string'
+                  ? ` (Provider: ${videoResult['primaryProvider']}${
+                      typeof videoResult?.['fallbackProvider'] === 'string'
+                        ? `, Fallback: ${videoResult['fallbackProvider']}`
+                        : ''
+                    })`
+                  : '';
               services['video'] = {
                 status: videoResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
                 responseTime:
@@ -1953,19 +1962,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     : 0,
                 lastChecked: new Date().toISOString(),
                 details:
-                  typeof videoResult?.['message'] === 'string'
+                  (typeof videoResult?.['message'] === 'string'
                     ? videoResult['message']
                     : videoResult?.['status'] === 'up'
                       ? 'Video service available'
-                      : 'Video service unavailable (OpenVidu may be down)',
-                primaryProvider:
-                  typeof videoResult?.['primaryProvider'] === 'string'
-                    ? videoResult['primaryProvider']
-                    : undefined,
-                fallbackProvider:
-                  typeof videoResult?.['fallbackProvider'] === 'string'
-                    ? videoResult['fallbackProvider']
-                    : undefined,
+                      : 'Video service unavailable (OpenVidu may be down)') + providerInfo,
               };
             } catch (videoError) {
               // Video service failures should not affect other services
@@ -1998,6 +1999,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
       // Return degraded health response with individual service statuses
       // IMPORTANT: If we can return this response, the API is healthy!
+      // Ensure all required services are present
       return {
         status: overallStatus,
         timestamp: new Date().toISOString(),
@@ -2005,7 +2007,36 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
         services: {
-          ...services,
+          api: services['api'] || {
+            status: 'healthy' as const,
+            responseTime: 10,
+            lastChecked: new Date().toISOString(),
+            details: 'API service is running and responding',
+          },
+          database: services['database'] || {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Database health check not available',
+          },
+          cache: services['cache'] || {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Cache health check not available',
+          },
+          queue: services['queue'] || {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Queue health check not available',
+          },
+          logger: services['logging'] || {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Logger health check not available',
+          },
           communication: {
             status: 'healthy' as const,
             responseTime: 0,
