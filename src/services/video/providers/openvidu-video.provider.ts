@@ -51,20 +51,51 @@ export class OpenViduVideoProvider implements IVideoProvider {
     private readonly databaseService: DatabaseService
   ) {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
-    this.apiUrl = videoConfig?.openvidu?.url || 'http://openvidu-server:4443';
-    this.secret = videoConfig?.openvidu?.secret || '';
+
+    // Get URL from config or environment variable directly (with fallback)
+    const configUrl = videoConfig?.openvidu?.url;
+    const envUrl = this.configService.getEnv('OPENVIDU_URL');
+    this.apiUrl = configUrl || envUrl || 'http://openvidu-server:4443';
+
+    // Get secret from config or environment variable directly
+    const configSecret = videoConfig?.openvidu?.secret;
+    const envSecret = this.configService.getEnv('OPENVIDU_SECRET');
+    this.secret = configSecret || envSecret || '';
+
+    // Get domain from config or environment variable directly
+    const configDomain = videoConfig?.openvidu?.domain;
+    const envDomain = this.configService.getEnv('OPENVIDU_DOMAIN');
     this.domain =
-      videoConfig?.openvidu?.domain ||
+      configDomain ||
+      envDomain ||
       (() => {
-        const envDomain = this.configService.getEnv('OPENVIDU_DOMAIN');
-        if (!envDomain) {
-          throw new Error(
-            'Missing required environment variable: OPENVIDU_DOMAIN. ' +
-              'Please set OPENVIDU_DOMAIN in your environment configuration.'
-          );
-        }
-        return envDomain;
+        throw new Error(
+          'Missing required environment variable: OPENVIDU_DOMAIN. ' +
+            'Please set OPENVIDU_DOMAIN in your environment configuration.'
+        );
       })();
+
+    // Log configuration for debugging (async, don't await)
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'OpenVidu provider initialized',
+      'OpenViduVideoProvider.constructor',
+      {
+        apiUrl: this.apiUrl,
+        domain: this.domain,
+        secretConfigured: !!this.secret,
+        configSource: {
+          urlFromConfig: !!configUrl,
+          urlFromEnv: !!envUrl,
+          secretFromConfig: !!configSecret,
+          secretFromEnv: !!envSecret,
+          domainFromConfig: !!configDomain,
+          domainFromEnv: !!envDomain,
+        },
+        note: 'If URL is incorrect, check OPENVIDU_URL in .env.production or .env.local file and restart the application.',
+      }
+    );
   }
 
   /**
@@ -580,6 +611,11 @@ export class OpenViduVideoProvider implements IVideoProvider {
     const retryDelayMs = 2000;
     const healthEndpoint = `${this.apiUrl}/openvidu/api/health`;
 
+    // Track last error for detailed error message
+    let lastError = 'Unknown error';
+    let lastErrorCode: string | undefined;
+    let finalIsConnectionError = true;
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Try health endpoint without auth first (health endpoint typically doesn't require auth)
@@ -697,10 +733,10 @@ export class OpenViduVideoProvider implements IVideoProvider {
             healthEndpoint,
             isConnectionError,
             diagnostic: {
-              message: isConnectionError
+              message: finalIsConnectionError
                 ? 'Cannot connect to OpenVidu server. Check: 1) Is OpenVidu container running? 2) Is OPENVIDU_URL correct? 3) Can backend reach OpenVidu network?'
                 : 'OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.',
-              possibleCauses: isConnectionError
+              possibleCauses: finalIsConnectionError
                 ? [
                     'OpenVidu container not running',
                     'Incorrect OPENVIDU_URL configuration',
@@ -728,6 +764,11 @@ export class OpenViduVideoProvider implements IVideoProvider {
           }
         }
 
+        // Store last error for final error message
+        lastError = errorMessage;
+        lastErrorCode = errorCode;
+        finalIsConnectionError = isConnectionError;
+
         // Retry with delay if not last attempt
         if (attempt < maxRetries) {
           await new Promise(resolve => setTimeout(resolve, retryDelayMs));
@@ -735,7 +776,18 @@ export class OpenViduVideoProvider implements IVideoProvider {
       }
     }
 
-    // All retries failed - log warning and return false
+    // All retries failed - build detailed error message using last error
+    // Build comprehensive error message with diagnostic information
+    let detailedErrorMessage = `OpenVidu health check failed after ${maxRetries} attempts. `;
+    detailedErrorMessage += `Last error: ${lastError}${lastErrorCode ? ` (code: ${lastErrorCode})` : ''}. `;
+    if (finalIsConnectionError) {
+      detailedErrorMessage += `Cannot connect to OpenVidu server at ${this.apiUrl}. `;
+      detailedErrorMessage += `Possible causes: 1) OpenVidu container not running, 2) Incorrect OPENVIDU_URL configuration (current: ${this.apiUrl}), 3) Network connectivity issue, 4) OpenVidu REST API not started (KMS may be running but REST API not ready).`;
+    } else {
+      detailedErrorMessage += `OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.`;
+    }
+
+    // Log warning with detailed information
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.WARN,
@@ -744,11 +796,38 @@ export class OpenViduVideoProvider implements IVideoProvider {
       {
         apiUrl: this.apiUrl,
         attempts: maxRetries,
+        error: detailedErrorMessage,
         note: 'OpenVidu container may not be running, not ready yet, or network issue. API will continue without video support.',
       }
     );
 
-    return false;
+    // Throw error with detailed message so health indicator can capture it
+    throw new HealthcareError(
+      ErrorCode.SERVICE_UNAVAILABLE,
+      detailedErrorMessage,
+      undefined,
+      {
+        apiUrl: this.apiUrl,
+        attempts: maxRetries,
+        isConnectionError: finalIsConnectionError,
+        errorCode: lastErrorCode,
+        lastError,
+        diagnostic: {
+          message: finalIsConnectionError
+            ? 'Cannot connect to OpenVidu server. Check: 1) Is OpenVidu container running? 2) Is OPENVIDU_URL correct? 3) Can backend reach OpenVidu network?'
+            : 'OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.',
+          possibleCauses: finalIsConnectionError
+            ? [
+                'OpenVidu container not running',
+                'Incorrect OPENVIDU_URL configuration',
+                'Network connectivity issue between backend and OpenVidu',
+                'OpenVidu REST API not started (KMS may be running but REST API not ready)',
+              ]
+            : ['OpenVidu REST API error', 'Authentication issue', 'OpenVidu service degraded'],
+        },
+      },
+      'OpenViduVideoProvider.isHealthy'
+    );
   }
 
   /**

@@ -16,6 +16,7 @@ interface VideoHealthStatus {
   isHealthy: boolean;
   primaryProvider: string;
   fallbackProvider: string | null;
+  errorMessage?: string;
 }
 
 @Injectable()
@@ -42,23 +43,53 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
     }
 
     // Real-time health check using OpenVidu /openvidu/api/health endpoint
-    const isHealthy = await this.videoService.isHealthy();
+    // Capture error details if health check fails
+    let isHealthy = false;
+    let errorMessage: string | undefined;
+
+    try {
+      isHealthy = await this.videoService.isHealthy();
+    } catch (error) {
+      // Capture actual error message for detailed reporting
+      errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      isHealthy = false;
+    }
+
     const primaryProvider = this.videoService.getCurrentProvider();
     const fallbackProvider = this.videoService.getFallbackProvider();
 
-    return {
+    const result: VideoHealthStatus = {
       isHealthy,
       primaryProvider: primaryProvider || 'unknown',
       fallbackProvider: fallbackProvider || null,
     };
+
+    // Only include errorMessage if it exists (for exactOptionalPropertyTypes)
+    if (errorMessage !== undefined) {
+      result.errorMessage = errorMessage;
+    }
+
+    return result;
   }
 
   protected formatResult(key: string, status: VideoHealthStatus): HealthIndicatorResult {
-    return this.getStatus(key, status.isHealthy, {
+    const details: Record<string, unknown> = {
       primaryProvider: status.primaryProvider,
       fallbackProvider: status.fallbackProvider,
       isHealthy: status.isHealthy,
-    });
+    };
+
+    // Include error message if available for detailed error reporting
+    if (status.errorMessage) {
+      details['error'] = status.errorMessage;
+      details['message'] = `Video service unavailable: ${status.errorMessage}`;
+    } else if (!status.isHealthy) {
+      details['message'] = 'Video service unavailable - OpenVidu may be down or not accessible';
+    } else {
+      details['message'] = 'Video service is healthy';
+    }
+
+    return this.getStatus(key, status.isHealthy, details);
   }
 
   protected extractIsHealthy(status: VideoHealthStatus): boolean {

@@ -84,7 +84,11 @@ backup_postgres() {
         fi
         
         # Store metadata - extract backup type from path if present
-        local backup_type_from_path=$(basename $(dirname "$backup_file") 2>/dev/null || echo "")
+        local backup_type_from_path=""
+        local dir_path=$(dirname "$backup_file" 2>/dev/null || echo "")
+        if [[ -n "$dir_path" ]]; then
+            backup_type_from_path=$(basename "$dir_path" 2>/dev/null || echo "")
+        fi
         local relative_file_path="postgres-${TIMESTAMP}.sql.gz"
         if [[ -n "$backup_type_from_path" ]] && [[ "$backup_type_from_path" != "postgres" ]]; then
             relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
@@ -472,7 +476,9 @@ backup_postgres_to_path() {
         log_success "PostgreSQL backup created: ${backup_file}"
         
         # Upload to S3 with retry logic
-        local s3_path="backups/postgres/$(basename $(dirname "$backup_file"))/postgres-${TIMESTAMP}.sql.gz"
+        local backup_dir_name=$(dirname "$backup_file" 2>/dev/null || echo "")
+        local backup_type=$(basename "$backup_dir_name" 2>/dev/null || echo "postgres")
+        local s3_path="backups/postgres/${backup_type}/postgres-${TIMESTAMP}.sql.gz"
         if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
             BACKUP_RESULTS["postgres_s3"]="success"
         else
@@ -481,7 +487,11 @@ backup_postgres_to_path() {
         fi
         
         # Store metadata - extract backup type from path if present
-        local backup_type_from_path=$(basename $(dirname "$backup_file") 2>/dev/null || echo "")
+        local backup_type_from_path=""
+        local dir_path=$(dirname "$backup_file" 2>/dev/null || echo "")
+        if [[ -n "$dir_path" ]]; then
+            backup_type_from_path=$(basename "$dir_path" 2>/dev/null || echo "")
+        fi
         local relative_file_path="postgres-${TIMESTAMP}.sql.gz"
         if [[ -n "$backup_type_from_path" ]] && [[ "$backup_type_from_path" != "postgres" ]]; then
             relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
@@ -548,7 +558,9 @@ backup_dragonfly_to_path() {
                 log_success "Dragonfly backup created: ${backup_file}"
                 
                 # Upload to S3 with retry logic
-                local s3_path="backups/dragonfly/$(basename $(dirname "$backup_file"))/dragonfly-${TIMESTAMP}.rdb.gz"
+                local backup_dir_name=$(dirname "$backup_file" 2>/dev/null || echo "")
+                local backup_type=$(basename "$backup_dir_name" 2>/dev/null || echo "dragonfly")
+                local s3_path="backups/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
                 if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
                     BACKUP_RESULTS["dragonfly_s3"]="success"
                 else

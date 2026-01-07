@@ -1017,6 +1017,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           if (terminusError instanceof HealthCheckError) {
             const causes = terminusError.causes as Record<string, unknown> | undefined;
+
+            // Check if only optional services (video) are unhealthy
+            // If so, don't log as ERROR - video is optional and API can function without it
+            const optionalServices = ['video'];
+            const criticalServices = ['database', 'cache', 'queue', 'logging'];
+            const unhealthyServices = causes ? Object.keys(causes) : [];
+            const onlyOptionalUnhealthy =
+              unhealthyServices.length > 0 &&
+              unhealthyServices.every(key => optionalServices.includes(key)) &&
+              !unhealthyServices.some(key => criticalServices.includes(key));
+
             if (causes && typeof causes === 'object') {
               const services: Record<string, ServiceHealth> = {};
               for (const [key, indicatorData] of Object.entries(causes)) {
@@ -1048,6 +1059,21 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                       : details,
                   };
                 }
+              }
+
+              // If only optional services are unhealthy, log as WARN instead of ERROR
+              // This prevents excessive ERROR logs when only video (optional) is down
+              if (onlyOptionalUnhealthy && this.loggingService) {
+                void this.loggingService.log(
+                  LogType.SYSTEM,
+                  LogLevel.WARN,
+                  `Health check: Optional service(s) unhealthy (${unhealthyServices.join(', ')}). Core services are healthy.`,
+                  'HealthService',
+                  {
+                    unhealthyServices,
+                    note: 'Video service is optional - API continues to function normally without it.',
+                  }
+                );
               }
 
               return {
@@ -1631,19 +1657,42 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : undefined;
 
+      // Check if error is due to optional services only (video)
+      // If so, log as WARN instead of ERROR to reduce log noise
+      let isOptionalServiceError = false;
+      if (error instanceof HealthCheckError && error.causes) {
+        const causes = error.causes as Record<string, unknown> | undefined;
+        if (causes && typeof causes === 'object') {
+          const unhealthyKeys = Object.keys(causes);
+          isOptionalServiceError =
+            unhealthyKeys.length > 0 &&
+            unhealthyKeys.every(key => key === 'video') &&
+            !unhealthyKeys.some(key => ['database', 'cache', 'queue', 'logging'].includes(key));
+        }
+      }
+      if (!isOptionalServiceError) {
+        isOptionalServiceError =
+          errorMessage.includes('video') ||
+          errorMessage.includes('Video') ||
+          errorMessage.includes('OpenVidu');
+      }
+
       // Log detailed error information for debugging
       // Use LoggingService if available, otherwise fallback to console.error
       if (this.loggingService) {
         void this.loggingService
           .log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            `Health check failed: ${errorMessage}`,
+            isOptionalServiceError ? LogType.SYSTEM : LogType.ERROR,
+            isOptionalServiceError ? LogLevel.WARN : LogLevel.ERROR,
+            isOptionalServiceError
+              ? `Health check: Optional service (video) unavailable. Core services are healthy.`
+              : `Health check failed: ${errorMessage}`,
             'HealthService',
             {
               error: errorMessage,
               stack: errorStack,
               errorType: error?.constructor?.name || typeof error,
+              isOptionalServiceError,
               // Log which service might be causing the issue
               services: {
                 databaseHealthIndicator: !!this.databaseHealthIndicator,
@@ -1659,16 +1708,21 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           )
           .catch(() => {
             // Ignore logging errors - fallback to console.error
-            console.error('[HealthService] Health check failed:', errorMessage);
-            if (errorStack) {
-              console.error('[HealthService] Stack trace:', errorStack);
+            if (!isOptionalServiceError) {
+              console.error('[HealthService] Health check failed:', errorMessage);
+              if (errorStack) {
+                console.error('[HealthService] Stack trace:', errorStack);
+              }
             }
           });
       } else {
         // Fallback to console.error when LoggingService is not available
-        console.error('[HealthService] Health check failed:', errorMessage);
-        if (errorStack) {
-          console.error('[HealthService] Stack trace:', errorStack);
+        // Only log if not an optional service error
+        if (!isOptionalServiceError) {
+          console.error('[HealthService] Health check failed:', errorMessage);
+          if (errorStack) {
+            console.error('[HealthService] Stack trace:', errorStack);
+          }
         }
       }
 
@@ -2160,6 +2214,22 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const videoResult = result['video'] as Record<string, unknown>;
+              const isHealthy = videoResult?.['status'] === 'up';
+
+              // Extract actual error details from health indicator
+              let errorDetails = '';
+              if (!isHealthy) {
+                // Check for error message in result
+                if (typeof videoResult?.['error'] === 'string') {
+                  errorDetails = videoResult['error'];
+                } else if (typeof videoResult?.['message'] === 'string') {
+                  errorDetails = videoResult['message'];
+                } else {
+                  errorDetails =
+                    'Video service unavailable - OpenVidu may be down or not accessible';
+                }
+              }
+
               // Build details string with provider info if available
               const providerInfo =
                 typeof videoResult?.['primaryProvider'] === 'string'
@@ -2169,19 +2239,20 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                         : ''
                     })`
                   : '';
+
               services['video'] = {
-                status: videoResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof videoResult?.['responseTime'] === 'number'
                     ? videoResult['responseTime']
                     : 0,
                 lastChecked: new Date().toISOString(),
-                details:
-                  (typeof videoResult?.['message'] === 'string'
-                    ? videoResult['message']
-                    : videoResult?.['status'] === 'up'
-                      ? 'Video service available'
-                      : 'Video service unavailable (OpenVidu may be down)') + providerInfo,
+                details: isHealthy
+                  ? (typeof videoResult?.['message'] === 'string'
+                      ? videoResult['message']
+                      : 'Video service available') + providerInfo
+                  : errorDetails + providerInfo,
+                ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
             } catch (videoError) {
               // Video service failures should not affect other services
