@@ -582,15 +582,41 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await Promise.race([
-          this.httpService.get(
-            healthEndpoint,
-            this.getHttpConfig({ timeout: 5000 }) // 5 second timeout
-          ),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Health check timeout')), 5000)
-          ),
-        ]);
+        // Try health endpoint without auth first (health endpoint typically doesn't require auth)
+        // If that fails, try with auth
+        let response;
+        try {
+          // First attempt: without authentication (health endpoint usually doesn't require it)
+          response = await Promise.race([
+            this.httpService.get(healthEndpoint, {
+              timeout: 5000,
+              // No auth header for health endpoint
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timeout')), 5000)
+            ),
+          ]);
+        } catch (authError) {
+          // If first attempt fails, try with authentication
+          const authErrorMessage = authError instanceof Error ? authError.message : 'Unknown error';
+          const isAuthError =
+            authErrorMessage.includes('401') ||
+            authErrorMessage.includes('403') ||
+            authErrorMessage.includes('Unauthorized') ||
+            authErrorMessage.includes('Forbidden');
+
+          if (isAuthError || attempt > 1) {
+            // Try with authentication
+            response = await Promise.race([
+              this.httpService.get(healthEndpoint, this.getHttpConfig({ timeout: 5000 })),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('Health check timeout')), 5000)
+              ),
+            ]);
+          } else {
+            throw authError;
+          }
+        }
 
         // Check for official health response: {"status": "UP"}
         const data = response.data as { status?: string } | undefined;
@@ -616,7 +642,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
             LogLevel.WARN,
             `OpenVidu reported unhealthy status on attempt ${attempt}`,
             'OpenViduVideoProvider.isHealthy',
-            { apiUrl: this.apiUrl, status: response.status, healthStatus: data?.status }
+            {
+              apiUrl: this.apiUrl,
+              status: response.status,
+              healthStatus: data?.status,
+              responseData: data,
+            }
           );
           // Don't retry if OpenVidu explicitly says it's DOWN
           return false;
@@ -624,44 +655,77 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
         // Any other 2xx/3xx response indicates OpenVidu is accessible
         if (response.status >= 200 && response.status < 400) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            `OpenVidu health check returned status ${response.status} - service is accessible`,
+            'OpenViduVideoProvider.isHealthy',
+            { apiUrl: this.apiUrl, status: response.status, data }
+          );
           return true;
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorCode = (error as { code?: string })?.code;
         const isConnectionError =
+          errorCode === 'ECONNREFUSED' ||
+          errorCode === 'ENOTFOUND' ||
+          errorCode === 'ETIMEDOUT' ||
+          errorCode === 'EHOSTUNREACH' ||
+          errorCode === 'ENETUNREACH' ||
           errorMessage.includes('ECONNREFUSED') ||
           errorMessage.includes('ENOTFOUND') ||
           errorMessage.includes('timeout') ||
           errorMessage.includes('ETIMEDOUT') ||
           errorMessage.includes('EHOSTUNREACH') ||
-          errorMessage.includes('ENETUNREACH');
+          errorMessage.includes('ENETUNREACH') ||
+          errorMessage.includes('getaddrinfo') ||
+          errorMessage.includes('connect ECONNREFUSED');
 
-        // Log attempt details
+        // Enhanced logging with more diagnostic information
         await this.loggingService.log(
           LogType.SYSTEM,
-          LogLevel.DEBUG,
+          attempt === maxRetries ? LogLevel.WARN : LogLevel.DEBUG,
           `OpenVidu health check attempt ${attempt}/${maxRetries} failed: ${errorMessage}`,
           'OpenViduVideoProvider.isHealthy',
           {
             attempt,
             maxRetries,
             error: errorMessage,
+            errorCode,
             apiUrl: this.apiUrl,
             healthEndpoint,
             isConnectionError,
+            diagnostic: {
+              message: isConnectionError
+                ? 'Cannot connect to OpenVidu server. Check: 1) Is OpenVidu container running? 2) Is OPENVIDU_URL correct? 3) Can backend reach OpenVidu network?'
+                : 'OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.',
+              possibleCauses: isConnectionError
+                ? [
+                    'OpenVidu container not running',
+                    'Incorrect OPENVIDU_URL configuration',
+                    'Network connectivity issue between backend and OpenVidu',
+                    'OpenVidu REST API not started (KMS may be running but REST API not ready)',
+                  ]
+                : ['OpenVidu REST API error', 'Authentication issue', 'OpenVidu service degraded'],
+            },
           }
         );
 
-        // If not a connection error (e.g., auth error), OpenVidu is running
+        // If not a connection error (e.g., auth error, 500 error), OpenVidu is running but may have issues
         if (!isConnectionError) {
           await this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.DEBUG,
-            'OpenVidu health check returned non-connection error - container is accessible',
+            'OpenVidu health check returned non-connection error - container is accessible but may have issues',
             'OpenViduVideoProvider.isHealthy',
-            { error: errorMessage, apiUrl: this.apiUrl }
+            { error: errorMessage, errorCode, apiUrl: this.apiUrl }
           );
-          return true; // Container is accessible
+          // Return true if we got a response (even if error) - means server is reachable
+          // This allows the API to continue even if OpenVidu has temporary issues
+          if (attempt === maxRetries) {
+            return false; // After all retries, mark as unhealthy
+          }
         }
 
         // Retry with delay if not last attempt
