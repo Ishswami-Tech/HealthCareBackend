@@ -79,11 +79,25 @@ export class ApplicationLifecycleManager {
         ...(config.enableHttp2 !== undefined && { enableHttp2: config.enableHttp2 }),
       };
 
-      this.app = await this.frameworkAdapter.createApplication(
-        appModule,
-        adapterOptions,
-        this.logger
-      );
+      // Add logging before and after to help diagnose hanging issues
+      this.logger.log('Starting application creation (this may take up to 120 seconds)...');
+      const startTime = Date.now();
+
+      try {
+        this.app = await this.frameworkAdapter.createApplication(
+          appModule,
+          adapterOptions,
+          this.logger
+        );
+
+        const elapsed = Date.now() - startTime;
+        this.logger.log(`Application creation completed in ${elapsed}ms`);
+      } catch (error) {
+        const elapsed = Date.now() - startTime;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.logger.error(`Application creation failed after ${elapsed}ms: ${errorMessage}`);
+        throw error;
+      }
 
       if (!this.app) {
         throw new Error('Application creation failed - returned null');

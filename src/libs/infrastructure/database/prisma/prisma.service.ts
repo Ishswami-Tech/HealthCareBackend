@@ -1357,15 +1357,51 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
 
     // Store the connection promise so other services can wait for it
-    PrismaService.connectionPromise = this.connectWithRetry();
-    await PrismaService.connectionPromise;
-    PrismaService.isConnected = true;
+    // Add timeout to prevent hanging if database is not accessible
+    const CONNECTION_TIMEOUT_MS = 60000; // 60 seconds - reasonable timeout for database connection
 
-    // Wait an additional 5 seconds to ensure all delegates are fully initialized
-    // This prevents "Invalid invocation" errors when services access delegates
-    // Prisma needs time to fully initialize all delegate properties
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    PrismaService.isFullyInitialized = true;
+    PrismaService.connectionPromise = Promise.race([
+      this.connectWithRetry(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Database connection timed out after ${CONNECTION_TIMEOUT_MS}ms. Database may not be accessible.`
+              )
+            ),
+          CONNECTION_TIMEOUT_MS
+        )
+      ),
+    ]);
+
+    try {
+      await PrismaService.connectionPromise;
+      PrismaService.isConnected = true;
+
+      // Wait an additional 5 seconds to ensure all delegates are fully initialized
+      // This prevents "Invalid invocation" errors when services access delegates
+      // Prisma needs time to fully initialize all delegate properties
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      PrismaService.isFullyInitialized = true;
+    } catch (error) {
+      // Log error but don't block application startup
+      // Application can start in degraded mode without database
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.ERROR,
+          `Database connection failed during initialization: ${errorMessage}. Application will start in degraded mode.`,
+          'PrismaService.onModuleInit',
+          { error: errorMessage }
+        );
+      }
+      // Don't throw - allow application to start without database
+      // Health checks will report database as unhealthy
+      PrismaService.isConnected = false;
+      PrismaService.isFullyInitialized = false;
+    }
 
     if (this.loggingService) {
       void this.loggingService.log(
