@@ -756,7 +756,27 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           }
 
           // Video - always check (no background monitoring)
-          healthCheckPromises.push(() => this.videoHealthIndicator!.check('video'));
+          // Wrap in try-catch to prevent video failures from affecting other services
+          healthCheckPromises.push(async () => {
+            try {
+              return await this.videoHealthIndicator!.check('video');
+            } catch (videoError) {
+              // Video service failures should not affect other services
+              // Return unhealthy status in HealthIndicatorResult format instead of throwing
+              const errorMessage =
+                videoError instanceof Error ? videoError.message : 'Video service unavailable';
+              // Use getStatus from HealthIndicator base class format
+              return {
+                video: {
+                  status: 'down',
+                  message: `Video service unavailable: ${errorMessage}. OpenVidu may be down.`,
+                  primaryProvider: 'openvidu',
+                  fallbackProvider: null,
+                  isHealthy: false,
+                },
+              } as HealthIndicatorResult;
+            }
+          });
           serviceKeys.push('video');
 
           // Only run Terminus checks if we have services to check
@@ -1699,46 +1719,293 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // Return degraded health response
+      // Try to get individual service statuses from cached data or individual checks
+      // This ensures we don't mark all services as unhealthy when only one service fails
+      const services: Record<string, ServiceHealth> = {
+        api: {
+          status: 'healthy' as const, // API is healthy if we can respond
+          responseTime: 10,
+          lastChecked: new Date().toISOString(),
+          details: 'API service is running and responding',
+        },
+      };
+
+      // Try to get cached statuses from background monitoring (if available)
+      const currentTime = Date.now();
+      const getCachedServiceStatus = (serviceName: string): ServiceHealth | null => {
+        const cached = this.serviceStatusCache.get(serviceName);
+        if (cached && currentTime - cached.timestamp < 30000) {
+          // Use cached status if less than 30 seconds old
+          return {
+            status: cached.status,
+            responseTime: 0,
+            lastChecked: new Date(cached.timestamp).toISOString(),
+            details: cached.details || `${serviceName} status from background monitoring`,
+          };
+        }
+        return null;
+      };
+
+      // Try individual service checks (non-blocking, with timeouts)
+      await Promise.allSettled([
+        // Database check
+        (async () => {
+          const cached = getCachedServiceStatus('database');
+          if (cached) {
+            services['database'] = cached;
+            return;
+          }
+          if (this.databaseHealthIndicator) {
+            try {
+              const result = await Promise.race([
+                this.databaseHealthIndicator.check('database'),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                ),
+              ]);
+              const dbResult = result['database'] as Record<string, unknown>;
+              services['database'] = {
+                status: dbResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                responseTime:
+                  typeof dbResult?.['responseTime'] === 'number' ? dbResult['responseTime'] : 0,
+                lastChecked: new Date().toISOString(),
+                details:
+                  typeof dbResult?.['message'] === 'string'
+                    ? dbResult['message']
+                    : dbResult?.['status'] === 'up'
+                      ? 'PostgreSQL connected'
+                      : 'Database health check failed',
+              };
+            } catch {
+              services['database'] = {
+                status: 'unhealthy',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: `Database health check failed: ${errorMessage}`,
+              };
+            }
+          } else {
+            services['database'] = {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              details: 'Database health indicator not available',
+            };
+          }
+        })(),
+        // Cache check
+        (async () => {
+          const cached = getCachedServiceStatus('cache');
+          if (cached) {
+            services['cache'] = cached;
+            return;
+          }
+          if (this.cacheHealthIndicator) {
+            try {
+              const result = await Promise.race([
+                this.cacheHealthIndicator.check('cache'),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                ),
+              ]);
+              const cacheResult = result['cache'] as Record<string, unknown>;
+              services['cache'] = {
+                status: cacheResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                responseTime:
+                  typeof cacheResult?.['responseTime'] === 'number'
+                    ? cacheResult['responseTime']
+                    : 0,
+                lastChecked: new Date().toISOString(),
+                details:
+                  typeof cacheResult?.['message'] === 'string'
+                    ? cacheResult['message']
+                    : cacheResult?.['status'] === 'up'
+                      ? 'Cache connected'
+                      : 'Cache health check failed',
+              };
+            } catch {
+              services['cache'] = {
+                status: 'unhealthy',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: `Cache health check failed: ${errorMessage}`,
+              };
+            }
+          } else {
+            services['cache'] = {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              details: 'Cache health indicator not available',
+            };
+          }
+        })(),
+        // Queue check
+        (async () => {
+          const cached = getCachedServiceStatus('queue');
+          if (cached) {
+            services['queue'] = cached;
+            return;
+          }
+          if (this.queueHealthIndicator) {
+            try {
+              const result = await Promise.race([
+                this.queueHealthIndicator.check('queue'),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                ),
+              ]);
+              const queueResult = result['queue'] as Record<string, unknown>;
+              services['queue'] = {
+                status: queueResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                responseTime:
+                  typeof queueResult?.['responseTime'] === 'number'
+                    ? queueResult['responseTime']
+                    : 0,
+                lastChecked: new Date().toISOString(),
+                details:
+                  typeof queueResult?.['message'] === 'string'
+                    ? queueResult['message']
+                    : queueResult?.['status'] === 'up'
+                      ? 'Queue connected'
+                      : 'Queue health check failed',
+              };
+            } catch {
+              services['queue'] = {
+                status: 'unhealthy',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: `Queue health check failed: ${errorMessage}`,
+              };
+            }
+          } else {
+            services['queue'] = {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              details: 'Queue health indicator not available',
+            };
+          }
+        })(),
+        // Logger check
+        (async () => {
+          const cached = getCachedServiceStatus('logging');
+          if (cached) {
+            services['logging'] = cached;
+            return;
+          }
+          if (this.loggingHealthIndicator) {
+            try {
+              const result = await Promise.race([
+                this.loggingHealthIndicator.check('logging'),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout')), 2000)
+                ),
+              ]);
+              const loggerResult = result['logging'] as Record<string, unknown>;
+              services['logging'] = {
+                status: loggerResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                responseTime:
+                  typeof loggerResult?.['responseTime'] === 'number'
+                    ? loggerResult['responseTime']
+                    : 0,
+                lastChecked: new Date().toISOString(),
+                details:
+                  typeof loggerResult?.['message'] === 'string'
+                    ? loggerResult['message']
+                    : loggerResult?.['status'] === 'up'
+                      ? 'Logging service available'
+                      : 'Logging health check failed',
+              };
+            } catch {
+              services['logging'] = {
+                status: 'unhealthy',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: `Logging health check failed: ${errorMessage}`,
+              };
+            }
+          } else {
+            services['logging'] = {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              details: 'Logging health indicator not available',
+            };
+          }
+        })(),
+        // Video check (may fail - handle gracefully)
+        (async () => {
+          if (this.videoHealthIndicator) {
+            try {
+              const result = await Promise.race([
+                this.videoHealthIndicator.check('video'),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Timeout')), 5000)
+                ),
+              ]);
+              const videoResult = result['video'] as Record<string, unknown>;
+              services['video'] = {
+                status: videoResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                responseTime:
+                  typeof videoResult?.['responseTime'] === 'number'
+                    ? videoResult['responseTime']
+                    : 0,
+                lastChecked: new Date().toISOString(),
+                details:
+                  typeof videoResult?.['message'] === 'string'
+                    ? videoResult['message']
+                    : videoResult?.['status'] === 'up'
+                      ? 'Video service available'
+                      : 'Video service unavailable (OpenVidu may be down)',
+                primaryProvider:
+                  typeof videoResult?.['primaryProvider'] === 'string'
+                    ? videoResult['primaryProvider']
+                    : undefined,
+                fallbackProvider:
+                  typeof videoResult?.['fallbackProvider'] === 'string'
+                    ? videoResult['fallbackProvider']
+                    : undefined,
+              };
+            } catch (videoError) {
+              // Video service failures should not affect other services
+              const videoErrorMessage =
+                videoError instanceof Error ? videoError.message : 'Unknown error';
+              services['video'] = {
+                status: 'unhealthy',
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`,
+              };
+            }
+          } else {
+            services['video'] = {
+              status: 'unhealthy',
+              responseTime: 0,
+              lastChecked: new Date().toISOString(),
+              details: 'Video health indicator not available',
+            };
+          }
+        })(),
+      ]);
+
+      // All checks are already completed (Promise.allSettled already waited for all promises)
+
+      // Determine overall status based on individual service statuses
+      const allServiceStatuses = Object.values(services).map(s => s.status);
+      const hasUnhealthy = allServiceStatuses.some(s => s === 'unhealthy');
+      const overallStatus: 'healthy' | 'degraded' = hasUnhealthy ? 'degraded' : 'healthy';
+
+      // Return degraded health response with individual service statuses
       // IMPORTANT: If we can return this response, the API is healthy!
-      // The error is from other services, not the API itself
       return {
-        status: 'degraded',
+        status: overallStatus,
         timestamp: new Date().toISOString(),
         environment: this.config?.getEnvironment() || 'development',
         version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
         services: {
-          api: {
-            status: 'healthy' as const, // API is healthy if we can respond
-            responseTime: 10, // Small response time
-            lastChecked: new Date().toISOString(),
-            details: 'API service is running and responding',
-          },
-          database: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            details: `Health check failed: ${errorMessage}. Database service may not be initialized.`,
-          },
-          cache: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            details: `Health check failed: ${errorMessage}. Cache service may not be initialized.`,
-          },
-          queue: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            details: `Health check failed: ${errorMessage}. Queue service may not be initialized.`,
-          },
-          logger: {
-            status: 'unhealthy' as const,
-            responseTime: 0,
-            lastChecked: new Date().toISOString(),
-            details: `Health check failed: ${errorMessage}. Logger service may not be initialized.`,
-          },
+          ...services,
           communication: {
             status: 'healthy' as const,
             responseTime: 0,
