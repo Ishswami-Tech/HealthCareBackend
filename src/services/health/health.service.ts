@@ -38,7 +38,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   // Smart caching configuration - optimized for real-time status (15-30s freshness)
   private readonly CACHE_FRESHNESS_MS = 20000; // 20 seconds - cache is considered fresh
   private readonly MAX_CACHE_AGE_MS = 30000; // 30 seconds - max age before forcing refresh
-  private readonly BACKGROUND_CHECK_INTERVAL = 20000; // 20 seconds - background monitoring interval
+  private readonly BACKGROUND_CHECK_INTERVAL = 30000; // 30 seconds - background monitoring interval (aligned with cache max age)
   private readonly DB_CHECK_INTERVAL = 10000; // 10 seconds - DB connection monitoring interval
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD = 90000; // 90 seconds - allow external services time to start
@@ -134,7 +134,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Start background health monitoring
-   * Updates cached health status independently of API requests every 20 seconds
+   * Updates cached health status independently of API requests every 30 seconds
    */
   private startBackgroundMonitoring() {
     // Initial health check
@@ -662,6 +662,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           lastChecked: new Date().toISOString(),
           details: 'Health check service unavailable - cannot determine status',
         },
+        video: {
+          status: 'unhealthy' as const,
+          responseTime: 0,
+          lastChecked: new Date().toISOString(),
+          details: 'Health check service unavailable - cannot determine status',
+        },
         communication: {
           status: 'healthy' as const,
           responseTime: 0,
@@ -943,6 +949,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 responseTime: 0,
                 lastChecked: new Date().toISOString(),
               },
+              video: services['video'] || {
+                status: 'unhealthy' as const,
+                responseTime: 0,
+                lastChecked: new Date().toISOString(),
+                details: 'Video health check not available',
+              },
               communication: (() => {
                 // Try to get communication health status if available
                 try {
@@ -1070,6 +1082,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     status: 'unhealthy' as const,
                     responseTime: 0,
                     lastChecked: new Date().toISOString(),
+                  },
+                  video: services['video'] || {
+                    status: 'unhealthy' as const,
+                    responseTime: 0,
+                    lastChecked: new Date().toISOString(),
+                    details: 'Video health check not available',
                   },
                   communication: {
                     status: 'healthy' as const,
@@ -1569,6 +1587,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               'Logger status unknown',
             ...(normalizedLoggerHealth.error && { error: normalizedLoggerHealth.error }),
           },
+          video: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Video health check not available',
+          },
           communication: {
             status: 'healthy' as const,
             responseTime: 0,
@@ -1747,14 +1771,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       };
 
       // Try individual service checks (non-blocking, with timeouts)
+      // Always perform real-time checks to get actual error details
+      // Cached status is only used as fallback if real-time check fails
       await Promise.allSettled([
         // Database check
         (async () => {
-          const cached = getCachedServiceStatus('database');
-          if (cached) {
-            services['database'] = cached;
-            return;
-          }
           if (this.databaseHealthIndicator) {
             try {
               const result = await Promise.race([
@@ -1764,25 +1785,67 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const dbResult = result['database'] as Record<string, unknown>;
+              const isHealthy = dbResult?.['status'] === 'up';
+
+              // Extract actual error details from health indicator
+              let errorDetails = '';
+              if (!isHealthy) {
+                // Check for errors array (from DatabaseHealthStatus)
+                const errors = dbResult?.['errors'] as string[] | undefined;
+                if (errors && Array.isArray(errors) && errors.length > 0) {
+                  errorDetails = errors.join('; ');
+                } else if (typeof dbResult?.['error'] === 'string') {
+                  errorDetails = dbResult['error'];
+                } else if (typeof dbResult?.['message'] === 'string') {
+                  errorDetails = dbResult['message'];
+                }
+              }
+
               services['database'] = {
-                status: dbResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof dbResult?.['responseTime'] === 'number' ? dbResult['responseTime'] : 0,
                 lastChecked: new Date().toISOString(),
-                details:
-                  typeof dbResult?.['message'] === 'string'
+                details: isHealthy
+                  ? typeof dbResult?.['message'] === 'string'
                     ? dbResult['message']
-                    : dbResult?.['status'] === 'up'
-                      ? 'PostgreSQL connected'
-                      : 'Database health check failed',
+                    : 'PostgreSQL connected'
+                  : errorDetails || 'Database health check failed',
+                ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
-            } catch {
-              services['database'] = {
-                status: 'unhealthy',
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details: `Database health check failed: ${errorMessage}`,
-              };
+            } catch (dbError) {
+              const dbErrorMessage = dbError instanceof Error ? dbError.message : 'Unknown error';
+              const dbErrorCode = (dbError as { code?: string })?.code;
+              const isTimeout = dbErrorMessage.includes('Timeout') || dbErrorCode === 'ETIMEDOUT';
+              const isConnectionError =
+                dbErrorMessage.includes('ECONNREFUSED') ||
+                dbErrorMessage.includes('ENOTFOUND') ||
+                dbErrorCode === 'ECONNREFUSED' ||
+                dbErrorCode === 'ENOTFOUND';
+
+              // Build detailed error message
+              let errorDetails = `Database health check failed: ${dbErrorMessage}`;
+              if (isTimeout) {
+                errorDetails = `Database health check timeout (2s) - service may be slow or unavailable`;
+              } else if (isConnectionError) {
+                errorDetails = `Database connection refused - PostgreSQL may not be running or network issue`;
+              }
+
+              // Try to use cached status if available and recent, otherwise use real-time error
+              const cached = getCachedServiceStatus('database');
+              if (cached && cached.status === 'healthy') {
+                // Use cached healthy status if available (service was healthy recently)
+                services['database'] = cached;
+              } else {
+                // Use real-time error details
+                services['database'] = {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: errorDetails,
+                  error: errorDetails,
+                };
+              }
             }
           } else {
             services['database'] = {
@@ -1795,11 +1858,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         })(),
         // Cache check
         (async () => {
-          const cached = getCachedServiceStatus('cache');
-          if (cached) {
-            services['cache'] = cached;
-            return;
-          }
           if (this.cacheHealthIndicator) {
             try {
               const result = await Promise.race([
@@ -1809,27 +1867,81 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const cacheResult = result['cache'] as Record<string, unknown>;
+              const isHealthy = cacheResult?.['status'] === 'up';
+
+              // Extract actual error details from health indicator
+              let errorDetails = '';
+              if (!isHealthy) {
+                // Check for issues array (from CacheHealthMonitorStatus)
+                const connection = cacheResult?.['connection'] as
+                  | Record<string, unknown>
+                  | undefined;
+                const issues = cacheResult?.['issues'] as string[] | undefined;
+                if (issues && Array.isArray(issues) && issues.length > 0) {
+                  errorDetails = issues.join('; ');
+                } else if (connection && typeof connection === 'object') {
+                  const providerStatus = connection['providerStatus'];
+                  const provider =
+                    typeof connection['provider'] === 'string' ? connection['provider'] : 'unknown';
+                  if (providerStatus === 'error' || providerStatus === 'disconnected') {
+                    errorDetails = `Cache provider ${provider} is ${String(providerStatus)}`;
+                  }
+                } else if (typeof cacheResult?.['error'] === 'string') {
+                  errorDetails = cacheResult['error'];
+                } else if (typeof cacheResult?.['message'] === 'string') {
+                  errorDetails = cacheResult['message'];
+                }
+              }
+
               services['cache'] = {
-                status: cacheResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof cacheResult?.['responseTime'] === 'number'
                     ? cacheResult['responseTime']
                     : 0,
                 lastChecked: new Date().toISOString(),
-                details:
-                  typeof cacheResult?.['message'] === 'string'
+                details: isHealthy
+                  ? typeof cacheResult?.['message'] === 'string'
                     ? cacheResult['message']
-                    : cacheResult?.['status'] === 'up'
-                      ? 'Cache connected'
-                      : 'Cache health check failed',
+                    : 'Cache connected'
+                  : errorDetails || 'Cache health check failed',
+                ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
-            } catch {
-              services['cache'] = {
-                status: 'unhealthy',
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details: `Cache health check failed: ${errorMessage}`,
-              };
+            } catch (cacheError) {
+              const cacheErrorMessage =
+                cacheError instanceof Error ? cacheError.message : 'Unknown error';
+              const cacheErrorCode = (cacheError as { code?: string })?.code;
+              const isTimeout =
+                cacheErrorMessage.includes('Timeout') || cacheErrorCode === 'ETIMEDOUT';
+              const isConnectionError =
+                cacheErrorMessage.includes('ECONNREFUSED') ||
+                cacheErrorMessage.includes('ENOTFOUND') ||
+                cacheErrorCode === 'ECONNREFUSED' ||
+                cacheErrorCode === 'ENOTFOUND';
+
+              // Build detailed error message
+              let errorDetails = `Cache health check failed: ${cacheErrorMessage}`;
+              if (isTimeout) {
+                errorDetails = `Cache health check timeout (2s) - Dragonfly/Redis may be slow or unavailable`;
+              } else if (isConnectionError) {
+                errorDetails = `Cache connection refused - Dragonfly/Redis may not be running or network issue`;
+              }
+
+              // Try to use cached status if available and recent, otherwise use real-time error
+              const cached = getCachedServiceStatus('cache');
+              if (cached && cached.status === 'healthy') {
+                // Use cached healthy status if available (service was healthy recently)
+                services['cache'] = cached;
+              } else {
+                // Use real-time error details
+                services['cache'] = {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: errorDetails,
+                  error: errorDetails,
+                };
+              }
             }
           } else {
             services['cache'] = {
@@ -1842,11 +1954,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         })(),
         // Queue check
         (async () => {
-          const cached = getCachedServiceStatus('queue');
-          if (cached) {
-            services['queue'] = cached;
-            return;
-          }
           if (this.queueHealthIndicator) {
             try {
               const result = await Promise.race([
@@ -1856,27 +1963,82 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const queueResult = result['queue'] as Record<string, unknown>;
+              const isHealthy = queueResult?.['status'] === 'up';
+
+              // Extract actual error details from health indicator
+              let errorDetails = '';
+              if (!isHealthy) {
+                // Check for issues array (from QueueHealthMonitorStatus)
+                const issues = queueResult?.['issues'] as string[] | undefined;
+                if (issues && Array.isArray(issues) && issues.length > 0) {
+                  errorDetails = issues.join('; ');
+                } else {
+                  const connection = queueResult?.['connection'] as
+                    | Record<string, unknown>
+                    | undefined;
+                  if (
+                    connection &&
+                    typeof connection === 'object' &&
+                    connection['connected'] === false
+                  ) {
+                    errorDetails = 'Queue connection failed';
+                  } else if (typeof queueResult?.['error'] === 'string') {
+                    errorDetails = queueResult['error'];
+                  } else if (typeof queueResult?.['message'] === 'string') {
+                    errorDetails = queueResult['message'];
+                  }
+                }
+              }
+
               services['queue'] = {
-                status: queueResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof queueResult?.['responseTime'] === 'number'
                     ? queueResult['responseTime']
                     : 0,
                 lastChecked: new Date().toISOString(),
-                details:
-                  typeof queueResult?.['message'] === 'string'
+                details: isHealthy
+                  ? typeof queueResult?.['message'] === 'string'
                     ? queueResult['message']
-                    : queueResult?.['status'] === 'up'
-                      ? 'Queue connected'
-                      : 'Queue health check failed',
+                    : 'Queue connected'
+                  : errorDetails || 'Queue health check failed',
+                ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
-            } catch {
-              services['queue'] = {
-                status: 'unhealthy',
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details: `Queue health check failed: ${errorMessage}`,
-              };
+            } catch (queueError) {
+              const queueErrorMessage =
+                queueError instanceof Error ? queueError.message : 'Unknown error';
+              const queueErrorCode = (queueError as { code?: string })?.code;
+              const isTimeout =
+                queueErrorMessage.includes('Timeout') || queueErrorCode === 'ETIMEDOUT';
+              const isConnectionError =
+                queueErrorMessage.includes('ECONNREFUSED') ||
+                queueErrorMessage.includes('ENOTFOUND') ||
+                queueErrorCode === 'ECONNREFUSED' ||
+                queueErrorCode === 'ENOTFOUND';
+
+              // Build detailed error message
+              let errorDetails = `Queue health check failed: ${queueErrorMessage}`;
+              if (isTimeout) {
+                errorDetails = `Queue health check timeout (2s) - BullMQ/Redis may be slow or unavailable`;
+              } else if (isConnectionError) {
+                errorDetails = `Queue connection refused - BullMQ/Redis may not be running or network issue`;
+              }
+
+              // Try to use cached status if available and recent, otherwise use real-time error
+              const cached = getCachedServiceStatus('queue');
+              if (cached && cached.status === 'healthy') {
+                // Use cached healthy status if available (service was healthy recently)
+                services['queue'] = cached;
+              } else {
+                // Use real-time error details
+                services['queue'] = {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: errorDetails,
+                  error: errorDetails,
+                };
+              }
             }
           } else {
             services['queue'] = {
@@ -1889,11 +2051,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         })(),
         // Logger check
         (async () => {
-          const cached = getCachedServiceStatus('logging');
-          if (cached) {
-            services['logging'] = cached;
-            return;
-          }
           if (this.loggingHealthIndicator) {
             try {
               const result = await Promise.race([
@@ -1903,27 +2060,85 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 ),
               ]);
               const loggerResult = result['logging'] as Record<string, unknown>;
+              const isHealthy = loggerResult?.['status'] === 'up';
+
+              // Extract actual error details from health indicator
+              let errorDetails = '';
+              if (!isHealthy) {
+                // Check for issues array (from LoggingHealthMonitorStatus)
+                const issues = loggerResult?.['issues'] as string[] | undefined;
+                if (issues && Array.isArray(issues) && issues.length > 0) {
+                  errorDetails = issues.join('; ');
+                } else {
+                  const service = loggerResult?.['service'] as Record<string, unknown> | undefined;
+                  const endpoint = loggerResult?.['endpoint'] as
+                    | Record<string, unknown>
+                    | undefined;
+                  if (service && typeof service === 'object' && service['available'] === false) {
+                    errorDetails = 'Logging service not available';
+                  } else if (
+                    endpoint &&
+                    typeof endpoint === 'object' &&
+                    endpoint['accessible'] === false
+                  ) {
+                    errorDetails = 'Logging endpoint not accessible';
+                  } else if (typeof loggerResult?.['error'] === 'string') {
+                    errorDetails = loggerResult['error'];
+                  } else if (typeof loggerResult?.['message'] === 'string') {
+                    errorDetails = loggerResult['message'];
+                  }
+                }
+              }
+
               services['logging'] = {
-                status: loggerResult?.['status'] === 'up' ? 'healthy' : 'unhealthy',
+                status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof loggerResult?.['responseTime'] === 'number'
                     ? loggerResult['responseTime']
                     : 0,
                 lastChecked: new Date().toISOString(),
-                details:
-                  typeof loggerResult?.['message'] === 'string'
+                details: isHealthy
+                  ? typeof loggerResult?.['message'] === 'string'
                     ? loggerResult['message']
-                    : loggerResult?.['status'] === 'up'
-                      ? 'Logging service available'
-                      : 'Logging health check failed',
+                    : 'Logging service available'
+                  : errorDetails || 'Logging health check failed',
+                ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
-            } catch {
-              services['logging'] = {
-                status: 'unhealthy',
-                responseTime: 0,
-                lastChecked: new Date().toISOString(),
-                details: `Logging health check failed: ${errorMessage}`,
-              };
+            } catch (loggerError) {
+              const loggerErrorMessage =
+                loggerError instanceof Error ? loggerError.message : 'Unknown error';
+              const loggerErrorCode = (loggerError as { code?: string })?.code;
+              const isTimeout =
+                loggerErrorMessage.includes('Timeout') || loggerErrorCode === 'ETIMEDOUT';
+              const isConnectionError =
+                loggerErrorMessage.includes('ECONNREFUSED') ||
+                loggerErrorMessage.includes('ENOTFOUND') ||
+                loggerErrorCode === 'ECONNREFUSED' ||
+                loggerErrorCode === 'ENOTFOUND';
+
+              // Build detailed error message
+              let errorDetails = `Logging health check failed: ${loggerErrorMessage}`;
+              if (isTimeout) {
+                errorDetails = `Logging health check timeout (2s) - LoggingService may be slow or unavailable`;
+              } else if (isConnectionError) {
+                errorDetails = `Logging service connection refused - LoggingService may not be initialized`;
+              }
+
+              // Try to use cached status if available and recent, otherwise use real-time error
+              const cached = getCachedServiceStatus('logging');
+              if (cached && cached.status === 'healthy') {
+                // Use cached healthy status if available (service was healthy recently)
+                services['logging'] = cached;
+              } else {
+                // Use real-time error details
+                services['logging'] = {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: errorDetails,
+                  error: errorDetails,
+                };
+              }
             }
           } else {
             services['logging'] = {
@@ -1972,11 +2187,29 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               // Video service failures should not affect other services
               const videoErrorMessage =
                 videoError instanceof Error ? videoError.message : 'Unknown error';
+              const videoErrorCode = (videoError as { code?: string })?.code;
+              const isTimeout =
+                videoErrorMessage.includes('Timeout') || videoErrorCode === 'ETIMEDOUT';
+              const isConnectionError =
+                videoErrorMessage.includes('ECONNREFUSED') ||
+                videoErrorMessage.includes('ENOTFOUND') ||
+                videoErrorCode === 'ECONNREFUSED' ||
+                videoErrorCode === 'ENOTFOUND';
+
+              // Build detailed error message
+              let errorDetails = `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`;
+              if (isTimeout) {
+                errorDetails = `Video health check timeout (5s) - OpenVidu may be slow, starting up, or unavailable`;
+              } else if (isConnectionError) {
+                errorDetails = `Video connection refused - OpenVidu container may not be running or network issue`;
+              }
+
               services['video'] = {
                 status: 'unhealthy',
                 responseTime: 0,
                 lastChecked: new Date().toISOString(),
-                details: `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`,
+                details: errorDetails,
+                error: errorDetails,
               };
             }
           } else {
@@ -2036,6 +2269,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             responseTime: 0,
             lastChecked: new Date().toISOString(),
             details: 'Logger health check not available',
+          },
+          video: services['video'] || {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Video health check not available',
           },
           communication: {
             status: 'healthy' as const,
@@ -2428,6 +2667,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             details: 'Health check service unavailable - cannot determine status',
           },
           logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: new Date().toISOString(),
+            details: 'Health check service unavailable - cannot determine status',
+          },
+          video: {
             status: 'unhealthy' as const,
             responseTime: 0,
             lastChecked: new Date().toISOString(),

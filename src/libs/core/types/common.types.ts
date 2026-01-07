@@ -121,6 +121,7 @@ export interface HealthCheckResponse {
     cache: ServiceHealth;
     queue: ServiceHealth;
     logger: ServiceHealth;
+    video: ServiceHealth;
     communication: ServiceHealth;
   };
 }
@@ -133,6 +134,7 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
     cache: ServiceHealth;
     queue: ServiceHealth;
     logger: ServiceHealth;
+    video: ServiceHealth;
     communication: ServiceHealth;
     prismaStudio?: ServiceHealth;
     redisCommander?: ServiceHealth;

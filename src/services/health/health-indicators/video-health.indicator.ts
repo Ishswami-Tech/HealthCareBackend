@@ -64,4 +64,22 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
   protected extractIsHealthy(status: VideoHealthStatus): boolean {
     return status.isHealthy;
   }
+
+  /**
+   * Override validateHealthStatus to NOT throw HealthCheckError when video is down
+   * Video is an optional service - API can function without it
+   * This prevents Terminus from logging ERROR when only video is down
+   */
+  protected validateHealthStatus(result: HealthIndicatorResult, status: VideoHealthStatus): void {
+    // Don't throw HealthCheckError for video - it's optional
+    // Video service being down should not cause ERROR logs
+    // The result already indicates unhealthy status, which Terminus will handle gracefully
+    // This prevents excessive ERROR logs when OpenVidu is down (every 20-60 seconds)
+    if (!status.isHealthy) {
+      // Video is down but don't throw - just return
+      // Terminus will see the unhealthy status in the result but won't log as ERROR
+      return;
+    }
+    // If healthy, no validation needed - result already indicates healthy
+  }
 }
