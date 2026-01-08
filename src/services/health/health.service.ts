@@ -6,7 +6,7 @@ import {
   OnModuleInit,
   OnModuleDestroy,
 } from '@nestjs/common';
-import { HealthCheckService, HealthCheckError, HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthCheckError, HealthIndicatorResult } from './health-indicators/types';
 import { ConfigService } from '@config/config.service';
 import { DatabaseHealthIndicator } from './health-indicators/database-health.indicator';
 import { CacheHealthIndicator } from './health-indicators/cache-health.indicator';
@@ -74,7 +74,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService,
-    @Optional() private readonly healthCheckService?: HealthCheckService,
     @Optional() private readonly databaseHealthIndicator?: DatabaseHealthIndicator,
     @Optional() private readonly cacheHealthIndicator?: CacheHealthIndicator,
     @Optional() private readonly queueHealthIndicator?: QueueHealthIndicator,
@@ -108,19 +107,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-      // Use LoggingService if available, otherwise fallback to console.error
-      if (this.loggingService) {
-        void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.ERROR,
-          'HealthService onModuleInit failed',
-          'HealthService',
-          { error: errorMessage, stack: errorStack }
-        );
-      } else {
-        console.error(`[HealthService] onModuleInit failed: ${errorMessage}`);
-        console.error(`[HealthService] Stack: ${errorStack}`);
-      }
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      void this.loggingService?.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'HealthService onModuleInit failed',
+        'HealthService',
+        { error: errorMessage, stack: errorStack }
+      );
       // Don't throw - allow app to continue without health monitoring
     }
   }
@@ -534,37 +528,28 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       // If getHealth itself fails, try to perform a basic health check
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (this.loggingService) {
-        await this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.ERROR,
-          'HealthService getHealth failed, attempting basic health check',
-          'HealthService',
-          { error: errorMessage }
-        );
-      } else {
-        console.error(
-          '[HealthService] getHealth failed, attempting basic health check:',
-          errorMessage
-        );
-      }
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      void this.loggingService?.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'HealthService getHealth failed, attempting basic health check',
+        'HealthService',
+        { error: errorMessage }
+      );
       try {
         return await this.performHealthCheck();
       } catch (fallbackError) {
         // Last resort: return minimal health response with real system metrics
         const fallbackErrorMessage =
           fallbackError instanceof Error ? fallbackError.message : 'Unknown error';
-        if (this.loggingService) {
-          await this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'HealthService performHealthCheck also failed',
-            'HealthService',
-            { error: fallbackErrorMessage }
-          );
-        } else {
-          console.error('[HealthService] performHealthCheck also failed:', fallbackErrorMessage);
-        }
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+        void this.loggingService?.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService performHealthCheck also failed',
+          'HealthService',
+          { error: fallbackErrorMessage }
+        );
         const minimalResponse = this.getMinimalHealthResponse();
         // Ensure minimal response has real system metrics
         try {
@@ -690,8 +675,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
    * Perform actual health checks (no caching) - always fresh
    */
   /**
-   * Perform health check using Terminus
-   * This is the core method that uses Terminus health indicators
+   * Perform health check (no Terminus dependency)
+   * This is the core method that uses health indicators with LoggingService
    */
   private async performHealthCheck(): Promise<HealthCheckResponse> {
     const startTime = performance.now();
@@ -722,17 +707,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const cachedQueueHealth = useCachedStatus('queue', 15000);
       const cachedLoggerHealth = useCachedStatus('logging', 15000);
 
-      // Use Terminus for health checks if available, but only for services without fresh cache
+      // Run health checks directly (no Terminus dependency - uses only LoggingService)
+      // Only check services that don't have fresh cache
+      // Video is excluded - it's checked separately below
       if (
-        this.healthCheckService &&
         this.databaseHealthIndicator &&
         this.cacheHealthIndicator &&
         this.queueHealthIndicator &&
-        this.loggingHealthIndicator &&
-        this.videoHealthIndicator
+        this.loggingHealthIndicator
       ) {
         try {
           // Build health check array - only check services that don't have fresh cache
+          // Video is excluded - it's checked separately below
           const healthCheckPromises: Array<() => Promise<HealthIndicatorResult>> = [];
           const serviceKeys: string[] = [];
 
@@ -768,41 +754,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             serviceKeys.push('logging');
           }
 
-          // Video - always check (no background monitoring)
-          // Wrap in try-catch to prevent video failures from affecting other services
-          healthCheckPromises.push(async () => {
-            try {
-              return await this.videoHealthIndicator!.check('video');
-            } catch (videoError) {
-              // Video service failures should not affect other services
-              // Return unhealthy status in HealthIndicatorResult format instead of throwing
-              const errorMessage =
-                videoError instanceof Error ? videoError.message : 'Video service unavailable';
-              // Use getStatus from HealthIndicator base class format
-              return {
-                video: {
-                  status: 'down',
-                  message: `Video service unavailable: ${errorMessage}. OpenVidu may be down.`,
-                  primaryProvider: 'openvidu',
-                  fallbackProvider: null,
-                  isHealthy: false,
-                },
-              } as HealthIndicatorResult;
-            }
-          });
-          serviceKeys.push('video');
+          // Video is NOT included - it's checked separately below
+          // This prevents excessive ERROR logs when OpenVidu is down (video is optional)
 
-          // Only run Terminus checks if we have services to check
-          let terminusResult: {
-            status: string;
-            info?: Record<string, unknown>;
-            error?: Record<string, unknown>;
-          } | null = null;
-          if (healthCheckPromises.length > 0) {
-            terminusResult = await this.healthCheckService.check(healthCheckPromises);
-          }
-
-          // Transform Terminus result to HealthCheckResponse format
+          // Run health checks directly (replaces Terminus HealthCheckService.check)
           const services: Record<string, ServiceHealth> = {};
 
           // Use cached status for services that have fresh cache
@@ -819,31 +774,56 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['logging'] = cachedLoggerHealth;
           }
 
-          // Process Terminus results only for services that were actually checked
-          const terminusStatus = terminusResult?.status || 'ok';
-          const info = terminusResult?.info || {};
-          const error = terminusResult?.error || {};
+          // Run health checks for services that need checking
+          if (healthCheckPromises.length > 0) {
+            const healthCheckResults = await Promise.allSettled(
+              healthCheckPromises.map(checkFn => checkFn())
+            );
 
-          // Map Terminus indicators to services (only for services that were checked)
-          const allIndicators = { ...info, ...error };
-          for (const key of serviceKeys) {
-            if (!key) continue;
-            const indicatorData = allIndicators[key];
-            if (indicatorData && typeof indicatorData === 'object') {
-              const data = indicatorData as Record<string, unknown>;
-              const hasError = error[key] !== undefined;
-              const message =
-                typeof data['message'] === 'string'
-                  ? data['message']
-                  : hasError
-                    ? 'Service unhealthy'
-                    : 'Service healthy';
-              services[key] = {
-                status: hasError ? 'unhealthy' : 'healthy',
-                responseTime: typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
-                lastChecked: new Date().toISOString(),
-                details: message,
-              };
+            // Process health check results
+            for (let i = 0; i < healthCheckResults.length; i++) {
+              const result = healthCheckResults[i];
+              const serviceKey = serviceKeys[i];
+              if (!serviceKey || !result) continue;
+
+              if (result.status === 'fulfilled') {
+                const indicatorResult = result.value;
+                const serviceData = indicatorResult[serviceKey];
+                if (serviceData && typeof serviceData === 'object') {
+                  const data = serviceData as Record<string, unknown>;
+                  const isHealthy = data['status'] === 'up';
+                  const message =
+                    typeof data['message'] === 'string'
+                      ? data['message']
+                      : isHealthy
+                        ? 'Service healthy'
+                        : 'Service unhealthy';
+                  services[serviceKey] = {
+                    status: isHealthy ? 'healthy' : 'unhealthy',
+                    responseTime:
+                      typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
+                    lastChecked: new Date().toISOString(),
+                    details: message,
+                  };
+                }
+              } else if (result.status === 'rejected') {
+                // Health check failed - log through LoggingService
+                const errorMessage =
+                  result.reason instanceof Error ? result.reason.message : 'Unknown error';
+                void this.loggingService?.log(
+                  LogType.SYSTEM,
+                  LogLevel.ERROR,
+                  `Health check failed for ${serviceKey}`,
+                  'HealthService',
+                  { service: serviceKey, error: errorMessage }
+                );
+                services[serviceKey] = {
+                  status: 'unhealthy',
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                  details: errorMessage,
+                };
+              }
             }
           }
 
@@ -857,8 +837,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           // Get realtime health status from cache if available
           // Map realtime status ('healthy' | 'degraded' | 'unhealthy') to ServiceHealth status ('healthy' | 'unhealthy')
-          let overallStatus: 'healthy' | 'degraded' =
-            terminusStatus === 'ok' && !hasUnhealthy ? 'healthy' : 'degraded';
+          let overallStatus: 'healthy' | 'degraded' = !hasUnhealthy ? 'healthy' : 'degraded';
           if (this.healthCacheService) {
             try {
               const cachedStatus: unknown = await this.healthCacheService.getCachedStatus();
@@ -871,7 +850,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 }
               }
             } catch {
-              // Fallback to Terminus status if cache unavailable
+              // Fallback to calculated status if cache unavailable
             }
           }
 
@@ -918,7 +897,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 loggerStatus = mapRealtimeToServiceHealth(loggerStatusValue) || loggerStatus;
               }
             } catch {
-              // Fallback to Terminus status if cache unavailable
+              // Fallback to calculated status if cache unavailable
               // API remains healthy (default)
             }
           }
@@ -943,11 +922,24 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             timestamp: Date.now(),
           };
 
-          // Only log health check failures if status changed or if it's a critical service failure
-          // Video service failures are optional and should only be logged on status change
+          // Only log health check failures if status changed AND it's a critical service failure
+          // Video service failures are optional and should NOT be logged repeatedly (reduces log noise)
+          // Only log when critical services fail or when video status changes from healthy to unhealthy (first failure)
           const hasVideoFailure = currentVideoStatus === 'unhealthy';
-          const hasCriticalFailure = overallStatus === 'degraded' && !hasVideoFailure;
-          const shouldLogFailure = statusChanged && (hasCriticalFailure || hasVideoFailure);
+          const hasCriticalFailure = currentOverallStatus === 'degraded' && !hasVideoFailure;
+
+          // Only log video failures when transitioning from healthy to unhealthy (first failure)
+          // Don't log if video was already unhealthy (prevents repeated logs)
+          const videoStatusChangedToUnhealthy =
+            this.previousHealthStatus &&
+            this.previousHealthStatus.video === 'healthy' &&
+            currentVideoStatus === 'unhealthy';
+
+          // Log if:
+          // 1. Critical services failed (always log critical failures)
+          // 2. Video just failed for the first time (transition from healthy to unhealthy)
+          const shouldLogFailure =
+            statusChanged && (hasCriticalFailure || videoStatusChangedToUnhealthy);
 
           if (shouldLogFailure && this.loggingService) {
             const isVideoOnlyFailure = hasVideoFailure && !hasCriticalFailure;
@@ -1064,16 +1056,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               })(),
             },
           };
-        } catch (terminusError) {
-          // Terminus throws HealthCheckError when services are down
-          // Extract the error information
+        } catch (healthCheckError) {
+          // Health check error - extract the error information
           // Check if we're in startup grace period
           const timeSinceStart = Date.now() - this.serviceStartTime;
           const isInStartupGracePeriod =
             timeSinceStart < this.EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD;
 
-          if (terminusError instanceof HealthCheckError) {
-            const causes = terminusError.causes as Record<string, unknown> | undefined;
+          if (healthCheckError instanceof HealthCheckError) {
+            const causes = healthCheckError.causes as Record<string, unknown> | undefined;
 
             // Check if only optional services (video) are unhealthy
             // If so, don't log as ERROR - video is optional and API can function without it
@@ -1183,11 +1174,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               };
             }
           }
-          throw terminusError;
+          throw healthCheckError;
         }
       }
 
-      // Fallback if Terminus is not available
+      // Fallback if health checks are not available
       const environment = this.config?.getEnvironment() || 'development';
 
       // Use cached database status if available and fresh (< 15 seconds old)
@@ -1248,17 +1239,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               return await this.checkCacheHealth();
             } catch (error) {
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-              if (this.loggingService) {
-                void this.loggingService.log(
-                  LogType.ERROR,
-                  LogLevel.ERROR,
-                  'HealthService Cache health check error',
-                  'HealthService',
-                  { error: errorMsg }
-                );
-              } else {
-                console.error('[HealthService] Cache health check error:', error);
-              }
+              // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+              void this.loggingService?.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'HealthService Cache health check error',
+                'HealthService',
+                { error: errorMsg }
+              );
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Cache health check failed',
@@ -1281,17 +1269,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ),
         ]).catch((error): ServiceHealth => {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-          if (this.loggingService) {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'HealthService Cache health check promise rejected',
-              'HealthService',
-              { error: errorMsg }
-            );
-          } else {
-            console.error('[HealthService] Cache health check promise rejected:', error);
-          }
+          // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+          void this.loggingService?.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Cache health check promise rejected',
+            'HealthService',
+            { error: errorMsg }
+          );
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Cache health check failed',
@@ -1306,17 +1291,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               return await this.checkQueueHealth();
             } catch (error) {
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-              if (this.loggingService) {
-                void this.loggingService.log(
-                  LogType.ERROR,
-                  LogLevel.ERROR,
-                  'HealthService Queue health check error',
-                  'HealthService',
-                  { error: errorMsg }
-                );
-              } else {
-                console.error('[HealthService] Queue health check error:', error);
-              }
+              // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+              void this.loggingService?.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'HealthService Queue health check error',
+                'HealthService',
+                { error: errorMsg }
+              );
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Queue health check failed',
@@ -1339,17 +1321,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ),
         ]).catch((error): ServiceHealth => {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-          if (this.loggingService) {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'HealthService Queue health check promise rejected',
-              'HealthService',
-              { error: errorMsg }
-            );
-          } else {
-            console.error('[HealthService] Queue health check promise rejected:', error);
-          }
+          // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+          void this.loggingService?.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Queue health check promise rejected',
+            'HealthService',
+            { error: errorMsg }
+          );
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Queue health check failed',
@@ -1364,17 +1343,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               return await this.checkLoggerHealth();
             } catch (error) {
               const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-              if (this.loggingService) {
-                void this.loggingService.log(
-                  LogType.ERROR,
-                  LogLevel.ERROR,
-                  'HealthService Logger health check error',
-                  'HealthService',
-                  { error: errorMsg }
-                );
-              } else {
-                console.error('[HealthService] Logger health check error:', error);
-              }
+              // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+              void this.loggingService?.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'HealthService Logger health check error',
+                'HealthService',
+                { error: errorMsg }
+              );
               return {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Logger health check failed',
@@ -1397,17 +1373,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           ),
         ]).catch((error): ServiceHealth => {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-          if (this.loggingService) {
-            void this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'HealthService Logger health check promise rejected',
-              'HealthService',
-              { error: errorMsg }
-            );
-          } else {
-            console.error('[HealthService] Logger health check promise rejected:', error);
-          }
+          // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+          void this.loggingService?.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'HealthService Logger health check promise rejected',
+            'HealthService',
+            { error: errorMsg }
+          );
           return {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Logger health check failed',
@@ -1437,17 +1410,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'HealthService Error extracting Cache health',
-            'HealthService',
-            { error: errorMsg }
-          );
-        } else {
-          console.error('[HealthService] Error extracting Cache health:', error);
-        }
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+        void this.loggingService?.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService Error extracting Cache health',
+          'HealthService',
+          { error: errorMsg }
+        );
         cacheHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Cache check extraction failed',
@@ -1472,17 +1442,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'HealthService Error extracting Queue health',
-            'HealthService',
-            { error: errorMsg }
-          );
-        } else {
-          console.error('[HealthService] Error extracting Queue health:', error);
-        }
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+        void this.loggingService?.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService Error extracting Queue health',
+          'HealthService',
+          { error: errorMsg }
+        );
         queueHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Queue check extraction failed',
@@ -1507,17 +1474,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            'HealthService Error extracting Logger health',
-            'HealthService',
-            { error: errorMsg }
-          );
-        } else {
-          console.error('[HealthService] Error extracting Logger health:', error);
-        }
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+        void this.loggingService?.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'HealthService Error extracting Logger health',
+          'HealthService',
+          { error: errorMsg }
+        );
         loggerHealth = {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Logger check extraction failed',
@@ -1762,51 +1726,34 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const shouldLog = statusChanged || !isOptionalServiceError;
 
       // Log detailed error information for debugging (only on status change or critical errors)
-      // Use LoggingService if available, otherwise fallback to console.error
-      if (shouldLog && this.loggingService) {
-        void this.loggingService
-          .log(
-            isOptionalServiceError ? LogType.SYSTEM : LogType.ERROR,
-            isOptionalServiceError ? LogLevel.WARN : LogLevel.ERROR,
-            isOptionalServiceError
-              ? `Health check: Optional service (video) unavailable. Core services are healthy.`
-              : `Health check failed: ${errorMessage}`,
-            'HealthService',
-            {
-              error: errorMessage,
-              stack: errorStack,
-              errorType: error?.constructor?.name || typeof error,
-              isOptionalServiceError,
-              statusChanged,
-              // Log which service might be causing the issue
-              services: {
-                databaseHealthIndicator: !!this.databaseHealthIndicator,
-                cacheHealthIndicator: !!this.cacheHealthIndicator,
-                queueHealthIndicator: !!this.queueHealthIndicator,
-                loggingHealthIndicator: !!this.loggingHealthIndicator,
-                loggingService: !!this.loggingService,
-                socketService: false, // Removed - clinic-specific
-                emailService: false, // Removed - clinic-specific
-                config: !!this.config,
-              },
-            }
-          )
-          .catch(() => {
-            // Ignore logging errors - fallback to console.error
-            if (!isOptionalServiceError) {
-              console.error('[HealthService] Health check failed:', errorMessage);
-              if (errorStack) {
-                console.error('[HealthService] Stack trace:', errorStack);
-              }
-            }
-          });
-      } else if (shouldLog && !isOptionalServiceError) {
-        // Fallback to console.error when LoggingService is not available
-        // Only log if not an optional service error
-        console.error('[HealthService] Health check failed:', errorMessage);
-        if (errorStack) {
-          console.error('[HealthService] Stack trace:', errorStack);
-        }
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      if (shouldLog) {
+        void this.loggingService?.log(
+          isOptionalServiceError ? LogType.SYSTEM : LogType.ERROR,
+          isOptionalServiceError ? LogLevel.WARN : LogLevel.ERROR,
+          isOptionalServiceError
+            ? `Health check: Optional service (video) unavailable. Core services are healthy.`
+            : `Health check failed: ${errorMessage}`,
+          'HealthService',
+          {
+            error: errorMessage,
+            stack: errorStack,
+            errorType: error?.constructor?.name || typeof error,
+            isOptionalServiceError,
+            statusChanged,
+            // Log which service might be causing the issue
+            services: {
+              databaseHealthIndicator: !!this.databaseHealthIndicator,
+              cacheHealthIndicator: !!this.cacheHealthIndicator,
+              queueHealthIndicator: !!this.queueHealthIndicator,
+              loggingHealthIndicator: !!this.loggingHealthIndicator,
+              loggingService: !!this.loggingService,
+              socketService: false, // Removed - clinic-specific
+              emailService: false, // Removed - clinic-specific
+              config: !!this.config,
+            },
+          }
+        );
       }
 
       // Try to get system metrics safely - always try to get real values
@@ -2293,7 +2240,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               const result = await Promise.race([
                 this.videoHealthIndicator.check('video'),
                 new Promise<never>((_, reject) =>
-                  setTimeout(() => reject(new Error('Timeout')), 5000)
+                  setTimeout(() => reject(new Error('Timeout')), 10000)
                 ),
               ]);
               const videoResult = result['video'] as Record<string, unknown>;
@@ -2353,7 +2300,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               // Build detailed error message
               let errorDetails = `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`;
               if (isTimeout) {
-                errorDetails = `Video health check timeout (5s) - OpenVidu may be slow, starting up, or unavailable`;
+                errorDetails = `Video health check timeout (10s) - OpenVidu may be slow, starting up, or unavailable`;
               } else if (isConnectionError) {
                 errorDetails = `Video connection refused - OpenVidu container may not be running or network issue`;
               }
@@ -2527,9 +2474,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get detailed health status with smart caching using Terminus
+   * Get detailed health status with smart caching (no Terminus dependency)
    * Returns cached data if fresh, otherwise performs comprehensive checks
    * Includes realtime status from realtime health monitoring system
+   * Uses only LoggingService (per .ai-rules/ coding standards)
    */
   async getDetailedHealth(): Promise<
     DetailedHealthCheckResponse & { realtime?: AggregatedHealthStatus }

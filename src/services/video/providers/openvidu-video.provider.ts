@@ -623,13 +623,15 @@ export class OpenViduVideoProvider implements IVideoProvider {
         let response;
         try {
           // First attempt: without authentication (health endpoint usually doesn't require it)
+          // Increased timeout to 10 seconds to handle slow OpenVidu responses
+          const healthCheckTimeout = 10000; // 10 seconds
           response = await Promise.race([
             this.httpService.get(healthEndpoint, {
-              timeout: 5000,
+              timeout: healthCheckTimeout,
               // No auth header for health endpoint
             }),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Health check timeout')), 5000)
+              setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
             ),
           ]);
         } catch (authError) {
@@ -643,10 +645,15 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
           if (isAuthError || attempt > 1) {
             // Try with authentication
+            // Increased timeout to 10 seconds to handle slow OpenVidu responses
+            const healthCheckTimeout = 10000; // 10 seconds
             response = await Promise.race([
-              this.httpService.get(healthEndpoint, this.getHttpConfig({ timeout: 5000 })),
+              this.httpService.get(
+                healthEndpoint,
+                this.getHttpConfig({ timeout: healthCheckTimeout })
+              ),
               new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Health check timeout')), 5000)
+                setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
               ),
             ]);
           } else {

@@ -31,14 +31,6 @@ interface DashboardLogEntry {
   data: string;
 }
 
-interface LoggingServiceLogEntry {
-  timestamp?: string | Date;
-  level?: string;
-  message?: string;
-  type?: string;
-  metadata?: unknown;
-}
-
 interface DashboardData {
   overallHealth: {
     status: 'healthy' | 'degraded';
@@ -841,13 +833,21 @@ export class AppController {
   private async getRecentLogs(limit: number = 10): Promise<DashboardLogEntry[]> {
     try {
       // Use your logging service to get recent logs
-      const logs = (await this.loggingService.getLogs()) as LoggingServiceLogEntry[];
+      const result = await this.loggingService.getLogs(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+        limit
+      );
+      const logs = result.logs;
 
       return logs.slice(0, limit).map(
-        (log: LoggingServiceLogEntry): DashboardLogEntry => ({
-          timestamp: (log.timestamp as string | Date) || new Date().toISOString(),
+        (log): DashboardLogEntry => ({
+          timestamp: log.timestamp || new Date().toISOString(),
           level: (log.level as string) || 'info',
-          message: (log.message as string) || 'No message',
+          message: log.message || 'No message',
           source: (log.type as string) || 'Unknown',
           data: log.metadata ? JSON.stringify(log.metadata) : '{}',
         })

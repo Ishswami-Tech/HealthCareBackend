@@ -65,8 +65,16 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-      console.error(`[QueueHealthMonitorService] onModuleInit failed: ${errorMessage}`);
-      console.error(`[QueueHealthMonitorService] Stack: ${errorStack}`);
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      if (this.loggingService && typeof this.loggingService.log === 'function') {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `QueueHealthMonitorService onModuleInit failed: ${errorMessage}`,
+          'QueueHealthMonitorService',
+          { error: errorMessage, stack: errorStack }
+        );
+      }
       // Don't throw - allow app to continue without queue health monitoring
     }
   }

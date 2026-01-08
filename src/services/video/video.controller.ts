@@ -31,7 +31,7 @@ import {
   ApiBearerAuth,
   ApiBody,
 } from '@nestjs/swagger';
-import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
+// Terminus removed - using only LoggingService (per .ai-rules/ coding standards)
 
 // 2. Internal imports - Infrastructure layer
 import { LoggingService } from '@infrastructure/logging';
@@ -138,7 +138,7 @@ export class VideoController {
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
     private readonly errors: HealthcareErrorsService,
-    private readonly health: HealthCheckService,
+    // HealthCheckService removed - using only LoggingService (per .ai-rules/ coding standards)
     private readonly videoHealthIndicator: VideoHealthIndicator,
     private readonly databaseHealthIndicator: DatabaseHealthIndicator,
     private readonly cacheHealthIndicator: CacheHealthIndicator
@@ -1214,15 +1214,15 @@ export class VideoController {
   }
 
   /**
-   * Health check endpoint using @nestjs/terminus
+   * Health check endpoint (no Terminus dependency)
+   * Uses only LoggingService (per .ai-rules/ coding standards)
    */
   @Get('health')
-  @HealthCheck()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Video service health check',
     description:
-      'Check the health status of the video service and providers using Terminus health checks.',
+      'Check the health status of the video service and providers using health indicators.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -1253,11 +1253,52 @@ export class VideoController {
     },
   })
   async healthCheck() {
-    return await this.health.check([
-      () => this.videoHealthIndicator.check('video'),
-      () => this.databaseHealthIndicator.check('database'),
-      () => this.cacheHealthIndicator.check('cache'),
-    ]);
+    // Run health checks directly (no Terminus dependency)
+    const healthCheckPromises = [
+      this.videoHealthIndicator.check('video'),
+      this.databaseHealthIndicator.check('database'),
+      this.cacheHealthIndicator.check('cache'),
+    ];
+
+    const results = await Promise.allSettled(healthCheckPromises);
+
+    // Transform results to Terminus-compatible format
+    const info: Record<string, unknown> = {};
+    const error: Record<string, unknown> = {};
+    let status = 'ok';
+
+    // Video health
+    const videoResult = results[0];
+    if (videoResult && videoResult.status === 'fulfilled') {
+      info['video'] = videoResult.value['video'];
+    } else {
+      error['video'] = { status: 'down', message: 'Video health check failed' };
+      status = 'error';
+    }
+
+    // Database health
+    const databaseResult = results[1];
+    if (databaseResult && databaseResult.status === 'fulfilled') {
+      info['database'] = databaseResult.value['database'];
+    } else {
+      error['database'] = { status: 'down', message: 'Database health check failed' };
+      status = 'error';
+    }
+
+    // Cache health
+    const cacheResult = results[2];
+    if (cacheResult && cacheResult.status === 'fulfilled') {
+      info['cache'] = cacheResult.value['cache'];
+    } else {
+      error['cache'] = { status: 'down', message: 'Cache health check failed' };
+      status = 'error';
+    }
+
+    return {
+      status,
+      info: Object.keys(info).length > 0 ? info : undefined,
+      error: Object.keys(error).length > 0 ? error : undefined,
+    };
   }
 
   // ============================================================================
