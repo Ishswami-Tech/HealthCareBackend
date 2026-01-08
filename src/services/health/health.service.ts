@@ -701,15 +701,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         return null;
       };
 
-      // Try to use cached status for database (background monitoring updates every 10s)
+      // Try to use cached status for all services (background monitoring updates cache)
+      // Cache freshness: 15 seconds (same as other services)
       const cachedDbHealth = useCachedStatus('database', 15000);
       const cachedCacheHealth = useCachedStatus('cache', 15000);
       const cachedQueueHealth = useCachedStatus('queue', 15000);
       const cachedLoggerHealth = useCachedStatus('logging', 15000);
+      const cachedVideoHealth = useCachedStatus('video', 15000); // Video uses same caching pattern
 
       // Run health checks directly (no Terminus dependency - uses only LoggingService)
       // Only check services that don't have fresh cache
-      // Video is excluded - it's checked separately below
+      // Video follows same pattern as other services: use cache if fresh, otherwise check
       if (
         this.databaseHealthIndicator &&
         this.cacheHealthIndicator &&
@@ -754,8 +756,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             serviceKeys.push('logging');
           }
 
-          // Video is NOT included - it's checked separately below
-          // This prevents excessive ERROR logs when OpenVidu is down (video is optional)
+          // Video - use cache if available, otherwise check (same pattern as other services)
+          if (cachedVideoHealth) {
+            // Will use cached status below
+          } else if (this.videoHealthIndicator) {
+            healthCheckPromises.push(() => this.videoHealthIndicator!.check('video'));
+            serviceKeys.push('video');
+          }
 
           // Run health checks directly (replaces Terminus HealthCheckService.check)
           const services: Record<string, ServiceHealth> = {};
@@ -772,6 +779,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           }
           if (cachedLoggerHealth) {
             services['logging'] = cachedLoggerHealth;
+          }
+          if (cachedVideoHealth) {
+            services['video'] = cachedVideoHealth;
           }
 
           // Run health checks for services that need checking
@@ -805,6 +815,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     lastChecked: new Date().toISOString(),
                     details: message,
                   };
+
+                  // Update cache for all services (including video) - same pattern as other services
+                  if (
+                    this.serviceStatusCache &&
+                    typeof this.serviceStatusCache.set === 'function'
+                  ) {
+                    this.serviceStatusCache.set(serviceKey, {
+                      status: isHealthy ? 'healthy' : 'unhealthy',
+                      timestamp: Date.now(),
+                      details: message,
+                    });
+                  }
                 }
               } else if (result.status === 'rejected') {
                 // Health check failed - log through LoggingService
@@ -823,6 +845,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   lastChecked: new Date().toISOString(),
                   details: errorMessage,
                 };
+
+                // Update cache for failed services (including video) - same pattern as other services
+                if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+                  this.serviceStatusCache.set(serviceKey, {
+                    status: 'unhealthy',
+                    timestamp: Date.now(),
+                    details: errorMessage,
+                  });
+                }
               }
             }
           }
@@ -862,6 +893,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           let cacheStatus: 'healthy' | 'unhealthy' = services['cache']?.status || 'unhealthy';
           let queueStatus: 'healthy' | 'unhealthy' = services['queue']?.status || 'unhealthy';
           let loggerStatus: 'healthy' | 'unhealthy' = services['logging']?.status || 'unhealthy';
+          let videoStatus: 'healthy' | 'unhealthy' = services['video']?.status || 'unhealthy';
 
           if (this.healthCacheService) {
             try {
@@ -881,12 +913,14 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 const cacheService = cachedServices['cache'];
                 const queueService = cachedServices['queue'];
                 const loggerService = cachedServices['logger'];
+                const videoService = cachedServices['video']; // Video service from realtime cache
 
                 const apiStatusValue = this.extractRealtimeStatus(apiService?.status);
                 const databaseStatusValue = this.extractRealtimeStatus(databaseService?.status);
                 const cacheStatusValue = this.extractRealtimeStatus(cacheService?.status);
                 const queueStatusValue = this.extractRealtimeStatus(queueService?.status);
                 const loggerStatusValue = this.extractRealtimeStatus(loggerService?.status);
+                const videoStatusValue = this.extractRealtimeStatus(videoService?.status);
 
                 // API is always healthy if status is undefined (not in cache) or healthy
                 // Only mark unhealthy if explicitly marked as unhealthy in cache
@@ -895,6 +929,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 cacheStatus = mapRealtimeToServiceHealth(cacheStatusValue) || cacheStatus;
                 queueStatus = mapRealtimeToServiceHealth(queueStatusValue) || queueStatus;
                 loggerStatus = mapRealtimeToServiceHealth(loggerStatusValue) || loggerStatus;
+                videoStatus = mapRealtimeToServiceHealth(videoStatusValue) || videoStatus; // Video status from realtime cache
               }
             } catch {
               // Fallback to calculated status if cache unavailable
@@ -999,7 +1034,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 lastChecked: new Date().toISOString(),
               },
               video: services['video'] || {
-                status: 'unhealthy' as const,
+                status: videoStatus,
                 responseTime: 0,
                 lastChecked: new Date().toISOString(),
                 details: 'Video health check not available',
@@ -2233,9 +2268,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             };
           }
         })(),
-        // Video check (may fail - handle gracefully)
+        // Video check - uses same pattern as other services (cache if fresh, otherwise check)
+        // Video is now integrated with other services - uses caching with freshness windows
         (async () => {
-          if (this.videoHealthIndicator) {
+          // Video is already checked above with other services if cache is stale
+          // This section handles video if it wasn't checked above (shouldn't happen, but safety check)
+          if (!services['video'] && this.videoHealthIndicator) {
             try {
               const result = await Promise.race([
                 this.videoHealthIndicator.check('video'),
@@ -2249,7 +2287,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               // Extract actual error details from health indicator
               let errorDetails = '';
               if (!isHealthy) {
-                // Check for error message in result
                 if (typeof videoResult?.['error'] === 'string') {
                   errorDetails = videoResult['error'];
                 } else if (typeof videoResult?.['message'] === 'string') {
@@ -2284,8 +2321,18 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   : errorDetails + providerInfo,
                 ...(errorDetails && !isHealthy ? { error: errorDetails } : {}),
               };
+
+              // Update cache with video status (same as other services)
+              if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+                this.serviceStatusCache.set('video', {
+                  status: isHealthy ? 'healthy' : 'unhealthy',
+                  timestamp: Date.now(),
+                  details: isHealthy
+                    ? 'Video service available'
+                    : errorDetails || 'Video service unavailable',
+                });
+              }
             } catch (videoError) {
-              // Video service failures should not affect other services
               const videoErrorMessage =
                 videoError instanceof Error ? videoError.message : 'Unknown error';
               const videoErrorCode = (videoError as { code?: string })?.code;
@@ -2297,7 +2344,6 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 videoErrorCode === 'ECONNREFUSED' ||
                 videoErrorCode === 'ENOTFOUND';
 
-              // Build detailed error message
               let errorDetails = `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`;
               if (isTimeout) {
                 errorDetails = `Video health check timeout (10s) - OpenVidu may be slow, starting up, or unavailable`;
@@ -2312,8 +2358,17 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 details: errorDetails,
                 error: errorDetails,
               };
+
+              // Update cache with video status (same as other services)
+              if (this.serviceStatusCache && typeof this.serviceStatusCache.set === 'function') {
+                this.serviceStatusCache.set('video', {
+                  status: 'unhealthy',
+                  timestamp: Date.now(),
+                  details: errorDetails,
+                });
+              }
             }
-          } else {
+          } else if (!services['video']) {
             services['video'] = {
               status: 'unhealthy',
               responseTime: 0,

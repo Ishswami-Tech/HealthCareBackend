@@ -11,6 +11,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
+import { HttpService } from '@infrastructure/http';
 import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
@@ -37,6 +38,7 @@ export class JitsiVideoProvider implements IVideoProvider {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     private readonly configService: ConfigService,
+    private readonly httpService: HttpService,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService
   ) {}
@@ -450,14 +452,138 @@ export class JitsiVideoProvider implements IVideoProvider {
 
   /**
    * Check if provider is healthy
+   *
+   * For external Jitsi service (Option 1 - recommended for fallback):
+   * - Verifies configuration is valid
+   * - Checks if external Jitsi service is reachable
+   * - Uses lightweight HTTP check to verify service availability
+   *
+   * Architecture:
+   * - External Jitsi service (e.g., meet.jit.si or hosted Jitsi)
+   * - No containers needed - just configuration
+   * - Health check verifies service is accessible
    */
-  isHealthy(): Promise<boolean> {
+  async isHealthy(): Promise<boolean> {
+    // Check if Jitsi is enabled first
+    if (!this.isEnabled()) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        'Jitsi is disabled in configuration',
+        'JitsiVideoProvider.isHealthy',
+        {}
+      );
+      return false;
+    }
+
     try {
       const jitsiConfig = this.configService.getJitsiConfig();
-      // Simple health check - verify config is valid
-      return Promise.resolve(jitsiConfig.enabled && !!jitsiConfig.domain);
-    } catch {
-      return Promise.resolve(false);
+
+      // Verify configuration is valid
+      if (!jitsiConfig.enabled || !jitsiConfig.domain || !jitsiConfig.baseUrl) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          'Jitsi configuration is incomplete',
+          'JitsiVideoProvider.isHealthy',
+          {
+            enabled: jitsiConfig.enabled,
+            hasDomain: !!jitsiConfig.domain,
+            hasBaseUrl: !!jitsiConfig.baseUrl,
+          }
+        );
+        return false;
+      }
+
+      // Real-time health check: Verify external Jitsi service is reachable
+      // Use lightweight HTTP check - just verify service responds
+      // Jitsi Meet typically responds on the base URL (e.g., https://meet.jit.si)
+      const maxRetries = 2; // Fewer retries for external service (faster failover)
+      const retryDelayMs = 1000;
+      const healthCheckTimeout = 5000; // 5 seconds max for external service check
+      const healthEndpoint = jitsiConfig.baseUrl;
+
+      let lastError = 'Unknown error';
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          // Lightweight health check - just verify service responds
+          // Accept any status code (200, 404, etc.) - as long as we get a response, service is up
+          const response = await Promise.race([
+            this.httpService.get(healthEndpoint, {
+              timeout: healthCheckTimeout,
+              // No auth needed for basic health check
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+            ),
+          ]);
+
+          // If we get any response (even 404), the service is reachable
+          if (response && response.status !== undefined) {
+            await this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.DEBUG,
+              `Jitsi external service is reachable (status: ${response.status})`,
+              'JitsiVideoProvider.isHealthy',
+              {
+                endpoint: healthEndpoint,
+                status: response.status,
+                attempt,
+              }
+            );
+            return true;
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          lastError = errorMessage;
+
+          // Log retry attempt (non-blocking)
+          if (attempt < maxRetries) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.DEBUG,
+              `Jitsi health check attempt ${attempt} failed, retrying...`,
+              'JitsiVideoProvider.isHealthy',
+              {
+                endpoint: healthEndpoint,
+                attempt,
+                error: errorMessage,
+              }
+            );
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+          }
+        }
+      }
+
+      // All retries failed
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Jitsi external service health check failed after ${maxRetries} attempts: ${lastError}`,
+        'JitsiVideoProvider.isHealthy',
+        {
+          endpoint: healthEndpoint,
+          attempts: maxRetries,
+          error: lastError,
+          note: 'External Jitsi service may be unreachable. Fallback will not be available.',
+        }
+      );
+      return false;
+    } catch (error) {
+      // Configuration or other error
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Jitsi health check failed: ${errorMessage}`,
+        'JitsiVideoProvider.isHealthy',
+        {
+          error: errorMessage,
+        }
+      );
+      return false;
     }
   }
 }

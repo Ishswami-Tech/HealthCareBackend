@@ -67,8 +67,9 @@ export abstract class BaseHealthIndicator<T = unknown> {
   async check(key: string): Promise<HealthIndicatorResult> {
     // Check service availability
     if (!this.isServiceAvailable()) {
-      return this.getStatus(key, true, {
+      return this.getStatus(key, false, {
         message: this.getUnavailableMessage(),
+        status: 'inactive',
       });
     }
 
