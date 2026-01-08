@@ -64,10 +64,18 @@ export class HealthAggregatorService {
           services['queue'] = this.transformServiceHealth(queueService);
         }
 
-        // Logger
-        const loggerService = healthResponse.services['logger'];
+        // Logger (service key is 'logging' in HealthService, but response uses 'logger')
+        const loggerService =
+          healthResponse.services['logger'] ||
+          (healthResponse.services as Record<string, unknown>)['logging'];
         if (loggerService) {
           services['logger'] = this.transformServiceHealth(loggerService);
+        }
+
+        // Video (same pattern as other services)
+        const videoService = healthResponse.services['video'];
+        if (videoService) {
+          services['video'] = this.transformServiceHealth(videoService);
         }
       }
 
