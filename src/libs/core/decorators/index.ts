@@ -25,6 +25,7 @@ export * from './clinic-route.decorator';
 
 // Validation decorators
 export * from './validation.decorator';
+export * from './clinic-id.validator';
 
 // Performance and security decorators
 export * from './rate-limit.decorator';

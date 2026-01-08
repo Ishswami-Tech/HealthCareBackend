@@ -222,7 +222,10 @@ verify_application() {
     
     local api_ready=false
     local worker_ready=false
-    local api_retries=10
+    # Check API for 4 minutes (240 seconds) every 30 seconds = 8 attempts
+    local api_max_wait=240
+    local api_interval=30
+    local api_elapsed=0
     local api_attempt=0
     
     # Check worker (simpler check - just running)
@@ -235,26 +238,27 @@ verify_application() {
         show_container_logs "$worker_container" 30
     fi
     
-    # Check API with retry logic (it may need time to start)
+    # Check API with retry logic (it may need time to start - up to 4 minutes)
     if container_running "$api_container"; then
-        log_info "API container is running, checking health endpoint..."
-        while [[ $api_attempt -lt $api_retries ]] && ! $api_ready; do
+        log_info "API container is running, checking health endpoint (max ${api_max_wait}s, checking every ${api_interval}s)..."
+        while [[ $api_elapsed -lt $api_max_wait ]] && ! $api_ready; do
             api_attempt=$((api_attempt + 1))
-            log_info "API health check attempt $api_attempt/$api_retries..."
+            log_info "API health check attempt $api_attempt (${api_elapsed}/${api_max_wait}s)..."
             
             if docker exec "$api_container" wget -q --spider http://localhost:8088/health 2>/dev/null; then
                 api_ready=true
                 log_success "API is ready and responding"
             else
-                if [[ $api_attempt -lt $api_retries ]]; then
-                    log_info "API not ready yet, waiting before retry..."
-                    sleep $((api_attempt * 3))  # Wait 3s, 6s, 9s, etc.
+                if [[ $api_elapsed -lt $api_max_wait ]]; then
+                    log_info "API not ready yet, waiting ${api_interval}s before retry..."
+                    sleep "$api_interval"
+                    api_elapsed=$((api_elapsed + api_interval))
                 fi
             fi
         done
         
         if ! $api_ready; then
-            log_warning "API did not become ready after $api_retries attempts"
+            log_warning "API did not become ready after ${api_max_wait}s (${api_attempt} attempts)"
             show_container_logs "$api_container" 50
         fi
     else

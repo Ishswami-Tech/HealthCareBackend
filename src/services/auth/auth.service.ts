@@ -199,8 +199,19 @@ export class AuthService {
         );
       }
 
-      // Validate clinic exists and is active
-      const clinic = await this.databaseService.findClinicByIdSafe(registerDto.clinicId);
+      // Resolve clinic UUID from clinicId (handles both UUID and clinic code like "CL0001")
+      let clinicUUID = registerDto.clinicId;
+      try {
+        // Import resolveClinicUUID utility
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        clinicUUID = await resolveClinicUUID(this.databaseService, registerDto.clinicId);
+      } catch (_resolveError) {
+        // If resolveClinicUUID fails, the clinic doesn't exist or is invalid
+        throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
+      }
+
+      // Validate clinic exists and is active using resolved UUID
+      const clinic = await this.databaseService.findClinicByIdSafe(clinicUUID);
       if (!clinic) {
         throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
       }
@@ -211,6 +222,9 @@ export class AuthService {
           'AuthService.register'
         );
       }
+
+      // Update registerDto with resolved UUID for consistency
+      registerDto.clinicId = clinicUUID;
 
       // Check if user already exists
       const existingUser = await this.databaseService.findUserByEmailSafe(registerDto.email);
