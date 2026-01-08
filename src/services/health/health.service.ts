@@ -1718,7 +1718,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // If so, log as WARN instead of ERROR to reduce log noise
       let isOptionalServiceError = false;
       let videoStatus: 'healthy' | 'unhealthy' = 'unhealthy';
-      let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'degraded';
+      const errorOverallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'degraded';
 
       if (error instanceof HealthCheckError && error.causes) {
         const causes = error.causes as Record<string, unknown> | undefined;
@@ -1748,12 +1748,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Check if status has changed - only log on status changes to reduce log noise
       const statusChanged =
         !this.previousHealthStatus ||
-        this.previousHealthStatus.overall !== overallStatus ||
+        this.previousHealthStatus.overall !== errorOverallStatus ||
         this.previousHealthStatus.video !== videoStatus;
 
       // Update previous status
       this.previousHealthStatus = {
-        overall: overallStatus,
+        overall: errorOverallStatus,
         video: videoStatus,
         timestamp: Date.now(),
       };
