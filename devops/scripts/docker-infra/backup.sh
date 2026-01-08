@@ -107,8 +107,8 @@ backup_postgres() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS[postgres_local]}",
-    "s3": "${BACKUP_RESULTS[postgres_s3]}"
+    "local": "${BACKUP_RESULTS["postgres_local"]}",
+    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
   }
 }
 EOF
@@ -177,8 +177,8 @@ backup_dragonfly() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS[dragonfly_local]}",
-    "s3": "${BACKUP_RESULTS[dragonfly_s3]}"
+    "local": "${BACKUP_RESULTS["dragonfly_local"]}",
+    "s3": "${BACKUP_RESULTS["dragonfly_s3"]}"
   }
 }
 EOF
@@ -214,8 +214,8 @@ create_metadata() {
   "postgres": ${postgres_json},
   "dragonfly": ${dragonfly_json},
   "storage": {
-    "local": "${BACKUP_RESULTS[postgres_local]}",
-    "s3": "${BACKUP_RESULTS[postgres_s3]}"
+    "local": "${BACKUP_RESULTS["postgres_local"]}",
+    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
   }
 }
 EOF
@@ -510,8 +510,8 @@ backup_postgres_to_path() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS[postgres_local]}",
-    "s3": "${BACKUP_RESULTS[postgres_s3]}"
+    "local": "${BACKUP_RESULTS["postgres_local"]}",
+    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
   }
 }
 EOF
@@ -580,8 +580,8 @@ backup_dragonfly_to_path() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS[dragonfly_local]}",
-    "s3": "${BACKUP_RESULTS[dragonfly_s3]}"
+    "local": "${BACKUP_RESULTS["dragonfly_local"]}",
+    "s3": "${BACKUP_RESULTS["dragonfly_s3"]}"
   }
 }
 EOF

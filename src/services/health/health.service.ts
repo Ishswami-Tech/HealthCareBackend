@@ -62,6 +62,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
     { status: 'healthy' | 'unhealthy'; timestamp: number; details?: string }
   >();
 
+  // Track previous health status to only log on changes (reduces log noise)
+  private previousHealthStatus: {
+    overall: 'healthy' | 'degraded' | 'unhealthy';
+    video: 'healthy' | 'unhealthy';
+    timestamp: number;
+  } | null = null;
+
   constructor(
     @Optional() @Inject(forwardRef(() => ConfigService)) private readonly config?: ConfigService,
     @Optional()
@@ -916,6 +923,56 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             }
           }
 
+          // Track video status for change detection
+          const videoServiceStatus = services['video']?.status || 'unhealthy';
+          const currentVideoStatus: 'healthy' | 'unhealthy' =
+            videoServiceStatus === 'healthy' ? 'healthy' : 'unhealthy';
+          const currentOverallStatus: 'healthy' | 'degraded' | 'unhealthy' =
+            overallStatus === 'healthy' ? 'healthy' : 'degraded';
+
+          // Check if status has changed - only log on status changes to reduce log noise
+          const statusChanged =
+            !this.previousHealthStatus ||
+            this.previousHealthStatus.overall !== currentOverallStatus ||
+            this.previousHealthStatus.video !== currentVideoStatus;
+
+          // Update previous status
+          this.previousHealthStatus = {
+            overall: currentOverallStatus,
+            video: currentVideoStatus,
+            timestamp: Date.now(),
+          };
+
+          // Only log health check failures if status changed or if it's a critical service failure
+          // Video service failures are optional and should only be logged on status change
+          const hasVideoFailure = currentVideoStatus === 'unhealthy';
+          const hasCriticalFailure = overallStatus === 'degraded' && !hasVideoFailure;
+          const shouldLogFailure = statusChanged && (hasCriticalFailure || hasVideoFailure);
+
+          if (shouldLogFailure && this.loggingService) {
+            const isVideoOnlyFailure = hasVideoFailure && !hasCriticalFailure;
+            void this.loggingService.log(
+              isVideoOnlyFailure ? LogType.SYSTEM : LogType.ERROR,
+              isVideoOnlyFailure ? LogLevel.WARN : LogLevel.ERROR,
+              isVideoOnlyFailure
+                ? 'Health check: Optional service (video) unavailable. Core services are healthy.'
+                : `Health check failed: One or more critical services are unhealthy`,
+              'HealthService',
+              {
+                overallStatus: currentOverallStatus,
+                videoStatus: currentVideoStatus,
+                statusChanged,
+                services: {
+                  database: databaseStatus,
+                  cache: cacheStatus,
+                  queue: queueStatus,
+                  logger: loggerStatus,
+                  video: currentVideoStatus,
+                },
+              }
+            );
+          }
+
           return {
             status: overallStatus,
             timestamp: new Date().toISOString(),
@@ -1660,6 +1717,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Check if error is due to optional services only (video)
       // If so, log as WARN instead of ERROR to reduce log noise
       let isOptionalServiceError = false;
+      let videoStatus: 'healthy' | 'unhealthy' = 'unhealthy';
+      let overallStatus: 'healthy' | 'degraded' | 'unhealthy' = 'degraded';
+
       if (error instanceof HealthCheckError && error.causes) {
         const causes = error.causes as Record<string, unknown> | undefined;
         if (causes && typeof causes === 'object') {
@@ -1668,6 +1728,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             unhealthyKeys.length > 0 &&
             unhealthyKeys.every(key => key === 'video') &&
             !unhealthyKeys.some(key => ['database', 'cache', 'queue', 'logging'].includes(key));
+
+          // Determine video status from error causes
+          if (causes['video']) {
+            videoStatus = 'unhealthy';
+          }
         }
       }
       if (!isOptionalServiceError) {
@@ -1675,11 +1740,30 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           errorMessage.includes('video') ||
           errorMessage.includes('Video') ||
           errorMessage.includes('OpenVidu');
+        if (isOptionalServiceError) {
+          videoStatus = 'unhealthy';
+        }
       }
 
-      // Log detailed error information for debugging
+      // Check if status has changed - only log on status changes to reduce log noise
+      const statusChanged =
+        !this.previousHealthStatus ||
+        this.previousHealthStatus.overall !== overallStatus ||
+        this.previousHealthStatus.video !== videoStatus;
+
+      // Update previous status
+      this.previousHealthStatus = {
+        overall: overallStatus,
+        video: videoStatus,
+        timestamp: Date.now(),
+      };
+
+      // Only log if status changed or if it's a critical (non-optional) error
+      const shouldLog = statusChanged || !isOptionalServiceError;
+
+      // Log detailed error information for debugging (only on status change or critical errors)
       // Use LoggingService if available, otherwise fallback to console.error
-      if (this.loggingService) {
+      if (shouldLog && this.loggingService) {
         void this.loggingService
           .log(
             isOptionalServiceError ? LogType.SYSTEM : LogType.ERROR,
@@ -1693,6 +1777,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               stack: errorStack,
               errorType: error?.constructor?.name || typeof error,
               isOptionalServiceError,
+              statusChanged,
               // Log which service might be causing the issue
               services: {
                 databaseHealthIndicator: !!this.databaseHealthIndicator,
@@ -1715,14 +1800,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               }
             }
           });
-      } else {
+      } else if (shouldLog && !isOptionalServiceError) {
         // Fallback to console.error when LoggingService is not available
         // Only log if not an optional service error
-        if (!isOptionalServiceError) {
-          console.error('[HealthService] Health check failed:', errorMessage);
-          if (errorStack) {
-            console.error('[HealthService] Stack trace:', errorStack);
-          }
+        console.error('[HealthService] Health check failed:', errorMessage);
+        if (errorStack) {
+          console.error('[HealthService] Stack trace:', errorStack);
         }
       }
 
