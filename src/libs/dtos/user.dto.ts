@@ -19,6 +19,7 @@ import {
 import { Transform, Type } from 'class-transformer';
 import { PartialType, OmitType } from '@nestjs/mapped-types';
 import { ValidateNested } from 'class-validator';
+import { IsClinicId } from '@core/decorators/clinic-id.validator';
 
 /**
  * Gender enumeration
@@ -297,11 +298,11 @@ export class CreateUserDto extends SimpleCreateUserDto {
   experience?: number;
 
   @ApiPropertyOptional({
-    example: 'clinic-uuid-123',
-    description: 'Associated clinic ID',
+    example: 'CL0001',
+    description: 'Associated clinic ID (UUID or clinic code like CL0001)',
   })
   @IsOptional()
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
 
   @ApiPropertyOptional({

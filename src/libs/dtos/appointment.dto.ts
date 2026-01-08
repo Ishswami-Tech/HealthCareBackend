@@ -15,6 +15,7 @@ import {
   IsObject,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { IsClinicId } from '@core/decorators/clinic-id.validator';
 
 /**
  * Appointment status enumeration
@@ -221,10 +222,10 @@ export class CreateAppointmentDto {
   doctorId!: string;
 
   @ApiProperty({
-    example: 'clinic-uuid-123',
-    description: 'Clinic ID where appointment will take place',
+    example: 'CL0001',
+    description: 'Clinic ID where appointment will take place (UUID or clinic code like CL0001)',
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsNotEmpty({ message: 'Clinic ID is required' })
   clinicId!: string;
 
@@ -373,11 +374,11 @@ export class UpdateAppointmentDto {
   doctorId?: string;
 
   @ApiPropertyOptional({
-    example: 'clinic-uuid-456',
-    description: 'New clinic ID for the appointment',
+    example: 'CL0001',
+    description: 'New clinic ID for the appointment (UUID or clinic code like CL0001)',
   })
   @IsOptional()
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
 }
 
@@ -415,10 +416,10 @@ export class AppointmentResponseDto {
   doctorId!: string;
 
   @ApiProperty({
-    example: 'clinic-uuid-123',
-    description: 'Clinic ID where appointment takes place',
+    example: 'CL0001',
+    description: 'Clinic ID where appointment takes place (UUID or clinic code like CL0001)',
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
 
   @ApiProperty({
@@ -898,8 +899,8 @@ export class VerifyAppointmentQRDto {
   @IsNotEmpty({ message: 'Location ID is required' })
   locationId!: string;
 
-  @ApiProperty({ description: 'Clinic ID' })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @ApiProperty({ description: 'Clinic ID (UUID or clinic code like CL0001)' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsNotEmpty({ message: 'Clinic ID is required' })
   clinicId!: string;
 
@@ -1081,9 +1082,12 @@ export class AppointmentFilterDto {
   @IsUUID('4', { message: 'Location ID must be a valid UUID' })
   locationId?: string;
 
-  @ApiPropertyOptional({ description: 'Clinic ID filter', required: false })
+  @ApiPropertyOptional({
+    description: 'Clinic ID filter (UUID or clinic code like CL0001)',
+    required: false,
+  })
   @IsOptional()
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
 
   @ApiPropertyOptional({ description: 'Page number', required: false })

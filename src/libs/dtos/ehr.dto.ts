@@ -5,6 +5,7 @@
  */
 
 import { IsString, IsOptional, IsDateString } from 'class-validator';
+import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import type {
   MedicalHistoryResponse,
   LabReportResponse,
@@ -24,7 +25,7 @@ export class CreateMedicalHistoryDto {
   userId!: string;
 
   @IsOptional()
-  @IsString()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
 
   @IsString()
@@ -58,7 +59,7 @@ export class CreateLabReportDto {
   userId!: string;
 
   @IsOptional()
-  @IsString()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
 
   @IsString()

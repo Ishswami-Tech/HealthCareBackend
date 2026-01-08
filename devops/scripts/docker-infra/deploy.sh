@@ -362,8 +362,8 @@ deploy_application() {
         
         log_success "Application containers started successfully"
         
-        # Wait for health
-        if wait_for_health "${CONTAINER_PREFIX}api" 120; then
+        # Wait for health (4 minutes with 30 second intervals - API takes time to start)
+        if wait_for_health "${CONTAINER_PREFIX}api" 240 30; then
             # Create success backup after successful deployment
             log_info "Creating success backup after successful deployment..."
             local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"

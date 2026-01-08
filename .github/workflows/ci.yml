@@ -907,7 +907,7 @@ jobs:
           CORS_METHODS=${{ vars.CORS_METHODS }}
           SWAGGER_URL=${{ vars.SWAGGER_URL }}
           BULL_BOARD_URL=${{ vars.BULL_BOARD_URL }}
-          SOCKET_URL=${{ secrets.SOCKET_URL }}
+          SOCKET_URL=${{ vars.SOCKET_URL }}
           PRISMA_STUDIO_URL=${{ vars.PRISMA_STUDIO_URL }}
           PGADMIN_URL=${{ vars.PGADMIN_URL }}
           WHATSAPP_ENABLED=${{ vars.WHATSAPP_ENABLED }}
@@ -1047,6 +1047,24 @@ jobs:
           CDN_URL=${{ vars.CDN_URL }}
           DOCKER_ENV=${{ vars.DOCKER_ENV }}
           DOCKER_NETWORK=${{ vars.DOCKER_NETWORK }}
+          
+          # Optional Service URLs
+          REDIS_COMMANDER_URL=${{ vars.REDIS_COMMANDER_URL }}
+          
+          # Jitsi Configuration (Fallback Video Provider - Optional)
+          JITSI_DOMAIN=${{ vars.JITSI_DOMAIN }}
+          JITSI_BASE_DOMAIN=${{ vars.JITSI_BASE_DOMAIN }}
+          JITSI_SUBDOMAIN=${{ vars.JITSI_SUBDOMAIN }}
+          JITSI_APP_ID=${{ vars.JITSI_APP_ID }}
+          JITSI_APP_SECRET=${{ secrets.JITSI_APP_SECRET }}
+          JITSI_BASE_URL=${{ vars.JITSI_BASE_URL }}
+          JITSI_WS_URL=${{ vars.JITSI_WS_URL }}
+          JITSI_ENABLE_RECORDING=${{ vars.JITSI_ENABLE_RECORDING }}
+          JITSI_ENABLE_WAITING_ROOM=${{ vars.JITSI_ENABLE_WAITING_ROOM }}
+          
+          # Social Auth Redirect URIs
+          FACEBOOK_REDIRECT_URI=${{ vars.FACEBOOK_REDIRECT_URI }}
+          APPLE_REDIRECT_URI=${{ vars.APPLE_REDIRECT_URI }}
           EOF
 
       - name: Copy files to server
