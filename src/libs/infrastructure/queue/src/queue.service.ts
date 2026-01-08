@@ -1922,19 +1922,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       // Defensive check: ensure all Maps are initialized (they should always be, but check anyway)
       if (!this.queues || typeof this.queues.set !== 'function') {
         const errorMsg = 'queues Map is not properly initialized';
-        console.error(`[QueueService] ${errorMsg}`);
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
         void this.loggingService.log(LogType.SYSTEM, LogLevel.ERROR, errorMsg, 'QueueService', {});
         return;
       }
       if (!this.workers || typeof this.workers.set !== 'function') {
         const errorMsg = 'workers Map is not properly initialized';
-        console.error(`[QueueService] ${errorMsg}`);
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
         void this.loggingService.log(LogType.SYSTEM, LogLevel.ERROR, errorMsg, 'QueueService', {});
         return;
       }
       if (!this.queueMetrics || typeof this.queueMetrics.set !== 'function') {
         const errorMsg = 'queueMetrics Map is not properly initialized';
-        console.error(`[QueueService] ${errorMsg}`);
+        // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
         void this.loggingService.log(LogType.SYSTEM, LogLevel.ERROR, errorMsg, 'QueueService', {});
         return;
       }
@@ -1949,8 +1949,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-      console.error(`[QueueService] onModuleInit failed: ${errorMessage}`);
-      console.error(`[QueueService] Stack: ${errorStack}`);
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `QueueService onModuleInit failed: ${errorMessage}`,
+        'QueueService',
+        { error: errorMessage, stack: errorStack }
+      );
       // Don't throw - allow app to continue without queue service logging
     }
   }

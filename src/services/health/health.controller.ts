@@ -11,11 +11,12 @@ export class HealthController {
   constructor(private readonly healthService: HealthService) {}
 
   /**
-   * Unified Health Check Endpoint using HealthService (Terminus-based)
+   * Unified Health Check Endpoint using HealthService
    *
-   * Returns real-time health status of core services using Terminus health indicators.
+   * Returns real-time health status of core services using health indicators.
    * Always performs fresh health checks for accurate status.
    * Includes realtime status from realtime health monitoring system.
+   * Uses only LoggingService (per .ai-rules/ coding standards).
    * Perfect for load balancers, monitoring tools, and real-time status checks.
    *
    * Query Parameters:

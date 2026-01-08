@@ -5,18 +5,34 @@ import {
   Query,
   Res,
   Post,
+  Body,
+  Param,
   Inject,
   forwardRef,
   VERSION_NEUTRAL,
+  UsePipes,
+  ValidationPipe,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@logging';
 
 // Internal imports - Types
 import { LogType, LogLevel } from '@core/types';
+
+// Internal imports - DTOs
+import {
+  GetLogsQueryDto,
+  GetEventsQueryDto,
+  ClearLogsDto,
+  PaginatedLogsResponseDto,
+  PaginatedEventsResponseDto,
+} from '@dtos/logging.dto';
+
+// Internal imports - Rate Limiting
+import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 
 @ApiTags('logging')
 @Controller({ path: 'logger', version: VERSION_NEUTRAL })
@@ -428,24 +444,33 @@ export class LoggingController {
   }
 
   @Get('logs/data')
-  async getLogs(
-    @Query('type') type?: string, // Changed from LogType to string to avoid Swagger circular dependency
-    @Query('level') level?: string,
-    @Query('startTime') startTime?: string,
-    @Query('endTime') endTime?: string
-  ): Promise<unknown[]> {
+  @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
+  @ApiOperation({ summary: 'Get paginated logs with filtering' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated logs retrieved successfully',
+    type: PaginatedLogsResponseDto,
+  })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async getLogs(@Query() query: GetLogsQueryDto): Promise<PaginatedLogsResponseDto> {
     try {
-      const logs = await this.loggingService.getLogs(
-        type as LogType | undefined, // Cast to LogType for service call
-        startTime ? new Date(startTime) : undefined,
-        endTime ? new Date(endTime) : undefined,
-        (level as LogLevel) || undefined
+      const result = await this.loggingService.getLogs(
+        query.type,
+        query.startTime ? new Date(query.startTime) : undefined,
+        query.endTime ? new Date(query.endTime) : undefined,
+        query.level,
+        query.page,
+        query.limit,
+        query.search
       );
 
-      return logs.map((log: unknown) => ({
+      // Map logs to ensure disabled property is set
+      const mappedLogs = result.logs.map((log: unknown) => ({
         ...(log as Record<string, unknown>),
         disabled: false, // Ensure disabled property is always set
       }));
+
+      return new PaginatedLogsResponseDto(mappedLogs, result.meta);
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -457,18 +482,103 @@ export class LoggingController {
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
-      return []; // Return empty array instead of null
+      // Return empty paginated result on error
+      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
+      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
+      return new PaginatedLogsResponseDto([], meta);
     }
   }
 
   @Get('events/data')
-  async getEvents(@Query('type') type?: string): Promise<unknown[]> {
-    return await this.loggingService.getEvents(type);
+  @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
+  @ApiOperation({ summary: 'Get paginated events with filtering' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated events retrieved successfully',
+    type: PaginatedEventsResponseDto,
+  })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async getEvents(@Query() query: GetEventsQueryDto): Promise<PaginatedEventsResponseDto> {
+    try {
+      const result = await this.loggingService.getEvents(query.type, query.page, query.limit);
+      return new PaginatedEventsResponseDto(result.events, result.meta);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch events',
+        'LoggingController',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      // Return empty paginated result on error
+      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
+      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
+      return new PaginatedEventsResponseDto([], meta);
+    }
+  }
+
+  @Get('logs/clinic/:clinicId')
+  @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
+  @ApiOperation({ summary: 'Get paginated logs filtered by clinic ID' })
+  @ApiParam({ name: 'clinicId', description: 'Clinic ID to filter logs', example: 'CL0001' })
+  @ApiResponse({
+    status: 200,
+    description: 'Paginated clinic logs retrieved successfully',
+    type: PaginatedLogsResponseDto,
+  })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async getLogsByClinic(
+    @Param('clinicId') clinicId: string,
+    @Query() query: GetLogsQueryDto
+  ): Promise<PaginatedLogsResponseDto> {
+    try {
+      const result = await this.loggingService.getLogsByClinic(
+        clinicId,
+        query.type,
+        query.startTime ? new Date(query.startTime) : undefined,
+        query.endTime ? new Date(query.endTime) : undefined,
+        query.level,
+        query.page,
+        query.limit,
+        query.search
+      );
+
+      // Map logs to ensure disabled property is set
+      const mappedLogs = result.logs.map((log: unknown) => ({
+        ...(log as Record<string, unknown>),
+        disabled: false,
+      }));
+
+      return new PaginatedLogsResponseDto(mappedLogs, result.meta);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to fetch clinic logs',
+        'LoggingController',
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          clinicId,
+        }
+      );
+      // Return empty paginated result on error
+      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
+      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
+      return new PaginatedLogsResponseDto([], meta);
+    }
   }
 
   @Post('logs/clear')
-  async clearLogs(): Promise<{ success: boolean; message: string }> {
-    return (await this.loggingService.clearLogs()) as { success: boolean; message: string };
+  @RateLimitAPI({ points: 10, duration: 60 }) // 10 requests per minute (more restrictive for destructive operation)
+  @ApiOperation({ summary: 'Clear logs from cache and optionally from database' })
+  @ApiResponse({ status: 200, description: 'Logs cleared successfully' })
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
+  async clearLogs(@Body() body: ClearLogsDto): Promise<{ success: boolean; message: string }> {
+    return await this.loggingService.clearLogs(body.clearDatabase || false);
   }
 
   @Post('events/clear')

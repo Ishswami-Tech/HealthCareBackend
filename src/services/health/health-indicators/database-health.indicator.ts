@@ -1,12 +1,13 @@
 /**
  * Database Health Indicator for Health Module
  * @class DatabaseHealthIndicator
- * @description Health indicator for database service using @nestjs/terminus
+ * @description Health indicator for database service (no Terminus dependency)
+ * Uses only LoggingService (per .ai-rules/ coding standards)
  * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthIndicatorResult } from './types';
 // Use direct import to avoid TDZ issues with barrel exports
 // Import service directly and type from core types
 import { DatabaseService } from '@infrastructure/database/database.service';

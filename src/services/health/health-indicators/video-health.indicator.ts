@@ -1,14 +1,15 @@
 /**
  * Video Health Indicator for Health Module
  * @class VideoHealthIndicator
- * @description Health indicator for video service using @nestjs/terminus
+ * @description Health indicator for video service (no Terminus dependency)
+ * Uses only LoggingService (per .ai-rules/ coding standards)
  * Uses OpenVidu official health endpoint: /openvidu/api/health
  * See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
  * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthIndicatorResult } from './types';
 import { VideoService } from '@services/video/video.service';
 import { BaseHealthIndicator } from './base-health.indicator';
 
@@ -99,16 +100,16 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
   /**
    * Override validateHealthStatus to NOT throw HealthCheckError when video is down
    * Video is an optional service - API can function without it
-   * This prevents Terminus from logging ERROR when only video is down
+   * This prevents excessive ERROR logs when only video is down
    */
   protected validateHealthStatus(result: HealthIndicatorResult, status: VideoHealthStatus): void {
     // Don't throw HealthCheckError for video - it's optional
     // Video service being down should not cause ERROR logs
-    // The result already indicates unhealthy status, which Terminus will handle gracefully
+    // The result already indicates unhealthy status
     // This prevents excessive ERROR logs when OpenVidu is down (every 20-60 seconds)
     if (!status.isHealthy) {
       // Video is down but don't throw - just return
-      // Terminus will see the unhealthy status in the result but won't log as ERROR
+      // The result already indicates unhealthy status
       return;
     }
     // If healthy, no validation needed - result already indicates healthy

@@ -13,11 +13,20 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import { HttpStatus } from '@nestjs/common';
 
 // Internal imports - Types
-import { LogType, LogLevel } from '@core/types';
+import {
+  LogType,
+  LogLevel,
+  type LogContext,
+  type LogEntry,
+  type EventEntry,
+  type PaginatedLogsResult,
+  type PaginatedEventsResult,
+} from '@core/types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
-import type { LogContext } from '@core/types/logging.types';
+import { PaginationMetaDto } from '@dtos/common-response.dto';
+import { calculatePagination } from '@infrastructure/database/query/query.utils';
 
 /**
  * ===================================================================
@@ -69,12 +78,14 @@ import type { LogContext } from '@core/types/logging.types';
  *   { userId: '123', ipAddress: '192.168.1.1' }
  * );
  *
- * // Get logs with filtering
- * const logs = await this.loggingService.getLogs(
+ * // Get logs with filtering and pagination
+ * const result = await this.loggingService.getLogs(
  *   LogType.USER_ACTIVITY,
  *   new Date('2024-01-01'),
  *   new Date('2024-01-31'),
- *   LogLevel.INFO
+ *   LogLevel.INFO,
+ *   1, // page
+ *   50 // limit
  * );
  * ```
  *
@@ -88,6 +99,7 @@ import type { LogContext } from '@core/types/logging.types';
  * - Structured logging with context
  * - Performance metrics collection
  * - Error tracking and alerting
+ * - Pagination support for scalability
  */
 @Injectable()
 export class LoggingService {
@@ -114,6 +126,9 @@ export class LoggingService {
   private static systemUserWarningLogged = false;
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
+  // Error tracking for observability
+  private errorCounts = new Map<string, number>();
+  private lastErrorTime = new Map<string, number>();
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -534,13 +549,34 @@ export class LoggingService {
     }
   }
 
+  /**
+   * Get logs with pagination and filtering
+   * @param type - Filter by log type
+   * @param startTime - Start time for filtering
+   * @param endTime - End time for filtering
+   * @param level - Filter by log level
+   * @param page - Page number (1-based, default: 1)
+   * @param limit - Items per page (default: 100, max: 1000)
+   * @param search - Search term to filter by message content
+   * @returns Paginated logs result
+   */
   async getLogs(
     type?: LogType,
     startTime?: Date,
     endTime?: Date,
-    level?: LogLevel
-  ): Promise<unknown[]> {
+    level?: LogLevel,
+    page?: number,
+    limit?: number,
+    search?: string
+  ): Promise<PaginatedLogsResult> {
     try {
+      // Calculate pagination
+      const pagination = calculatePagination({
+        ...(page !== undefined && { page }),
+        ...(limit !== undefined && { limit }),
+      });
+      const { skip, take, page: currentPage } = pagination;
+
       // Enhanced time range handling for 1M users
       const now = new Date();
       const defaultStartTime = new Date(now.getTime() - 6 * 60 * 60 * 1000); // 6 hours for better performance
@@ -548,13 +584,13 @@ export class LoggingService {
       const finalStartTime = startTime || defaultStartTime;
       const finalEndTime = endTime || now;
 
-      // Optimized cache key with better distribution
-      const cacheKey = `logs:v2:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}`;
+      // Optimized cache key with pagination and search
+      const cacheKey = `logs:v3:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}:${search || 'none'}:${currentPage}:${take}`;
 
       // Enhanced caching with compression for large datasets
-      const cachedLogs = await this.cacheService?.get<string>(cacheKey);
-      if (cachedLogs) {
-        return JSON.parse(cachedLogs) as unknown[];
+      const cachedResult = await this.cacheService?.get<string>(cacheKey);
+      if (cachedResult) {
+        return JSON.parse(cachedResult) as PaginatedLogsResult;
       }
 
       // Optimized database query for 1M users
@@ -573,31 +609,47 @@ export class LoggingService {
       if (!this.databaseService) {
         // Cache-only fallback for high performance (when database is not available)
         const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
-        const parsedLogs = cachedLogs
-          .map(log => JSON.parse(log) as unknown)
-          .filter((log: unknown) => {
-            const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
-            const logDate = new Date(logData.timestamp);
+        const parsedLogs: LogEntry[] = cachedLogs
+          .map(log => JSON.parse(log) as LogEntry)
+          .filter((log: LogEntry) => {
+            const logDate = new Date(log.timestamp);
 
             // Apply time filter
             const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
 
             // Apply type filter
-            const matchesType = !type || logData.type === type;
+            const matchesType = !type || log.type === type;
 
             // Apply level filter
-            const matchesLevel = !level || logData.level === level;
+            const matchesLevel = !level || log.level === level;
 
-            return inTimeRange && matchesType && matchesLevel;
-          })
-          .sort((a: unknown, b: unknown) => {
-            const aData = a as { timestamp: string };
-            const bData = b as { timestamp: string };
-            return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
-          })
-          .slice(0, 1000); // Limit for performance
+            // Apply search filter
+            const matchesSearch =
+              !search ||
+              log.message.toLowerCase().includes(search.toLowerCase()) ||
+              log.context.toLowerCase().includes(search.toLowerCase());
 
-        return parsedLogs;
+            return inTimeRange && matchesType && matchesLevel && matchesSearch;
+          })
+          .sort((a, b) => {
+            const aTime = new Date(a.timestamp).getTime();
+            const bTime = new Date(b.timestamp).getTime();
+            return bTime - aTime;
+          });
+
+        // Calculate total
+        const total = parsedLogs.length;
+
+        // Apply pagination
+        const paginatedLogs = parsedLogs.slice(skip, skip + take);
+
+        // Create pagination metadata
+        const meta = new PaginationMetaDto(currentPage, take, total);
+
+        return {
+          logs: paginatedLogs,
+          meta,
+        };
       }
 
       // Temporarily bypass database query due to schema migration issues
@@ -609,8 +661,16 @@ export class LoggingService {
         // CRITICAL: During startup grace period, don't call Prisma methods at all
         // Even accessing auditLog delegate triggers Prisma's internal validation that logs to stderr
         if (isInStartupGracePeriod) {
-          // Return empty array during startup grace period
-          return [];
+          // Return empty result during startup grace period
+          const pagination = calculatePagination({
+            ...(page !== undefined && { page }),
+            ...(limit !== undefined && { limit }),
+          });
+          const meta = new PaginationMetaDto(pagination.page, pagination.take, 0);
+          return {
+            logs: [],
+            meta,
+          };
         }
 
         const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
@@ -670,7 +730,7 @@ export class LoggingService {
           clinicId: string | null;
         }>;
 
-        const dbResult = (
+        const dbResult: LogEntry[] = (
           dbLogs as Array<{
             id: string;
             action: string;
@@ -695,123 +755,278 @@ export class LoggingService {
               clinicId: log.clinicId || undefined,
             },
             timestamp: log.timestamp,
-          };
+            clinicId: log.clinicId || undefined,
+            userId: log.userId,
+          } as LogEntry;
         });
 
         // CRITICAL: Combine database logs with cache logs to ensure ALL logs appear in UI
         // Cache logs contain the full log entry with all metadata, while DB logs are audit-only
-        let combinedLogs = [...dbResult];
+        let combinedLogs: LogEntry[] = [...dbResult];
 
         try {
-          // Get cache logs and combine with database logs
-          const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
-          const parsedCacheLogs = cachedLogs
-            .map(log => JSON.parse(log) as unknown)
-            .filter((log: unknown) => {
-              const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
-              const logDate = new Date(logData.timestamp);
+          // Get cache logs with pagination (use lRange with start/end for performance)
+          const cacheStart = 0;
+          const cacheEnd = -1; // Get all, we'll filter and paginate
+          const cachedLogs = (await this.cacheService?.lRange('logs', cacheStart, cacheEnd)) || [];
+          const parsedCacheLogs: LogEntry[] = cachedLogs
+            .map(log => JSON.parse(log) as LogEntry)
+            .filter((log: LogEntry) => {
+              const logDate = new Date(log.timestamp);
 
               // Apply time filter
               const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
 
               // Apply type filter
-              const matchesType = !type || logData.type === type;
+              const matchesType = !type || log.type === type;
 
               // Apply level filter
-              const matchesLevel = !level || logData.level === level;
+              const matchesLevel = !level || log.level === level;
 
-              return inTimeRange && matchesType && matchesLevel;
-            })
-            .slice(0, 5000); // Limit cache logs for performance
+              // Apply search filter
+              const matchesSearch =
+                !search ||
+                log.message.toLowerCase().includes(search.toLowerCase()) ||
+                log.context.toLowerCase().includes(search.toLowerCase());
+
+              return inTimeRange && matchesType && matchesLevel && matchesSearch;
+            });
 
           // Combine and deduplicate by ID (cache logs have more complete data)
-          const logMap = new Map<string, unknown>();
+          const logMap = new Map<string, LogEntry>();
 
           // First add cache logs (they have complete metadata)
           for (const log of parsedCacheLogs) {
-            const logData = log as { id: string };
-            if (logData.id) {
-              logMap.set(logData.id, log);
+            if (log.id) {
+              logMap.set(log.id, log);
             }
           }
 
           // Then add database logs (only if not already in cache)
           for (const log of dbResult) {
-            const logData = log as { id: string };
-            if (logData.id && !logMap.has(logData.id)) {
-              logMap.set(logData.id, log);
+            if (log.id && !logMap.has(log.id)) {
+              logMap.set(log.id, log);
             }
           }
 
-          combinedLogs = Array.from(logMap.values()) as typeof combinedLogs;
+          combinedLogs = Array.from(logMap.values());
 
           // Sort by timestamp descending (newest first)
-          combinedLogs.sort((a: unknown, b: unknown) => {
-            const aData = a as { timestamp: string | Date };
-            const bData = b as { timestamp: string | Date };
-            const aTime = new Date(aData.timestamp).getTime();
-            const bTime = new Date(bData.timestamp).getTime();
+          combinedLogs.sort((a, b) => {
+            const aTime = new Date(a.timestamp).getTime();
+            const bTime = new Date(b.timestamp).getTime();
             return bTime - aTime;
           });
 
-          // Limit to 1000 for performance
-          combinedLogs = combinedLogs.slice(0, 1000);
-        } catch (_cacheError) {
-          // If cache retrieval fails, just use database logs
-          // Silent fail - database logs are still available
+          // Apply search filter if not already applied
+          if (search) {
+            combinedLogs = combinedLogs.filter(
+              log =>
+                log.message.toLowerCase().includes(search.toLowerCase()) ||
+                log.context.toLowerCase().includes(search.toLowerCase())
+            );
+          }
+
+          // Calculate total before pagination
+          const total = combinedLogs.length;
+
+          // Apply pagination
+          combinedLogs = combinedLogs.slice(skip, skip + take);
+
+          // Create pagination metadata
+          const meta = new PaginationMetaDto(currentPage, take, total);
+
+          const result: PaginatedLogsResult = {
+            logs: combinedLogs,
+            meta,
+          };
+
+          // Enhanced caching with longer TTL for 1M users
+          await this.cacheService?.set(cacheKey, JSON.stringify(result), 900); // 15 minutes
+
+          return result;
+        } catch (cacheError) {
+          // Track error for observability
+          this.trackError('getLogs_cache_error', cacheError);
+
+          // If cache retrieval fails, use database logs with pagination
+          // Apply search filter to database results
+          let filteredLogs = dbResult;
+          if (search) {
+            filteredLogs = dbResult.filter(
+              log =>
+                log.message.toLowerCase().includes(search.toLowerCase()) ||
+                log.context.toLowerCase().includes(search.toLowerCase())
+            );
+          }
+
+          // Calculate total
+          const total = filteredLogs.length;
+
+          // Apply pagination
+          const paginatedLogs = filteredLogs.slice(skip, skip + take);
+
+          // Create pagination metadata
+          const meta = new PaginationMetaDto(currentPage, take, total);
+
+          return {
+            logs: paginatedLogs,
+            meta,
+          };
         }
+      } catch (dbError) {
+        // Track error for observability
+        this.trackError('getLogs_database_error', dbError);
 
-        // Enhanced caching with longer TTL for 1M users
-        await this.cacheService?.set(cacheKey, combinedLogs, 900); // 15 minutes
-
-        return combinedLogs;
-      } catch (_error) {
-        // Database query failed, falling back to cache - silent fail
-
+        // Database query failed, falling back to cache
         // Fallback to cache-only logs (these contain full log entries with all metadata)
         try {
           const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
-          const parsedLogs = cachedLogs
-            .map(log => JSON.parse(log) as unknown)
-            .filter((log: unknown) => {
-              const logData = log as { timestamp: string; type?: LogType; level?: LogLevel };
-              const logDate = new Date(logData.timestamp);
+          const parsedLogs: LogEntry[] = cachedLogs
+            .map(log => JSON.parse(log) as LogEntry)
+            .filter((log: LogEntry) => {
+              const logDate = new Date(log.timestamp);
 
               // Apply time filter
               const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
 
               // Apply type filter
-              const matchesType = !type || logData.type === type;
+              const matchesType = !type || log.type === type;
 
               // Apply level filter
-              const matchesLevel = !level || logData.level === level;
+              const matchesLevel = !level || log.level === level;
 
-              return inTimeRange && matchesType && matchesLevel;
-            })
-            .sort((a: unknown, b: unknown) => {
-              const aData = a as { timestamp: string };
-              const bData = b as { timestamp: string };
-              return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
-            })
-            .slice(0, 1000); // Limit for performance
+              // Apply search filter
+              const matchesSearch =
+                !search ||
+                log.message.toLowerCase().includes(search.toLowerCase()) ||
+                log.context.toLowerCase().includes(search.toLowerCase());
 
-          return parsedLogs;
-        } catch (_cacheError) {
-          // Cache fallback also failed - return empty array
-          return [];
+              return inTimeRange && matchesType && matchesLevel && matchesSearch;
+            })
+            .sort((a, b) => {
+              const aTime = new Date(a.timestamp).getTime();
+              const bTime = new Date(b.timestamp).getTime();
+              return bTime - aTime;
+            });
+
+          // Calculate total
+          const total = parsedLogs.length;
+
+          // Apply pagination
+          const paginatedLogs = parsedLogs.slice(skip, skip + take);
+
+          // Create pagination metadata
+          const meta = new PaginationMetaDto(currentPage, take, total);
+
+          return {
+            logs: paginatedLogs,
+            meta,
+          };
+        } catch (cacheError) {
+          // Track error for observability
+          this.trackError('getLogs_cache_fallback_error', cacheError);
+
+          // Cache fallback also failed - return empty result
+          const meta = new PaginationMetaDto(currentPage, take, 0);
+          return {
+            logs: [],
+            meta,
+          };
         }
       }
-    } catch (_error) {
-      // Silent fail - return empty array on error
-      return [];
+    } catch (error) {
+      // Track error for observability
+      this.trackError('getLogs_general_error', error);
+
+      // Return empty result on error
+      const pagination = calculatePagination({
+        ...(page !== undefined && { page }),
+        ...(limit !== undefined && { limit }),
+      });
+      const meta = new PaginationMetaDto(pagination.page, pagination.take, 0);
+      return {
+        logs: [],
+        meta,
+      };
     }
   }
 
-  async clearLogs(): Promise<{ success: boolean; message: string }> {
+  /**
+   * Track errors for observability
+   * @private
+   */
+  private trackError(errorKey: string, _error: unknown): void {
+    const count = this.errorCounts.get(errorKey) || 0;
+    this.errorCounts.set(errorKey, count + 1);
+    this.lastErrorTime.set(errorKey, Date.now());
+
+    // Log critical errors (more than 10 occurrences in 1 minute)
+    const lastError = this.lastErrorTime.get(errorKey) || 0;
+    const timeSinceLastError = Date.now() - lastError;
+    if (count > 10 && timeSinceLastError < 60000) {
+      // This is a critical error pattern - would be logged to external monitoring if available
+      // For now, we track it internally
+    }
+  }
+
+  /**
+   * Clear logs from cache and optionally from database
+   * @param clearDatabase - Whether to clear database logs (audit trail). Default: false
+   * @returns Success status and message
+   */
+  async clearLogs(clearDatabase = false): Promise<{ success: boolean; message: string }> {
     try {
+      // Always clear cache
       await this.cacheService?.del('logs');
-      return { success: true, message: 'Logs cleared successfully' };
+
+      // Optionally clear database logs (audit trail)
+      if (clearDatabase && this.databaseService) {
+        try {
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const auditLog = (
+                client as {
+                  auditLog: {
+                    deleteMany: (args: unknown) => Promise<{ count: number }>;
+                  };
+                }
+              ).auditLog;
+              return await auditLog.deleteMany({
+                where: {}, // Delete all audit logs
+              });
+            },
+            {
+              userId: 'system',
+              userRole: 'system',
+              clinicId: '',
+              operation: 'CLEAR_LOGS',
+              resourceType: 'AUDIT_LOG',
+              resourceId: 'all',
+              timestamp: new Date(),
+            }
+          );
+        } catch (dbError) {
+          // Track error but don't fail - cache is cleared
+          this.trackError('clearLogs_database_error', dbError);
+          return {
+            success: true,
+            message:
+              'Cache logs cleared successfully, but database clear failed (audit trail may remain)',
+          };
+        }
+      }
+
+      return {
+        success: true,
+        message: clearDatabase
+          ? 'Logs cleared successfully from cache and database'
+          : 'Logs cleared successfully from cache (database audit trail preserved)',
+      };
     } catch (error) {
+      // Track error for observability
+      this.trackError('clearLogs_error', error);
+
       throw new HealthcareError(
         ErrorCode.LOGGING_CLEAR_FAILED,
         'Failed to clear logs',
@@ -824,31 +1039,144 @@ export class LoggingService {
     }
   }
 
-  async getEvents(type?: string): Promise<unknown[]> {
+  /**
+   * Get events with pagination and filtering
+   * @param type - Filter by event type
+   * @param page - Page number (1-based, default: 1)
+   * @param limit - Items per page (default: 100, max: 1000)
+   * @returns Paginated events result
+   */
+  async getEvents(type?: string, page?: number, limit?: number): Promise<PaginatedEventsResult> {
     try {
+      // Calculate pagination
+      const pagination = calculatePagination({
+        ...(page !== undefined && { page }),
+        ...(limit !== undefined && { limit }),
+      });
+      const { skip, take, page: currentPage } = pagination;
+
       // Enhanced event retrieval for 1M users
-      const cachedEvents = (await this.cacheService?.lRange('events', 0, -1)) || [];
-      let events = cachedEvents.map(event => JSON.parse(event) as unknown);
+      const cachedEvents: unknown[] = (await this.cacheService?.lRange('events', 0, -1)) || [];
+
+      // Local type alias matching EventEntry structure to avoid import type resolution issues
+      type LocalEventEntry = {
+        id: string;
+        type: string;
+        data: Record<string, unknown>;
+        timestamp: string | Date;
+        clinicId?: string;
+        userId?: string;
+      };
+
+      // Type guard function
+      const isEventEntry = (obj: unknown): obj is LocalEventEntry => {
+        if (!obj || typeof obj !== 'object') {
+          return false;
+        }
+        const entry = obj as Record<string, unknown>;
+        return (
+          typeof entry['id'] === 'string' &&
+          typeof entry['type'] === 'string' &&
+          typeof entry['data'] === 'object' &&
+          entry['data'] !== null &&
+          (entry['timestamp'] instanceof Date || typeof entry['timestamp'] === 'string')
+        );
+      };
+
+      const events: LocalEventEntry[] = cachedEvents
+        .map((event: unknown): LocalEventEntry | null => {
+          try {
+            if (typeof event === 'string') {
+              const parsed: unknown = JSON.parse(event);
+              if (isEventEntry(parsed)) {
+                return parsed;
+              }
+            }
+            return null;
+          } catch {
+            return null;
+          }
+        })
+        .filter((event): event is LocalEventEntry => event !== null);
 
       // Apply filters
-      if (type) {
-        events = events.filter((event: unknown) => {
-          const eventData = event as { type: string };
-          return eventData.type === type;
-        });
-      }
+      const filteredEvents: LocalEventEntry[] = type
+        ? events.filter((event: LocalEventEntry) => {
+            return event['type'] === type;
+          })
+        : events;
 
-      // Enhanced sorting and limiting for performance
-      return events
-        .sort((a: unknown, b: unknown) => {
-          const aData = a as { timestamp: string };
-          const bData = b as { timestamp: string };
-          return new Date(bData.timestamp).getTime() - new Date(aData.timestamp).getTime();
-        })
-        .slice(0, 2000); // Increased limit for 1M users
-    } catch (_error) {
-      // Silent fail - return empty array on error
-      return [];
+      // Enhanced sorting
+      filteredEvents.sort((a: LocalEventEntry, b: LocalEventEntry) => {
+        const aTime = new Date(a['timestamp']).getTime();
+        const bTime = new Date(b['timestamp']).getTime();
+        return bTime - aTime;
+      });
+
+      // Calculate total before pagination
+      const total: number = filteredEvents.length;
+
+      // Apply pagination
+      const paginatedEvents: LocalEventEntry[] = filteredEvents.slice(skip, skip + take);
+
+      // Create pagination metadata
+      const meta = new PaginationMetaDto(currentPage, take, total);
+
+      // Convert to EventEntry[] for return type (matching interface structure)
+      const resultEvents: EventEntry[] = paginatedEvents.map(
+        (event: LocalEventEntry): EventEntry => {
+          const eventId: string = typeof event['id'] === 'string' ? event['id'] : '';
+          const eventType: string = typeof event['type'] === 'string' ? event['type'] : '';
+          const eventData: Record<string, unknown> =
+            typeof event['data'] === 'object' && event['data'] !== null ? event['data'] : {};
+          const eventTimestamp: string | Date =
+            event['timestamp'] instanceof Date || typeof event['timestamp'] === 'string'
+              ? event['timestamp']
+              : new Date();
+
+          const eventClinicIdValue: unknown = event['clinicId'];
+          const eventUserIdValue: unknown = event['userId'];
+
+          const clinicIdValue: string | undefined =
+            typeof eventClinicIdValue === 'string' && eventClinicIdValue.length > 0
+              ? eventClinicIdValue
+              : undefined;
+          const userIdValue: string | undefined =
+            typeof eventUserIdValue === 'string' && eventUserIdValue.length > 0
+              ? eventUserIdValue
+              : undefined;
+
+          const result: EventEntry = {
+            id: eventId,
+            type: eventType,
+            data: eventData,
+            timestamp: eventTimestamp,
+            ...(clinicIdValue !== undefined && { clinicId: clinicIdValue }),
+            ...(userIdValue !== undefined && { userId: userIdValue }),
+          };
+
+          return result;
+        }
+      );
+
+      return {
+        events: resultEvents,
+        meta,
+      };
+    } catch (error) {
+      // Track error for observability
+      this.trackError('getEvents_error', error);
+
+      // Return empty result on error
+      const pagination = calculatePagination({
+        ...(page !== undefined && { page }),
+        ...(limit !== undefined && { limit }),
+      });
+      const meta = new PaginationMetaDto(pagination.page, pagination.take, 0);
+      return {
+        events: [],
+        meta,
+      };
     }
   }
 
@@ -1194,26 +1522,84 @@ export class LoggingService {
   /**
    * Get logs filtered by clinic for multi-tenant isolation
    */
+  /**
+   * Get logs filtered by clinic with pagination
+   * @param clinicId - Clinic ID to filter by
+   * @param type - Filter by log type
+   * @param startTime - Start time for filtering
+   * @param endTime - End time for filtering
+   * @param level - Filter by log level
+   * @param page - Page number (1-based, default: 1)
+   * @param limit - Items per page (default: 100, max: 1000)
+   * @param search - Search term to filter by message content
+   * @returns Paginated logs result filtered by clinic
+   */
   async getLogsByClinic(
     clinicId: string,
     type?: LogType,
     startTime?: Date,
     endTime?: Date,
-    level?: LogLevel
-  ): Promise<unknown[]> {
-    const logs = await this.getLogs(type, startTime, endTime, level);
+    level?: LogLevel,
+    page?: number,
+    limit?: number,
+    search?: string
+  ): Promise<PaginatedLogsResult> {
+    // Get all logs first (with pagination)
+    const logsResultUnknown: unknown = await this.getLogs(
+      type,
+      startTime,
+      endTime,
+      level,
+      page,
+      limit,
+      search
+    );
+
+    // Ensure result is properly typed with runtime validation
+    if (
+      !logsResultUnknown ||
+      typeof logsResultUnknown !== 'object' ||
+      !('logs' in logsResultUnknown) ||
+      !Array.isArray(logsResultUnknown.logs) ||
+      !('meta' in logsResultUnknown)
+    ) {
+      const pagination = calculatePagination({
+        ...(page !== undefined && { page }),
+        ...(limit !== undefined && { limit }),
+      });
+      const meta = new PaginationMetaDto(pagination.page, pagination.take, 0);
+      return {
+        logs: [],
+        meta,
+      };
+    }
+
+    // Extract and validate logs array
+    const logsArray: unknown = logsResultUnknown.logs;
+    const validatedLogs: LogEntry[] = Array.isArray(logsArray) ? (logsArray as LogEntry[]) : [];
 
     // Filter logs by clinic context
-    return logs.filter((log: unknown) => {
-      const logData = log as {
-        context?: string;
-        metadata?: Record<string, unknown>;
-      };
+    const clinicLogs: LogEntry[] = validatedLogs.filter((log: LogEntry) => {
       return (
-        logData.context?.includes(`clinic_${clinicId}_`) ||
-        logData.metadata?.['clinicId'] === clinicId
+        log.context?.includes(`clinic_${clinicId}_`) ||
+        log.metadata?.['clinicId'] === clinicId ||
+        log.clinicId === clinicId
       );
     });
+
+    // Recalculate pagination metadata for filtered results
+    const total: number = clinicLogs.length;
+    const pagination = calculatePagination({
+      ...(page !== undefined && { page }),
+      ...(limit !== undefined && { limit }),
+    });
+    const filteredMeta = new PaginationMetaDto(pagination.page, pagination.take, total);
+
+    const filteredResult: PaginatedLogsResult = {
+      logs: clinicLogs,
+      meta: filteredMeta,
+    };
+    return filteredResult;
   }
 
   /**

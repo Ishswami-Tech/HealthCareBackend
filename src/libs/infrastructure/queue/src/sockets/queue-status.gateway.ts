@@ -115,8 +115,16 @@ export class QueueStatusGateway
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       const errorStack = error instanceof Error ? error.stack : 'No stack trace';
-      console.error(`[QueueStatusGateway] onModuleInit failed: ${errorMessage}`);
-      console.error(`[QueueStatusGateway] Stack: ${errorStack}`);
+      // All logs go through centralized LoggingService (per .ai-rules/ coding standards)
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `QueueStatusGateway onModuleInit failed: ${errorMessage}`,
+          'QueueStatusGateway',
+          { error: errorMessage, stack: errorStack }
+        );
+      }
       // Don't throw - allow app to continue without queue status gateway
     }
   }

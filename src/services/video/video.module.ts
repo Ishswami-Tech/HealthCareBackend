@@ -8,7 +8,7 @@
 
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { TerminusModule } from '@nestjs/terminus';
+// TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
 import { ConfigModule } from '@config';
 import { CacheModule } from '@infrastructure/cache';
 import { LoggingModule } from '@infrastructure/logging';
@@ -53,7 +53,7 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
   imports: [
     ConfigModule,
     HttpModule, // Centralized HTTP service for OpenVidu API calls
-    TerminusModule, // Health checks
+    // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
     EventEmitterModule, // Required for @OnEvent decorators
     forwardRef(() => EventsModule), // Central event system
     CacheModule,

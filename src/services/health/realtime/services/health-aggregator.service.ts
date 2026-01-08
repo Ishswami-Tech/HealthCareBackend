@@ -1,7 +1,7 @@
 /**
  * Health Aggregator Service
  * Aggregates health check results from HealthService into unified status
- * Uses HealthService (Terminus-based) as the single source of truth
+ * Uses HealthService as the single source of truth (no Terminus dependency)
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
@@ -32,13 +32,13 @@ export class HealthAggregatorService {
 
   /**
    * Aggregate all health checks into unified status using HealthService
-   * HealthService uses Terminus internally, ensuring consistency across all health checks
+   * HealthService uses health indicators with LoggingService, ensuring consistency across all health checks
    */
   async aggregateHealth(socketServer?: Server): Promise<AggregatedHealthStatus> {
     const startTime = Date.now();
 
     try {
-      // Get health status from HealthService (Terminus-based)
+      // Get health status from HealthService (no Terminus dependency)
       const healthResponse = await this.healthService.getHealth();
 
       // Transform HealthService response to AggregatedHealthStatus format
@@ -71,7 +71,7 @@ export class HealthAggregatorService {
         }
       }
 
-      // Check socket health separately (not part of Terminus)
+      // Check socket health separately
       let socketHealth: ServiceHealthStatus;
       try {
         const socketResult = await this.socketChecker.check(socketServer);
