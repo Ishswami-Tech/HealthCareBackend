@@ -200,8 +200,11 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
 
           const responseTime = Date.now() - startTime;
           // HttpService returns HttpResponse<T>, which has a 'data' property
-          const responseData = response?.data;
-          const isHealthy = responseData?.status === 'UP';
+          const responseData = response?.data as { status?: string } | undefined;
+          const httpStatus = response?.status;
+
+          // Check health: HTTP 200 AND status === 'UP' (same logic as OpenViduVideoProvider)
+          const isHealthy = httpStatus === 200 && responseData?.status === 'UP';
 
           // Log result for debugging
           if (this.loggingService) {
@@ -212,12 +215,14 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
               'VideoHealthIndicator.getHealthStatus',
               {
                 isHealthy,
-                status: responseData?.status,
+                httpStatus,
+                healthStatus: responseData?.status,
                 responseTime,
-                responseStatus: response?.status,
                 hasResponse: !!response,
+                hasData: !!responseData,
                 endpoint: healthEndpoint,
                 timeout,
+                fullResponse: responseData, // Include full response for debugging
               }
             );
           }
@@ -243,7 +248,7 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
             ...(isHealthy
               ? {}
               : {
-                  errorMessage: `OpenVidu reports status: ${responseData?.status || 'unknown'}`,
+                  errorMessage: `OpenVidu health check failed - HTTP ${httpStatus || 'unknown'}, status: ${responseData?.status || 'unknown'}`,
                 }),
           };
         } catch (raceError) {
