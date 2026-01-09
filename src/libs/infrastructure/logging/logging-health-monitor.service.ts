@@ -460,21 +460,16 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
     const QUERY_TIMEOUT_MS = 1500; // 1.5 seconds max for endpoint check (fast enough for 10M+ users)
 
     try {
-      // SECURITY: Use ConfigService instead of hardcoded localhost URL
-      const loggerBaseUrl =
-        this.configService.getEnv('API_URL') ||
-        (() => {
-          throw new Error(
-            'Missing required environment variable: API_URL. Please set API_URL in environment configuration.'
-          );
-        })();
-      // Try PORT first, then VIRTUAL_PORT, then default
+      // Use localhost for health check (internal check, not external)
+      // This avoids circular HTTP requests to external URL
+      // The logger endpoint is on the same server, so use localhost
       const loggerPort = this.configService.getEnvNumber(
         'PORT',
         this.configService.getEnvNumber('VIRTUAL_PORT', 8088)
       );
       const loggerUrlPath = this.configService.getEnv('LOGGER_URL', '/logger');
-      const loggerUrl = `${loggerBaseUrl}${loggerUrlPath}`;
+      // Use localhost for internal health check (same container)
+      const loggerUrl = `http://localhost:${loggerPort}${loggerUrlPath}`;
 
       // Use lightweight HTTP check - just verify endpoint responds (any status code means service is responding)
       // Accept any status code including 404, 500, etc. - as long as we get a response, the server is up

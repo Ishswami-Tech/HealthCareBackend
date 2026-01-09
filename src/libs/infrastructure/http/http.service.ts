@@ -189,27 +189,38 @@ export class HttpService {
     // Create observable with retry logic
     const request$ = this.nestHttpService.request<T>(axiosConfig).pipe(
       catchError((error: unknown) => {
-        // Log error
+        // Log error with detailed information
+        const axiosError = error as {
+          code?: string;
+          errno?: string;
+          syscall?: string;
+          address?: string;
+          port?: number;
+          message?: string;
+          response?: { status?: number; statusText?: string; data?: unknown };
+        };
+        const errorCode = axiosError.code || (error as { code?: string })?.code;
+        const errorMessage =
+          axiosError.message || (error instanceof Error ? error.message : String(error));
+
         if (this.loggingService) {
           void this.loggingService.log(
-            LogType.SYSTEM,
+            LogType.ERROR,
             LogLevel.ERROR,
-            `HTTP ${method} ${url} failed`,
+            `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
             'HttpService',
             {
               requestId,
               method,
               url,
-              error: error instanceof Error ? error.message : String(error),
-              statusCode:
-                error &&
-                typeof error === 'object' &&
-                'response' in error &&
-                error.response &&
-                typeof error.response === 'object' &&
-                'status' in error.response
-                  ? (error.response.status as number)
-                  : undefined,
+              error: errorMessage,
+              errorCode,
+              errno: axiosError.errno,
+              syscall: axiosError.syscall,
+              address: axiosError.address,
+              port: axiosError.port,
+              responseStatus: axiosError.response?.status,
+              responseStatusText: axiosError.response?.statusText,
             }
           );
         }
@@ -325,16 +336,46 @@ export class HttpService {
       // Network or other errors
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      // Extract more detailed error information
+      const axiosError = error as {
+        code?: string;
+        errno?: string;
+        syscall?: string;
+        address?: string;
+        port?: number;
+        message?: string;
+        response?: { status?: number; statusText?: string; data?: unknown };
+      };
+
+      const errorCode = axiosError.code || (error as { code?: string })?.code;
+      const errorDetails = {
+        url,
+        method,
+        requestDuration,
+        error: errorMessage,
+        errorCode,
+        errno: axiosError.errno,
+        syscall: axiosError.syscall,
+        address: axiosError.address,
+        port: axiosError.port,
+      };
+
+      // Log detailed error for debugging (especially for connection errors)
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ''}`,
+          'HttpService.request',
+          errorDetails
+        );
+      }
+
       throw new HealthcareError(
         ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
-        `HTTP ${method} ${url} failed: ${errorMessage}`,
+        `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
         undefined,
-        {
-          url,
-          method,
-          requestDuration,
-          error: errorMessage,
-        },
+        errorDetails,
         'HttpService.request'
       );
     }
