@@ -513,12 +513,23 @@ export class LoggingService {
       // This ensures ALL logs from ALL systems appear in the logger dashboard
       // No filtering - every log entry is stored for complete visibility
       try {
-        await Promise.all([
-          this.cacheService?.rPush('logs', JSON.stringify(logEntry)),
-          // Increased from 5000 to 10000 to keep more logs visible (all systems, all levels)
-          this.cacheService?.lTrim('logs', -10000, -1), // Keep last 10000 logs for comprehensive visibility
-        ]);
+        if (this.cacheService) {
+          await Promise.all([
+            this.cacheService.rPush('logs', JSON.stringify(logEntry)),
+            // Increased from 5000 to 10000 to keep more logs visible (all systems, all levels)
+            this.cacheService.lTrim('logs', -10000, -1), // Keep last 10000 logs for comprehensive visibility
+          ]);
+        } else {
+          // Log warning if cache service is not available (but don't break logging)
+          console.warn(
+            '[LoggingService] Cache service not available - logs will not appear in dashboard'
+          );
+        }
       } catch (_cacheError) {
+        // Log cache errors for debugging (but don't break logging)
+        const errorMessage =
+          _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
+        console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
         // Silent fail for cache logging - resilient for high scale
         // Cache logging failures shouldn't break the logging service
       }
@@ -645,7 +656,22 @@ export class LoggingService {
       // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
       // Cache is the primary source of truth for real-time log viewing
       // Database is only used for audit trail persistence
-      const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
+      let cachedLogs: string[] = [];
+      try {
+        if (this.cacheService) {
+          cachedLogs = (await this.cacheService.lRange('logs', 0, -1)) || [];
+        } else {
+          // Log warning if cache service is not available
+          console.warn(
+            '[LoggingService] Cache service not available - cannot retrieve logs from cache'
+          );
+        }
+      } catch (cacheError) {
+        // Log cache read errors for debugging
+        const errorMessage = cacheError instanceof Error ? cacheError.message : String(cacheError);
+        console.error(`[LoggingService] Failed to read logs from cache: ${errorMessage}`);
+        cachedLogs = [];
+      }
       const parsedCacheLogs: LogEntry[] = cachedLogs
         .map(log => {
           try {
