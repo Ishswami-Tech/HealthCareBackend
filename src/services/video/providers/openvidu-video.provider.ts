@@ -605,11 +605,13 @@ export class OpenViduVideoProvider implements IVideoProvider {
       return false;
     }
 
-    // Real-time health check with retry logic using official health endpoint
+    // Real-time health check with retry logic - NO AUTHENTICATION
+    // Simply checks if OpenVidu server is reachable at the root URL
     // OpenVidu may take time to fully start even after container is running
     const maxRetries = 3;
     const retryDelayMs = 2000;
-    const healthEndpoint = `${this.apiUrl}/openvidu/api/health`;
+    // Use root URL for health check - no auth required
+    const healthEndpoint = this.apiUrl;
 
     // Track last error for detailed error message
     let lastError = 'Unknown error';
@@ -618,52 +620,21 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Try health endpoint without auth first (health endpoint typically doesn't require auth)
-        // If that fails, try with auth
-        let response;
-        try {
-          // First attempt: without authentication (health endpoint usually doesn't require it)
-          // Increased timeout to 10 seconds to handle slow OpenVidu responses
-          const healthCheckTimeout = 10000; // 10 seconds
-          response = await Promise.race([
-            this.httpService.get(healthEndpoint, {
-              timeout: healthCheckTimeout,
-              // No auth header for health endpoint
-            }),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
-            ),
-          ]);
-        } catch (authError) {
-          // If first attempt fails, try with authentication
-          const authErrorMessage = authError instanceof Error ? authError.message : 'Unknown error';
-          const isAuthError =
-            authErrorMessage.includes('401') ||
-            authErrorMessage.includes('403') ||
-            authErrorMessage.includes('Unauthorized') ||
-            authErrorMessage.includes('Forbidden');
+        // NO authentication - just check if server responds
+        // Increased timeout to 10 seconds to handle slow OpenVidu responses
+        const healthCheckTimeout = 10000; // 10 seconds
+        const response = await Promise.race([
+          this.httpService.get(healthEndpoint, {
+            timeout: healthCheckTimeout,
+            // No auth - public health check
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+          ),
+        ]);
 
-          if (isAuthError || attempt > 1) {
-            // Try with authentication
-            // Increased timeout to 10 seconds to handle slow OpenVidu responses
-            const healthCheckTimeout = 10000; // 10 seconds
-            response = await Promise.race([
-              this.httpService.get(
-                healthEndpoint,
-                this.getHttpConfig({ timeout: healthCheckTimeout })
-              ),
-              new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
-              ),
-            ]);
-          } else {
-            throw authError;
-          }
-        }
-
-        // Check for official health response: {"status": "UP"}
-        const data = response.data as { status?: string } | undefined;
-        const isUp = response.status === 200 && data?.status === 'UP';
+        // Check for successful response: Any 2xx/3xx means server is up
+        const isUp = response.status >= 200 && response.status < 400;
 
         if (isUp) {
           if (attempt > 1) {
@@ -672,40 +643,26 @@ export class OpenViduVideoProvider implements IVideoProvider {
               LogLevel.INFO,
               `OpenVidu health check succeeded on attempt ${attempt}`,
               'OpenViduVideoProvider.isHealthy',
-              { apiUrl: this.apiUrl, status: response.status, healthStatus: data?.status }
+              { apiUrl: this.apiUrl, status: response.status }
             );
           }
           return true;
         }
 
-        // OpenVidu responded but reported DOWN status
-        if (response.status === 503 || data?.status === 'DOWN') {
+        // OpenVidu responded but with error status (service unavailable)
+        if (response.status === 503) {
           await this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
-            `OpenVidu reported unhealthy status on attempt ${attempt}`,
+            `OpenVidu reported service unavailable on attempt ${attempt}`,
             'OpenViduVideoProvider.isHealthy',
             {
               apiUrl: this.apiUrl,
               status: response.status,
-              healthStatus: data?.status,
-              responseData: data,
             }
           );
-          // Don't retry if OpenVidu explicitly says it's DOWN
+          // Don't retry if OpenVidu explicitly says it's unavailable
           return false;
-        }
-
-        // Any other 2xx/3xx response indicates OpenVidu is accessible
-        if (response.status >= 200 && response.status < 400) {
-          await this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.INFO,
-            `OpenVidu health check returned status ${response.status} - service is accessible`,
-            'OpenViduVideoProvider.isHealthy',
-            { apiUrl: this.apiUrl, status: response.status, data }
-          );
-          return true;
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
