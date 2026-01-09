@@ -2346,7 +2346,11 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
               let errorDetails = `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`;
               if (isTimeout) {
-                errorDetails = `Video health check timeout (10s) - OpenVidu may be slow, starting up, or unavailable`;
+                // Get timeout from config or use default 5 seconds
+                const timeout =
+                  this.config?.getEnvNumber('VIDEO_HEALTH_CHECK_TIMEOUT', 5000) || 5000;
+                const timeoutSeconds = timeout / 1000;
+                errorDetails = `Video health check timeout (${timeoutSeconds}s) - OpenVidu may be slow, starting up, or unavailable`;
               } else if (isConnectionError) {
                 errorDetails = `Video connection refused - OpenVidu container may not be running or network issue`;
               }
