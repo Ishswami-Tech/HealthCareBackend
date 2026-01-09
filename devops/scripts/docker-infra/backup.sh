@@ -32,6 +32,7 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
 DRAGONFLY_CONTAINER="dragonfly"
+REDIS_CONTAINER="redis"  # Optional: for redis-cli tool access
 
 BACKUP_ID=$(create_backup_id)
 TIMESTAMP=$(get_timestamp)
@@ -141,17 +142,81 @@ backup_dragonfly() {
     # Try to create RDB snapshot
     local temp_rdb="/tmp/dragonfly-${TIMESTAMP}.rdb"
     
+    # Check if redis-cli is available in container
+    local cli_available=false
+    if docker exec "$container" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
+        cli_available=true
+        log_info "Using redis-cli for backup"
+    else
+        log_warning "redis-cli not found in container, trying alternative methods..."
+    fi
+    
     # Use SAVE command to create snapshot
-    if docker exec "$container" redis-cli -p 6379 SAVE >/dev/null 2>&1; then
-        # Copy RDB file from container
-        if docker cp "${container}:/data/dump.rdb" "$temp_rdb" 2>/dev/null; then
+    local save_success=false
+    if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+        # Try SAVE first (blocking but immediate)
+        if eval "$redis_cli_cmd SAVE" >/dev/null 2>&1; then
+            save_success=true
+            log_info "SAVE command succeeded"
+        else
+            log_warning "SAVE command failed, trying BGSAVE..."
+            # Try BGSAVE (background save) which is non-blocking
+            if eval "$redis_cli_cmd BGSAVE" >/dev/null 2>&1; then
+                log_info "BGSAVE started, waiting for completion..."
+                # Wait for BGSAVE to complete (max 30 seconds)
+                local wait_count=0
+                while [ $wait_count -lt 30 ]; do
+                    sleep 1
+                    wait_count=$((wait_count + 1))
+                    # Check if save is in progress
+                    if ! eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -q "rdb_bgsave_in_progress:1"; then
+                        save_success=true
+                        log_info "BGSAVE completed"
+                        break
+                    fi
+                done
+                if [ "$save_success" = false ]; then
+                    log_warning "BGSAVE did not complete within 30 seconds"
+                fi
+            else
+                log_error "BGSAVE command also failed"
+            fi
+        fi
+    else
+        log_error "redis-cli not available and no alternative method found"
+    fi
+    
+    if [ "$save_success" = true ]; then
+        # Try multiple possible RDB file locations
+        local rdb_paths=(
+            "/data/dump.rdb"
+            "/var/lib/dragonfly/dump.rdb"
+            "/tmp/dump.rdb"
+            "/dump.rdb"
+        )
+        
+        local rdb_found=false
+        for rdb_path in "${rdb_paths[@]}"; do
+            if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
+                if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                    rdb_found=true
+                    log_info "Found RDB file at: ${rdb_path}"
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$rdb_found" = true ]; then
             # Compress
             if gzip -c "$temp_rdb" > "$backup_file"; then
                 rm -f "$temp_rdb"
                 chmod 600 "$backup_file"
                 local checksum=$(calculate_checksum "$backup_file")
                 local size=$(get_file_size "$backup_file")
-                local key_count=$(docker exec "$container" redis-cli -p 6379 DBSIZE 2>/dev/null | xargs || echo "0")
+                local key_count="0"
+                if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+                    key_count=$(eval "$redis_cli_cmd DBSIZE" 2>/dev/null | xargs || echo "0")
+                fi
                 
                 BACKUP_RESULTS["dragonfly_local"]="success"
                 log_success "Dragonfly backup created: ${backup_file}"
@@ -184,8 +249,16 @@ backup_dragonfly() {
 EOF
                 
                 return 0
+            else
+                log_error "Failed to compress RDB file"
             fi
+        else
+            log_error "RDB file not found in any expected location"
+            log_info "Checked paths: ${rdb_paths[*]}"
         fi
+    else
+        log_error "Failed to trigger SAVE/BGSAVE command in Dragonfly container"
+        log_info "Container may not have redis-cli installed or SAVE command failed"
     fi
     
     log_error "Dragonfly backup failed"
@@ -542,17 +615,110 @@ backup_dragonfly_to_path() {
         return 1
     fi
     
+    # Check if redis-cli is available - try multiple sources:
+    # 1. Inside Dragonfly container
+    # 2. In a separate Redis container (if available)
+    # 3. On the host system
+    local cli_available=false
+    local redis_cli_cmd=""
+    
+    # First, try inside Dragonfly container
+    if docker exec "$container" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
+        cli_available=true
+        redis_cli_cmd="docker exec $container redis-cli -p 6379"
+        log_info "Using redis-cli from Dragonfly container"
+    # Try using Redis container (if available) to connect to Dragonfly
+    elif container_running "${REDIS_CONTAINER}" 2>/dev/null && \
+         docker exec "${REDIS_CONTAINER}" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
+        cli_available=true
+        # Get Dragonfly container IP or use hostname
+        local dragonfly_host="dragonfly"
+        local dragonfly_port="6379"
+        redis_cli_cmd="docker exec ${REDIS_CONTAINER} redis-cli -h ${dragonfly_host} -p ${dragonfly_port}"
+        log_info "Using redis-cli from Redis container to connect to Dragonfly"
+    # Try host system redis-cli
+    elif command -v redis-cli >/dev/null 2>&1; then
+        cli_available=true
+        # Get Dragonfly container IP
+        local dragonfly_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null || echo "")
+        if [ -n "$dragonfly_ip" ]; then
+            redis_cli_cmd="redis-cli -h ${dragonfly_ip} -p 6379"
+            log_info "Using redis-cli from host system to connect to Dragonfly at ${dragonfly_ip}"
+        else
+            # Fallback to hostname
+            redis_cli_cmd="redis-cli -h dragonfly -p 6379"
+            log_info "Using redis-cli from host system to connect to Dragonfly"
+        fi
+    else
+        log_warning "redis-cli not found in Dragonfly container, Redis container, or host system"
+    fi
+    
     # Use SAVE command to create snapshot
-    if docker exec "$container" redis-cli -p 6379 SAVE > /dev/null 2>&1; then
-        # Copy RDB file from container
-        if docker cp "${container}:/data/dump.rdb" "$temp_rdb" 2>/dev/null; then
+    local save_success=false
+    if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+        # Try SAVE first (blocking but immediate)
+        if eval "$redis_cli_cmd SAVE" >/dev/null 2>&1; then
+            save_success=true
+            log_info "SAVE command succeeded"
+        else
+            log_warning "SAVE command failed, trying BGSAVE..."
+            # Try BGSAVE (background save) which is non-blocking
+            if eval "$redis_cli_cmd BGSAVE" >/dev/null 2>&1; then
+                log_info "BGSAVE started, waiting for completion..."
+                # Wait for BGSAVE to complete (max 30 seconds)
+                local wait_count=0
+                while [ $wait_count -lt 30 ]; do
+                    sleep 1
+                    wait_count=$((wait_count + 1))
+                    # Check if save is in progress
+                    if ! eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -q "rdb_bgsave_in_progress:1"; then
+                        save_success=true
+                        log_info "BGSAVE completed"
+                        break
+                    fi
+                done
+                if [ "$save_success" = false ]; then
+                    log_warning "BGSAVE did not complete within 30 seconds"
+                fi
+            else
+                log_error "BGSAVE command also failed"
+            fi
+        fi
+    else
+        log_error "redis-cli not available and no alternative method found"
+    fi
+    
+    if [ "$save_success" = true ]; then
+        # Try multiple possible RDB file locations
+        local rdb_paths=(
+            "/data/dump.rdb"
+            "/var/lib/dragonfly/dump.rdb"
+            "/tmp/dump.rdb"
+            "/dump.rdb"
+        )
+        
+        local rdb_found=false
+        for rdb_path in "${rdb_paths[@]}"; do
+            if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
+                if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                    rdb_found=true
+                    log_info "Found RDB file at: ${rdb_path}"
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$rdb_found" = true ]; then
             # Compress
             if gzip -c "$temp_rdb" > "$backup_file"; then
                 rm -f "$temp_rdb"
                 chmod 600 "$backup_file"
                 local checksum=$(calculate_checksum "$backup_file")
                 local size=$(get_file_size "$backup_file")
-                local key_count=$(docker exec "$container" redis-cli -p 6379 DBSIZE 2>/dev/null | xargs || echo "0")
+                local key_count="0"
+                if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+                    key_count=$(eval "$redis_cli_cmd DBSIZE" 2>/dev/null | xargs || echo "0")
+                fi
                 
                 BACKUP_RESULTS["dragonfly_local"]="success"
                 log_success "Dragonfly backup created: ${backup_file}"
