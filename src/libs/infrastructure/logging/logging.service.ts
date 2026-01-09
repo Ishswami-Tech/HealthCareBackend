@@ -381,7 +381,7 @@ export class LoggingService {
           (level === LogLevel.ERROR || level === LogLevel.WARN);
         const isImportantSecurityLog =
           type === LogType.SECURITY && (level === LogLevel.ERROR || level === LogLevel.WARN);
-        const isCriticalError = level === LogLevel.ERROR || level === LogLevel.FATAL;
+        const isCriticalError = level === LogLevel.ERROR;
 
         shouldShowInTerminal =
           isCriticalError ||
@@ -396,8 +396,7 @@ export class LoggingService {
         }
       } else {
         // Staging/other environments: Show ERROR and WARN
-        shouldShowInTerminal =
-          level === LogLevel.ERROR || level === LogLevel.WARN || level === LogLevel.FATAL;
+        shouldShowInTerminal = level === LogLevel.ERROR || level === LogLevel.WARN;
       }
 
       if (shouldShowInTerminal) {
