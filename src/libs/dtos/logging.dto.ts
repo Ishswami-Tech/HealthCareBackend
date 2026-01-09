@@ -72,17 +72,17 @@ export class GetLogsQueryDto {
   page?: number = 1;
 
   @ApiPropertyOptional({
-    description: 'Number of logs per page',
+    description: 'Number of logs per page (up to 10000 to show all logs from cache)',
     example: 50,
     minimum: 1,
-    maximum: 1000,
+    maximum: 10000,
     default: 100,
   })
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: 'limit must be an integer' })
   @Min(1, { message: 'limit must be at least 1' })
-  @Max(1000, { message: 'limit must not exceed 1000' })
+  @Max(10000, { message: 'limit must not exceed 10000' })
   limit?: number = 100;
 
   @ApiPropertyOptional({

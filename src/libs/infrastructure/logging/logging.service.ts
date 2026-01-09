@@ -424,7 +424,8 @@ export class LoggingService {
       const isNoisyLog = this.isNoisyLog(message, context, level);
 
       // ALWAYS store logs in cache (even if noisy) for dashboard visibility
-      // Only skip database logging for noisy/timeout logs
+      // CRITICAL: ERROR and WARN level logs are NEVER filtered as noisy - they must always appear
+      // Only skip database logging for noisy/timeout logs (but still store in cache)
       if (!isNoisyLog && !isTimeoutOrConnectionError) {
         try {
           // Enhanced database logging with better error handling
@@ -508,12 +509,14 @@ export class LoggingService {
       }
 
       // High-performance cache logging
-      // ALWAYS store logs in cache (even if noisy) for dashboard visibility
-      // This ensures all logs appear in the logger dashboard
+      // ALWAYS store ALL logs in cache (regardless of level, type, or noise) for dashboard visibility
+      // This ensures ALL logs from ALL systems appear in the logger dashboard
+      // No filtering - every log entry is stored for complete visibility
       try {
         await Promise.all([
           this.cacheService?.rPush('logs', JSON.stringify(logEntry)),
-          this.cacheService?.lTrim('logs', -5000, -1), // Keep last 5000 logs for 1M users
+          // Increased from 5000 to 10000 to keep more logs visible (all systems, all levels)
+          this.cacheService?.lTrim('logs', -10000, -1), // Keep last 10000 logs for comprehensive visibility
         ]);
       } catch (_cacheError) {
         // Silent fail for cache logging - resilient for high scale
@@ -620,18 +623,23 @@ export class LoggingService {
     search?: string
   ): Promise<PaginatedLogsResult> {
     try {
-      // Calculate pagination
-      const pagination = calculatePagination({
-        ...(page !== undefined && { page }),
-        ...(limit !== undefined && { limit }),
-      });
-      const { skip, take, page: currentPage } = pagination;
+      // Calculate pagination for logging
+      // Override calculatePagination's max limit of 100 to allow up to 10000 for showing all logs
+      const requestedLimit = limit !== undefined ? limit : 100;
+      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit)); // Max 10000 for logging (matches cache size), min 1
+      const effectivePage = Math.max(1, page || 1);
+      const skip = (effectivePage - 1) * effectiveLimit;
+      const take = effectiveLimit;
+      const currentPage = effectivePage;
 
       // Enhanced time range handling for 1M users
+      // If startTime is provided, use it for time filtering
+      // If startTime is NOT provided (undefined), show ALL logs from cache (no time filter)
+      // This allows "All Time" option in UI to show all available logs
       const now = new Date();
-      const defaultStartTime = new Date(now.getTime() - 6 * 60 * 60 * 1000); // 6 hours for better performance
-
-      const finalStartTime = startTime || defaultStartTime;
+      // If startTime is undefined, use epoch (0) to show all logs from cache
+      // If startTime is provided, use it for time-based filtering
+      const finalStartTime = startTime !== undefined ? startTime : new Date(0); // Epoch = show all logs when no startTime
       const finalEndTime = endTime || now;
 
       // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
@@ -650,21 +658,29 @@ export class LoggingService {
         .filter((log: LogEntry) => {
           const logDate = new Date(log.timestamp);
 
-          // Apply time filter
-          const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
+          // Apply time filter (only if startTime was explicitly provided)
+          // If startTime is epoch (0), it means "show all time" - don't filter by time
+          const inTimeRange =
+            finalStartTime.getTime() === 0 || // "All Time" selected
+            (logDate >= finalStartTime && logDate <= finalEndTime);
 
-          // Apply type filter
+          // Apply type filter (only if specified)
           const matchesType = !type || log.type === type;
 
-          // Apply level filter
+          // Apply level filter (only if specified)
           const matchesLevel = !level || log.level === level;
 
-          // Apply search filter
+          // Apply search filter (only if specified)
           const matchesSearch =
             !search ||
             log.message.toLowerCase().includes(search.toLowerCase()) ||
-            log.context.toLowerCase().includes(search.toLowerCase());
+            log.context.toLowerCase().includes(search.toLowerCase()) ||
+            (log.metadata &&
+              typeof log.metadata === 'object' &&
+              JSON.stringify(log.metadata).toLowerCase().includes(search.toLowerCase()));
 
+          // Return true if log matches ALL specified filters
+          // This ensures ALL logs from ALL systems are shown when no filters are applied
           return inTimeRange && matchesType && matchesLevel && matchesSearch;
         })
         .sort((a, b) => {
@@ -993,12 +1009,14 @@ export class LoggingService {
    */
   async getEvents(type?: string, page?: number, limit?: number): Promise<PaginatedEventsResult> {
     try {
-      // Calculate pagination
-      const pagination = calculatePagination({
-        ...(page !== undefined && { page }),
-        ...(limit !== undefined && { limit }),
-      });
-      const { skip, take, page: currentPage } = pagination;
+      // Calculate pagination for events
+      // Override calculatePagination's max limit of 100 to allow up to 10000 for showing all events
+      const requestedLimit = limit !== undefined ? limit : 100;
+      const effectiveLimit = Math.min(10000, Math.max(1, requestedLimit)); // Max 10000 for events (matches cache size), min 1
+      const effectivePage = Math.max(1, page || 1);
+      const skip = (effectivePage - 1) * effectiveLimit;
+      const take = effectiveLimit;
+      const currentPage = effectivePage;
 
       // Enhanced event retrieval for 1M users
       const cachedEvents: unknown[] = (await this.cacheService?.lRange('events', 0, -1)) || [];

@@ -142,13 +142,42 @@ backup_dragonfly() {
     # Try to create RDB snapshot
     local temp_rdb="/tmp/dragonfly-${TIMESTAMP}.rdb"
     
-    # Check if redis-cli is available in container
+    # Check if redis-cli is available - try multiple sources:
+    # 1. Inside Dragonfly container
+    # 2. In a separate Redis container (if available)
+    # 3. On the host system
     local cli_available=false
+    local redis_cli_cmd=""
+    
+    # First, try inside Dragonfly container
     if docker exec "$container" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
         cli_available=true
-        log_info "Using redis-cli for backup"
+        redis_cli_cmd="docker exec $container redis-cli -p 6379"
+        log_info "Using redis-cli from Dragonfly container"
+    # Try using Redis container (if available) to connect to Dragonfly
+    elif container_running "${REDIS_CONTAINER}" 2>/dev/null && \
+         docker exec "${REDIS_CONTAINER}" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
+        cli_available=true
+        # Get Dragonfly container IP or use hostname
+        local dragonfly_host="dragonfly"
+        local dragonfly_port="6379"
+        redis_cli_cmd="docker exec ${REDIS_CONTAINER} redis-cli -h ${dragonfly_host} -p ${dragonfly_port}"
+        log_info "Using redis-cli from Redis container to connect to Dragonfly"
+    # Try host system redis-cli
+    elif command -v redis-cli >/dev/null 2>&1; then
+        cli_available=true
+        # Get Dragonfly container IP
+        local dragonfly_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container" 2>/dev/null || echo "")
+        if [ -n "$dragonfly_ip" ]; then
+            redis_cli_cmd="redis-cli -h ${dragonfly_ip} -p 6379"
+            log_info "Using redis-cli from host system to connect to Dragonfly at ${dragonfly_ip}"
+        else
+            # Fallback to hostname
+            redis_cli_cmd="redis-cli -h dragonfly -p 6379"
+            log_info "Using redis-cli from host system to connect to Dragonfly"
+        fi
     else
-        log_warning "redis-cli not found in container, trying alternative methods..."
+        log_warning "redis-cli not found in Dragonfly container, Redis container, or host system"
     fi
     
     # Use SAVE command to create snapshot
@@ -187,6 +216,9 @@ backup_dragonfly() {
     fi
     
     if [ "$save_success" = true ]; then
+        # Give SAVE a moment to complete file write (especially for large datasets)
+        sleep 2
+        
         # Try multiple possible RDB file locations
         local rdb_paths=(
             "/data/dump.rdb"
@@ -196,15 +228,45 @@ backup_dragonfly() {
         )
         
         local rdb_found=false
+        local checked_paths=()
         for rdb_path in "${rdb_paths[@]}"; do
-            if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
-                if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
-                    rdb_found=true
-                    log_info "Found RDB file at: ${rdb_path}"
-                    break
+            checked_paths+=("$rdb_path")
+            # First check if file exists in container
+            if docker exec "$container" test -f "$rdb_path" 2>/dev/null; then
+                # File exists, try to copy it
+                if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
+                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                        rdb_found=true
+                        log_info "Found RDB file at: ${rdb_path}"
+                        break
+                    else
+                        log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
+                    fi
+                else
+                    log_warning "RDB file at ${rdb_path} exists but docker cp failed"
                 fi
             fi
         done
+        
+        if [ "$rdb_found" = false ]; then
+            log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
+            # Try to get more diagnostic info
+            if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+                log_info "Checking Dragonfly INFO for RDB file location..."
+                local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
+                if [ -n "$persistence_info" ]; then
+                    log_info "Dragonfly persistence info: ${persistence_info}"
+                fi
+                # Try to find RDB file using find command in container
+                log_info "Searching for dump.rdb files in container..."
+                local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
+                if [ -n "$found_files" ]; then
+                    log_info "Found dump.rdb files in container: ${found_files}"
+                else
+                    log_warning "No dump.rdb files found in container"
+                fi
+            fi
+        fi
         
         if [ "$rdb_found" = true ]; then
             # Compress
@@ -253,8 +315,8 @@ EOF
                 log_error "Failed to compress RDB file"
             fi
         else
-            log_error "RDB file not found in any expected location"
-            log_info "Checked paths: ${rdb_paths[*]}"
+            log_error "RDB file not found in any expected location after SAVE succeeded"
+            log_error "This may indicate: 1) Dragonfly saves to a different path, 2) File permissions issue, 3) Volume mount issue"
         fi
     else
         log_error "Failed to trigger SAVE/BGSAVE command in Dragonfly container"
@@ -689,6 +751,9 @@ backup_dragonfly_to_path() {
     fi
     
     if [ "$save_success" = true ]; then
+        # Give SAVE a moment to complete file write (especially for large datasets)
+        sleep 2
+        
         # Try multiple possible RDB file locations
         local rdb_paths=(
             "/data/dump.rdb"
@@ -698,15 +763,45 @@ backup_dragonfly_to_path() {
         )
         
         local rdb_found=false
+        local checked_paths=()
         for rdb_path in "${rdb_paths[@]}"; do
-            if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
-                if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
-                    rdb_found=true
-                    log_info "Found RDB file at: ${rdb_path}"
-                    break
+            checked_paths+=("$rdb_path")
+            # First check if file exists in container
+            if docker exec "$container" test -f "$rdb_path" 2>/dev/null; then
+                # File exists, try to copy it
+                if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
+                    if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
+                        rdb_found=true
+                        log_info "Found RDB file at: ${rdb_path}"
+                        break
+                    else
+                        log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
+                    fi
+                else
+                    log_warning "RDB file at ${rdb_path} exists but docker cp failed"
                 fi
             fi
         done
+        
+        if [ "$rdb_found" = false ]; then
+            log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
+            # Try to get more diagnostic info
+            if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
+                log_info "Checking Dragonfly INFO for RDB file location..."
+                local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
+                if [ -n "$persistence_info" ]; then
+                    log_info "Dragonfly persistence info: ${persistence_info}"
+                fi
+                # Try to find RDB file using find command in container
+                log_info "Searching for dump.rdb files in container..."
+                local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
+                if [ -n "$found_files" ]; then
+                    log_info "Found dump.rdb files in container: ${found_files}"
+                else
+                    log_warning "No dump.rdb files found in container"
+                fi
+            fi
+        fi
         
         if [ "$rdb_found" = true ]; then
             # Compress
