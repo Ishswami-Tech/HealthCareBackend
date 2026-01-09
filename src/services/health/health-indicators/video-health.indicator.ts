@@ -147,26 +147,27 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           throw new Error(errorMsg);
         }
 
-        const openviduSecret = this.configService.getEnv('OPENVIDU_SECRET') || '';
-        const healthEndpoint = `${openviduUrl}/openvidu/api/health`;
+        // Health check WITHOUT authentication
+        // Simply check if OpenVidu server is responding at the root URL
+        // The root URL serves a static welcome page and doesn't require auth
+        const healthEndpoint = openviduUrl;
 
         // Log health check attempt for debugging
         if (this.loggingService) {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.DEBUG,
-            'VideoHealthIndicator: Performing direct OpenVidu health check',
+            'VideoHealthIndicator: Performing OpenVidu health check (no auth)',
             'VideoHealthIndicator.getHealthStatus',
             {
               endpoint: healthEndpoint,
-              hasSecret: !!openviduSecret,
             }
           );
         }
 
         // REAL-TIME health check - always fresh, no cache
-        // Uses official OpenVidu health endpoint: /openvidu/api/health
-        // See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
+        // Simply checks if OpenVidu server is reachable (HTTP connectivity)
+        // No authentication required - just checks server is up
         const startTime = Date.now();
         // Get timeout from config or use default 5 seconds
         const timeout = this.configService.getEnvNumber('VIDEO_HEALTH_CHECK_TIMEOUT', 5000) || 5000;
@@ -180,19 +181,11 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
         });
 
         try {
-          // Build headers for OpenVidu health check
-          // HttpService automatically handles SSL for HTTPS URLs (including self-signed certs in dev)
-          const headers: Record<string, string> = {};
-          if (openviduSecret) {
-            headers['Authorization'] = `Basic ${Buffer.from(
-              `OPENVIDUAPP:${openviduSecret}`
-            ).toString('base64')}`;
-          }
-
+          // NO authentication - just check if server responds
           const response = await Promise.race([
-            this.httpService.get<{ status: string }>(healthEndpoint, {
+            this.httpService.get<string>(healthEndpoint, {
               timeout,
-              headers,
+              // No auth headers - public health check
             }),
             timeoutPromise,
           ]);
@@ -204,18 +197,13 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           }
 
           const responseTime = Date.now() - startTime;
-          // HttpService returns HttpResponse<T>, which has a 'data' property
-          const responseData = response?.data as { status?: string } | undefined;
           const httpStatus = response?.status;
 
-          // Check health: HTTP 200 AND status === 'UP' (same logic as OpenViduVideoProvider)
-          // Also accept any 2xx/3xx response as "service is accessible" (fallback for different OpenVidu versions)
-          const isHealthy =
-            (httpStatus === 200 && responseData?.status === 'UP') ||
-            (httpStatus >= 200 && httpStatus < 400 && !responseData?.status); // Accept 2xx/3xx if no status field
+          // Check health: Any 2xx/3xx response means OpenVidu is running
+          // We're just checking connectivity - no auth required
+          const isHealthy = httpStatus >= 200 && httpStatus < 400;
 
           // Log result for debugging (only at DEBUG level to reduce noise)
-          // Health check failures are expected when service is down - don't log as ERROR
           if (this.loggingService && isHealthy) {
             void this.loggingService.log(
               LogType.SYSTEM,
@@ -225,7 +213,6 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
               {
                 isHealthy,
                 httpStatus,
-                healthStatus: responseData?.status,
                 responseTime,
                 endpoint: healthEndpoint,
               }
@@ -242,7 +229,6 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
               {
                 isHealthy,
                 httpStatus,
-                healthStatus: responseData?.status,
                 responseTime,
                 endpoint: healthEndpoint,
                 hasFallback: !!hasFallback,
@@ -271,7 +257,7 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
             ...(isHealthy
               ? {}
               : {
-                  errorMessage: `OpenVidu health check failed - HTTP ${httpStatus || 'unknown'}, status: ${responseData?.status || 'unknown'}`,
+                  errorMessage: `OpenVidu health check failed - HTTP ${httpStatus || 'unknown'}`,
                 }),
           };
         } catch (raceError) {
