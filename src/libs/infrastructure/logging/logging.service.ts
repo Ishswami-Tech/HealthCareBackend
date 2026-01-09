@@ -360,17 +360,54 @@ export class LoggingService {
     };
 
     try {
-      // Development-only colored console output for debugging
-      // In production, all logging goes through Redis/database only
+      // Terminal output for both development and production
+      // Production: Only ERROR, WARN, and important SYSTEM/EMERGENCY logs (reduced noise)
+      // Development: All levels except DEBUG (full visibility)
       // Use ConfigService (which uses dotenv) for environment variable access
-      if (this.configService?.isDevelopment() && level !== LogLevel.DEBUG) {
+      const isDevelopment = this.configService?.isDevelopment() ?? false;
+      const isProduction = this.configService?.isProduction() ?? false;
+
+      // Determine if this log should be shown in terminal
+      let shouldShowInTerminal = false;
+
+      if (isDevelopment) {
+        // Development: Show all levels except DEBUG
+        shouldShowInTerminal = level !== LogLevel.DEBUG;
+      } else if (isProduction) {
+        // Production: Only show ERROR, WARN, and important SYSTEM/EMERGENCY logs
+        // Filter out noisy logs even for ERROR/WARN
+        const isImportantSystemLog =
+          (type === LogType.SYSTEM || type === LogType.EMERGENCY) &&
+          (level === LogLevel.ERROR || level === LogLevel.WARN);
+        const isImportantSecurityLog =
+          type === LogType.SECURITY && (level === LogLevel.ERROR || level === LogLevel.WARN);
+        const isCriticalError = level === LogLevel.ERROR || level === LogLevel.FATAL;
+
+        shouldShowInTerminal =
+          isCriticalError ||
+          level === LogLevel.WARN ||
+          isImportantSystemLog ||
+          isImportantSecurityLog;
+
+        // In production, also filter out noisy logs even if they're ERROR/WARN
+        if (shouldShowInTerminal) {
+          const isNoisy = this.isNoisyLog(message, context, level);
+          shouldShowInTerminal = !isNoisy;
+        }
+      } else {
+        // Staging/other environments: Show ERROR and WARN
+        shouldShowInTerminal =
+          level === LogLevel.ERROR || level === LogLevel.WARN || level === LogLevel.FATAL;
+      }
+
+      if (shouldShowInTerminal) {
         const levelColor = this.getLevelColor(level);
         const contextColor = '\x1b[36m'; // Cyan
         const resetColor = '\x1b[0m';
 
         const coloredMessage = `${levelColor}[${level}]${resetColor} ${contextColor}[${context}]${resetColor} ${message}`;
-        // Development output - using console.warn which is allowed by ESLint config
-        // This is intentional for development visibility in the logging service itself
+        // Terminal output - using console.warn which is allowed by ESLint config
+        // This provides visibility in both development and production (with reduced noise in production)
         console.warn(coloredMessage);
       }
 

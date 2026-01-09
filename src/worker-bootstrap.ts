@@ -133,10 +133,34 @@ async function bootstrap() {
             cachePort,
           }
         );
+
+        // Log additional startup information through LoggingService
+        await logService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`,
+          'WorkerBootstrap',
+          {
+            serviceName: configService.get<string>('SERVICE_NAME', 'clinic'),
+          }
+        );
+
+        await logService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `${cacheProvider === 'dragonfly' ? 'Dragonfly' : cacheProvider === 'redis' ? 'Redis' : 'Memory'} Connection: ${cacheHost}:${cachePort}`,
+          'WorkerBootstrap',
+          {
+            cacheProvider,
+            cacheHost,
+            cachePort,
+          }
+        );
       }
     } catch (error) {
       // Fallback logging only if LoggingService completely fails
       // This is acceptable as a last resort fallback when LoggingService is unavailable
+      // These logs will NOT appear in logger dashboard, only in terminal
       console.error('✅ Healthcare Worker initialized successfully');
       console.error(
         `🔄 Processing queues for ${configService.get<string>('SERVICE_NAME', 'clinic')} domain`
@@ -205,10 +229,11 @@ async function bootstrap() {
               LogLevel.WARN,
               `Received ${signal}, shutting down worker gracefully...`,
               'WorkerBootstrap',
-              {}
+              { signal }
             );
           } else {
             // Fallback logging only if LoggingService is not available
+            // These logs will NOT appear in logger dashboard, only in terminal
             console.error(`📤 Received ${signal}, shutting down worker gracefully...`);
           }
           try {
@@ -225,12 +250,15 @@ async function bootstrap() {
                 `Error during ${signal} shutdown`,
                 'WorkerBootstrap',
                 {
+                  signal,
                   error:
                     shutdownError instanceof Error ? shutdownError.message : String(shutdownError),
+                  stack: shutdownError instanceof Error ? shutdownError.stack : undefined,
                 }
               );
             } else {
               // Fallback logging only if LoggingService is not available
+              // These logs will NOT appear in logger dashboard, only in terminal
               console.error(`❌ Error during ${signal} shutdown:`, shutdownError);
             }
             process.exit(1);
@@ -256,10 +284,11 @@ async function bootstrap() {
           LogLevel.INFO,
           'Worker health check passed',
           'WorkerBootstrap',
-          {}
+          { healthCheck: true }
         );
       } else {
         // Fallback logging only if LoggingService is not available
+        // These logs will NOT appear in logger dashboard, only in terminal
         console.error('✅ Worker health check passed');
       }
       process.exit(0);
@@ -273,10 +302,11 @@ async function bootstrap() {
         LogLevel.INFO,
         'Worker is running and processing queues...',
         'WorkerBootstrap',
-        {}
+        { status: 'running' }
       );
     } else {
       // Fallback logging only if LoggingService is not available
+      // These logs will NOT appear in logger dashboard, only in terminal
       console.error('🔄 Worker is running and processing queues...');
     }
   } catch (error) {
@@ -287,10 +317,14 @@ async function bootstrap() {
         LogLevel.ERROR,
         'Worker failed to start',
         'WorkerBootstrap',
-        { error: error instanceof Error ? error.message : String(error) }
+        {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }
       );
     } else {
       // Fallback logging only if LoggingService is not available
+      // These logs will NOT appear in logger dashboard, only in terminal
       console.error('❌ Worker failed to start:', error);
     }
     process.exit(1);
@@ -303,6 +337,8 @@ async function bootstrap() {
 
 bootstrap().catch((error: unknown) => {
   // Bootstrap-level error handler - LoggingService may not be available yet
+  // This is the absolute last resort - LoggingService is not initialized at this point
+  // These logs will NOT appear in logger dashboard, only in terminal
   console.error('🚨 Bootstrap failed:', error instanceof Error ? error.message : String(error));
   process.exit(1);
 });

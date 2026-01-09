@@ -344,11 +344,11 @@ The health system:
 
 ## API Endpoints
 
-| Endpoint                      | Method    | Role   | Description                                                                               |
-| ----------------------------- | --------- | ------ | ----------------------------------------------------------------------------------------- |
-| `/health`                     | GET       | Public | Basic health check (HealthService-based, includes realtime status)                        |
-| `/health?detailed=true`       | GET       | Public | Detailed health check with system metrics (HealthService-based, includes realtime status) |
-| Socket.IO `/health` namespace | WebSocket | Public | Real-time health updates via push (recommended for dashboards)                            |
+| Endpoint                      | Method    | Role               | Description                                                                                                                                                                                                 |
+| ----------------------------- | --------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/health`                     | GET       | Public             | Basic health check (HealthService-based, includes realtime status)                                                                                                                                          |
+| `/health?detailed=true`       | GET       | Public             | Detailed health check with system metrics (HealthService-based, includes realtime status)                                                                                                                   |
+| Socket.IO `/health` namespace | WebSocket | Public (CORS Only) | Real-time health updates via push (recommended for dashboards). **No authentication required** - access controlled via CORS only. Configure `CORS_ORIGIN` environment variable to restrict allowed origins. |
 
 **Note:** All REST endpoints and Socket.IO realtime health monitoring use
 `HealthService` which uses health indicators with LoggingService (no Terminus

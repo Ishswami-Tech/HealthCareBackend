@@ -1301,18 +1301,22 @@ async function bootstrap() {
         await loggingService.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Failed to start application: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          `Failed to start application: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
           'Bootstrap',
           {
-            _error: _error instanceof Error ? _error.message : 'Unknown _error',
+            error: _error instanceof Error ? _error.message : 'Unknown error',
             stack: _error instanceof Error ? _error.stack : 'No stack trace available',
             details: _error,
           }
         );
       } catch (logError) {
+        // Last resort - LoggingService itself failed
+        // These logs will NOT appear in logger dashboard, only in terminal
         console.error('CRITICAL: Failed to log through LoggingService:', logError);
       }
     } else {
+      // Last resort - LoggingService not available
+      // These logs will NOT appear in logger dashboard, only in terminal
       console.error('CRITICAL: Failed to start application:', _error);
     }
 
@@ -1321,7 +1325,27 @@ async function bootstrap() {
         await app.close();
       }
     } catch (closeError) {
-      console.error('CRITICAL: Failed to close application:', closeError);
+      // Try to log close error through LoggingService if available
+      if (loggingService) {
+        try {
+          await loggingService.log(
+            LogType.ERROR,
+            AppLogLevel.ERROR,
+            'Failed to close application',
+            'Bootstrap',
+            {
+              error: closeError instanceof Error ? closeError.message : String(closeError),
+              stack: closeError instanceof Error ? closeError.stack : undefined,
+            }
+          );
+        } catch {
+          // Last resort - LoggingService failed
+          console.error('CRITICAL: Failed to close application:', closeError);
+        }
+      } else {
+        // Last resort - LoggingService not available
+        console.error('CRITICAL: Failed to close application:', closeError);
+      }
     }
 
     process.exit(1);
@@ -1329,6 +1353,9 @@ async function bootstrap() {
 }
 
 bootstrap().catch((_error: unknown) => {
+  // Bootstrap-level error handler - LoggingService may not be available yet
+  // This is the absolute last resort - LoggingService is not initialized at this point
+  // These logs will NOT appear in logger dashboard, only in terminal
   console.error('CRITICAL: Fatal error during bootstrap:', _error);
   process.exit(1);
 });

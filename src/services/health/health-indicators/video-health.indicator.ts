@@ -35,6 +35,8 @@ import { VideoService } from '@services/video/video.service';
 import { BaseHealthIndicator } from './base-health.indicator';
 import { ConfigService } from '@config';
 import { HttpService } from '@infrastructure/http';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 interface VideoHealthStatus {
   isHealthy: boolean;
@@ -55,21 +57,42 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
     private readonly configService?: ConfigService,
     @Optional()
     @Inject(forwardRef(() => HttpService))
-    private readonly httpService?: HttpService
+    private readonly httpService?: HttpService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    private readonly loggingService?: LoggingService
   ) {
     super();
   }
 
   protected isServiceAvailable(): boolean {
-    const isAvailable = this.videoService !== undefined && this.videoService !== null;
-    // Log for debugging if service is not available
-    if (!isAvailable) {
-      // Use console.error as fallback since LoggingService might not be available
-      // This helps diagnose module injection issues
-      console.error(
-        '[VideoHealthIndicator] VideoService not available - check module configuration and circular dependencies'
+    // Video health check can work in two ways:
+    // 1. Via VideoService (if available)
+    // 2. Via direct HTTP check to OpenVidu (if ConfigService and HttpService are available)
+    const videoServiceAvailable = this.videoService !== undefined && this.videoService !== null;
+    const directCheckAvailable =
+      this.configService !== undefined &&
+      this.configService !== null &&
+      this.httpService !== undefined &&
+      this.httpService !== null;
+
+    const isAvailable = videoServiceAvailable || directCheckAvailable;
+
+    // Log for debugging if neither method is available
+    if (!isAvailable && this.loggingService) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'VideoHealthIndicator: Neither VideoService nor direct HTTP check available - check module configuration',
+        'VideoHealthIndicator.isServiceAvailable',
+        {
+          videoServiceAvailable,
+          configServiceAvailable: !!this.configService,
+          httpServiceAvailable: !!this.httpService,
+        }
       );
     }
+
     return isAvailable;
   }
 
@@ -89,86 +112,228 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
    * This ensures health status reflects actual current state, not stale cached data
    */
   protected async getHealthStatus(): Promise<VideoHealthStatus> {
+    // Log that health check is being performed
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.DEBUG,
+        'VideoHealthIndicator: getHealthStatus called',
+        'VideoHealthIndicator.getHealthStatus',
+        {
+          videoServiceAvailable: !!this.videoService,
+          configServiceAvailable: !!this.configService,
+          httpServiceAvailable: !!this.httpService,
+        }
+      );
+    }
+
     // PRIORITY 1: Direct real-time OpenVidu health check (most reliable)
     // Always check OpenVidu directly to get current status - no caching
     if (this.configService && this.httpService) {
       try {
-        const openviduUrl =
-          this.configService.getEnv('OPENVIDU_URL') || 'http://openvidu-server:4443';
+        // Get OpenVidu URL from config (no hardcoded fallback)
+        const openviduUrl = this.configService.getEnv('OPENVIDU_URL');
+        if (!openviduUrl) {
+          const errorMsg = 'OPENVIDU_URL not configured';
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.ERROR,
+              `VideoHealthIndicator: ${errorMsg}`,
+              'VideoHealthIndicator.getHealthStatus',
+              { error: errorMsg }
+            );
+          }
+          throw new Error(errorMsg);
+        }
+
         const openviduSecret = this.configService.getEnv('OPENVIDU_SECRET') || '';
         const healthEndpoint = `${openviduUrl}/openvidu/api/health`;
+
+        // Log health check attempt for debugging
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.DEBUG,
+            'VideoHealthIndicator: Performing direct OpenVidu health check',
+            'VideoHealthIndicator.getHealthStatus',
+            {
+              endpoint: healthEndpoint,
+              hasSecret: !!openviduSecret,
+            }
+          );
+        }
 
         // REAL-TIME health check - always fresh, no cache
         // Uses official OpenVidu health endpoint: /openvidu/api/health
         // See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
         const startTime = Date.now();
-        const response = await Promise.race([
-          this.httpService.get<{ status: string }>(healthEndpoint, {
-            timeout: 5000, // 5 second timeout for real-time check
-            headers: openviduSecret
-              ? {
-                  Authorization: `Basic ${Buffer.from(`OPENVIDUAPP:${openviduSecret}`).toString('base64')}`,
-                }
-              : {},
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('OpenVidu health check timeout')), 5000)
-          ),
-        ]);
+        // Get timeout from config or use default 5 seconds
+        const timeout = this.configService.getEnvNumber('VIDEO_HEALTH_CHECK_TIMEOUT', 5000) || 5000;
 
-        const responseTime = Date.now() - startTime;
-        const isHealthy = response?.data?.status === 'UP';
+        // Create timeout promise with proper cleanup
+        let timeoutId: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error(`OpenVidu health check timeout after ${timeout}ms`));
+          }, timeout);
+        });
 
-        // Get provider info from VideoService if available (for fallback status)
-        let primaryProvider = 'openvidu';
-        let fallbackProvider: string | null = 'jitsi';
+        try {
+          const response = await Promise.race([
+            this.httpService.get<{ status: string }>(healthEndpoint, {
+              timeout,
+              headers: openviduSecret
+                ? {
+                    Authorization: `Basic ${Buffer.from(`OPENVIDUAPP:${openviduSecret}`).toString('base64')}`,
+                  }
+                : {},
+            }),
+            timeoutPromise,
+          ]);
 
-        if (this.videoService) {
-          try {
-            primaryProvider = this.videoService.getCurrentProvider() || 'openvidu';
-            fallbackProvider = this.videoService.getFallbackProvider();
-          } catch {
-            // VideoService methods failed - use defaults
+          // Clear timeout if request completed successfully
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
           }
-        }
 
-        return {
-          isHealthy,
-          primaryProvider,
-          fallbackProvider,
-          ...(isHealthy
-            ? {}
-            : {
-                errorMessage: `OpenVidu reports status: ${response?.data?.status || 'unknown'}`,
+          const responseTime = Date.now() - startTime;
+          // HttpService returns HttpResponse<T>, which has a 'data' property
+          const responseData = response?.data;
+          const isHealthy = responseData?.status === 'UP';
+
+          // Log result for debugging
+          if (this.loggingService) {
+            void this.loggingService.log(
+              isHealthy ? LogType.SYSTEM : LogType.ERROR,
+              isHealthy ? LogLevel.INFO : LogLevel.WARN,
+              `VideoHealthIndicator: OpenVidu health check ${isHealthy ? 'succeeded' : 'failed'}`,
+              'VideoHealthIndicator.getHealthStatus',
+              {
+                isHealthy,
+                status: responseData?.status,
                 responseTime,
-              }),
-        };
+                responseStatus: response?.status,
+                hasResponse: !!response,
+                endpoint: healthEndpoint,
+                timeout,
+              }
+            );
+          }
+
+          // Get provider info from VideoService if available (for fallback status)
+          let primaryProvider = 'openvidu';
+          let fallbackProvider: string | null = 'jitsi';
+
+          if (this.videoService) {
+            try {
+              primaryProvider = this.videoService.getCurrentProvider() || 'openvidu';
+              fallbackProvider = this.videoService.getFallbackProvider();
+            } catch {
+              // VideoService methods failed - use defaults
+            }
+          }
+
+          return {
+            isHealthy,
+            primaryProvider,
+            fallbackProvider,
+            responseTime,
+            ...(isHealthy
+              ? {}
+              : {
+                  errorMessage: `OpenVidu reports status: ${responseData?.status || 'unknown'}`,
+                }),
+          };
+        } catch (raceError) {
+          // Clear timeout if it was set (ensure cleanup in all error cases)
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          // Re-throw to be caught by outer catch block
+          throw raceError;
+        }
       } catch (error) {
         // Direct health check failed - try VideoService as fallback
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorStack = error instanceof Error ? error.stack : undefined;
+
+        // Log error for debugging
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'VideoHealthIndicator: Direct OpenVidu health check failed, trying VideoService fallback',
+            'VideoHealthIndicator.getHealthStatus',
+            {
+              error: errorMessage,
+              stack: errorStack,
+              willTryVideoService: !!this.videoService,
+            }
+          );
+        }
 
         // If VideoService is available, try it as fallback
         if (this.videoService) {
           try {
+            const fallbackStartTime = Date.now();
             const isHealthy = await this.videoService.isHealthy();
+            const fallbackResponseTime = Date.now() - fallbackStartTime;
             const primaryProvider = this.videoService.getCurrentProvider() || 'openvidu';
             const fallbackProvider = this.videoService.getFallbackProvider();
+
+            if (this.loggingService) {
+              void this.loggingService.log(
+                isHealthy ? LogType.SYSTEM : LogType.ERROR,
+                isHealthy ? LogLevel.INFO : LogLevel.WARN,
+                `VideoHealthIndicator: VideoService fallback health check ${isHealthy ? 'succeeded' : 'failed'}`,
+                'VideoHealthIndicator.getHealthStatus',
+                {
+                  isHealthy,
+                  primaryProvider,
+                  fallbackProvider,
+                  responseTime: fallbackResponseTime,
+                  usedFallback: true,
+                  originalError: errorMessage,
+                }
+              );
+            }
 
             return {
               isHealthy,
               primaryProvider,
               fallbackProvider,
+              responseTime: fallbackResponseTime,
               ...(isHealthy
                 ? {}
                 : { errorMessage: `VideoService health check failed: ${errorMessage}` }),
             };
           } catch (serviceError) {
+            const serviceErrorMessage =
+              serviceError instanceof Error ? serviceError.message : 'Unknown error';
+
             // Both direct check and VideoService failed
+            if (this.loggingService) {
+              void this.loggingService.log(
+                LogType.ERROR,
+                LogLevel.ERROR,
+                'VideoHealthIndicator: Both direct OpenVidu check and VideoService fallback failed',
+                'VideoHealthIndicator.getHealthStatus',
+                {
+                  directCheckError: errorMessage,
+                  videoServiceError: serviceErrorMessage,
+                  usedFallback: true,
+                }
+              );
+            }
+
             return {
               isHealthy: false,
               primaryProvider: 'openvidu',
               fallbackProvider: 'jitsi',
-              errorMessage: `Direct OpenVidu check failed: ${errorMessage}. VideoService check also failed: ${serviceError instanceof Error ? serviceError.message : 'Unknown error'}`,
+              errorMessage: `Direct OpenVidu check failed: ${errorMessage}. VideoService check also failed: ${serviceErrorMessage}`,
             };
           }
         }
@@ -191,10 +356,36 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
 
       try {
         isHealthy = await this.videoService.isHealthy();
+
+        if (this.loggingService) {
+          void this.loggingService.log(
+            isHealthy ? LogType.SYSTEM : LogType.ERROR,
+            isHealthy ? LogLevel.INFO : LogLevel.WARN,
+            `VideoHealthIndicator: VideoService health check ${isHealthy ? 'succeeded' : 'failed'}`,
+            'VideoHealthIndicator.getHealthStatus',
+            {
+              isHealthy,
+              usedVideoService: true,
+            }
+          );
+        }
       } catch (error) {
         // Capture actual error message for detailed reporting
         errorMessage = error instanceof Error ? error.message : 'Unknown error';
         isHealthy = false;
+
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'VideoHealthIndicator: VideoService health check threw error',
+            'VideoHealthIndicator.getHealthStatus',
+            {
+              error: errorMessage,
+              usedVideoService: true,
+            }
+          );
+        }
       }
 
       const primaryProvider = this.videoService.getCurrentProvider();
@@ -215,12 +406,28 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
     }
 
     // No way to check health - both direct check and VideoService unavailable
+    const errorMsg =
+      'Video service not available - OpenVidu direct check and VideoService both unavailable. Check module configuration.';
+
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `VideoHealthIndicator: ${errorMsg}`,
+        'VideoHealthIndicator.getHealthStatus',
+        {
+          videoServiceAvailable: false,
+          configServiceAvailable: !!this.configService,
+          httpServiceAvailable: !!this.httpService,
+        }
+      );
+    }
+
     return {
       isHealthy: false,
       primaryProvider: 'unknown',
       fallbackProvider: null,
-      errorMessage:
-        'Video service not available - OpenVidu direct check and VideoService both unavailable. Check module configuration.',
+      errorMessage: errorMsg,
     };
   }
 
