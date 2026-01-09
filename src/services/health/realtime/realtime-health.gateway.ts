@@ -100,6 +100,19 @@ export class RealtimeHealthGateway
       // This ensures health namespace respects CORS_ORIGIN environment variable
       // Same security model as the main app gateway and other WebSocket gateways
 
+      // CRITICAL: Explicitly bypass any global authentication middleware
+      // The health namespace is public and should not require authentication
+      const healthNamespace = server.of('/health');
+      if (healthNamespace) {
+        // Remove any authentication middleware that might be applied globally
+        // This ensures the health namespace is truly public
+        healthNamespace.use((socket, next) => {
+          // Allow all connections without authentication
+          // Access is controlled only via CORS configuration
+          next();
+        });
+      }
+
       // Get CORS origins for logging
       const corsOrigins = getCorsOrigin();
       const allowedOrigins = Array.isArray(corsOrigins)

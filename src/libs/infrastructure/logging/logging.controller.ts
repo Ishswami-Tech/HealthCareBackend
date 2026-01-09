@@ -243,13 +243,7 @@ export class LoggingController {
           try {
             const response = await fetch('/logger/logs/clear', { method: 'POST' });
             if (!response.ok) {
-              throw new HealthcareError(
-                ErrorCode.LOGGING_CLEAR_FAILED,
-                'Failed to clear logs',
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                {},
-                'LoggingController.clearLogs'
-              );
+              throw new Error('Failed to clear logs: ' + response.statusText);
             }
             refreshContent();
           } catch (error) {
@@ -264,13 +258,7 @@ export class LoggingController {
           try {
             const response = await fetch('/logger/events/clear', { method: 'POST' });
             if (!response.ok) {
-              throw new HealthcareError(
-                ErrorCode.LOGGING_CLEAR_FAILED,
-                'Failed to clear events',
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                {},
-                'LoggingController.clearEvents'
-              );
+              throw new Error('Failed to clear events: ' + response.statusText);
             }
             refreshContent();
           } catch (error) {
@@ -331,24 +319,22 @@ export class LoggingController {
 
             const response = await fetch(url);
             if (!response.ok) {
-              throw new HealthcareError(
-                ErrorCode.LOGGING_RETRIEVAL_FAILED,
-                'Failed to fetch data',
-                HttpStatus.INTERNAL_SERVER_ERROR,
-                {},
-                'LoggingController.refreshContent'
-              );
+              throw new Error('Failed to fetch data: ' + response.statusText);
             }
             
             const data = await response.json();
             
-            if (!data || data.length === 0) {
+            // Handle paginated response format: { logs: [], meta: {} }
+            const logs = data.logs || (Array.isArray(data) ? data : []);
+            
+            if (!logs || logs.length === 0) {
               container.innerHTML = '<div class="empty-state">No data found</div>';
               failedAttempts = 0;
+              updateRefreshStatus(false);
               return;
             }
 
-            container.innerHTML = data.map(log => {
+            container.innerHTML = logs.map(log => {
               const metadata = typeof (log as { metadata?: unknown }).metadata === 'string' ? JSON.parse((log as { metadata?: unknown }).metadata) : (log as { metadata?: unknown }).metadata;
               return '<div class="entry">' +
                 '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +

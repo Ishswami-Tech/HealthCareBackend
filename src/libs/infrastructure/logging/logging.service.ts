@@ -368,6 +368,7 @@ export class LoggingService {
       const isProduction = this.configService?.isProduction() ?? false;
 
       // Determine if this log should be shown in terminal
+      // IMPORTANT: Terminal output happens BEFORE noise filtering to ensure visibility
       let shouldShowInTerminal = false;
 
       if (isDevelopment) {
@@ -375,7 +376,7 @@ export class LoggingService {
         shouldShowInTerminal = level !== LogLevel.DEBUG;
       } else if (isProduction) {
         // Production: Only show ERROR, WARN, and important SYSTEM/EMERGENCY logs
-        // Filter out noisy logs even for ERROR/WARN
+        // Filter out noisy logs even for ERROR/WARN (but allow critical system logs)
         const isImportantSystemLog =
           (type === LogType.SYSTEM || type === LogType.EMERGENCY) &&
           (level === LogLevel.ERROR || level === LogLevel.WARN);
@@ -389,8 +390,8 @@ export class LoggingService {
           isImportantSystemLog ||
           isImportantSecurityLog;
 
-        // In production, also filter out noisy logs even if they're ERROR/WARN
-        if (shouldShowInTerminal) {
+        // In production, filter out noisy logs (but allow critical errors and important system logs)
+        if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
           const isNoisy = this.isNoisyLog(message, context, level);
           shouldShowInTerminal = !isNoisy;
         }
@@ -422,6 +423,8 @@ export class LoggingService {
 
       const isNoisyLog = this.isNoisyLog(message, context, level);
 
+      // ALWAYS store logs in cache (even if noisy) for dashboard visibility
+      // Only skip database logging for noisy/timeout logs
       if (!isNoisyLog && !isTimeoutOrConnectionError) {
         try {
           // Enhanced database logging with better error handling
@@ -505,6 +508,8 @@ export class LoggingService {
       }
 
       // High-performance cache logging
+      // ALWAYS store logs in cache (even if noisy) for dashboard visibility
+      // This ensures all logs appear in the logger dashboard
       try {
         await Promise.all([
           this.cacheService?.rPush('logs', JSON.stringify(logEntry)),
@@ -525,6 +530,13 @@ export class LoggingService {
   }
 
   private isNoisyLog(message: string, context: string, level: LogLevel): boolean {
+    // Filter out DEBUG level logs (always noisy)
+    if (level === LogLevel.DEBUG) {
+      return true;
+    }
+
+    // Filter out repetitive health check and heartbeat messages
+    // But allow ERROR/WARN level logs even if they contain these patterns
     const noisyPatterns = [
       'health check',
       'GET /health',
@@ -532,20 +544,22 @@ export class LoggingService {
       'heartbeat',
       'ping',
       'HealthCheck',
-      'Socket',
-      'Bootstrap',
       'websocket',
       'keepalive',
     ];
 
-    return (
-      level === LogLevel.DEBUG ||
-      noisyPatterns.some(
+    // Only filter as noisy if it's INFO level and matches noisy patterns
+    // ERROR and WARN should always be shown (even if they contain noisy patterns)
+    if (level === LogLevel.INFO) {
+      return noisyPatterns.some(
         pattern =>
           message.toLowerCase().includes(pattern.toLowerCase()) ||
           context.toLowerCase().includes(pattern.toLowerCase())
-      )
-    );
+      );
+    }
+
+    // ERROR and WARN are never considered noisy
+    return false;
   }
 
   private addToMetricsBuffer(logEntry: unknown) {
@@ -620,15 +634,63 @@ export class LoggingService {
       const finalStartTime = startTime || defaultStartTime;
       const finalEndTime = endTime || now;
 
-      // Optimized cache key with pagination and search
-      const cacheKey = `logs:v3:${type || 'all'}:${level || 'all'}:${finalStartTime.getTime()}:${finalEndTime.getTime()}:${search || 'none'}:${currentPage}:${take}`;
+      // ALWAYS read from cache first (logs are stored in 'logs' list via rPush)
+      // Cache is the primary source of truth for real-time log viewing
+      // Database is only used for audit trail persistence
+      const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
+      const parsedCacheLogs: LogEntry[] = cachedLogs
+        .map(log => {
+          try {
+            return JSON.parse(log) as LogEntry;
+          } catch {
+            return null;
+          }
+        })
+        .filter((log): log is LogEntry => log !== null)
+        .filter((log: LogEntry) => {
+          const logDate = new Date(log.timestamp);
 
-      // Enhanced caching with compression for large datasets
-      const cachedResult = await this.cacheService?.get<string>(cacheKey);
-      if (cachedResult) {
-        return JSON.parse(cachedResult) as PaginatedLogsResult;
+          // Apply time filter
+          const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
+
+          // Apply type filter
+          const matchesType = !type || log.type === type;
+
+          // Apply level filter
+          const matchesLevel = !level || log.level === level;
+
+          // Apply search filter
+          const matchesSearch =
+            !search ||
+            log.message.toLowerCase().includes(search.toLowerCase()) ||
+            log.context.toLowerCase().includes(search.toLowerCase());
+
+          return inTimeRange && matchesType && matchesLevel && matchesSearch;
+        })
+        .sort((a, b) => {
+          const aTime = new Date(a.timestamp).getTime();
+          const bTime = new Date(b.timestamp).getTime();
+          return bTime - aTime;
+        });
+
+      // If no database service, return cache logs only
+      if (!this.databaseService) {
+        // Calculate total
+        const total = parsedCacheLogs.length;
+
+        // Apply pagination
+        const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
+
+        // Create pagination metadata
+        const meta = new PaginationMetaDto(currentPage, take, total);
+
+        return {
+          logs: paginatedLogs,
+          meta,
+        };
       }
 
+      // Database is available - try to combine cache + database logs
       // Optimized database query for 1M users
       const whereClause: unknown = {
         timestamp: {
@@ -641,54 +703,7 @@ export class LoggingService {
         (whereClause as Record<string, unknown>)['action'] = type;
       }
 
-      // Enhanced database query with better indexing
-      if (!this.databaseService) {
-        // Cache-only fallback for high performance (when database is not available)
-        const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
-        const parsedLogs: LogEntry[] = cachedLogs
-          .map(log => JSON.parse(log) as LogEntry)
-          .filter((log: LogEntry) => {
-            const logDate = new Date(log.timestamp);
-
-            // Apply time filter
-            const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
-
-            // Apply type filter
-            const matchesType = !type || log.type === type;
-
-            // Apply level filter
-            const matchesLevel = !level || log.level === level;
-
-            // Apply search filter
-            const matchesSearch =
-              !search ||
-              log.message.toLowerCase().includes(search.toLowerCase()) ||
-              log.context.toLowerCase().includes(search.toLowerCase());
-
-            return inTimeRange && matchesType && matchesLevel && matchesSearch;
-          })
-          .sort((a, b) => {
-            const aTime = new Date(a.timestamp).getTime();
-            const bTime = new Date(b.timestamp).getTime();
-            return bTime - aTime;
-          });
-
-        // Calculate total
-        const total = parsedLogs.length;
-
-        // Apply pagination
-        const paginatedLogs = parsedLogs.slice(skip, skip + take);
-
-        // Create pagination metadata
-        const meta = new PaginationMetaDto(currentPage, take, total);
-
-        return {
-          logs: paginatedLogs,
-          meta,
-        };
-      }
-
-      // Temporarily bypass database query due to schema migration issues
+      // Try to get audit logs from database and combine with cache
       try {
         // Check if we're in startup grace period
         const timeSinceStart = Date.now() - this.serviceStartTime;
@@ -697,14 +712,12 @@ export class LoggingService {
         // CRITICAL: During startup grace period, don't call Prisma methods at all
         // Even accessing auditLog delegate triggers Prisma's internal validation that logs to stderr
         if (isInStartupGracePeriod) {
-          // Return empty result during startup grace period
-          const pagination = calculatePagination({
-            ...(page !== undefined && { page }),
-            ...(limit !== undefined && { limit }),
-          });
-          const meta = new PaginationMetaDto(pagination.page, pagination.take, 0);
+          // Return cache logs only during startup grace period
+          const total = parsedCacheLogs.length;
+          const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
+          const meta = new PaginationMetaDto(currentPage, take, total);
           return {
-            logs: [],
+            logs: paginatedLogs,
             meta,
           };
         }
@@ -798,178 +811,74 @@ export class LoggingService {
 
         // CRITICAL: Combine database logs with cache logs to ensure ALL logs appear in UI
         // Cache logs contain the full log entry with all metadata, while DB logs are audit-only
-        let combinedLogs: LogEntry[] = [...dbResult];
+        // Use the already-parsed cache logs from above (parsedCacheLogs)
+        const logMap = new Map<string, LogEntry>();
 
-        try {
-          // Get cache logs with pagination (use lRange with start/end for performance)
-          const cacheStart = 0;
-          const cacheEnd = -1; // Get all, we'll filter and paginate
-          const cachedLogs = (await this.cacheService?.lRange('logs', cacheStart, cacheEnd)) || [];
-          const parsedCacheLogs: LogEntry[] = cachedLogs
-            .map(log => JSON.parse(log) as LogEntry)
-            .filter((log: LogEntry) => {
-              const logDate = new Date(log.timestamp);
-
-              // Apply time filter
-              const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
-
-              // Apply type filter
-              const matchesType = !type || log.type === type;
-
-              // Apply level filter
-              const matchesLevel = !level || log.level === level;
-
-              // Apply search filter
-              const matchesSearch =
-                !search ||
-                log.message.toLowerCase().includes(search.toLowerCase()) ||
-                log.context.toLowerCase().includes(search.toLowerCase());
-
-              return inTimeRange && matchesType && matchesLevel && matchesSearch;
-            });
-
-          // Combine and deduplicate by ID (cache logs have more complete data)
-          const logMap = new Map<string, LogEntry>();
-
-          // First add cache logs (they have complete metadata)
-          for (const log of parsedCacheLogs) {
-            if (log.id) {
-              logMap.set(log.id, log);
-            }
+        // First add cache logs (they have complete metadata and are most up-to-date)
+        for (const log of parsedCacheLogs) {
+          if (log.id) {
+            logMap.set(log.id, log);
           }
-
-          // Then add database logs (only if not already in cache)
-          for (const log of dbResult) {
-            if (log.id && !logMap.has(log.id)) {
-              logMap.set(log.id, log);
-            }
-          }
-
-          combinedLogs = Array.from(logMap.values());
-
-          // Sort by timestamp descending (newest first)
-          combinedLogs.sort((a, b) => {
-            const aTime = new Date(a.timestamp).getTime();
-            const bTime = new Date(b.timestamp).getTime();
-            return bTime - aTime;
-          });
-
-          // Apply search filter if not already applied
-          if (search) {
-            combinedLogs = combinedLogs.filter(
-              log =>
-                log.message.toLowerCase().includes(search.toLowerCase()) ||
-                log.context.toLowerCase().includes(search.toLowerCase())
-            );
-          }
-
-          // Calculate total before pagination
-          const total = combinedLogs.length;
-
-          // Apply pagination
-          combinedLogs = combinedLogs.slice(skip, skip + take);
-
-          // Create pagination metadata
-          const meta = new PaginationMetaDto(currentPage, take, total);
-
-          const result: PaginatedLogsResult = {
-            logs: combinedLogs,
-            meta,
-          };
-
-          // Enhanced caching with longer TTL for 1M users
-          await this.cacheService?.set(cacheKey, JSON.stringify(result), 900); // 15 minutes
-
-          return result;
-        } catch (cacheError) {
-          // Track error for observability
-          this.trackError('getLogs_cache_error', cacheError);
-
-          // If cache retrieval fails, use database logs with pagination
-          // Apply search filter to database results
-          let filteredLogs = dbResult;
-          if (search) {
-            filteredLogs = dbResult.filter(
-              log =>
-                log.message.toLowerCase().includes(search.toLowerCase()) ||
-                log.context.toLowerCase().includes(search.toLowerCase())
-            );
-          }
-
-          // Calculate total
-          const total = filteredLogs.length;
-
-          // Apply pagination
-          const paginatedLogs = filteredLogs.slice(skip, skip + take);
-
-          // Create pagination metadata
-          const meta = new PaginationMetaDto(currentPage, take, total);
-
-          return {
-            logs: paginatedLogs,
-            meta,
-          };
         }
+
+        // Then add database logs (only if not already in cache)
+        for (const log of dbResult) {
+          if (log.id && !logMap.has(log.id)) {
+            logMap.set(log.id, log);
+          }
+        }
+
+        const combinedLogs = Array.from(logMap.values());
+
+        // Sort by timestamp descending (newest first)
+        combinedLogs.sort((a, b) => {
+          const aTime = new Date(a.timestamp).getTime();
+          const bTime = new Date(b.timestamp).getTime();
+          return bTime - aTime;
+        });
+
+        // Apply search filter if not already applied (should already be filtered, but double-check)
+        let filteredLogs = combinedLogs;
+        if (search) {
+          filteredLogs = combinedLogs.filter(
+            log =>
+              log.message.toLowerCase().includes(search.toLowerCase()) ||
+              log.context.toLowerCase().includes(search.toLowerCase())
+          );
+        }
+
+        // Calculate total before pagination
+        const total = filteredLogs.length;
+
+        // Apply pagination
+        const paginatedLogs = filteredLogs.slice(skip, skip + take);
+
+        // Create pagination metadata
+        const meta = new PaginationMetaDto(currentPage, take, total);
+
+        const result: PaginatedLogsResult = {
+          logs: paginatedLogs,
+          meta,
+        };
+
+        // Note: We don't cache the result here because logs are constantly being added
+        // The 'logs' list in cache is the source of truth and is kept up-to-date
+
+        return result;
       } catch (dbError) {
         // Track error for observability
         this.trackError('getLogs_database_error', dbError);
 
-        // Database query failed, falling back to cache
-        // Fallback to cache-only logs (these contain full log entries with all metadata)
-        try {
-          const cachedLogs = (await this.cacheService?.lRange('logs', 0, -1)) || [];
-          const parsedLogs: LogEntry[] = cachedLogs
-            .map(log => JSON.parse(log) as LogEntry)
-            .filter((log: LogEntry) => {
-              const logDate = new Date(log.timestamp);
+        // Database query failed, falling back to cache-only logs
+        // Cache logs are already parsed above (parsedCacheLogs)
+        const total = parsedCacheLogs.length;
+        const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
+        const meta = new PaginationMetaDto(currentPage, take, total);
 
-              // Apply time filter
-              const inTimeRange = logDate >= finalStartTime && logDate <= finalEndTime;
-
-              // Apply type filter
-              const matchesType = !type || log.type === type;
-
-              // Apply level filter
-              const matchesLevel = !level || log.level === level;
-
-              // Apply search filter
-              const matchesSearch =
-                !search ||
-                log.message.toLowerCase().includes(search.toLowerCase()) ||
-                log.context.toLowerCase().includes(search.toLowerCase());
-
-              return inTimeRange && matchesType && matchesLevel && matchesSearch;
-            })
-            .sort((a, b) => {
-              const aTime = new Date(a.timestamp).getTime();
-              const bTime = new Date(b.timestamp).getTime();
-              return bTime - aTime;
-            });
-
-          // Calculate total
-          const total = parsedLogs.length;
-
-          // Apply pagination
-          const paginatedLogs = parsedLogs.slice(skip, skip + take);
-
-          // Create pagination metadata
-          const meta = new PaginationMetaDto(currentPage, take, total);
-
-          return {
-            logs: paginatedLogs,
-            meta,
-          };
-        } catch (cacheError) {
-          // Track error for observability
-          this.trackError('getLogs_cache_fallback_error', cacheError);
-
-          // Cache fallback also failed - return empty result
-          const meta = new PaginationMetaDto(currentPage, take, 0);
-          return {
-            logs: [],
-            meta,
-          };
-        }
+        return {
+          logs: paginatedLogs,
+          meta,
+        };
       }
     } catch (error) {
       // Track error for observability
