@@ -480,6 +480,8 @@ export class LoggingHealthMonitorService implements OnModuleInit, OnModuleDestro
       const httpCheckPromise: Promise<{ status: number }> = this.httpService
         .get<unknown>(loggerUrl, {
           timeout: QUERY_TIMEOUT_MS,
+          // Disable redirects for localhost health checks to prevent external URL redirects
+          maxRedirects: 0,
         })
         .then(response => {
           // Response already has status from centralized HTTP service

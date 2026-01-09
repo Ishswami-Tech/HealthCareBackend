@@ -180,14 +180,19 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
         });
 
         try {
+          // Build headers for OpenVidu health check
+          // HttpService automatically handles SSL for HTTPS URLs (including self-signed certs in dev)
+          const headers: Record<string, string> = {};
+          if (openviduSecret) {
+            headers['Authorization'] = `Basic ${Buffer.from(
+              `OPENVIDUAPP:${openviduSecret}`
+            ).toString('base64')}`;
+          }
+
           const response = await Promise.race([
             this.httpService.get<{ status: string }>(healthEndpoint, {
               timeout,
-              headers: openviduSecret
-                ? {
-                    Authorization: `Basic ${Buffer.from(`OPENVIDUAPP:${openviduSecret}`).toString('base64')}`,
-                  }
-                : {},
+              headers,
             }),
             timeoutPromise,
           ]);
@@ -204,25 +209,43 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           const httpStatus = response?.status;
 
           // Check health: HTTP 200 AND status === 'UP' (same logic as OpenViduVideoProvider)
-          const isHealthy = httpStatus === 200 && responseData?.status === 'UP';
+          // Also accept any 2xx/3xx response as "service is accessible" (fallback for different OpenVidu versions)
+          const isHealthy =
+            (httpStatus === 200 && responseData?.status === 'UP') ||
+            (httpStatus >= 200 && httpStatus < 400 && !responseData?.status); // Accept 2xx/3xx if no status field
 
-          // Log result for debugging
-          if (this.loggingService) {
+          // Log result for debugging (only at DEBUG level to reduce noise)
+          // Health check failures are expected when service is down - don't log as ERROR
+          if (this.loggingService && isHealthy) {
             void this.loggingService.log(
-              isHealthy ? LogType.SYSTEM : LogType.ERROR,
-              isHealthy ? LogLevel.INFO : LogLevel.WARN,
-              `VideoHealthIndicator: OpenVidu health check ${isHealthy ? 'succeeded' : 'failed'}`,
+              LogType.SYSTEM,
+              LogLevel.DEBUG,
+              `VideoHealthIndicator: OpenVidu health check succeeded`,
               'VideoHealthIndicator.getHealthStatus',
               {
                 isHealthy,
                 httpStatus,
                 healthStatus: responseData?.status,
                 responseTime,
-                hasResponse: !!response,
-                hasData: !!responseData,
                 endpoint: healthEndpoint,
-                timeout,
-                fullResponse: responseData, // Include full response for debugging
+              }
+            );
+          }
+          // Only log failures at WARN level if we have a fallback, otherwise ERROR
+          if (this.loggingService && !isHealthy) {
+            const hasFallback = this.videoService && this.videoService.getFallbackProvider();
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              hasFallback ? LogLevel.DEBUG : LogLevel.WARN,
+              `VideoHealthIndicator: OpenVidu health check failed${hasFallback ? ' (fallback available)' : ''}`,
+              'VideoHealthIndicator.getHealthStatus',
+              {
+                isHealthy,
+                httpStatus,
+                healthStatus: responseData?.status,
+                responseTime,
+                endpoint: healthEndpoint,
+                hasFallback: !!hasFallback,
               }
             );
           }

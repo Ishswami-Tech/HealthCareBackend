@@ -197,22 +197,44 @@ export class HttpService {
           address?: string;
           port?: number;
           message?: string;
+          config?: { url?: string };
           response?: { status?: number; statusText?: string; data?: unknown };
         };
         const errorCode = axiosError.code || (error as { code?: string })?.code;
         const errorMessage =
           axiosError.message || (error instanceof Error ? error.message : String(error));
 
+        // Use original requested URL, not the URL from error.config (which might be after redirects)
+        // This ensures we log the URL that was actually requested, not a redirected URL
+        const loggedUrl = url; // Always use the original URL parameter
+
+        // Determine log level based on error type and context
+        // Health check failures and connection errors are less critical than application errors
+        // Also check if this is a logger endpoint check (should use localhost, not external URL)
+        const isHealthCheck = url.includes('/health') || url.includes('/api/health');
+        const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
+        const isConnectionError =
+          errorCode === 'ECONNREFUSED' ||
+          errorCode === 'ENOTFOUND' ||
+          errorCode === 'ETIMEDOUT' ||
+          errorCode === 'EHOSTUNREACH' ||
+          errorCode === 'ENETUNREACH';
+        const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
+        const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
+        const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+
         if (this.loggingService) {
           void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.ERROR,
-            `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
+            logType,
+            logLevel,
+            `HTTP ${method} ${loggedUrl} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
             'HttpService',
             {
               requestId,
               method,
-              url,
+              url: loggedUrl, // Use original URL, not redirected URL
+              originalUrl: url, // Keep original for reference
+              errorUrl: axiosError.config?.url, // Show if different (redirect happened)
               error: errorMessage,
               errorCode,
               errno: axiosError.errno,
@@ -221,6 +243,9 @@ export class HttpService {
               port: axiosError.port,
               responseStatus: axiosError.response?.status,
               responseStatusText: axiosError.response?.statusText,
+              isHealthCheck,
+              isLoggerCheck,
+              isConnectionError,
             }
           );
         }
@@ -360,14 +385,31 @@ export class HttpService {
         port: axiosError.port,
       };
 
+      // Determine log level based on error type and context
+      // Health check failures and connection errors are less critical than application errors
+      const isHealthCheck = url.includes('/health') || url.includes('/api/health');
+      const isConnectionError =
+        errorCode === 'ECONNREFUSED' ||
+        errorCode === 'ENOTFOUND' ||
+        errorCode === 'ETIMEDOUT' ||
+        errorCode === 'EHOSTUNREACH' ||
+        errorCode === 'ENETUNREACH';
+      const isExpectedFailure = isHealthCheck || isConnectionError;
+      const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
+      const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+
       // Log detailed error for debugging (especially for connection errors)
       if (this.loggingService) {
         void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.ERROR,
+          logType,
+          logLevel,
           `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ''}`,
           'HttpService.request',
-          errorDetails
+          {
+            ...errorDetails,
+            isHealthCheck,
+            isConnectionError,
+          }
         );
       }
 
