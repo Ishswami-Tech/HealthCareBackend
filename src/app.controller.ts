@@ -916,12 +916,14 @@ export class AppController {
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background-color: #f8fafc;
             color: #1a202c;
-            line-height: 1.5;
-            font-size: 14px;
+            line-height: 1.6;
+            font-size: 15px;
             min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         .container {
@@ -938,9 +940,10 @@ export class AppController {
 
         header h1 {
             font-size: 2.5rem;
-            font-weight: bold;
+            font-weight: 700;
             color: #1a202c;
             margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
         }
 
         header p {
@@ -954,9 +957,10 @@ export class AppController {
 
         .section-title {
             font-size: 1.5rem;
-            font-weight: 600;
+            font-weight: 700;
             color: #1a202c;
             margin-bottom: 1rem;
+            letter-spacing: -0.02em;
         }
 
         .services-grid {
@@ -1032,17 +1036,19 @@ export class AppController {
         }
 
         .service-title {
-            font-size: 1rem;
+            font-size: 1.0625rem;
             font-weight: 600;
             color: #334155;
             margin: 0;
+            letter-spacing: -0.01em;
         }
 
         .status-badge {
-            font-size: 0.75rem;
-            padding: 0.25rem 0.5rem;
+            font-size: 0.8125rem;
+            padding: 0.375rem 0.75rem;
             border-radius: 9999px;
-            font-weight: 500;
+            font-weight: 600;
+            letter-spacing: 0.01em;
         }
 
         .status-active {
@@ -1142,6 +1148,7 @@ export class AppController {
             font-weight: 600;
             color: #334155;
             margin: 0;
+            letter-spacing: -0.01em;
         }
 
         .status-circle {
@@ -1171,8 +1178,9 @@ export class AppController {
         }
 
         .health-status-text {
-            font-weight: 500;
-            font-size: 1.125rem;
+            font-weight: 600;
+            font-size: 1.25rem;
+            letter-spacing: -0.01em;
         }
 
         .status-text-healthy {
@@ -1214,14 +1222,16 @@ export class AppController {
 
         .metric-label {
             color: #64748b;
-            font-size: 0.75rem;
+            font-size: 0.8125rem;
             margin-bottom: 0.25rem;
             display: block;
+            font-weight: 500;
         }
 
         .metric-value {
             color: #334155;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 0.9375rem;
         }
 
         /* Logs Section */
@@ -1465,7 +1475,7 @@ export class AppController {
                             ${healthData.overallHealth.statusText}
                         </span>
                     </div>
-                    <p style="text-align: center; color: #64748b; font-size: 0.875rem;">${healthData.overallHealth.details}</p>
+                    <p style="text-align: center; color: #64748b; font-size: 0.9375rem; line-height: 1.5; margin-top: 0.5rem;">${healthData.overallHealth.details}</p>
                 </div>
             </div>
 
@@ -1493,7 +1503,7 @@ export class AppController {
                                 ${service.isHealthy ? 'Active' : 'Inactive'}
                             </span>
                         </div>
-                        <p style="color: #64748b; margin: 0.5rem 0;">${service.details}</p>
+                        <p style="color: #64748b; margin: 0.5rem 0; font-size: 0.9375rem; line-height: 1.5;">${service.details}</p>
                         ${
                           service.error && !service.isHealthy
                             ? `<div style="margin-top: 0.5rem; padding: 0.75rem; background: #fee2e2; border-left: 3px solid #ef4444; border-radius: 4px;">
