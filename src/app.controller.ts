@@ -468,6 +468,9 @@ export class AppController {
         : allServices;
 
       // Calculate overall system health with defensive checks
+      // PRIORITY: Service health takes precedence over backend status
+      // If all services are healthy, system is healthy regardless of backend status field
+      // This prevents false "degraded" status when system metrics (CPU/memory) are wrong
       const servicesData = healthData && 'services' in healthData ? healthData.services : {};
       const totalServices = servicesData ? Object.keys(servicesData).length : 0;
       const healthyServices = servicesData
@@ -479,11 +482,16 @@ export class AppController {
               (service as ServiceHealth).status === 'healthy'
           ).length
         : 0;
+
+      // CRITICAL: If all services are healthy, system is healthy (ignore backend status field)
+      // Backend status might be "degraded" due to incorrect CPU calculation, but if all services
+      // are healthy, the system is actually healthy
       const isSystemHealthy = totalServices > 0 && healthyServices === totalServices;
 
       // Initialize health dashboard data
       const dashboardData: DashboardData = {
         overallHealth: {
+          // Always use service-based calculation, not backend status field
           status: isSystemHealthy ? 'healthy' : 'degraded',
           statusText: isSystemHealthy ? 'All systems operational' : 'System partially degraded',
           healthyCount: healthyServices,
@@ -1721,7 +1729,21 @@ export class AppController {
                 
                 // Handle heartbeat (lightweight ping)
                 healthSocket.on('health:heartbeat', (heartbeat) => {
-                    updateOverallStatus(heartbeat.o);
+                    // Check if all services are healthy and override status if needed
+                    // This prevents false "degraded" when all services are healthy
+                    if (heartbeat.s) {
+                        const allHealthy = Object.values(heartbeat.s).every(
+                            (service: unknown) => 
+                                service && 
+                                typeof service === 'object' && 
+                                'status' in service && 
+                                (service as { status: string }).status === 'healthy'
+                        );
+                        const finalStatus = allHealthy ? 'healthy' : heartbeat.o;
+                        updateOverallStatus(finalStatus);
+                    } else {
+                        updateOverallStatus(heartbeat.o);
+                    }
                 });
                 
                 // Handle connection errors
@@ -1946,13 +1968,26 @@ export class AppController {
                 
                 const healthData = await response.json();
                 
+                // Check if all services are healthy
+                let allServicesHealthy = true;
+                if (healthData.services) {
+                    const services = healthData.services;
+                    allServicesHealthy = Object.values(services).every(
+                        (service: unknown) => 
+                            service && 
+                            typeof service === 'object' && 
+                            'status' in service && 
+                            (service as { status: string }).status === 'healthy'
+                    );
+                }
+                
+                // PRIORITY: If all services are healthy, override status to "healthy"
+                // This prevents false "degraded" status when system metrics are wrong
+                const finalStatus = allServicesHealthy ? 'healthy' : (healthData.status || 'degraded');
+                
                 // Update overall health status
-                if (healthData.status) {
-                    const statusElement = document.querySelector('.overall-health .status-text');
-                    if (statusElement) {
-                        statusElement.textContent = healthData.status.toUpperCase();
-                        statusElement.className = \`status-text status-text-\${healthData.status}\`;
-                    }
+                if (finalStatus) {
+                    updateOverallStatus(finalStatus);
                     
                     const lastCheckedElement = document.querySelector('.overall-health .last-checked');
                     if (lastCheckedElement && healthData.timestamp) {
