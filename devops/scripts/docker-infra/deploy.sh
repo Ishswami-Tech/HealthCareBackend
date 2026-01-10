@@ -352,13 +352,43 @@ deploy_application() {
     # Note: We need to include infrastructure profile to resolve dependencies (coturn)
     # but we only pull the app service images
     log_info "Pulling latest images for api and worker (forcing pull to get latest version)..."
-    if ! docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
-        log_error "Failed to pull images for api and worker"
-        if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-            log_error "No GITHUB_TOKEN provided - cannot authenticate with GHCR"
-            log_error "Either provide GITHUB_TOKEN and GITHUB_USERNAME, or make the package public in GitHub"
+    
+    # Try to pull with the specific tag first
+    local pull_success=false
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
+        log_success "Successfully pulled images with specific tag: ${DOCKER_IMAGE}"
+        pull_success=true
+    else
+        log_warning "Failed to pull images with specific tag: ${DOCKER_IMAGE}"
+        log_warning "This might mean the CI/CD build didn't complete or the tag doesn't exist"
+        log_info "Attempting to pull :latest tag as fallback..."
+        
+        # Fallback to :latest tag if specific tag doesn't exist
+        local fallback_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+        local original_docker_image="${DOCKER_IMAGE:-}"
+        export DOCKER_IMAGE="${fallback_image}"
+        
+        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
+            log_success "Successfully pulled fallback image: ${fallback_image}"
+            log_warning "Using :latest tag instead of specific tag. This may not be the exact commit you expected."
+            pull_success=true
+        else
+            # Restore original DOCKER_IMAGE
+            export DOCKER_IMAGE="${original_docker_image}"
+            log_error "Failed to pull images for api and worker (both specific tag and :latest failed)"
+            if [[ -z "${GITHUB_TOKEN:-}" ]]; then
+                log_error "No GITHUB_TOKEN provided - cannot authenticate with GHCR"
+                log_error "Either provide GITHUB_TOKEN and GITHUB_USERNAME, or make the package public in GitHub"
+            else
+                log_error "Image may not exist in registry. Check CI/CD build status."
+                log_error "Tried tags: ${original_docker_image} and ${fallback_image}"
+                log_error "Possible causes:"
+                log_error "  1. CI/CD build didn't complete successfully"
+                log_error "  2. Image wasn't pushed to registry"
+                log_error "  3. Tag format is incorrect"
+            fi
+            return 1
         fi
-        return 1
     fi
     
     # Force remove old containers to ensure new image is used
