@@ -95,8 +95,9 @@ services:
       # Values are loaded from .env.development via env_file directive above
       # IMPORTANT: Inside Docker, use container name (openvidu-server) not localhost
       # NOTE: OpenVidu in dev mode uses HTTP (SERVER_SSL_ENABLED=false)
+      # OPENVIDU_URL should be set in .env.development, but allow fallback for local dev
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: http://openvidu-server:4443
+      OPENVIDU_URL: ${OPENVIDU_URL:-http://openvidu-server:4443}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
       OPENVIDU_DOMAIN: ${OPENVIDU_DOMAIN:-localhost}
       # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
