@@ -95,6 +95,10 @@ backup_postgres() {
             relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
         fi
         
+        # Extract array values to variables for use in heredoc (fixes syntax error)
+        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
+        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
 {
@@ -108,8 +112,8 @@ backup_postgres() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS["postgres_local"]}",
-    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
+    "local": "${postgres_local_status}",
+    "s3": "${postgres_s3_status}"
   }
 }
 EOF
@@ -148,12 +152,25 @@ backup_dragonfly() {
     # 3. On the host system
     local cli_available=false
     local redis_cli_cmd=""
+    local backup_dir=""
+    local db_filename="dump.rdb"
     
     # First, try inside Dragonfly container
+    # Dragonfly uses redis-cli but might need different connection syntax
     if docker exec "$container" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
-        cli_available=true
-        redis_cli_cmd="docker exec $container redis-cli -p 6379"
-        log_info "Using redis-cli from Dragonfly container"
+        # Try without -p flag first (Dragonfly default port), then with -p
+        if docker exec "$container" redis-cli ping >/dev/null 2>&1; then
+            redis_cli_cmd="docker exec $container redis-cli"
+            cli_available=true
+            log_info "Using redis-cli from Dragonfly container (default port)"
+        elif docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1; then
+            redis_cli_cmd="docker exec $container redis-cli -p 6379"
+            cli_available=true
+            log_info "Using redis-cli from Dragonfly container (port 6379)"
+        else
+            log_warning "redis-cli found but cannot connect to Dragonfly"
+            cli_available=false
+        fi
     # Try using Redis container (if available) to connect to Dragonfly
     elif container_running "${REDIS_CONTAINER}" 2>/dev/null && \
          docker exec "${REDIS_CONTAINER}" sh -c "command -v redis-cli >/dev/null 2>&1" 2>/dev/null; then
@@ -183,32 +200,72 @@ backup_dragonfly() {
     # Use SAVE command to create snapshot
     local save_success=false
     if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-        # Try SAVE first (blocking but immediate)
-        if eval "$redis_cli_cmd SAVE" >/dev/null 2>&1; then
-            save_success=true
-            log_info "SAVE command succeeded"
+        # Test connection first
+        if ! eval "$redis_cli_cmd PING" >/dev/null 2>&1; then
+            log_error "Cannot connect to Dragonfly with redis-cli - connection test failed"
+            cli_available=false
         else
-            log_warning "SAVE command failed, trying BGSAVE..."
-            # Try BGSAVE (background save) which is non-blocking
-            if eval "$redis_cli_cmd BGSAVE" >/dev/null 2>&1; then
-                log_info "BGSAVE started, waiting for completion..."
-                # Wait for BGSAVE to complete (max 30 seconds)
-                local wait_count=0
-                while [ $wait_count -lt 30 ]; do
-                    sleep 1
-                    wait_count=$((wait_count + 1))
-                    # Check if save is in progress
-                    if ! eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -q "rdb_bgsave_in_progress:1"; then
-                        save_success=true
-                        log_info "BGSAVE completed"
-                        break
-                    fi
-                done
-                if [ "$save_success" = false ]; then
-                    log_warning "BGSAVE did not complete within 30 seconds"
-                fi
+            log_info "Successfully connected to Dragonfly"
+            
+            # Check Dragonfly configuration for backup directory and filename
+            local config_dir_output=$(eval "$redis_cli_cmd CONFIG GET dir" 2>/dev/null || echo "")
+            local backup_dir=$(echo "$config_dir_output" | grep -v "^dir$" | tail -1 | xargs || echo "")
+            
+            local config_dbfilename_output=$(eval "$redis_cli_cmd CONFIG GET dbfilename" 2>/dev/null || echo "")
+            local db_filename=$(echo "$config_dbfilename_output" | grep -v "^dbfilename$" | tail -1 | xargs || echo "dump.rdb")
+            
+            if [ -n "$backup_dir" ]; then
+                log_info "Dragonfly configured backup directory: ${backup_dir}, filename: ${db_filename}"
             else
-                log_error "BGSAVE command also failed"
+                log_info "Dragonfly using default directory, filename: ${db_filename}"
+            fi
+            
+            # Try SAVE first (blocking but immediate)
+            log_info "Attempting SAVE command..."
+            local save_output=$(eval "$redis_cli_cmd SAVE" 2>&1)
+            local save_exit_code=$?
+            
+            if [ $save_exit_code -eq 0 ] && echo "$save_output" | grep -qiE "(OK|ok)"; then
+                save_success=true
+                log_info "SAVE command succeeded: ${save_output}"
+            else
+                log_warning "SAVE command failed (exit: $save_exit_code, output: '${save_output}'), trying BGSAVE..."
+                # Try BGSAVE (background save) which is non-blocking
+                local bgsave_output=$(eval "$redis_cli_cmd BGSAVE" 2>&1)
+                local bgsave_exit_code=$?
+                
+                if [ $bgsave_exit_code -eq 0 ] && echo "$bgsave_output" | grep -qiE "(OK|Background saving|Background)"; then
+                    log_info "BGSAVE started: ${bgsave_output}, waiting for completion..."
+                    # Wait for BGSAVE to complete (max 60 seconds for large datasets)
+                    local wait_count=0
+                    local max_wait=60
+                    while [ $wait_count -lt $max_wait ]; do
+                        sleep 1
+                        wait_count=$((wait_count + 1))
+                        # Check if save is in progress
+                        local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null || echo "")
+                        if echo "$persistence_info" | grep -q "rdb_bgsave_in_progress:0"; then
+                            # Check if save was successful
+                            if echo "$persistence_info" | grep -q "rdb_last_bgsave_status:ok"; then
+                                save_success=true
+                                log_info "BGSAVE completed successfully"
+                                break
+                            else
+                                log_warning "BGSAVE completed but status is not OK"
+                                break
+                            fi
+                        fi
+                        # Show progress every 10 seconds
+                        if [ $((wait_count % 10)) -eq 0 ]; then
+                            log_info "BGSAVE in progress... (${wait_count}/${max_wait}s)"
+                        fi
+                    done
+                    if [ "$save_success" = false ]; then
+                        log_warning "BGSAVE did not complete within ${max_wait} seconds or status is not OK"
+                    fi
+                else
+                    log_error "BGSAVE command also failed (exit: $bgsave_exit_code, output: '${bgsave_output}')"
+                fi
             fi
         fi
     else
@@ -292,6 +349,10 @@ backup_dragonfly() {
                     BACKUP_RESULTS["dragonfly_s3"]="failed"
                 fi
                 
+                # Extract array values to variables for use in heredoc (fixes syntax error)
+                local dragonfly_local_status="${BACKUP_RESULTS["dragonfly_local"]}"
+                local dragonfly_s3_status="${BACKUP_RESULTS["dragonfly_s3"]}"
+                
                 # Store metadata
                 cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF
 {
@@ -304,8 +365,8 @@ backup_dragonfly() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS["dragonfly_local"]}",
-    "s3": "${BACKUP_RESULTS["dragonfly_s3"]}"
+    "local": "${dragonfly_local_status}",
+    "s3": "${dragonfly_s3_status}"
   }
 }
 EOF
@@ -342,6 +403,10 @@ create_metadata() {
             dragonfly_json=$(cat "$dragonfly_meta")
         fi
         
+        # Extract array values to variables for use in heredoc (fixes syntax error)
+        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
+        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        
         cat > "$METADATA_FILE" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
@@ -349,8 +414,8 @@ create_metadata() {
   "postgres": ${postgres_json},
   "dragonfly": ${dragonfly_json},
   "storage": {
-    "local": "${BACKUP_RESULTS["postgres_local"]}",
-    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
+    "local": "${postgres_local_status}",
+    "s3": "${postgres_s3_status}"
   }
 }
 EOF
@@ -632,6 +697,10 @@ backup_postgres_to_path() {
             relative_file_path="${backup_type_from_path}/postgres-${TIMESTAMP}.sql.gz"
         fi
         
+        # Extract array values to variables for use in heredoc (fixes syntax error)
+        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
+        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
 {
@@ -645,8 +714,8 @@ backup_postgres_to_path() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS["postgres_local"]}",
-    "s3": "${BACKUP_RESULTS["postgres_s3"]}"
+    "local": "${postgres_local_status}",
+    "s3": "${postgres_s3_status}"
   }
 }
 EOF
@@ -718,32 +787,72 @@ backup_dragonfly_to_path() {
     # Use SAVE command to create snapshot
     local save_success=false
     if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-        # Try SAVE first (blocking but immediate)
-        if eval "$redis_cli_cmd SAVE" >/dev/null 2>&1; then
-            save_success=true
-            log_info "SAVE command succeeded"
+        # Test connection first
+        if ! eval "$redis_cli_cmd PING" >/dev/null 2>&1; then
+            log_error "Cannot connect to Dragonfly with redis-cli - connection test failed"
+            cli_available=false
         else
-            log_warning "SAVE command failed, trying BGSAVE..."
-            # Try BGSAVE (background save) which is non-blocking
-            if eval "$redis_cli_cmd BGSAVE" >/dev/null 2>&1; then
-                log_info "BGSAVE started, waiting for completion..."
-                # Wait for BGSAVE to complete (max 30 seconds)
-                local wait_count=0
-                while [ $wait_count -lt 30 ]; do
-                    sleep 1
-                    wait_count=$((wait_count + 1))
-                    # Check if save is in progress
-                    if ! eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -q "rdb_bgsave_in_progress:1"; then
-                        save_success=true
-                        log_info "BGSAVE completed"
-                        break
-                    fi
-                done
-                if [ "$save_success" = false ]; then
-                    log_warning "BGSAVE did not complete within 30 seconds"
-                fi
+            log_info "Successfully connected to Dragonfly"
+            
+            # Check Dragonfly configuration for backup directory and filename
+            local config_dir_output=$(eval "$redis_cli_cmd CONFIG GET dir" 2>/dev/null || echo "")
+            local backup_dir=$(echo "$config_dir_output" | grep -v "^dir$" | tail -1 | xargs || echo "")
+            
+            local config_dbfilename_output=$(eval "$redis_cli_cmd CONFIG GET dbfilename" 2>/dev/null || echo "")
+            local db_filename=$(echo "$config_dbfilename_output" | grep -v "^dbfilename$" | tail -1 | xargs || echo "dump.rdb")
+            
+            if [ -n "$backup_dir" ]; then
+                log_info "Dragonfly configured backup directory: ${backup_dir}, filename: ${db_filename}"
             else
-                log_error "BGSAVE command also failed"
+                log_info "Dragonfly using default directory, filename: ${db_filename}"
+            fi
+            
+            # Try SAVE first (blocking but immediate)
+            log_info "Attempting SAVE command..."
+            local save_output=$(eval "$redis_cli_cmd SAVE" 2>&1)
+            local save_exit_code=$?
+            
+            if [ $save_exit_code -eq 0 ] && echo "$save_output" | grep -qiE "(OK|ok)"; then
+                save_success=true
+                log_info "SAVE command succeeded: ${save_output}"
+            else
+                log_warning "SAVE command failed (exit: $save_exit_code, output: '${save_output}'), trying BGSAVE..."
+                # Try BGSAVE (background save) which is non-blocking
+                local bgsave_output=$(eval "$redis_cli_cmd BGSAVE" 2>&1)
+                local bgsave_exit_code=$?
+                
+                if [ $bgsave_exit_code -eq 0 ] && echo "$bgsave_output" | grep -qiE "(OK|Background saving|Background)"; then
+                    log_info "BGSAVE started: ${bgsave_output}, waiting for completion..."
+                    # Wait for BGSAVE to complete (max 60 seconds for large datasets)
+                    local wait_count=0
+                    local max_wait=60
+                    while [ $wait_count -lt $max_wait ]; do
+                        sleep 1
+                        wait_count=$((wait_count + 1))
+                        # Check if save is in progress
+                        local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null || echo "")
+                        if echo "$persistence_info" | grep -q "rdb_bgsave_in_progress:0"; then
+                            # Check if save was successful
+                            if echo "$persistence_info" | grep -q "rdb_last_bgsave_status:ok"; then
+                                save_success=true
+                                log_info "BGSAVE completed successfully"
+                                break
+                            else
+                                log_warning "BGSAVE completed but status is not OK"
+                                break
+                            fi
+                        fi
+                        # Show progress every 10 seconds
+                        if [ $((wait_count % 10)) -eq 0 ]; then
+                            log_info "BGSAVE in progress... (${wait_count}/${max_wait}s)"
+                        fi
+                    done
+                    if [ "$save_success" = false ]; then
+                        log_warning "BGSAVE did not complete within ${max_wait} seconds or status is not OK"
+                    fi
+                else
+                    log_error "BGSAVE command also failed (exit: $bgsave_exit_code, output: '${bgsave_output}')"
+                fi
             fi
         fi
     else
@@ -829,6 +938,10 @@ backup_dragonfly_to_path() {
                     BACKUP_RESULTS["dragonfly_s3"]="failed"
                 fi
                 
+                # Extract array values to variables for use in heredoc (fixes syntax error)
+                local dragonfly_local_status="${BACKUP_RESULTS["dragonfly_local"]}"
+                local dragonfly_s3_status="${BACKUP_RESULTS["dragonfly_s3"]}"
+                
                 # Store metadata
                 cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF
 {
@@ -841,8 +954,8 @@ backup_dragonfly_to_path() {
   "local_path": "${backup_file}",
   "s3_path": "${s3_path}",
   "storage": {
-    "local": "${BACKUP_RESULTS["dragonfly_local"]}",
-    "s3": "${BACKUP_RESULTS["dragonfly_s3"]}"
+    "local": "${dragonfly_local_status}",
+    "s3": "${dragonfly_s3_status}"
   }
 }
 EOF
