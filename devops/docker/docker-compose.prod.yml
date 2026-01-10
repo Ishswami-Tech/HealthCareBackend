@@ -371,7 +371,9 @@ services:
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: http://openvidu-server:4443
+      # OPENVIDU_URL must be set in .env.production or environment variables
+      # Do NOT hardcode - use environment variable to allow proper configuration
+      OPENVIDU_URL: ${OPENVIDU_URL}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
     expose:
       - "${PORT:-8088}"

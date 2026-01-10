@@ -79,8 +79,9 @@ export class RealtimeHealthGateway
   server!: Server;
 
   private readonly ROOM_ALL = 'health:all';
-  private readonly MAX_CONNECTIONS_PER_IP = 3;
-  private readonly connectionsByIP = new Map<string, number>();
+  // Health checks should not have connection limits - they run constantly
+  // Removed MAX_CONNECTIONS_PER_IP limit to allow unlimited health check connections
+  // Security is handled via CORS configuration only
 
   constructor(
     private readonly broadcaster: HealthBroadcasterService,
@@ -152,23 +153,9 @@ export class RealtimeHealthGateway
       const clientId = client.id;
       const clientIP = this.getClientIP(client);
 
-      // Rate limiting: Check connections per IP
-      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
-      if (ipConnections >= this.MAX_CONNECTIONS_PER_IP) {
-        safeLog(
-          this.loggingService,
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Connection rejected: Too many connections from IP ${clientIP}`,
-          'RealtimeHealthGateway',
-          { clientId, clientIP, connections: ipConnections }
-        );
-        client.disconnect();
-        return;
-      }
-
-      // Increment connection count
-      this.connectionsByIP.set(clientIP, ipConnections + 1);
+      // Health checks should not have connection limits - they run constantly
+      // Removed rate limiting to allow unlimited health check connections
+      // Security is handled via CORS configuration only
 
       // Auto-join to health:all room
       await client.join(this.ROOM_ALL);
@@ -222,11 +209,7 @@ export class RealtimeHealthGateway
       const clientId = client.id;
       const clientIP = this.getClientIP(client);
 
-      // Decrement connection count
-      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
-      if (ipConnections > 0) {
-        this.connectionsByIP.set(clientIP, ipConnections - 1);
-      }
+      // Connection tracking removed - no limits for health checks
 
       safeLog(
         this.loggingService,
