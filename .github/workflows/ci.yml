@@ -1261,6 +1261,10 @@ jobs:
             export INFRA_STATUS="${{ needs.check-infrastructure.outputs.infra-status }}"
             export BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id || '' }}"
             
+            # Set DOCKER_IMAGE for docker-compose (uses IMAGE:IMAGE_TAG format)
+            export DOCKER_IMAGE="${IMAGE}:${IMAGE_TAG}"
+            echo "Setting DOCKER_IMAGE=${DOCKER_IMAGE}"
+            
             # Flag to indicate infrastructure operations were already handled by CI/CD jobs
             # This prevents deploy.sh from duplicating backup/recreate/restore operations
             if [[ "${{ needs.detect-changes.outputs.infra-changed }}" == "true" ]] || \
