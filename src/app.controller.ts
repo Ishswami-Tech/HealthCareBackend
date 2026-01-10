@@ -1751,16 +1751,27 @@ export class AppController {
         function updateDashboardFromRealtimeStatus(status) {
             if (!status) return;
             
-            // Update overall status
-            if (status.o) {
-                updateOverallStatus(status.o);
-            }
-            
-            // Update services
+            // Update services first
+            let allServicesHealthy = true;
             if (status.s) {
                 Object.entries(status.s).forEach(([serviceName, serviceData]) => {
                     updateServiceStatus(serviceName, serviceData);
+                    // Check if service is healthy
+                    if (serviceData && serviceData.status !== 'healthy') {
+                        allServicesHealthy = false;
+                    }
                 });
+            }
+            
+            // PRIORITY: If all services are healthy, show "healthy" regardless of system metrics
+            // This prevents false "degraded" status when system metrics are wrong (e.g., CPU > 100%)
+            if (status.o) {
+                // Override status if all services are healthy
+                const finalStatus = allServicesHealthy ? 'healthy' : status.o;
+                updateOverallStatus(finalStatus);
+            } else if (allServicesHealthy) {
+                // If no overall status but all services are healthy, show healthy
+                updateOverallStatus('healthy');
             }
             
             // Update system metrics if available
