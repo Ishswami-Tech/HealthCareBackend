@@ -99,17 +99,38 @@ export class HealthAggregatorService {
 
       // Use system metrics from HealthService if available, otherwise use SystemHealthChecker
       if (healthResponse.systemMetrics) {
+        // Calculate CPU percentage correctly
+        // process.cpuUsage() returns cumulative CPU time in microseconds
+        // To get percentage: (total_cpu_time / uptime / cpu_count) * 100
         const cpuValue =
-          healthResponse.systemMetrics.cpuUsage.cpuCount > 0
-            ? (healthResponse.systemMetrics.cpuUsage.user +
-                healthResponse.systemMetrics.cpuUsage.system) /
-              1000000
+          healthResponse.systemMetrics.cpuUsage.cpuCount > 0 &&
+          healthResponse.systemMetrics.uptime > 0
+            ? Math.min(
+                100,
+                Math.max(
+                  0,
+                  ((healthResponse.systemMetrics.cpuUsage.user +
+                    healthResponse.systemMetrics.cpuUsage.system) /
+                    1000000 / // Convert microseconds to seconds
+                    healthResponse.systemMetrics.uptime / // Divide by uptime to get rate
+                    healthResponse.systemMetrics.cpuUsage.cpuCount) * // Divide by CPU count
+                    100 // Convert to percentage
+                )
+              )
             : systemMetrics.cpu;
+
+        // Calculate memory percentage correctly
         const memoryValue =
           healthResponse.systemMetrics.memoryUsage.systemTotal > 0
-            ? (healthResponse.systemMetrics.memoryUsage.systemUsed /
-                healthResponse.systemMetrics.memoryUsage.systemTotal) *
-              100
+            ? Math.min(
+                100,
+                Math.max(
+                  0,
+                  (healthResponse.systemMetrics.memoryUsage.systemUsed /
+                    healthResponse.systemMetrics.memoryUsage.systemTotal) *
+                    100
+                )
+              )
             : systemMetrics.memory;
 
         // Create new object with updated values (read-only properties)

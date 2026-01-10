@@ -436,6 +436,39 @@ deploy_application() {
             return 1
         fi
         
+        # Verify containers are using the correct image
+        log_info "Verifying containers are using the correct image..."
+        local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+        local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
+        
+        if [[ -n "$api_image" ]]; then
+            log_info "API container image: $api_image"
+            if [[ "$api_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$api_image" == *":latest"* ]]; then
+                log_success "API container is using expected image"
+            else
+                log_warning "API container image ($api_image) may not match expected image (${DOCKER_IMAGE})"
+            fi
+        fi
+        
+        if [[ -n "$worker_image" ]]; then
+            log_info "Worker container image: $worker_image"
+            if [[ "$worker_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$worker_image" == *":latest"* ]]; then
+                log_success "Worker container is using expected image"
+            else
+                log_warning "Worker container image ($worker_image) may not match expected image (${DOCKER_IMAGE})"
+            fi
+        fi
+        
+        # Get container creation time to verify it was just recreated
+        local api_created=$(docker inspect --format='{{.Created}}' "$api_container" 2>/dev/null || echo "")
+        local worker_created=$(docker inspect --format='{{.Created}}' "$worker_container" 2>/dev/null || echo "")
+        if [[ -n "$api_created" ]]; then
+            log_info "API container created at: $api_created"
+        fi
+        if [[ -n "$worker_created" ]]; then
+            log_info "Worker container created at: $worker_created"
+        fi
+        
         if ! container_running "$worker_container"; then
             log_error "Worker container ($worker_container) failed to start"
             log_info "=== Worker Container Status ==="
