@@ -208,6 +208,7 @@ export class HealthAggregatorService {
 
   /**
    * Calculate overall status from services and system metrics
+   * Overall status should primarily reflect service health, not system metrics
    */
   private calculateOverallStatus(
     services: Record<string, ServiceHealthStatus>,
@@ -223,13 +224,18 @@ export class HealthAggregatorService {
     // Check for degraded services
     const hasDegraded = Object.values(services).some(s => s.status === 'degraded');
 
-    // Check system metrics thresholds
-    const systemDegraded = system.cpu >= 80 || system.memory >= 80 || system.errorRate >= 5;
+    // System metrics should only affect status if CRITICAL (not just high usage)
+    // High CPU/memory usage is normal under load - only mark degraded if critical
+    // Critical thresholds: CPU > 95%, Memory > 95%, Error rate > 10%
+    const systemCritical = system.cpu >= 95 || system.memory >= 95 || system.errorRate >= 10;
 
-    if (hasDegraded || systemDegraded) {
+    // Only mark as degraded if services are degraded OR system is critical
+    // Normal high usage (80-95%) should not affect overall status if services are healthy
+    if (hasDegraded || systemCritical) {
       return 'degraded';
     }
 
+    // All services healthy and system not critical = healthy
     return 'healthy';
   }
 
