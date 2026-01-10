@@ -621,6 +621,15 @@ export class OpenViduVideoProvider implements IVideoProvider {
     // Use root URL for health check - no auth required
     const healthEndpoint = this.apiUrl;
 
+    // Log the endpoint being used for debugging (helps verify new code is running)
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.DEBUG,
+      `OpenVidu health check using endpoint: ${healthEndpoint}`,
+      'OpenViduVideoProvider.isHealthy',
+      { apiUrl: this.apiUrl, healthEndpoint }
+    );
+
     // Track last error for detailed error message
     let lastError = 'Unknown error';
     let lastErrorCode: string | undefined;

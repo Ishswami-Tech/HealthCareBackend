@@ -152,15 +152,34 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
         // The root URL serves a static welcome page and doesn't require auth
         const healthEndpoint = openviduUrl;
 
+        // CRITICAL: Verify we're not using old hardcoded URL
+        if (
+          healthEndpoint.includes('openvidu-server:4443') ||
+          healthEndpoint.includes('/openvidu/api/health')
+        ) {
+          const errorMsg = `ERROR: Using old hardcoded URL! Expected OPENVIDU_URL from env, got: ${healthEndpoint}`;
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.ERROR,
+              LogLevel.ERROR,
+              errorMsg,
+              'VideoHealthIndicator.getHealthStatus',
+              { healthEndpoint, openviduUrl }
+            );
+          }
+          throw new Error(errorMsg);
+        }
+
         // Log health check attempt for debugging
         if (this.loggingService) {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.DEBUG,
-            'VideoHealthIndicator: Performing OpenVidu health check (no auth)',
+            `VideoHealthIndicator: Performing OpenVidu health check (no auth) at ${healthEndpoint}`,
             'VideoHealthIndicator.getHealthStatus',
             {
               endpoint: healthEndpoint,
+              openviduUrl,
             }
           );
         }
