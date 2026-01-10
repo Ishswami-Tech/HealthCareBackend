@@ -417,6 +417,27 @@ deploy_application() {
     # CRITICAL: --force-recreate ensures containers are recreated even if already running
     # This guarantees new code is deployed when image changes
     # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
+    
+    # CRITICAL: Validate OPENVIDU_URL is set before starting containers
+    # This prevents containers from starting with hardcoded/empty OPENVIDU_URL
+    if [[ -z "${OPENVIDU_URL:-}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL environment variable is not set!"
+        log_error "This will cause OpenVidu health checks to fail with hardcoded URL errors"
+        log_error "Please ensure OPENVIDU_URL is set in GitHub Actions environment variables"
+        log_error "Current OPENVIDU_URL value: '${OPENVIDU_URL:-EMPTY}'"
+        exit $EXIT_CRITICAL
+    fi
+    
+    # Log the URL being used (masked for security)
+    local masked_url="${OPENVIDU_URL}"
+    if [[ "${masked_url}" =~ ^https?://([^:]+) ]]; then
+        masked_url="${BASH_REMATCH[1]}"
+    fi
+    log_info "Using OPENVIDU_URL: ${masked_url} (from environment variable)"
+    
+    # Explicitly export OPENVIDU_URL to ensure docker-compose can access it
+    export OPENVIDU_URL="${OPENVIDU_URL}"
+    
     log_info "Starting application containers (api, worker) with force-recreate to ensure new image is used..."
     if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
@@ -467,6 +488,40 @@ deploy_application() {
         fi
         if [[ -n "$worker_created" ]]; then
             log_info "Worker container created at: $worker_created"
+        fi
+        
+        # CRITICAL: Verify OPENVIDU_URL is set correctly in the container
+        log_info "Verifying OPENVIDU_URL environment variable in API container..."
+        sleep 2  # Give container time to fully start
+        local container_openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR: Cannot read from container")
+        if [[ "$container_openvidu_url" == *"openvidu-server:4443"* ]] || [[ "$container_openvidu_url" == "NOT SET" ]] || [[ -z "$container_openvidu_url" ]]; then
+            log_error "CRITICAL: API container has incorrect OPENVIDU_URL: '${container_openvidu_url}'"
+            log_error "Expected: ${OPENVIDU_URL}"
+            log_error "Container will fail health checks with hardcoded URL errors"
+            log_error "This indicates the environment variable was not passed correctly to docker-compose"
+            log_warning "Check for .env.production file that might be overriding OPENVIDU_URL"
+            log_warning "Attempting to fix by recreating container with explicit environment variable..."
+            
+            # Try to recreate with explicit env var
+            docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
+            docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+            OPENVIDU_URL="${OPENVIDU_URL}" docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate api worker 2>&1 || {
+                log_error "Failed to recreate containers with correct OPENVIDU_URL"
+                return 1
+            }
+            
+            # Verify again after recreation
+            sleep 5
+            container_openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR: Cannot read from container")
+            if [[ "$container_openvidu_url" == *"openvidu-server:4443"* ]] || [[ "$container_openvidu_url" == "NOT SET" ]] || [[ -z "$container_openvidu_url" ]]; then
+                log_error "CRITICAL: Still incorrect after recreation. OPENVIDU_URL in container: '${container_openvidu_url}'"
+                log_error "Manual intervention required: Check .env.production file or docker-compose.prod.yml"
+                return 1
+            else
+                log_success "OPENVIDU_URL fixed in container: ${container_openvidu_url}"
+            fi
+        else
+            log_success "OPENVIDU_URL correctly set in container: ${container_openvidu_url}"
         fi
         
         if ! container_running "$worker_container"; then
