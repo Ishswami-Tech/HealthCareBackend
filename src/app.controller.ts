@@ -1996,12 +1996,35 @@ export class AppController {
                 if (healthData.systemMetrics) {
                     const metrics = healthData.systemMetrics;
                     
-                    // Update memory usage
+                    // Update memory usage - show SYSTEM memory (not heap) for better visibility
+                    // Heap memory can be misleading as Node.js heap grows dynamically
                     if (metrics.memoryUsage) {
                         const memoryElement = document.querySelector('[data-metric="memory"]');
-                        if (memoryElement && metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
-                            const percentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100).toFixed(1);
-                            memoryElement.textContent = \`\${percentage}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                        if (memoryElement) {
+                            // Show system memory percentage (more meaningful than heap)
+                            if (metrics.memoryUsage.systemTotal > 0 && metrics.memoryUsage.systemUsed !== undefined) {
+                                const systemPercentage = ((metrics.memoryUsage.systemUsed / metrics.memoryUsage.systemTotal) * 100).toFixed(1);
+                                const systemUsedGB = (metrics.memoryUsage.systemUsed / (1024 * 1024 * 1024)).toFixed(2);
+                                const systemTotalGB = (metrics.memoryUsage.systemTotal / (1024 * 1024 * 1024)).toFixed(2);
+                                memoryElement.textContent = \`\${systemPercentage}% (\${systemUsedGB} GB / \${systemTotalGB} GB)\`;
+                                
+                                // Add heap info as tooltip or secondary display if heap is high
+                                if (metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
+                                    const heapPercentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100);
+                                    if (heapPercentage > 90) {
+                                        // Show warning if heap is > 90%
+                                        memoryElement.title = \`⚠️ Heap memory high: \${heapPercentage.toFixed(1)}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                                        memoryElement.style.color = '#f59e0b'; // Orange warning
+                                    } else {
+                                        memoryElement.title = \`Heap: \${heapPercentage.toFixed(1)}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                                        memoryElement.style.color = ''; // Reset color
+                                    }
+                                }
+                            } else if (metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
+                                // Fallback to heap if system memory not available
+                                const percentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100).toFixed(1);
+                                memoryElement.textContent = \`\${percentage}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                            }
                         }
                     }
                     
