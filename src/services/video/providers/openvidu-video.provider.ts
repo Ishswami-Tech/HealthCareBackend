@@ -52,10 +52,18 @@ export class OpenViduVideoProvider implements IVideoProvider {
   ) {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
 
-    // Get URL from config or environment variable directly (with fallback)
+    // Get URL from config or environment variable directly (NO hardcoded fallback)
     const configUrl = videoConfig?.openvidu?.url;
     const envUrl = this.configService.getEnv('OPENVIDU_URL');
-    this.apiUrl = configUrl || envUrl || 'http://openvidu-server:4443';
+    this.apiUrl =
+      configUrl ||
+      envUrl ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: OPENVIDU_URL. ' +
+            'Please set OPENVIDU_URL in your environment configuration.'
+        );
+      })();
 
     // Get secret from config or environment variable directly
     const configSecret = videoConfig?.openvidu?.secret;
