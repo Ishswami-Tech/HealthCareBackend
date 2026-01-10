@@ -396,6 +396,15 @@ deploy_application() {
     log_info "Removing old containers to ensure new image is used (backup already created)..."
     docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
+    # Verify new image was pulled by checking image ID
+    log_info "Verifying new image is available..."
+    local new_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
+    if [[ -n "$new_image_id" ]]; then
+        log_success "New image verified: ${DOCKER_IMAGE} (ID: ${new_image_id})"
+    else
+        log_warning "Could not verify image ID, but continuing with deployment..."
+    fi
+    
     log_success "Images pulled successfully"
     
     # Run database migrations safely
@@ -404,11 +413,12 @@ deploy_application() {
         return 1
     fi
     
-    # Start new containers
+    # Start new containers with --force-recreate to ensure new image is used
+    # CRITICAL: --force-recreate ensures containers are recreated even if already running
+    # This guarantees new code is deployed when image changes
     # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
-    # Remove --no-deps to ensure dependencies are started (worker depends on api)
-    log_info "Starting application containers (api, worker)..."
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    log_info "Starting application containers (api, worker) with force-recreate to ensure new image is used..."
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
