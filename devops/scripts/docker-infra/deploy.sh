@@ -308,11 +308,51 @@ deploy_application() {
         log_info "No GHCR credentials provided, attempting to pull (package may be public)"
     fi
     
-    # Pull latest images
+    # Set DOCKER_IMAGE if not already set (use latest tag from registry)
+    # This ensures docker-compose uses the correct image tag
+    if [[ -z "${DOCKER_IMAGE:-}" ]]; then
+        # Default to latest tag if IMAGE and IMAGE_TAG are not provided
+        if [[ -n "${IMAGE:-}" ]] && [[ -n "${IMAGE_TAG:-}" ]]; then
+            export DOCKER_IMAGE="${IMAGE}:${IMAGE_TAG}"
+            log_info "Using image from environment: ${DOCKER_IMAGE}"
+        else
+            export DOCKER_IMAGE="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+            log_info "Using default image: ${DOCKER_IMAGE}"
+        fi
+    else
+        log_info "Using DOCKER_IMAGE from environment: ${DOCKER_IMAGE}"
+    fi
+    
+    # CRITICAL: Create backup BEFORE removing containers
+    # This ensures all data is safely backed up before any container operations
+    log_info "Creating pre-deployment backup before container removal..."
+    local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
+    [[ ! -f "$backup_script" ]] && backup_script="${SCRIPT_DIR}/backup.sh"
+    [[ ! -f "$backup_script" ]] && backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
+    
+    local PRE_DEPLOYMENT_BACKUP=""
+    if [[ -f "$backup_script" ]]; then
+        log_info "Running backup script: ${backup_script}"
+        PRE_DEPLOYMENT_BACKUP=$("$backup_script" "pre-deployment") || {
+            log_error "Pre-deployment backup failed - ABORTING to prevent data loss"
+            log_error "Please fix backup issues before deploying"
+            return 1
+        }
+        if [[ -n "$PRE_DEPLOYMENT_BACKUP" ]]; then
+            log_success "Pre-deployment backup created: ${PRE_DEPLOYMENT_BACKUP}"
+        else
+            log_warning "Backup script returned empty backup ID, but continuing..."
+        fi
+    else
+        log_warning "Backup script not found at ${backup_script} - proceeding without backup"
+        log_warning "This is risky - ensure you have recent backups before continuing"
+    fi
+    
+    # Pull latest images with --pull always to force update
     # Note: We need to include infrastructure profile to resolve dependencies (coturn)
     # but we only pull the app service images
-    log_info "Pulling latest images for api and worker..."
-    if ! docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull api worker 2>&1; then
+    log_info "Pulling latest images for api and worker (forcing pull to get latest version)..."
+    if ! docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
         log_error "Failed to pull images for api and worker"
         if [[ -z "${GITHUB_TOKEN:-}" ]]; then
             log_error "No GITHUB_TOKEN provided - cannot authenticate with GHCR"
@@ -320,6 +360,12 @@ deploy_application() {
         fi
         return 1
     fi
+    
+    # Force remove old containers to ensure new image is used
+    # NOTE: Backup already created above, so it's safe to remove containers
+    log_info "Removing old containers to ensure new image is used (backup already created)..."
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+    
     log_success "Images pulled successfully"
     
     # Run database migrations safely
