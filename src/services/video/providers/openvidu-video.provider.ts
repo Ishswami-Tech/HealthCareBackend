@@ -614,21 +614,23 @@ export class OpenViduVideoProvider implements IVideoProvider {
     }
 
     // Real-time health check with retry logic - NO AUTHENTICATION
-    // Simply checks if OpenVidu server is reachable at the root URL
+    // According to OpenVidu documentation (https://docs.openvidu.io):
+    // 1. Root URL should show "Welcome to OpenVidu" message (default behavior for all editions)
+    // 2. /openvidu/api/health endpoint exists but is ONLY available in PRO/ENTERPRISE editions
+    // 3. /openvidu/api/config is a public endpoint available in ALL editions (including CE)
+    //
+    // Strategy: Try root URL first, fallback to /openvidu/api/config if needed
+    // Treat 403/401 as healthy (server is responding, just blocking access)
     // OpenVidu may take time to fully start even after container is running
     const maxRetries = 3;
     const retryDelayMs = 2000;
-    // Use root URL for health check - no auth required
-    const healthEndpoint = this.apiUrl;
 
-    // Log the endpoint being used for debugging (helps verify new code is running)
-    await this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.DEBUG,
-      `OpenVidu health check using endpoint: ${healthEndpoint}`,
-      'OpenViduVideoProvider.isHealthy',
-      { apiUrl: this.apiUrl, healthEndpoint }
-    );
+    // Prepare endpoints
+    let rootEndpoint = this.apiUrl;
+    if (rootEndpoint.endsWith('/')) {
+      rootEndpoint = rootEndpoint.slice(0, -1);
+    }
+    const configEndpoint = `${rootEndpoint}/openvidu/api/config`;
 
     // Track last error for detailed error message
     let lastError = 'Unknown error';
@@ -636,22 +638,75 @@ export class OpenViduVideoProvider implements IVideoProvider {
     let finalIsConnectionError = true;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      let response: { status: number; data?: unknown } | null = null;
+      let healthCheckError: Error | null = null;
+      let endpointUsed = rootEndpoint;
+
       try {
-        // NO authentication - just check if server responds
+        // Try root URL first (should show "Welcome to OpenVidu")
         // Increased timeout to 10 seconds to handle slow OpenVidu responses
         const healthCheckTimeout = 10000; // 10 seconds
-        const response = await Promise.race([
-          this.httpService.get(healthEndpoint, {
-            timeout: healthCheckTimeout,
-            // No auth - public health check
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
-          ),
-        ]);
 
-        // Check for successful response: Any 2xx/3xx means server is up
-        const isUp = response.status >= 200 && response.status < 400;
+        try {
+          response = await Promise.race([
+            this.httpService.get(rootEndpoint, {
+              timeout: healthCheckTimeout,
+              // No auth - public health check
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+            ),
+          ]);
+
+          endpointUsed = rootEndpoint;
+        } catch (error) {
+          healthCheckError = error instanceof Error ? error : new Error(String(error));
+          const errorStatus = (error as { status?: number })?.status;
+
+          // If root URL returns 403/401, server is responding (healthy)
+          // Only try fallback for actual connection errors or other 4xx/5xx
+          if (errorStatus !== 403 && errorStatus !== 401) {
+            // Try fallback: /openvidu/api/config (public endpoint available in all editions)
+            try {
+              response = await Promise.race([
+                this.httpService.get<{ version?: string; [key: string]: unknown }>(configEndpoint, {
+                  timeout: healthCheckTimeout,
+                  // No auth - public endpoint
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+                ),
+              ]);
+
+              endpointUsed = configEndpoint;
+              healthCheckError = null; // Clear error since fallback succeeded
+            } catch (fallbackError) {
+              healthCheckError =
+                fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+              // Will be handled below
+            }
+          } else {
+            // 403/401 from root URL - server is responding, treat as healthy
+            response = { status: errorStatus };
+            endpointUsed = rootEndpoint;
+            healthCheckError = null;
+          }
+        }
+
+        if (!response && healthCheckError) {
+          throw healthCheckError;
+        }
+
+        // Check for successful response according to OpenVidu documentation:
+        // - 2xx/3xx: Server is up and responding (healthy) - shows "Welcome to OpenVidu" or config
+        // - 403 Forbidden: Server is up but blocking access (still healthy - server is responding)
+        //   Common with reverse proxies or security policies
+        // - 401 Unauthorized: Server is up but requires auth (still healthy - server is responding)
+        // - Other 4xx/5xx: Server error (unhealthy)
+        const isUp =
+          (response!.status >= 200 && response!.status < 400) || // Success responses (200-399)
+          response!.status === 403 || // Forbidden - server is up, just blocking (common with reverse proxies)
+          response!.status === 401; // Unauthorized - server is up, just requires auth
 
         if (isUp) {
           if (attempt > 1) {
@@ -660,14 +715,19 @@ export class OpenViduVideoProvider implements IVideoProvider {
               LogLevel.INFO,
               `OpenVidu health check succeeded on attempt ${attempt}`,
               'OpenViduVideoProvider.isHealthy',
-              { apiUrl: this.apiUrl, status: response.status }
+              {
+                apiUrl: this.apiUrl,
+                status: response!.status,
+                endpoint: endpointUsed,
+                endpointUsed: endpointUsed === rootEndpoint ? 'root' : 'config',
+              }
             );
           }
           return true;
         }
 
         // OpenVidu responded but with error status (service unavailable)
-        if (response.status === 503) {
+        if (response && response.status === 503) {
           await this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
@@ -711,7 +771,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
             error: errorMessage,
             errorCode,
             apiUrl: this.apiUrl,
-            healthEndpoint,
+            endpoint: endpointUsed,
+            endpointUsed: endpointUsed === rootEndpoint ? 'root' : 'config',
             isConnectionError,
             diagnostic: {
               message: finalIsConnectionError
