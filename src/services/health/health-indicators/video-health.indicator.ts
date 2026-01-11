@@ -235,7 +235,8 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           finalEndpoint = rootEndpoint;
         } catch (error) {
           lastError = error instanceof Error ? error : new Error(String(error));
-          const errorStatus = (error as { status?: number })?.status;
+          // Axios errors have status in error.response.status, not error.status
+          const errorStatus = (error as { response?: { status?: number } })?.response?.status;
 
           // If root URL returns 403/401, server is responding (healthy)
           // Only try fallback for actual connection errors or other 4xx/5xx
@@ -268,9 +269,20 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
               finalEndpoint = configEndpoint;
               lastError = null; // Clear error since fallback succeeded
             } catch (fallbackError) {
-              lastError =
-                fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
-              // Will be handled below
+              // Axios errors have status in error.response.status, not error.status
+              const fallbackErrorStatus = (fallbackError as { response?: { status?: number } })
+                ?.response?.status;
+
+              // If fallback endpoint returns 403/401, server is responding (healthy)
+              if (fallbackErrorStatus === 403 || fallbackErrorStatus === 401) {
+                response = { status: fallbackErrorStatus };
+                finalEndpoint = configEndpoint;
+                lastError = null;
+              } else {
+                lastError =
+                  fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+                // Will be handled below
+              }
             }
           } else {
             // 403/401 from root URL - server is responding, treat as healthy
