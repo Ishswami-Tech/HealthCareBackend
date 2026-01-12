@@ -213,15 +213,32 @@ export class HttpService {
         // Also check if this is a logger endpoint check (should use localhost, not external URL)
         const isHealthCheck = url.includes('/health') || url.includes('/api/health');
         const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
+        const isOpenViduCheck =
+          url.includes('openvidu') || url.includes('backend-service-v1-video');
+        const errorStatus = axiosError.response?.status;
+        // 403/401 from OpenVidu are expected (server is responding, just blocking access)
+        // These should be treated as healthy, not logged as errors
+        const isExpectedOpenVidu403 =
+          isOpenViduCheck && (errorStatus === 403 || errorStatus === 401);
         const isConnectionError =
           errorCode === 'ECONNREFUSED' ||
           errorCode === 'ENOTFOUND' ||
           errorCode === 'ETIMEDOUT' ||
           errorCode === 'EHOSTUNREACH' ||
           errorCode === 'ENETUNREACH';
-        const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
+        const isExpectedFailure =
+          isHealthCheck || isConnectionError || isLoggerCheck || isExpectedOpenVidu403;
+        // Don't log at all for expected OpenVidu 403/401 (they're treated as healthy)
+        const shouldSkipLogging = isExpectedOpenVidu403;
         const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
         const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+
+        // Skip logging for expected OpenVidu 403/401 responses (they're treated as healthy)
+        // The validateStatus function will handle these as valid responses
+        if (shouldSkipLogging) {
+          // Still throw the error so validateStatus can handle it, but don't log
+          return throwError(() => error);
+        }
 
         if (this.loggingService) {
           void this.loggingService.log(

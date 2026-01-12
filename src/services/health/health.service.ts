@@ -35,10 +35,13 @@ import * as os from 'os';
 export class HealthService implements OnModuleInit, OnModuleDestroy {
   private readonly SYSTEM_TENANT_ID = 'system-health-check';
 
-  // Smart caching configuration - optimized for real-time status (15-30s freshness)
+  // Smart caching configuration - optimized for Socket.IO-based monitoring
+  // When all services are healthy, we rely on Socket.IO broadcasts and reduce HTTP polling
   private readonly CACHE_FRESHNESS_MS = 20000; // 20 seconds - cache is considered fresh
   private readonly MAX_CACHE_AGE_MS = 30000; // 30 seconds - max age before forcing refresh
-  private readonly BACKGROUND_CHECK_INTERVAL = 30000; // 30 seconds - background monitoring interval (aligned with cache max age)
+  // Socket.IO-based monitoring: Poll less frequently when healthy (5 min), more when unhealthy (30s)
+  private readonly BACKGROUND_CHECK_INTERVAL_HEALTHY = 300000; // 5 minutes when all services healthy (Socket.IO handles real-time updates)
+  private readonly BACKGROUND_CHECK_INTERVAL_UNHEALTHY = 30000; // 30 seconds when services unhealthy (need frequent checks)
   private readonly DB_CHECK_INTERVAL = 10000; // 10 seconds - DB connection monitoring interval
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly EXTERNAL_SERVICE_STARTUP_GRACE_PERIOD = 90000; // 90 seconds - allow external services time to start
@@ -101,7 +104,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Start background health monitoring
-      this.startBackgroundMonitoring();
+      // Start with healthy interval (Socket.IO handles real-time updates)
+      // Will adjust dynamically based on health status
+      this.startBackgroundMonitoringWithInterval(this.BACKGROUND_CHECK_INTERVAL_HEALTHY);
       // Start continuous database connection monitoring
       this.startDatabaseMonitoring();
     } catch (error) {
@@ -134,17 +139,77 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Start background health monitoring
-   * Updates cached health status independently of API requests every 30 seconds
+   * Start background monitoring with dynamic interval based on health status
+   * Uses Socket.IO for real-time updates, reduces HTTP polling when healthy
    */
-  private startBackgroundMonitoring() {
-    // Initial health check
-    void this.updateCachedHealthStatus();
+  private startBackgroundMonitoringWithInterval(interval: number): void {
+    // Clear existing interval if any
+    if (this.backgroundMonitoringInterval) {
+      clearInterval(this.backgroundMonitoringInterval);
+    }
 
-    // Set up periodic background monitoring (every 20 seconds)
     this.backgroundMonitoringInterval = setInterval(() => {
-      void this.updateCachedHealthStatus();
-    }, this.BACKGROUND_CHECK_INTERVAL);
+      void this.updateCachedHealthStatusWithDynamicInterval();
+    }, interval);
+  }
+
+  /**
+   * Update cached health status and adjust polling interval based on health
+   * When healthy: Poll less frequently (5 min) - Socket.IO handles real-time updates
+   * When unhealthy: Poll more frequently (30s) - Need immediate detection
+   */
+  private async updateCachedHealthStatusWithDynamicInterval(): Promise<void> {
+    // Prevent concurrent updates
+    if (this.healthStatusLock) {
+      return;
+    }
+
+    try {
+      this.healthStatusLock = true;
+      const healthStatus = await this.performHealthCheck();
+      this.cachedHealthStatus = healthStatus;
+      this.cachedHealthTimestamp = Date.now();
+
+      // Determine if all services are healthy
+      // Check if any service is unhealthy
+      const services = healthStatus.services || {};
+      const hasUnhealthyService = Object.values(services).some((service: unknown) => {
+        const s = service as { status?: string };
+        return s?.status === 'unhealthy';
+      });
+      const isHealthy = !hasUnhealthyService;
+
+      // Adjust polling interval based on health status
+      // When healthy: Use longer interval (Socket.IO broadcasts handle real-time updates)
+      // When unhealthy: Use shorter interval (need frequent checks to detect recovery)
+      const newInterval = isHealthy
+        ? this.BACKGROUND_CHECK_INTERVAL_HEALTHY
+        : this.BACKGROUND_CHECK_INTERVAL_UNHEALTHY;
+
+      // Only restart interval if it changed (avoid unnecessary restarts)
+      const currentInterval = this.backgroundMonitoringInterval
+        ? (this.backgroundMonitoringInterval as unknown as { _idleTimeout?: number })?._idleTimeout
+        : null;
+      if (currentInterval !== newInterval) {
+        this.startBackgroundMonitoringWithInterval(newInterval);
+      }
+    } catch (error) {
+      // On error, assume unhealthy and use shorter interval
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Background health check failed: ${errorMessage}`,
+          'HealthService.updateCachedHealthStatusWithDynamicInterval',
+          { error: errorMessage }
+        );
+      }
+      // Use unhealthy interval on error
+      this.startBackgroundMonitoringWithInterval(this.BACKGROUND_CHECK_INTERVAL_UNHEALTHY);
+    } finally {
+      this.healthStatusLock = false;
+    }
   }
 
   /**
@@ -707,7 +772,9 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const cachedCacheHealth = useCachedStatus('cache', 15000);
       const cachedQueueHealth = useCachedStatus('queue', 15000);
       const cachedLoggerHealth = useCachedStatus('logging', 15000);
-      const cachedVideoHealth = useCachedStatus('video', 15000); // Video uses same caching pattern
+      // Video health checks use longer cache TTL (30s) since video service state doesn't change frequently
+      // This reduces HTTP requests to OpenVidu server
+      const cachedVideoHealth = useCachedStatus('video', 30000);
 
       // Run health checks directly (no Terminus dependency - uses only LoggingService)
       // Only check services that don't have fresh cache

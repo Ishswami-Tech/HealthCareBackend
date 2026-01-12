@@ -112,20 +112,7 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
    * This ensures health status reflects actual current state, not stale cached data
    */
   protected async getHealthStatus(): Promise<VideoHealthStatus> {
-    // Log that health check is being performed
-    if (this.loggingService) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.DEBUG,
-        'VideoHealthIndicator: getHealthStatus called',
-        'VideoHealthIndicator.getHealthStatus',
-        {
-          videoServiceAvailable: !!this.videoService,
-          configServiceAvailable: !!this.configService,
-          httpServiceAvailable: !!this.httpService,
-        }
-      );
-    }
+    // Don't log every health check call - only log failures
 
     // PRIORITY 1: Direct real-time OpenVidu health check (most reliable)
     // Always check OpenVidu directly to get current status - no caching
@@ -189,19 +176,7 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           throw new Error(errorMsg);
         }
 
-        // Log health check attempt for debugging
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.DEBUG,
-            `VideoHealthIndicator: Performing OpenVidu health check (no auth) at ${healthEndpoint}`,
-            'VideoHealthIndicator.getHealthStatus',
-            {
-              endpoint: healthEndpoint,
-              openviduUrl,
-            }
-          );
-        }
+        // Don't log every health check attempt - only log failures
 
         // REAL-TIME health check - always fresh, no cache
         // Simply checks if OpenVidu server is reachable (HTTP connectivity)
@@ -327,22 +302,8 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
           httpStatus === 403 || // Forbidden - server is up, just blocking (common with reverse proxies)
           httpStatus === 401; // Unauthorized - server is up, just requires auth
 
-        // Log result for debugging (only at DEBUG level to reduce noise)
-        if (this.loggingService && isHealthy) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.DEBUG,
-            `VideoHealthIndicator: OpenVidu health check succeeded`,
-            'VideoHealthIndicator.getHealthStatus',
-            {
-              isHealthy,
-              httpStatus,
-              responseTime,
-              endpoint: finalEndpoint,
-              endpointUsed: finalEndpoint === rootEndpoint ? 'root' : 'config',
-            }
-          );
-        }
+        // Don't log successful health checks to reduce log noise
+        // Only log failures or important state changes
         // Only log failures at WARN level if we have a fallback, otherwise ERROR
         if (this.loggingService && !isHealthy) {
           const hasFallback = this.videoService && this.videoService.getFallbackProvider();

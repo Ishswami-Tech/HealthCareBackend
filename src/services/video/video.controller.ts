@@ -113,12 +113,8 @@ import {
 
 // 6. Local imports (same directory)
 import { VideoService } from './video.service';
-// Central health indicators from HealthModule
-import {
-  DatabaseHealthIndicator,
-  CacheHealthIndicator,
-  VideoHealthIndicator,
-} from '@services/health/health-indicators';
+// NOTE: Health indicators removed - video health is now available via /health endpoint (HealthController)
+// This consolidates all health checks into a single endpoint for better maintainability
 
 @Controller('video')
 @ApiTags('video')
@@ -137,11 +133,8 @@ export class VideoController {
     private readonly virtualBackgroundService: VideoVirtualBackgroundService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
-    private readonly errors: HealthcareErrorsService,
-    // HealthCheckService removed - using only LoggingService (per .ai-rules/ coding standards)
-    private readonly videoHealthIndicator: VideoHealthIndicator,
-    private readonly databaseHealthIndicator: DatabaseHealthIndicator,
-    private readonly cacheHealthIndicator: CacheHealthIndicator
+    private readonly errors: HealthcareErrorsService
+    // NOTE: Health indicators removed - video health is now available via /health endpoint (HealthController)
   ) {}
 
   private isVideoTokenResponse(value: unknown): value is VideoTokenResponse {
@@ -1213,93 +1206,9 @@ export class VideoController {
     }
   }
 
-  /**
-   * Health check endpoint (no Terminus dependency)
-   * Uses only LoggingService (per .ai-rules/ coding standards)
-   */
-  @Get('health')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Video service health check',
-    description:
-      'Check the health status of the video service and providers using health indicators.',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Service health status',
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', example: 'ok' },
-        info: {
-          type: 'object',
-          properties: {
-            video: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', example: 'up' },
-                primaryProvider: { type: 'string', example: 'openvidu' },
-                fallbackProvider: { type: 'string', example: 'jitsi' },
-              },
-            },
-            communication: { type: 'object' },
-            database: { type: 'object' },
-            cache: { type: 'object' },
-          },
-        },
-        error: { type: 'object' },
-        details: { type: 'object' },
-      },
-    },
-  })
-  async healthCheck() {
-    // Run health checks directly (no Terminus dependency)
-    const healthCheckPromises = [
-      this.videoHealthIndicator.check('video'),
-      this.databaseHealthIndicator.check('database'),
-      this.cacheHealthIndicator.check('cache'),
-    ];
-
-    const results = await Promise.allSettled(healthCheckPromises);
-
-    // Transform results to Terminus-compatible format
-    const info: Record<string, unknown> = {};
-    const error: Record<string, unknown> = {};
-    let status = 'ok';
-
-    // Video health
-    const videoResult = results[0];
-    if (videoResult && videoResult.status === 'fulfilled') {
-      info['video'] = videoResult.value['video'];
-    } else {
-      error['video'] = { status: 'down', message: 'Video health check failed' };
-      status = 'error';
-    }
-
-    // Database health
-    const databaseResult = results[1];
-    if (databaseResult && databaseResult.status === 'fulfilled') {
-      info['database'] = databaseResult.value['database'];
-    } else {
-      error['database'] = { status: 'down', message: 'Database health check failed' };
-      status = 'error';
-    }
-
-    // Cache health
-    const cacheResult = results[2];
-    if (cacheResult && cacheResult.status === 'fulfilled') {
-      info['cache'] = cacheResult.value['cache'];
-    } else {
-      error['cache'] = { status: 'down', message: 'Cache health check failed' };
-      status = 'error';
-    }
-
-    return {
-      status,
-      info: Object.keys(info).length > 0 ? info : undefined,
-      error: Object.keys(error).length > 0 ? error : undefined,
-    };
-  }
+  // NOTE: Video health check is available via /health endpoint (HealthController)
+  // This consolidates all health checks into a single endpoint for better maintainability
+  // Use GET /health to check video service health along with all other services
 
   // ============================================================================
   // OPENVIDU PRO FEATURES - RECORDING
