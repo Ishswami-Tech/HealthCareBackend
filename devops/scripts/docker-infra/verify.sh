@@ -77,8 +77,35 @@ verify_infrastructure() {
         local health_check_exit
         
         # Run health check and capture both stdout and stderr
-        health_check_output=$("${SCRIPT_DIR}/health-check.sh" 2>&1)
-        health_check_exit=$?
+        # CRITICAL: Ensure health-check.sh exists and is executable
+        local health_check_script="${SCRIPT_DIR}/health-check.sh"
+        if [[ ! -f "$health_check_script" ]]; then
+            # Try alternative locations
+            if [[ -f "/opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh" ]]; then
+                health_check_script="/opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh"
+            elif [[ -f "/tmp/health-check.sh" ]]; then
+                health_check_script="/tmp/health-check.sh"
+            else
+                log_error "health-check.sh not found in any expected location"
+                log_error "Tried: ${SCRIPT_DIR}/health-check.sh"
+                log_error "Tried: /opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh"
+                log_error "Tried: /tmp/health-check.sh"
+                health_check_exit=127
+                health_check_output="ERROR: health-check.sh script not found"
+            fi
+        fi
+        
+        if [[ -f "$health_check_script" ]]; then
+            # Ensure script is executable
+            chmod +x "$health_check_script" 2>/dev/null || true
+            # Run health check and capture both stdout and stderr
+            health_check_output=$("$health_check_script" 2>&1)
+            health_check_exit=$?
+        else
+            # Script not found - set exit code 127
+            health_check_exit=127
+            health_check_output="ERROR: health-check.sh script not found (exit code 127)"
+        fi
         
         # Log important messages from health check (filter JSON but keep logs)
         echo "$health_check_output" | grep -E "^(INFO|WARNING|ERROR|SUCCESS|===|Auto-|Recovery|Recreating|Starting)" | while IFS= read -r line; do
@@ -103,15 +130,22 @@ verify_infrastructure() {
                 
                 # Re-run health check to see if recovery succeeded (without auto-recovery to avoid loops)
                 log_info "Re-checking health after recovery..."
-                if AUTO_RECREATE_MISSING="false" "${SCRIPT_DIR}/health-check.sh" >/dev/null 2>&1; then
+                local health_check_script="${SCRIPT_DIR}/health-check.sh"
+                [[ ! -f "$health_check_script" ]] && health_check_script="/opt/healthcare-backend/devops/scripts/docker-infra/health-check.sh"
+                [[ ! -f "$health_check_script" ]] && health_check_script="/tmp/health-check.sh"
+                if [[ -f "$health_check_script" ]] && AUTO_RECREATE_MISSING="false" "$health_check_script" >/dev/null 2>&1; then
                     health_check_passed=true
                     log_success "Health check passed after recovery"
                 else
                     log_warning "Health check still failing after recovery attempt"
                     # Show more details about what's still failing
                     local recheck_output
-                    recheck_output=$("${SCRIPT_DIR}/health-check.sh" 2>&1) || true
-                    echo "$recheck_output" | grep -E "(ERROR|WARNING|missing|unhealthy)" | head -10 >&2 || true
+                    if [[ -f "$health_check_script" ]]; then
+                        recheck_output=$("$health_check_script" 2>&1) || true
+                        echo "$recheck_output" | grep -E "(ERROR|WARNING|missing|unhealthy)" | head -10 >&2 || true
+                    else
+                        log_error "health-check.sh script not found - cannot recheck health"
+                    fi
                 fi
             else
                 log_warning "Health check attempt $health_check_attempt failed (exit code: $health_check_exit)"

@@ -397,21 +397,39 @@ deploy_application() {
     
     # CRITICAL: Use docker pull directly to force update, then docker compose will use the fresh image
     log_info "Pulling image directly with docker pull to ensure latest version..."
+    log_info "Attempting to pull: ${DOCKER_IMAGE}"
+    
+    local pull_success=false
     if docker pull "${DOCKER_IMAGE}" 2>&1; then
         log_success "Successfully pulled image: ${DOCKER_IMAGE}"
+        pull_success=true
+        
+        # Verify the image was actually pulled (not using cached version)
+        local pulled_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
+        log_info "Pulled image ID: ${pulled_image_id:0:12}"
     else
         log_warning "Failed to pull image with specific tag: ${DOCKER_IMAGE}"
-        log_warning "This might mean the CI/CD build didn't complete or the tag doesn't exist"
-        log_info "Attempting to pull :latest tag as fallback..."
+        log_warning "This might mean the CI/CD build didn't complete or the tag doesn't exist yet (propagation delay)"
+        log_info "Attempting to pull :latest tag as fallback (most recent build)..."
         
         # Fallback to :latest tag if specific tag doesn't exist
-        local fallback_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+        # Extract base image name (remove tag)
+        local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+        local fallback_image="${image_base}:latest"
         local original_docker_image="${DOCKER_IMAGE:-}"
+        
+        log_info "Trying fallback image: ${fallback_image}"
         export DOCKER_IMAGE="${fallback_image}"
         
         if docker pull "${DOCKER_IMAGE}" 2>&1; then
             log_success "Successfully pulled fallback image: ${fallback_image}"
-            log_warning "Using :latest tag instead of specific tag. This may not be the exact commit you expected."
+            log_warning "Using :latest tag instead of specific tag: ${original_docker_image}"
+            log_warning "This ensures deployment continues even if SHA tag hasn't propagated yet"
+            pull_success=true
+            
+            # Verify the fallback image was actually pulled
+            local pulled_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
+            log_info "Pulled fallback image ID: ${pulled_image_id:0:12}"
         else
             # Restore original DOCKER_IMAGE
             export DOCKER_IMAGE="${original_docker_image}"
@@ -426,31 +444,93 @@ deploy_application() {
                 log_error "  1. CI/CD build didn't complete successfully"
                 log_error "  2. Image wasn't pushed to registry"
                 log_error "  3. Tag format is incorrect"
+                log_error "  4. Registry propagation delay (wait a few minutes and retry)"
             fi
             return 1
         fi
     fi
     
-    # Also pull via docker compose to ensure compose file is aware of the image
+    if [[ "$pull_success" != "true" ]]; then
+        log_error "Image pull failed - cannot proceed with deployment"
+        return 1
+    fi
+    
+    # CRITICAL: Also pull via docker compose to ensure compose file is aware of the latest image
+    # This ensures docker-compose uses the freshly pulled image, not a cached version
     # NOTE: Only pulling api and worker, NOT infrastructure containers
-    log_info "Pulling via docker compose (ONLY api and worker images)..."
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull api worker 2>&1 || {
+    log_info "Pulling via docker compose to sync with compose file (ONLY api and worker images)..."
+    # The --quiet flag suppresses output but still pulls the latest version
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1 || {
         log_warning "docker compose pull had issues, but direct pull succeeded - continuing..."
+        log_info "Direct docker pull was successful, docker-compose will use that image"
     }
     
-    # Force remove old containers to ensure new image is used
-    # NOTE: Only removing api and worker containers, NOT infrastructure containers (postgres, dragonfly, etc.)
-    # Backup already created above, so it's safe to remove containers
-    log_info "Removing old API/Worker containers (infrastructure containers are NOT affected)..."
+    # CRITICAL: Verify we have the latest image by checking image creation time
+    log_info "Verifying image freshness..."
+    local image_created=$(docker images --format "{{.CreatedAt}}" "${DOCKER_IMAGE}" | head -n 1 || echo "")
+    if [[ -n "$image_created" ]]; then
+        log_info "Image created at: ${image_created}"
+        log_success "Image is available and ready for deployment"
+    fi
+    
+    # CRITICAL: Stop and remove old containers to ensure new image is used
+    # NOTE: Only stopping/removing api and worker containers, NOT infrastructure containers (postgres, dragonfly, etc.)
+    # Backup already created above, so it's safe to stop and remove containers
+    log_info "Stopping old API/Worker containers (infrastructure containers are NOT affected)..."
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
+    
+    log_info "Removing old API/Worker containers..."
     docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
-    # Verify new image was pulled by checking image ID
-    log_info "Verifying new image is available..."
+    # CRITICAL: Also use docker stop/rm directly as fallback to ensure containers are fully stopped
+    # This handles cases where docker compose might not fully stop containers
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    if container_running "$api_container"; then
+        log_info "Force stopping API container: $api_container"
+        docker stop "$api_container" 2>&1 || true
+        docker rm -f "$api_container" 2>&1 || true
+    fi
+    
+    if container_running "$worker_container"; then
+        log_info "Force stopping Worker container: $worker_container"
+        docker stop "$worker_container" 2>&1 || true
+        docker rm -f "$worker_container" 2>&1 || true
+    fi
+    
+    # Verify containers are actually stopped/removed
+    if container_running "$api_container" || container_running "$worker_container"; then
+        log_warning "Containers still running after stop/remove - forcing removal..."
+        docker kill "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    fi
+    
+    log_success "Old containers stopped and removed"
+    
+    # CRITICAL: Verify new image was pulled and get its image ID
+    log_info "Verifying new image is available and different from old image..."
     local new_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
     if [[ -n "$new_image_id" ]]; then
         log_success "New image verified: ${DOCKER_IMAGE} (ID: ${new_image_id})"
+        
+        # If we have a backup tag, compare image IDs to ensure they're different
+        if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+            local old_image_id=$(docker images --format "{{.ID}}" "$OLD_IMAGE_BACKUP_TAG" 2>/dev/null | head -n 1 || echo "")
+            if [[ -n "$old_image_id" ]]; then
+                if [[ "$new_image_id" != "$old_image_id" ]]; then
+                    log_success "New image is different from old image (old: ${old_image_id}, new: ${new_image_id})"
+                else
+                    log_warning "New image ID matches old image ID - this might mean the image wasn't updated"
+                    log_warning "Old image: ${OLD_IMAGE_BACKUP_TAG} (ID: ${old_image_id})"
+                    log_warning "New image: ${DOCKER_IMAGE} (ID: ${new_image_id})"
+                fi
+            fi
+        fi
     else
-        log_warning "Could not verify image ID, but continuing with deployment..."
+        log_error "Could not verify new image ID - image might not have been pulled correctly"
+        log_error "This could cause containers to use old image"
+        return 1
     fi
     
     log_success "Images pulled successfully"
@@ -486,11 +566,13 @@ deploy_application() {
     # Explicitly export OPENVIDU_URL to ensure docker-compose can access it
     export OPENVIDU_URL="${OPENVIDU_URL}"
     
-    log_info "Starting application containers (ONLY api and worker, NOT infrastructure containers)..."
+    log_info "Starting application containers with NEW image (ONLY api and worker, NOT infrastructure containers)..."
+    log_info "Using image: ${DOCKER_IMAGE}"
     # CRITICAL: Use --pull always to ensure we get the latest image even if tag exists
     # --force-recreate ensures containers are recreated even if config hasn't changed
     # --no-deps ensures infrastructure containers (postgres, dragonfly, etc.) are NOT recreated
     # We specify api worker explicitly to only recreate these two containers
+    # Note: Containers were already stopped and removed above, so this will create fresh ones with new image
     if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
@@ -509,27 +591,70 @@ deploy_application() {
             return 1
         fi
         
-        # Verify containers are using the correct image
-        log_info "Verifying containers are using the correct image..."
+        # CRITICAL: Verify containers are using the correct NEW image by comparing image IDs
+        log_info "Verifying containers are using the NEW image (not old image)..."
         local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+        local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
         local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
+        local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
         
-        if [[ -n "$api_image" ]]; then
+        # Get the new image ID that was pulled
+        local new_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
+        
+        if [[ -n "$api_image" ]] && [[ -n "$api_image_id" ]] && [[ -n "$new_image_id" ]]; then
             log_info "API container image: $api_image"
-            if [[ "$api_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$api_image" == *":latest"* ]]; then
-                log_success "API container is using expected image"
+            log_info "API container image ID: ${api_image_id:0:12}"
+            log_info "Expected new image ID: ${new_image_id:0:12}"
+            
+            # Compare image IDs to ensure container is using the new image
+            if [[ "$api_image_id" == "$new_image_id" ]]; then
+                log_success "✅ API container is using the NEW image (ID matches: ${api_image_id:0:12})"
+            elif [[ "$api_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$api_image" == "${DOCKER_IMAGE}" ]]; then
+                log_success "✅ API container is using expected image tag: ${api_image}"
+                log_info "   Image ID: ${api_image_id:0:12} (may differ if tag was updated)"
             else
-                log_warning "API container image ($api_image) may not match expected image (${DOCKER_IMAGE})"
+                log_error "❌ API container is NOT using the new image!"
+                log_error "   Container image: ${api_image} (ID: ${api_image_id:0:12})"
+                log_error "   Expected image: ${DOCKER_IMAGE} (ID: ${new_image_id:0:12})"
+                log_error "   This indicates the container was not recreated with the new image"
+                log_error "   Attempting to force recreate..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api 2>&1 || true
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api 2>&1 || true
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1 || {
+                    log_error "Failed to force recreate API container"
+                    return 1
+                }
             fi
+        else
+            log_warning "Could not verify API container image (missing image or ID)"
         fi
         
-        if [[ -n "$worker_image" ]]; then
+        if [[ -n "$worker_image" ]] && [[ -n "$worker_image_id" ]] && [[ -n "$new_image_id" ]]; then
             log_info "Worker container image: $worker_image"
-            if [[ "$worker_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$worker_image" == *":latest"* ]]; then
-                log_success "Worker container is using expected image"
+            log_info "Worker container image ID: ${worker_image_id:0:12}"
+            log_info "Expected new image ID: ${new_image_id:0:12}"
+            
+            # Compare image IDs to ensure container is using the new image
+            if [[ "$worker_image_id" == "$new_image_id" ]]; then
+                log_success "✅ Worker container is using the NEW image (ID matches: ${worker_image_id:0:12})"
+            elif [[ "$worker_image" == *"${DOCKER_IMAGE}"* ]] || [[ "$worker_image" == "${DOCKER_IMAGE}" ]]; then
+                log_success "✅ Worker container is using expected image tag: ${worker_image}"
+                log_info "   Image ID: ${worker_image_id:0:12} (may differ if tag was updated)"
             else
-                log_warning "Worker container image ($worker_image) may not match expected image (${DOCKER_IMAGE})"
+                log_error "❌ Worker container is NOT using the new image!"
+                log_error "   Container image: ${worker_image} (ID: ${worker_image_id:0:12})"
+                log_error "   Expected image: ${DOCKER_IMAGE} (ID: ${new_image_id:0:12})"
+                log_error "   This indicates the container was not recreated with the new image"
+                log_error "   Attempting to force recreate..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop worker 2>&1 || true
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f worker 2>&1 || true
+                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1 || {
+                    log_error "Failed to force recreate Worker container"
+                    return 1
+                }
             fi
+        else
+            log_warning "Could not verify Worker container image (missing image or ID)"
         fi
         
         # Get container creation time to verify it was just recreated
