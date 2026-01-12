@@ -1031,193 +1031,92 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
    */
   getRawPrismaClient(): PrismaClient {
-    // Ensure prismaClient is initialized before returning
-    if (!this.prismaClient) {
-      // Wait for PrismaClient to be generated with retry mechanism
-      const maxRetries = 10;
-      const retryDelay = 1000; // 1 second
-      let lastError: Error | null = null;
+    // First check if shared instance exists (created in onModuleInit)
+    // This is the preferred path - use the shared singleton instance
+    if (PrismaService.sharedPrismaClient) {
+      this.prismaClient = PrismaService.sharedPrismaClient;
+      return this.prismaClient;
+    }
 
-      for (let attempt = 0; attempt < maxRetries; attempt++) {
-        // Check if PrismaClient has been generated before attempting to create instance
-        if (!PrismaService.isPrismaClientGenerated()) {
-          if (attempt < maxRetries - 1) {
-            if (this.loggingService) {
-              void this.loggingService.log(
-                LogType.DATABASE,
-                LogLevel.WARN,
-                `PrismaClient not generated yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
-                'PrismaService.getRawPrismaClient'
-              );
-            }
-            // Use setTimeout in a promise to avoid blocking the event loop
-            // Note: This is a synchronous method, so we use a busy wait but with a check
-            const startWait = Date.now();
-            while (Date.now() - startWait < retryDelay) {
-              // Busy wait - this ensures we wait before retrying
-              // In practice, this should only happen during startup
-            }
-            continue; // Retry
-          } else {
-            throw new HealthcareError(
-              ErrorCode.DATABASE_CONNECTION_FAILED,
-              `PrismaClient has not been generated after ${maxRetries} attempts. Please ensure "prisma generate" has been run.`,
-              undefined,
-              { attempts: maxRetries },
+    // If instance exists on this service, use it
+    if (this.prismaClient) {
+      return this.prismaClient;
+    }
+
+    // If onModuleInit hasn't completed yet, check if PrismaClient files are generated
+    // and wait a bit for onModuleInit to complete
+    const maxRetries = 10;
+    const retryDelay = 1000; // 1 second
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // Check if shared instance was created by onModuleInit
+      if (PrismaService.sharedPrismaClient) {
+        this.prismaClient = PrismaService.sharedPrismaClient;
+        return this.prismaClient;
+      }
+
+      // Check if PrismaClient has been generated (files exist)
+      if (!PrismaService.isPrismaClientGenerated()) {
+        if (attempt < maxRetries - 1) {
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.WARN,
+              `PrismaClient not generated yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
               'PrismaService.getRawPrismaClient'
             );
           }
-        }
-
-        try {
-          // Initialize synchronously if not already done
-          // This can happen with REQUEST scope when instance is created before onModuleInit
-          // Use helper functions (which use dotenv) for environment variable access
-          const dbUrlValue = getEnv('DATABASE_URL');
-          const isProductionEnv = isProduction();
-
-          type LogLevel = 'error' | 'warn' | 'info' | 'query';
-          type LogConfig = { emit: 'stdout'; level: LogLevel };
-          const logConfig: LogConfig[] = isProductionEnv
-            ? [{ emit: 'stdout', level: 'error' }]
-            : [
-                { emit: 'stdout', level: 'query' },
-                { emit: 'stdout', level: 'error' },
-                { emit: 'stdout', level: 'warn' },
-              ];
-
-          // Prisma 7: Use adapter pattern for library engine type
-          let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
-          if (!connectionString) {
-            throw new HealthcareError(
-              ErrorCode.DATABASE_CONNECTION_FAILED,
-              'DATABASE_URL environment variable is not set',
-              undefined,
-              {},
-              'PrismaService.getRawPrismaClient'
-            );
+          // Busy wait - this ensures we wait before retrying
+          const startWait = Date.now();
+          while (Date.now() - startWait < retryDelay) {
+            // Busy wait - this ensures we wait before retrying
+            // In practice, this should only happen during startup
           }
-
-          // Remove sslmode from connection string to handle SSL via Pool config
-          // Preserve other query parameters
-          connectionString = connectionString.replace(/[?&]sslmode=[^&]*/g, match => {
-            return match.startsWith('?') ? '?' : '';
-          });
-
-          // Create pg Pool with SSL configuration
-          const poolConfig: {
-            connectionString: string;
-            ssl?: boolean | { rejectUnauthorized: boolean };
-            max?: number;
-            connectionTimeoutMillis?: number;
-          } = {
-            connectionString,
-            max: 10,
-            connectionTimeoutMillis: 10000,
-          };
-
-          // For Supabase/cloud databases, always configure SSL
-          // In development, accept self-signed certificates to avoid connection errors
-          const isProductionEnvCheck = isProduction();
-          if (
-            connectionString.includes('supabase') ||
-            connectionString.includes('pooler.supabase.com')
-          ) {
-            poolConfig.ssl = isProductionEnvCheck
-              ? { rejectUnauthorized: true }
-              : { rejectUnauthorized: false };
-          }
-
-          const pool = new Pool(poolConfig);
-          const adapter = new PrismaPg(pool);
-
-          const constructorArgs: PrismaClientConstructorArgs = {
-            log: logConfig,
-            errorFormat: 'minimal' as const,
-            adapter,
-          };
-
-          // Use async loading for PrismaClient (Prisma 7 with custom output requires this)
-          // Initialize in onModuleInit instead of constructor
-          // Store constructor args for async initialization
-          (this as unknown as { _constructorArgs: PrismaClientConstructorArgs })._constructorArgs =
-            constructorArgs;
-
-          // Verify client is properly initialized
-          if (!this.prismaClient) {
-            throw new HealthcareError(
-              ErrorCode.DATABASE_CONNECTION_FAILED,
-              'PrismaClient instance is null after creation',
-              undefined,
-              {},
-              'PrismaService.getRawPrismaClient'
-            );
-          }
-
-          // Success - break out of retry loop
-          return this.prismaClient;
-        } catch (error) {
-          lastError = error instanceof Error ? error : new Error(String(error));
-          const errorMessage = lastError.message;
-
-          // Check if this is the Prisma initialization error
-          if (
-            errorMessage.includes('did not initialize yet') ||
-            errorMessage.includes('prisma generate')
-          ) {
-            // If not the last attempt, wait and retry
-            if (attempt < maxRetries - 1) {
-              if (this.loggingService) {
-                void this.loggingService.log(
-                  LogType.DATABASE,
-                  LogLevel.WARN,
-                  `PrismaClient not ready yet (attempt ${attempt + 1}/${maxRetries}), waiting ${retryDelay}ms...`,
-                  'PrismaService.getRawPrismaClient'
-                );
-              }
-              // Synchronous wait (blocking) - this is intentional to ensure PrismaClient is ready
-              const startWait = Date.now();
-              while (Date.now() - startWait < retryDelay) {
-                // Busy wait - this ensures we wait before retrying
-              }
-              continue; // Retry
-            }
-            // Last attempt failed - throw error
-            throw new HealthcareError(
-              ErrorCode.DATABASE_CONNECTION_FAILED,
-              `PrismaClient initialization failed after ${maxRetries} attempts: ${errorMessage}. Please ensure "prisma generate" has been run.`,
-              undefined,
-              { originalError: errorMessage, attempts: maxRetries },
-              'PrismaService.getRawPrismaClient'
-            );
-          }
-
-          // If it's already a HealthcareError, rethrow it
-          if (error instanceof HealthcareError) {
-            throw error;
-          }
-
-          // Wrap other errors
+          continue; // Retry
+        } else {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
-            `Failed to initialize PrismaClient: ${errorMessage}. Please ensure "prisma generate" has been run.`,
+            `PrismaClient has not been generated after ${maxRetries} attempts. Please ensure "prisma generate" has been run.`,
             undefined,
-            { originalError: errorMessage },
+            { attempts: maxRetries },
             'PrismaService.getRawPrismaClient'
           );
         }
       }
 
-      // If we get here, all retries failed
-      throw new HealthcareError(
-        ErrorCode.DATABASE_CONNECTION_FAILED,
-        `PrismaClient initialization failed after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}. Please ensure "prisma generate" has been run.`,
-        undefined,
-        { originalError: lastError?.message, attempts: maxRetries },
-        'PrismaService.getRawPrismaClient'
-      );
+      // Files exist but instance not created yet - onModuleInit is still running
+      // Wait a bit more for onModuleInit to complete
+      if (attempt < maxRetries - 1) {
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.WARN,
+            `PrismaClient files found but instance not initialized yet (attempt ${attempt + 1}/${maxRetries}), waiting for onModuleInit to complete...`,
+            'PrismaService.getRawPrismaClient'
+          );
+        }
+        // Busy wait for onModuleInit to complete
+        const startWait = Date.now();
+        while (Date.now() - startWait < retryDelay) {
+          // Check if shared instance was created during wait
+          if (PrismaService.sharedPrismaClient) {
+            this.prismaClient = PrismaService.sharedPrismaClient;
+            return this.prismaClient;
+          }
+        }
+        continue; // Retry
+      }
     }
-    return this.prismaClient;
+
+    // If we get here, onModuleInit hasn't completed after all retries
+    // This should not happen in normal operation, but provide a helpful error
+    throw new HealthcareError(
+      ErrorCode.DATABASE_CONNECTION_FAILED,
+      `PrismaClient instance not available after ${maxRetries} attempts. onModuleInit may not have completed yet. Please wait for application initialization to complete.`,
+      undefined,
+      { attempts: maxRetries, isFullyInitialized: PrismaService.isFullyInitialized },
+      'PrismaService.getRawPrismaClient'
+    );
   }
 
   private static isConnected = false;

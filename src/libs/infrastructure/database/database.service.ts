@@ -472,6 +472,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
     // Execute with retry logic and circuit breaker
     const executeWithRetry = async (): Promise<T> => {
+      // CRITICAL: Wait for Prisma to be ready before executing queries
+      // This prevents "Retry failed" errors during application startup
+      if (!this.prismaService.isReady()) {
+        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        if (!isReady) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client not ready within timeout',
+            undefined,
+            {},
+            this.serviceName
+          );
+        }
+      }
+
       // Check circuit breaker
       if (this.circuitBreaker && !this.circuitBreaker.canExecute('database')) {
         throw new HealthcareError(
@@ -692,6 +707,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
     // Execute with retry logic and circuit breaker
     const executeWithRetry = async (): Promise<T> => {
+      // CRITICAL: Wait for Prisma to be ready before executing queries
+      // This prevents "Retry failed" errors during application startup
+      if (!this.prismaService.isReady()) {
+        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        if (!isReady) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client not ready within timeout',
+            undefined,
+            {},
+            this.serviceName
+          );
+        }
+      }
+
       // Check circuit breaker
       if (this.circuitBreaker && !this.circuitBreaker.canExecute('database')) {
         throw new HealthcareError(
