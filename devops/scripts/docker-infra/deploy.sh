@@ -348,18 +348,59 @@ deploy_application() {
         log_warning "This is risky - ensure you have recent backups before continuing"
     fi
     
+    # CRITICAL: Tag current running image as backup before pulling new one
+    # This allows rollback if new deployment fails
+    # NOTE: Only tags API/Worker images, NOT infrastructure images (postgres, dragonfly, etc.)
+    log_info "Tagging current API/Worker image as backup for rollback (infrastructure images are NOT affected)..."
+    local image_name_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    # Use global variable (not local) so it's accessible in rollback_deployment function
+    OLD_IMAGE_BACKUP_TAG="${image_name_base}:rollback-backup-$(date +%Y%m%d-%H%M%S)"
+    local current_image_tag=""
+    
+    if [[ -n "${image_name_base}" ]]; then
+        # Find the currently running image (used by api/worker containers)
+        local api_container="${CONTAINER_PREFIX}api"
+        if container_running "$api_container"; then
+            current_image_tag=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+            if [[ -n "$current_image_tag" ]] && [[ "$current_image_tag" == *"healthcare-api"* ]]; then
+                log_info "Found current running image: ${current_image_tag}"
+                # Tag it as backup
+                if docker tag "$current_image_tag" "$OLD_IMAGE_BACKUP_TAG" 2>&1; then
+                    log_success "Tagged current image as backup: ${OLD_IMAGE_BACKUP_TAG}"
+                    # Export for use in rollback
+                    export OLD_IMAGE_BACKUP_TAG
+                else
+                    log_warning "Failed to tag current image, but continuing..."
+                    OLD_IMAGE_BACKUP_TAG=""
+                fi
+            fi
+        fi
+        
+        # Also check for any existing images with the same base name
+        # Tag them as backup before removing (in case container isn't running)
+        docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | while read -r img; do
+            if [[ -n "$img" ]] && [[ "$img" == *"healthcare-api"* ]] && [[ "$img" != *"rollback-backup"* ]]; then
+                # Only tag if we haven't already tagged this image
+                if [[ -z "$current_image_tag" ]] || [[ "$img" != "$current_image_tag" ]]; then
+                    local backup_tag="${img}-rollback-backup-$(date +%Y%m%d-%H%M%S)"
+                    log_info "Tagging existing image as backup: ${img} -> ${backup_tag}"
+                    docker tag "$img" "$backup_tag" 2>&1 || true
+                fi
+            fi
+        done || true
+    fi
+    
     # Pull latest images with --pull always to force update
     # Note: We need to include infrastructure profile to resolve dependencies (coturn)
     # but we only pull the app service images
     log_info "Pulling latest images for api and worker (forcing pull to get latest version)..."
     
-    # Try to pull with the specific tag first
-    local pull_success=false
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
-        log_success "Successfully pulled images with specific tag: ${DOCKER_IMAGE}"
-        pull_success=true
+    # CRITICAL: Use docker pull directly to force update, then docker compose will use the fresh image
+    log_info "Pulling image directly with docker pull to ensure latest version..."
+    if docker pull "${DOCKER_IMAGE}" 2>&1; then
+        log_success "Successfully pulled image: ${DOCKER_IMAGE}"
     else
-        log_warning "Failed to pull images with specific tag: ${DOCKER_IMAGE}"
+        log_warning "Failed to pull image with specific tag: ${DOCKER_IMAGE}"
         log_warning "This might mean the CI/CD build didn't complete or the tag doesn't exist"
         log_info "Attempting to pull :latest tag as fallback..."
         
@@ -368,10 +409,9 @@ deploy_application() {
         local original_docker_image="${DOCKER_IMAGE:-}"
         export DOCKER_IMAGE="${fallback_image}"
         
-        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull --quiet api worker 2>&1; then
+        if docker pull "${DOCKER_IMAGE}" 2>&1; then
             log_success "Successfully pulled fallback image: ${fallback_image}"
             log_warning "Using :latest tag instead of specific tag. This may not be the exact commit you expected."
-            pull_success=true
         else
             # Restore original DOCKER_IMAGE
             export DOCKER_IMAGE="${original_docker_image}"
@@ -391,9 +431,17 @@ deploy_application() {
         fi
     fi
     
+    # Also pull via docker compose to ensure compose file is aware of the image
+    # NOTE: Only pulling api and worker, NOT infrastructure containers
+    log_info "Pulling via docker compose (ONLY api and worker images)..."
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app pull api worker 2>&1 || {
+        log_warning "docker compose pull had issues, but direct pull succeeded - continuing..."
+    }
+    
     # Force remove old containers to ensure new image is used
-    # NOTE: Backup already created above, so it's safe to remove containers
-    log_info "Removing old containers to ensure new image is used (backup already created)..."
+    # NOTE: Only removing api and worker containers, NOT infrastructure containers (postgres, dragonfly, etc.)
+    # Backup already created above, so it's safe to remove containers
+    log_info "Removing old API/Worker containers (infrastructure containers are NOT affected)..."
     docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
     # Verify new image was pulled by checking image ID
@@ -438,8 +486,12 @@ deploy_application() {
     # Explicitly export OPENVIDU_URL to ensure docker-compose can access it
     export OPENVIDU_URL="${OPENVIDU_URL}"
     
-    log_info "Starting application containers (api, worker) with force-recreate to ensure new image is used..."
-    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate api worker 2>&1 | tee /tmp/docker-compose-up.log; then
+    log_info "Starting application containers (ONLY api and worker, NOT infrastructure containers)..."
+    # CRITICAL: Use --pull always to ensure we get the latest image even if tag exists
+    # --force-recreate ensures containers are recreated even if config hasn't changed
+    # --no-deps ensures infrastructure containers (postgres, dragonfly, etc.) are NOT recreated
+    # We specify api worker explicitly to only recreate these two containers
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 | tee /tmp/docker-compose-up.log; then
         log_info "Waiting for containers to start..."
         sleep 5
         
@@ -505,7 +557,7 @@ deploy_application() {
             # Try to recreate with explicit env var
             docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
             docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
-            OPENVIDU_URL="${OPENVIDU_URL}" docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate api worker 2>&1 || {
+            OPENVIDU_URL="${OPENVIDU_URL}" docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
                 log_error "Failed to recreate containers with correct OPENVIDU_URL"
                 return 1
             }
@@ -538,6 +590,37 @@ deploy_application() {
         
         # Wait for health (4 minutes with 30 second intervals - API takes time to start)
         if wait_for_health "${CONTAINER_PREFIX}api" 240 30; then
+            # CRITICAL: Only remove old backup images AFTER successful deployment
+            # This ensures we can rollback if deployment fails
+            log_info "Deployment successful - cleaning up old backup images..."
+            local image_name_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+            if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]] && [[ -n "${image_name_base}" ]]; then
+                # Keep the most recent backup, remove older ones
+                docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | while read -r backup_img; do
+                    if [[ -n "$backup_img" ]] && [[ "$backup_img" != "$OLD_IMAGE_BACKUP_TAG" ]]; then
+                        log_info "Removing old backup image: ${backup_img}"
+                        docker rmi "$backup_img" 2>&1 || true
+                    fi
+                done || true
+                log_info "Kept most recent backup image: ${OLD_IMAGE_BACKUP_TAG}"
+            fi
+            
+            # Also remove old images that are not the current one and not backups
+            log_info "Removing old non-backup images..."
+            local current_running_image=$(docker inspect --format='{{.Config.Image}}' "${CONTAINER_PREFIX}api" 2>/dev/null || echo "")
+            if [[ -n "${image_name_base}" ]]; then
+                docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | while read -r img; do
+                    if [[ -n "$img" ]] && \
+                       [[ "$img" == *"healthcare-api"* ]] && \
+                       [[ "$img" != *"rollback-backup"* ]] && \
+                       [[ "$img" != "$current_running_image" ]] && \
+                       [[ "$img" != "${DOCKER_IMAGE}" ]]; then
+                        log_info "Removing old image: ${img}"
+                        docker rmi "$img" 2>&1 || true
+                    fi
+                done || true
+            fi
+            
             # Create success backup after successful deployment
             log_info "Creating success backup after successful deployment..."
             local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
@@ -1117,6 +1200,42 @@ BASELINE_SQL
 # Rollback deployment
 rollback_deployment() {
     log_warning "Initiating automatic rollback..."
+    
+    # CRITICAL: First, restore the old Docker image if backup exists
+    if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+        log_info "Restoring previous Docker image from backup: ${OLD_IMAGE_BACKUP_TAG}"
+        
+        # Use the backup image directly - it's already tagged and ready to use
+        # The backup tag format is: image-name:rollback-backup-YYYYMMDD-HHMMSS
+        # We can use it directly with docker-compose by setting DOCKER_IMAGE
+        
+        # Stop and remove current containers
+        log_info "Stopping current containers..."
+        local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+        if [[ -f "$compose_file" ]]; then
+            cd "$(dirname "$compose_file")" || {
+                log_error "Failed to change to compose directory"
+                return 1
+            }
+        fi
+        
+        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
+        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
+        
+        # Start containers with backup image
+        log_info "Starting containers with backup image..."
+        export DOCKER_IMAGE="$OLD_IMAGE_BACKUP_TAG"
+        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api worker 2>&1; then
+            log_success "Containers restarted with backup image"
+            # Wait a moment for containers to start
+            sleep 5
+        else
+            log_error "Failed to start containers with backup image"
+            log_warning "This is a critical failure - containers may need manual intervention"
+        fi
+    else
+        log_warning "No Docker image backup found - will only restore database"
+    fi
     
     # Find last success backup
     local last_success_backup=$(find_last_backup "success")

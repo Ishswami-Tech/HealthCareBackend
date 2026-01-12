@@ -51,6 +51,13 @@ export class RetryService {
     'QueryTimeoutError',
     'ConnectionPoolExhausted',
     'DatabaseUnavailable',
+    // Prisma initialization errors (should be retryable during startup)
+    'did not initialize yet',
+    'prisma generate',
+    'PrismaClient',
+    'not generated',
+    'not ready',
+    'Invalid invocation',
   ];
 
   constructor(
