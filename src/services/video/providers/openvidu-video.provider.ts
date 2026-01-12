@@ -648,10 +648,16 @@ export class OpenViduVideoProvider implements IVideoProvider {
         const healthCheckTimeout = 10000; // 10 seconds
 
         try {
+          // Use validateStatus to treat 403/401 as valid responses (not errors)
+          // This prevents HttpService from logging errors for these status codes
           response = await Promise.race([
             this.httpService.get(rootEndpoint, {
               timeout: healthCheckTimeout,
-              // No auth - public health check
+              validateStatus: (status: number) => {
+                // Treat 2xx, 3xx, 403, and 401 as valid responses
+                // 403/401 mean server is responding (healthy), just blocking access
+                return (status >= 200 && status < 400) || status === 403 || status === 401;
+              },
             }),
             new Promise<never>((_, reject) =>
               setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
@@ -669,10 +675,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
           if (errorStatus !== 403 && errorStatus !== 401) {
             // Try fallback: /openvidu/api/config (public endpoint available in all editions)
             try {
+              // Use validateStatus to treat 403/401 as valid responses (not errors)
               response = await Promise.race([
                 this.httpService.get<{ version?: string; [key: string]: unknown }>(configEndpoint, {
                   timeout: healthCheckTimeout,
-                  // No auth - public endpoint
+                  validateStatus: (status: number) => {
+                    // Treat 2xx, 3xx, 403, and 401 as valid responses
+                    return (status >= 200 && status < 400) || status === 403 || status === 401;
+                  },
                 }),
                 new Promise<never>((_, reject) =>
                   setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)

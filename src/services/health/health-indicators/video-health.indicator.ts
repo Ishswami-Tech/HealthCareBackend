@@ -224,10 +224,16 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
 
         // Try root URL first (should show "Welcome to OpenVidu")
         try {
+          // Use validateStatus to treat 403/401 as valid responses (not errors)
+          // This prevents HttpService from logging errors for these status codes
           response = await Promise.race([
             this.httpService.get<string>(rootEndpoint, {
               timeout,
-              // No auth headers - public health check
+              validateStatus: (status: number) => {
+                // Treat 2xx, 3xx, 403, and 401 as valid responses
+                // 403/401 mean server is responding (healthy), just blocking access
+                return (status >= 200 && status < 400) || status === 403 || status === 401;
+              },
             }),
             timeoutPromise,
           ]);
@@ -258,10 +264,14 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
             }
 
             try {
+              // Use validateStatus to treat 403/401 as valid responses (not errors)
               response = await Promise.race([
                 this.httpService.get<{ version?: string; [key: string]: unknown }>(configEndpoint, {
                   timeout,
-                  // No auth headers - public endpoint
+                  validateStatus: (status: number) => {
+                    // Treat 2xx, 3xx, 403, and 401 as valid responses
+                    return (status >= 200 && status < 400) || status === 403 || status === 401;
+                  },
                 }),
                 timeoutPromise,
               ]);

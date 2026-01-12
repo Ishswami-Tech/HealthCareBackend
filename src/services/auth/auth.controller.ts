@@ -98,13 +98,14 @@ export class AuthController {
     examples: {
       patient: {
         summary: 'Patient Registration',
-        description: 'Register a new patient',
+        description: 'Register a new patient with clinic ID (REQUIRED)',
         value: {
           email: 'patient@example.com',
           password: 'SecurePassword123!',
           firstName: 'John',
           lastName: 'Doe',
           phone: '+1234567890',
+          clinicId: 'CL0001', // REQUIRED - Sets primaryClinicId automatically
           role: 'PATIENT',
           gender: 'MALE',
           dateOfBirth: '1990-01-01',

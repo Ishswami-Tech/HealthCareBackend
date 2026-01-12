@@ -51,13 +51,15 @@ const patientClinicTests = {
   },
 
   async testRegisterPatient(ctx) {
-    const result = await ctx.makeRequest('POST', '/clinics/register', {
+    // Use /auth/register endpoint (clinicId is required)
+    const result = await ctx.makeRequest('POST', '/auth/register', {
       email: `testpatient_${Date.now()}@example.com`,
       password: 'TestPassword123!',
       firstName: 'Test',
       lastName: 'Patient',
       phone: '+1234567890',
-      clinicId: ctx.clinicId,
+      clinicId: ctx.clinicId, // REQUIRED - Sets primaryClinicId automatically
+      role: 'PATIENT',
     });
     const passed =
       result.ok || result.status === 400 || result.status === 403 || result.status === 409;
