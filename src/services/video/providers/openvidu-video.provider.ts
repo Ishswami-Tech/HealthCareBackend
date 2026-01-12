@@ -731,20 +731,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
           response!.status === 401; // Unauthorized - server is up, just requires auth
 
         if (isUp) {
-          if (attempt > 1) {
-            await this.loggingService.log(
-              LogType.SYSTEM,
-              LogLevel.INFO,
-              `OpenVidu health check succeeded on attempt ${attempt}`,
-              'OpenViduVideoProvider.isHealthy',
-              {
-                apiUrl: this.apiUrl,
-                status: response!.status,
-                endpoint: endpointUsed,
-                endpointUsed: endpointUsed === rootEndpoint ? 'root' : 'config',
-              }
-            );
-          }
+          // Don't log successful health checks - reduces log noise
+          // Only log failures to keep logs focused on issues
           return true;
         }
 
