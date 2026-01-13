@@ -326,7 +326,100 @@ crontab -l | grep healthcare
 # - Migration safety
 # - Automatic rollback on failure
 # - Success backup after deployment
+# - Post-deployment verification with auto-recovery
 ```
+
+### 5. Verify and Ensure Latest Image is Deployed
+
+```bash
+# Quick status check (non-destructive)
+./deploy.sh check-image
+
+# Verify and deploy latest image (can be run as scheduled job)
+./deploy.sh verify-image
+
+# Run post-deployment verification only
+./deploy.sh post-verify
+
+# Verify deployment status
+./verify.sh status
+
+# Verify container images match expected
+./verify.sh image
+
+# Verify and auto-fix image issues
+./verify.sh fix-image
+```
+
+---
+
+## Post-Deployment Verification System
+
+The deployment system includes a comprehensive post-deployment verification and
+auto-recovery mechanism that handles all edge cases:
+
+### Features
+
+1. **Multi-step Verification**: Verifies containers are running, using correct
+   image, healthy, and have correct environment variables
+2. **Auto-Recovery**: Automatically attempts to recover from failures (up to 3
+   retries)
+3. **Image Verification**: Ensures containers are using the expected Docker
+   image
+4. **Rollback Support**: Automatically rolls back to backup image if new
+   deployment fails
+5. **Environment Validation**: Verifies critical environment variables are set
+   correctly
+
+### Commands
+
+```bash
+# Full deployment with post-verification
+./deploy.sh
+
+# Independent image verification and update
+./deploy.sh verify-image
+
+# Quick status check
+./deploy.sh check-image
+
+# Show help
+./deploy.sh help
+```
+
+### Scheduled Image Verification
+
+You can run `./deploy.sh verify-image` as a scheduled job to ensure the latest
+image is always deployed:
+
+```bash
+# Add to crontab - run every 15 minutes
+*/15 * * * * /opt/healthcare-backend/devops/scripts/docker-infra/deploy.sh verify-image >> /var/log/deployments/image-verify.log 2>&1
+```
+
+### Rollback Mechanism
+
+If a deployment fails:
+
+1. **Image Backup**: Before pulling new image, current running image is tagged
+   as backup
+2. **Auto-Rollback**: If health check fails, system automatically rolls back to
+   backup image
+3. **Database Rollback**: Pre-deployment database backup is restored
+4. **Manual Rollback**: Available via `./deploy.sh` with `OLD_IMAGE_BACKUP_TAG`
+   set
+
+### Edge Cases Handled
+
+| Edge Case                       | Handling                          |
+| ------------------------------- | --------------------------------- |
+| Container not running           | Auto-start with latest image      |
+| Container using wrong image     | Force recreate with correct image |
+| Health check fails              | Diagnose, restart, verify         |
+| Environment variables incorrect | Recreate with explicit env vars   |
+| All recovery fails              | Rollback to backup image          |
+| OOM kills detected              | Log and restart                   |
+| Restart loops detected          | Diagnose and fix                  |
 
 ---
 
@@ -334,17 +427,39 @@ crontab -l | grep healthcare
 
 ### Main Scripts
 
-| Script                     | Purpose                                              | Usage                                                          |
-| -------------------------- | ---------------------------------------------------- | -------------------------------------------------------------- |
-| `deploy.sh`                | Main deployment orchestrator                         | `./deploy.sh [options]`                                        |
-| `health-check.sh`          | Infrastructure health monitoring                     | `./health-check.sh`                                            |
-| `backup.sh`                | Backup management (PostgreSQL + Dragonfly)           | `./backup.sh [hourly\|daily\|weekly\|pre-deployment\|success]` |
-| `restore.sh`               | Restore from backups                                 | `./restore.sh <backup-id>`                                     |
-| `verify.sh`                | Deployment verification                              | `./verify.sh deployment` or `./verify.sh backup <backup-id>`   |
-| `diagnose.sh`              | Diagnostic and troubleshooting                       | `./diagnose.sh`                                                |
-| `setup-directories.sh`     | Setup required directories                           | `./setup-directories.sh`                                       |
-| `fix-database-password.sh` | **NEW**: Verify and fix database password mismatches | `./fix-database-password.sh`                                   |
-| `clean-and-rebuild.sh`     | **NEW**: Clean all containers and rebuild            | `./clean-and-rebuild.sh`                                       |
+| Script                     | Purpose                                             | Usage                                                          |
+| -------------------------- | --------------------------------------------------- | -------------------------------------------------------------- |
+| `deploy.sh`                | Main deployment orchestrator with post-verification | `./deploy.sh [verify-image\|check-image\|post-verify\|help]`   |
+| `health-check.sh`          | Infrastructure health monitoring                    | `./health-check.sh`                                            |
+| `backup.sh`                | Backup management (PostgreSQL + Dragonfly)          | `./backup.sh [hourly\|daily\|weekly\|pre-deployment\|success]` |
+| `restore.sh`               | Restore from backups                                | `./restore.sh <backup-id>`                                     |
+| `verify.sh`                | Deployment and image verification                   | `./verify.sh [deployment\|image\|fix-image\|status\|backup]`   |
+| `diagnose.sh`              | Diagnostic and troubleshooting                      | `./diagnose.sh`                                                |
+| `diagnose-openvidu.sh`     | OpenVidu-specific diagnostics                       | `./diagnose-openvidu.sh`                                       |
+| `setup-directories.sh`     | Setup required directories                          | `./setup-directories.sh`                                       |
+| `fix-database-password.sh` | Verify and fix database password mismatches         | `./fix-database-password.sh`                                   |
+| `fix-missing-files.sh`     | Restore missing critical files                      | `./fix-missing-files.sh`                                       |
+| `clean-and-rebuild.sh`     | Clean all containers and rebuild                    | `./clean-and-rebuild.sh`                                       |
+
+### deploy.sh Commands
+
+| Command        | Purpose                                                    |
+| -------------- | ---------------------------------------------------------- |
+| (default)      | Full deployment based on INFRA_CHANGED and APP_CHANGED     |
+| `verify-image` | Verify and ensure latest image is deployed (with recovery) |
+| `check-image`  | Quick image status check (non-destructive)                 |
+| `post-verify`  | Run post-deployment verification only                      |
+| `help`         | Show help message                                          |
+
+### verify.sh Commands
+
+| Command      | Purpose                                    |
+| ------------ | ------------------------------------------ |
+| `deployment` | Post-deployment verification (default)     |
+| `image`      | Verify container images match expected     |
+| `fix-image`  | Verify and auto-fix container image issues |
+| `status`     | Show current deployment status             |
+| `backup`     | Backup integrity verification              |
 
 ### Utility Scripts
 
