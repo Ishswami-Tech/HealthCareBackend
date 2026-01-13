@@ -395,18 +395,56 @@ deploy_application() {
     # but we only pull the app service images
     log_info "Pulling latest images for api and worker (forcing pull to get latest version)..."
     
+    # CRITICAL: Remove old image with same tag to force fresh pull
+    # Docker may cache images even with --pull always if the tag is the same
+    log_info "Removing old image with same tag to force fresh pull..."
+    local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    
+    # Stop and remove containers first so we can remove the image
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    if container_running "$api_container" || container_running "$worker_container"; then
+        log_info "Stopping containers to allow image removal..."
+        docker stop "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    fi
+    
+    # Remove all images with the same tag (including dangling ones)
+    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${DOCKER_IMAGE}$"; then
+        log_info "Found existing image with tag ${DOCKER_IMAGE}, removing to force fresh pull..."
+        docker rmi "${DOCKER_IMAGE}" 2>&1 || {
+            log_warning "Could not remove old image (may have other tags) - will force pull anyway"
+        }
+    fi
+    
+    # Also remove any dangling images with the same repository
+    log_info "Cleaning up dangling images for ${image_base}..."
+    docker images "${image_base}" --filter "dangling=true" --format "{{.ID}}" | while read -r img_id; do
+        if [[ -n "$img_id" ]]; then
+            log_info "Removing dangling image: ${img_id:0:12}"
+            docker rmi "$img_id" 2>&1 || true
+        fi
+    done || true
+    
     # CRITICAL: Use docker pull directly to force update, then docker compose will use the fresh image
     log_info "Pulling image directly with docker pull to ensure latest version..."
     log_info "Attempting to pull: ${DOCKER_IMAGE}"
     
     local pull_success=false
+    # CRITICAL: Force pull without using cache to ensure we get absolute latest from registry
+    log_info "Pulling image (forcing fresh pull from registry)..."
     if docker pull "${DOCKER_IMAGE}" 2>&1; then
         log_success "Successfully pulled image: ${DOCKER_IMAGE}"
         pull_success=true
         
         # Verify the image was actually pulled (not using cached version)
         local pulled_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
+        local pulled_image_digest=$(docker images --format "{{.Digest}}" "${DOCKER_IMAGE}" | head -n 1 || echo "")
         log_info "Pulled image ID: ${pulled_image_id:0:12}"
+        if [[ -n "$pulled_image_digest" ]] && [[ "$pulled_image_digest" != "<none>" ]]; then
+            log_info "Pulled image digest: ${pulled_image_digest:0:30}..."
+        fi
     else
         log_warning "Failed to pull image with specific tag: ${DOCKER_IMAGE}"
         log_warning "This might mean the CI/CD build didn't complete or the tag doesn't exist yet (propagation delay)"
@@ -617,13 +655,34 @@ deploy_application() {
                 log_error "   Container image: ${api_image} (ID: ${api_image_id:0:12})"
                 log_error "   Expected image: ${DOCKER_IMAGE} (ID: ${new_image_id:0:12})"
                 log_error "   This indicates the container was not recreated with the new image"
-                log_error "   Attempting to force recreate..."
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api 2>&1 || true
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api 2>&1 || true
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1 || {
+                log_error "   Attempting to force recreate with explicit image..."
+                
+                # CRITICAL: Stop and remove container completely
+                docker stop "$api_container" 2>&1 || true
+                docker rm -f "$api_container" 2>&1 || true
+                
+                # Wait a moment to ensure container is fully removed
+                sleep 2
+                
+                # CRITICAL: Export DOCKER_IMAGE again to ensure it's set
+                export DOCKER_IMAGE="${DOCKER_IMAGE}"
+                
+                # Force recreate with explicit image pull
+                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api 2>&1; then
+                    log_info "Container recreated, verifying again..."
+                    sleep 3
+                    local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+                    if [[ "$new_api_image_id" == "$new_image_id" ]]; then
+                        log_success "✅ API container now using correct image after force recreate"
+                    else
+                        log_error "❌ API container still not using correct image after force recreate"
+                        log_error "   This is a critical issue - deployment may have failed"
+                        return 1
+                    fi
+                else
                     log_error "Failed to force recreate API container"
                     return 1
-                }
+                fi
             fi
         else
             log_warning "Could not verify API container image (missing image or ID)"
@@ -645,13 +704,34 @@ deploy_application() {
                 log_error "   Container image: ${worker_image} (ID: ${worker_image_id:0:12})"
                 log_error "   Expected image: ${DOCKER_IMAGE} (ID: ${new_image_id:0:12})"
                 log_error "   This indicates the container was not recreated with the new image"
-                log_error "   Attempting to force recreate..."
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop worker 2>&1 || true
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f worker 2>&1 || true
-                docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1 || {
+                log_error "   Attempting to force recreate with explicit image..."
+                
+                # CRITICAL: Stop and remove container completely
+                docker stop "$worker_container" 2>&1 || true
+                docker rm -f "$worker_container" 2>&1 || true
+                
+                # Wait a moment to ensure container is fully removed
+                sleep 2
+                
+                # CRITICAL: Export DOCKER_IMAGE again to ensure it's set
+                export DOCKER_IMAGE="${DOCKER_IMAGE}"
+                
+                # Force recreate with explicit image pull
+                if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps worker 2>&1; then
+                    log_info "Container recreated, verifying again..."
+                    sleep 3
+                    local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+                    if [[ "$new_worker_image_id" == "$new_image_id" ]]; then
+                        log_success "✅ Worker container now using correct image after force recreate"
+                    else
+                        log_error "❌ Worker container still not using correct image after force recreate"
+                        log_error "   This is a critical issue - deployment may have failed"
+                        return 1
+                    fi
+                else
                     log_error "Failed to force recreate Worker container"
                     return 1
-                }
+                fi
             fi
         else
             log_warning "Could not verify Worker container image (missing image or ID)"
@@ -762,7 +842,18 @@ deploy_application() {
             fi
             
             log_success "Application deployed successfully"
-            return 0
+            
+            # CRITICAL: Run post-deployment verification to ensure everything is correct
+            # This handles all edge cases and can auto-recover if issues are found
+            log_info "Running post-deployment verification..."
+            if post_deployment_verification; then
+                log_success "Post-deployment verification passed - deployment complete!"
+                return 0
+            else
+                log_error "Post-deployment verification failed"
+                # Post-deployment verification already handles rollback internally
+                return 1
+            fi
         else
             log_error "Application health check failed"
             log_info "=== API Container Logs (last 100 lines) ==="
@@ -795,6 +886,746 @@ deploy_application() {
         rollback_deployment
         return 1
     fi
+}
+
+# ============================================================================
+# POST-DEPLOYMENT VERIFICATION AND AUTO-RECOVERY
+# This ensures latest image is deployed and handles all edge cases
+# ============================================================================
+
+# Global variables for image tracking
+DEPLOYED_IMAGE_ID=""
+BACKUP_IMAGE_ID=""
+EXPECTED_IMAGE_TAG=""
+
+# Comprehensive post-deployment verification
+# Ensures latest image is deployed, handles failures, and manages rollback
+post_deployment_verification() {
+    log_info "=========================================="
+    log_info "=== POST-DEPLOYMENT VERIFICATION ==="
+    log_info "=========================================="
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    local max_retries=3
+    local retry_count=0
+    local verification_passed=false
+    
+    # Store expected image for verification
+    EXPECTED_IMAGE_TAG="${DOCKER_IMAGE}"
+    local expected_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" 2>/dev/null | head -n 1)
+    DEPLOYED_IMAGE_ID="${expected_image_id}"
+    
+    log_info "Expected image: ${EXPECTED_IMAGE_TAG}"
+    log_info "Expected image ID: ${expected_image_id:0:12}"
+    
+    while [[ $retry_count -lt $max_retries ]] && ! $verification_passed; do
+        retry_count=$((retry_count + 1))
+        log_info "Post-deployment verification attempt ${retry_count}/${max_retries}..."
+        
+        # Step 1: Verify containers are running
+        if ! verify_containers_running "$api_container" "$worker_container"; then
+            log_error "Containers not running - attempting recovery..."
+            if ! recover_containers; then
+                continue
+            fi
+        fi
+        
+        # Step 2: Verify containers are using the correct image
+        if ! verify_container_images "$api_container" "$worker_container" "$expected_image_id"; then
+            log_error "Containers using wrong image - attempting image fix..."
+            if ! fix_container_images "$api_container" "$worker_container"; then
+                continue
+            fi
+        fi
+        
+        # Step 3: Verify application health
+        if ! verify_application_health "$api_container"; then
+            log_error "Application health check failed - attempting recovery..."
+            if ! recover_unhealthy_containers "$api_container" "$worker_container"; then
+                continue
+            fi
+        fi
+        
+        # Step 4: Verify environment variables
+        if ! verify_environment_variables "$api_container"; then
+            log_error "Environment variables incorrect - attempting fix..."
+            if ! fix_environment_variables "$api_container" "$worker_container"; then
+                continue
+            fi
+        fi
+        
+        # All verifications passed
+        verification_passed=true
+        log_success "✅ All post-deployment verifications passed!"
+    done
+    
+    if ! $verification_passed; then
+        log_error "Post-deployment verification failed after ${max_retries} attempts"
+        log_error "Initiating rollback to backup image..."
+        if rollback_to_backup_image; then
+            log_warning "Rolled back to backup image successfully"
+            return 1
+        else
+            log_error "CRITICAL: Rollback to backup image also failed!"
+            log_error "Manual intervention required"
+            return 2
+        fi
+    fi
+    
+    # Final verification report
+    generate_deployment_report "$api_container" "$worker_container"
+    
+    return 0
+}
+
+# Verify containers are running
+verify_containers_running() {
+    local api_container="$1"
+    local worker_container="$2"
+    
+    log_info "Checking if containers are running..."
+    
+    local all_running=true
+    
+    if ! container_running "$api_container"; then
+        log_error "API container ($api_container) is not running"
+        all_running=false
+    else
+        log_success "API container is running"
+    fi
+    
+    if ! container_running "$worker_container"; then
+        log_error "Worker container ($worker_container) is not running"
+        all_running=false
+    else
+        log_success "Worker container is running"
+    fi
+    
+    $all_running
+}
+
+# Verify containers are using the correct image
+verify_container_images() {
+    local api_container="$1"
+    local worker_container="$2"
+    local expected_image_id="$3"
+    
+    log_info "Verifying containers are using the correct image..."
+    
+    local all_correct=true
+    
+    # Check API container
+    local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+    local api_image_tag=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+    
+    log_info "API container image: ${api_image_tag} (ID: ${api_image_id:0:12})"
+    
+    if [[ -z "$api_image_id" ]]; then
+        log_error "Cannot get API container image ID"
+        all_correct=false
+    elif [[ "$api_image_id" != "$expected_image_id" ]] && [[ "$api_image_tag" != "${DOCKER_IMAGE}" ]] && [[ "$api_image_tag" != *"${DOCKER_IMAGE}"* ]]; then
+        log_error "API container using wrong image!"
+        log_error "  Expected: ${DOCKER_IMAGE} (ID: ${expected_image_id:0:12})"
+        log_error "  Actual: ${api_image_tag} (ID: ${api_image_id:0:12})"
+        all_correct=false
+    else
+        log_success "API container using correct image"
+    fi
+    
+    # Check Worker container
+    local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+    local worker_image_tag=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
+    
+    log_info "Worker container image: ${worker_image_tag} (ID: ${worker_image_id:0:12})"
+    
+    if [[ -z "$worker_image_id" ]]; then
+        log_error "Cannot get Worker container image ID"
+        all_correct=false
+    elif [[ "$worker_image_id" != "$expected_image_id" ]] && [[ "$worker_image_tag" != "${DOCKER_IMAGE}" ]] && [[ "$worker_image_tag" != *"${DOCKER_IMAGE}"* ]]; then
+        log_error "Worker container using wrong image!"
+        log_error "  Expected: ${DOCKER_IMAGE} (ID: ${expected_image_id:0:12})"
+        log_error "  Actual: ${worker_image_tag} (ID: ${worker_image_id:0:12})"
+        all_correct=false
+    else
+        log_success "Worker container using correct image"
+    fi
+    
+    $all_correct
+}
+
+# Verify application health
+verify_application_health() {
+    local api_container="$1"
+    local health_timeout=60
+    local health_interval=10
+    local elapsed=0
+    
+    log_info "Verifying application health (timeout: ${health_timeout}s)..."
+    
+    while [[ $elapsed -lt $health_timeout ]]; do
+        # Try internal health check first
+        local health_response=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        
+        if [[ "$health_response" == "200" ]]; then
+            log_success "Application health check passed (HTTP 200)"
+            return 0
+        fi
+        
+        # Try external health check
+        local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        if [[ "$external_response" == "200" ]]; then
+            log_success "Application health check passed (external HTTP 200)"
+            return 0
+        fi
+        
+        log_info "Health check: internal=${health_response}, external=${external_response} - waiting..."
+        sleep $health_interval
+        elapsed=$((elapsed + health_interval))
+    done
+    
+    log_error "Application health check timed out after ${health_timeout}s"
+    return 1
+}
+
+# Verify environment variables
+verify_environment_variables() {
+    local api_container="$1"
+    
+    log_info "Verifying critical environment variables..."
+    
+    local all_ok=true
+    
+    # Check OPENVIDU_URL
+    local openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR")
+    if [[ "$openvidu_url" == "NOT SET" ]] || [[ "$openvidu_url" == "ERROR" ]] || [[ "$openvidu_url" == *"openvidu-server:4443"* ]]; then
+        log_error "OPENVIDU_URL is not set correctly: ${openvidu_url}"
+        all_ok=false
+    else
+        log_success "OPENVIDU_URL is set: ${openvidu_url:0:30}..."
+    fi
+    
+    # Check DATABASE_URL (partial - just verify it's set)
+    local db_url=$(docker exec "$api_container" sh -c 'echo "${DATABASE_URL:-NOT SET}"' 2>/dev/null || echo "ERROR")
+    if [[ "$db_url" == "NOT SET" ]] || [[ "$db_url" == "ERROR" ]]; then
+        log_error "DATABASE_URL is not set"
+        all_ok=false
+    else
+        log_success "DATABASE_URL is set"
+    fi
+    
+    # Check NODE_ENV
+    local node_env=$(docker exec "$api_container" sh -c 'echo "${NODE_ENV:-NOT SET}"' 2>/dev/null || echo "ERROR")
+    if [[ "$node_env" != "production" ]]; then
+        log_warning "NODE_ENV is not 'production': ${node_env}"
+    else
+        log_success "NODE_ENV is set to production"
+    fi
+    
+    $all_ok
+}
+
+# Recover containers that are not running
+recover_containers() {
+    log_info "Attempting to recover containers..."
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    # Stop any existing containers
+    docker stop "$api_container" "$worker_container" 2>&1 || true
+    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    
+    # Wait for cleanup
+    sleep 3
+    
+    # Ensure image is available
+    log_info "Ensuring image is available: ${DOCKER_IMAGE}"
+    docker pull "${DOCKER_IMAGE}" 2>&1 || {
+        log_error "Failed to pull image for recovery"
+        return 1
+    }
+    
+    # Start containers
+    export DOCKER_IMAGE="${DOCKER_IMAGE}"
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        log_info "Containers started, waiting for startup..."
+        sleep 10
+        
+        if container_running "$api_container" && container_running "$worker_container"; then
+            log_success "Container recovery successful"
+            return 0
+        fi
+    fi
+    
+    log_error "Container recovery failed"
+    return 1
+}
+
+# Fix containers using wrong image
+fix_container_images() {
+    local api_container="$1"
+    local worker_container="$2"
+    
+    log_info "Fixing container images to use: ${DOCKER_IMAGE}"
+    
+    # Complete cleanup
+    docker stop "$api_container" "$worker_container" 2>&1 || true
+    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    
+    # Remove cached image to force fresh pull
+    local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    docker rmi "${DOCKER_IMAGE}" 2>&1 || true
+    
+    # Pull fresh image
+    log_info "Pulling fresh image from registry..."
+    if ! docker pull "${DOCKER_IMAGE}" 2>&1; then
+        log_error "Failed to pull fresh image"
+        return 1
+    fi
+    
+    # Get new image ID
+    local new_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" 2>/dev/null | head -n 1)
+    log_info "Fresh image ID: ${new_image_id:0:12}"
+    
+    # Start containers with fresh image
+    export DOCKER_IMAGE="${DOCKER_IMAGE}"
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+        sleep 5
+        
+        # Verify the fix
+        local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+        local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+        
+        if [[ "$api_image_id" == "$new_image_id" ]] || [[ "$worker_image_id" == "$new_image_id" ]]; then
+            log_success "Image fix successful - containers now using correct image"
+            return 0
+        fi
+    fi
+    
+    log_error "Image fix failed"
+    return 1
+}
+
+# Recover unhealthy containers
+recover_unhealthy_containers() {
+    local api_container="$1"
+    local worker_container="$2"
+    
+    log_info "Attempting to recover unhealthy containers..."
+    
+    # Get container logs for diagnosis
+    log_info "=== Recent API Container Logs ==="
+    docker logs --tail 50 "$api_container" 2>&1 | tail -20 || true
+    
+    # Check for common issues
+    local restart_needed=false
+    
+    # Check if container is in restart loop
+    local restart_count=$(docker inspect --format='{{.RestartCount}}' "$api_container" 2>/dev/null || echo "0")
+    if [[ "$restart_count" -gt 3 ]]; then
+        log_warning "Container has restarted ${restart_count} times - likely configuration issue"
+        restart_needed=true
+    fi
+    
+    # Check for OOM kills
+    local oom_killed=$(docker inspect --format='{{.State.OOMKilled}}' "$api_container" 2>/dev/null || echo "false")
+    if [[ "$oom_killed" == "true" ]]; then
+        log_error "Container was OOM killed - check memory limits"
+        restart_needed=true
+    fi
+    
+    if $restart_needed; then
+        # Complete restart
+        docker stop "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+        sleep 3
+        
+        export DOCKER_IMAGE="${DOCKER_IMAGE}"
+        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+            sleep 15
+            
+            if container_running "$api_container" && container_running "$worker_container"; then
+                # Re-check health
+                if verify_application_health "$api_container"; then
+                    log_success "Unhealthy container recovery successful"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    
+    log_error "Unhealthy container recovery failed"
+    return 1
+}
+
+# Fix environment variables
+fix_environment_variables() {
+    local api_container="$1"
+    local worker_container="$2"
+    
+    log_info "Fixing environment variables..."
+    
+    # Recreate containers with explicit environment variables
+    docker stop "$api_container" "$worker_container" 2>&1 || true
+    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    
+    # Ensure all required environment variables are exported
+    export DOCKER_IMAGE="${DOCKER_IMAGE}"
+    export OPENVIDU_URL="${OPENVIDU_URL}"
+    
+    # Start with explicit environment
+    OPENVIDU_URL="${OPENVIDU_URL}" DOCKER_IMAGE="${DOCKER_IMAGE}" \
+        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
+        log_error "Failed to start containers with fixed environment"
+        return 1
+    }
+    
+    sleep 10
+    
+    if verify_environment_variables "$api_container"; then
+        log_success "Environment variable fix successful"
+        return 0
+    fi
+    
+    log_error "Environment variable fix failed"
+    return 1
+}
+
+# Rollback to backup image
+rollback_to_backup_image() {
+    log_info "Rolling back to backup image..."
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    # Find the most recent backup image
+    local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    local backup_image=""
+    
+    if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+        backup_image="${OLD_IMAGE_BACKUP_TAG}"
+        log_info "Using backup image tag: ${backup_image}"
+    else
+        # Find the most recent rollback-backup tagged image
+        backup_image=$(docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | head -n 1 || echo "")
+    fi
+    
+    if [[ -z "$backup_image" ]]; then
+        log_error "No backup image found - cannot rollback"
+        return 1
+    fi
+    
+    log_info "Found backup image: ${backup_image}"
+    BACKUP_IMAGE_ID=$(docker images --format "{{.ID}}" "$backup_image" 2>/dev/null | head -n 1)
+    log_info "Backup image ID: ${BACKUP_IMAGE_ID:0:12}"
+    
+    # Stop current containers
+    docker stop "$api_container" "$worker_container" 2>&1 || true
+    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    
+    # Tag backup image as the expected tag
+    log_info "Retagging backup image as current..."
+    docker tag "$backup_image" "${DOCKER_IMAGE}" 2>&1 || {
+        log_error "Failed to retag backup image"
+        return 1
+    }
+    
+    # Start containers with backup image
+    export DOCKER_IMAGE="${DOCKER_IMAGE}"
+    if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --force-recreate --no-deps api worker 2>&1; then
+        sleep 10
+        
+        if container_running "$api_container" && container_running "$worker_container"; then
+            # Verify health
+            if verify_application_health "$api_container"; then
+                log_success "Rollback to backup image successful"
+                return 0
+            fi
+        fi
+    fi
+    
+    log_error "Rollback to backup image failed"
+    return 1
+}
+
+# Generate deployment report
+generate_deployment_report() {
+    local api_container="$1"
+    local worker_container="$2"
+    
+    log_info "=========================================="
+    log_info "=== DEPLOYMENT VERIFICATION REPORT ==="
+    log_info "=========================================="
+    
+    # Image information
+    local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+    local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+    local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+    local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+    
+    log_info "Deployed Image:"
+    log_info "  Tag: ${DOCKER_IMAGE}"
+    log_info "  Expected ID: ${DEPLOYED_IMAGE_ID:0:12}"
+    log_info ""
+    log_info "API Container:"
+    log_info "  Name: ${api_container}"
+    log_info "  Image: ${api_image}"
+    log_info "  Image ID: ${api_image_id:0:12}"
+    log_info "  Status: $(docker inspect --format='{{.State.Status}}' "$api_container" 2>/dev/null || echo "N/A")"
+    log_info "  Started: $(docker inspect --format='{{.State.StartedAt}}' "$api_container" 2>/dev/null || echo "N/A")"
+    log_info ""
+    log_info "Worker Container:"
+    log_info "  Name: ${worker_container}"
+    log_info "  Image: ${worker_image}"
+    log_info "  Image ID: ${worker_image_id:0:12}"
+    log_info "  Status: $(docker inspect --format='{{.State.Status}}' "$worker_container" 2>/dev/null || echo "N/A")"
+    log_info "  Started: $(docker inspect --format='{{.State.StartedAt}}' "$worker_container" 2>/dev/null || echo "N/A")"
+    log_info ""
+    
+    # Backup image info
+    if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+        log_info "Backup Image:"
+        log_info "  Tag: ${OLD_IMAGE_BACKUP_TAG}"
+        log_info "  Available for rollback: Yes"
+    else
+        log_info "Backup Image: None (first deployment)"
+    fi
+    
+    log_info ""
+    log_success "=========================================="
+    log_success "=== DEPLOYMENT VERIFIED SUCCESSFULLY ==="
+    log_success "=========================================="
+}
+
+# ============================================================================
+# SCHEDULED IMAGE VERIFICATION JOB
+# Can be run independently to verify and ensure latest image is deployed
+# Usage: ./deploy.sh verify-image
+# ============================================================================
+
+# Verify and ensure latest image is deployed
+# This can be used as a scheduled job or post-deployment check
+verify_and_deploy_latest_image() {
+    log_info "=========================================="
+    log_info "=== IMAGE VERIFICATION AND DEPLOYMENT ==="
+    log_info "=========================================="
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    # Get the expected image from environment or default
+    if [[ -z "${DOCKER_IMAGE:-}" ]]; then
+        if [[ -n "${IMAGE:-}" ]] && [[ -n "${IMAGE_TAG:-}" ]]; then
+            DOCKER_IMAGE="${IMAGE}:${IMAGE_TAG}"
+        else
+            DOCKER_IMAGE="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+        fi
+    fi
+    export DOCKER_IMAGE="${DOCKER_IMAGE}"
+    log_info "Expected image: ${DOCKER_IMAGE}"
+    
+    # Step 1: Check what's currently running
+    log_info "Step 1: Checking current deployment..."
+    
+    local current_api_image=""
+    local current_api_image_id=""
+    local current_worker_image=""
+    local current_worker_image_id=""
+    
+    if container_running "$api_container"; then
+        current_api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+        current_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+        log_info "API container running with image: ${current_api_image} (ID: ${current_api_image_id:0:12})"
+    else
+        log_warning "API container is not running"
+    fi
+    
+    if container_running "$worker_container"; then
+        current_worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
+        current_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+        log_info "Worker container running with image: ${current_worker_image} (ID: ${current_worker_image_id:0:12})"
+    else
+        log_warning "Worker container is not running"
+    fi
+    
+    # Step 2: Get latest image from registry
+    log_info "Step 2: Fetching latest image from registry..."
+    
+    # Store current image as backup before pulling new one
+    if [[ -n "$current_api_image" ]] && [[ -n "$current_api_image_id" ]]; then
+        local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+        OLD_IMAGE_BACKUP_TAG="${image_base}:rollback-backup-$(date +%Y%m%d-%H%M%S)"
+        log_info "Backing up current image as: ${OLD_IMAGE_BACKUP_TAG}"
+        docker tag "$current_api_image" "$OLD_IMAGE_BACKUP_TAG" 2>&1 || {
+            log_warning "Could not create backup tag (may already exist)"
+        }
+    fi
+    
+    # Pull latest image
+    log_info "Pulling latest image: ${DOCKER_IMAGE}"
+    if ! docker pull "${DOCKER_IMAGE}" 2>&1; then
+        log_error "Failed to pull latest image from registry"
+        return 1
+    fi
+    
+    local latest_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" 2>/dev/null | head -n 1)
+    local latest_image_digest=$(docker images --format "{{.Digest}}" "${DOCKER_IMAGE}" 2>/dev/null | head -n 1 || echo "")
+    log_info "Latest image ID: ${latest_image_id:0:12}"
+    if [[ -n "$latest_image_digest" ]] && [[ "$latest_image_digest" != "<none>" ]]; then
+        log_info "Latest image digest: ${latest_image_digest:0:30}..."
+    fi
+    
+    # Step 3: Compare and decide
+    log_info "Step 3: Comparing current vs latest..."
+    
+    local needs_update=false
+    
+    if [[ -z "$current_api_image_id" ]] || [[ -z "$current_worker_image_id" ]]; then
+        log_info "One or more containers not running - deployment needed"
+        needs_update=true
+    elif [[ "$current_api_image_id" != "$latest_image_id" ]] || [[ "$current_worker_image_id" != "$latest_image_id" ]]; then
+        log_info "Current image differs from latest - update needed"
+        log_info "  Current API: ${current_api_image_id:0:12}"
+        log_info "  Current Worker: ${current_worker_image_id:0:12}"
+        log_info "  Latest: ${latest_image_id:0:12}"
+        needs_update=true
+    else
+        log_success "Containers are already running the latest image"
+        log_info "  Image ID: ${latest_image_id:0:12}"
+    fi
+    
+    if $needs_update; then
+        # Step 4: Deploy latest image
+        log_info "Step 4: Deploying latest image..."
+        
+        # Stop and remove current containers
+        log_info "Stopping current containers..."
+        docker stop "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+        
+        # Wait for cleanup
+        sleep 3
+        
+        # Start containers with latest image
+        log_info "Starting containers with latest image..."
+        export DOCKER_IMAGE="${DOCKER_IMAGE}"
+        if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+            log_info "Containers started, waiting for startup..."
+            sleep 10
+            
+            # Verify deployment
+            if container_running "$api_container" && container_running "$worker_container"; then
+                local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+                local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+                
+                if [[ "$new_api_image_id" == "$latest_image_id" ]] && [[ "$new_worker_image_id" == "$latest_image_id" ]]; then
+                    log_success "✅ Successfully deployed latest image!"
+                    log_info "  Image ID: ${latest_image_id:0:12}"
+                    
+                    # Verify health
+                    log_info "Verifying application health..."
+                    if verify_application_health "$api_container"; then
+                        log_success "✅ Application is healthy!"
+                        
+                        # Cleanup old backup images (keep last 2)
+                        log_info "Cleaning up old backup images..."
+                        local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+                        local backup_count=0
+                        docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | sort -r | while read -r backup_img; do
+                            backup_count=$((backup_count + 1))
+                            if [[ $backup_count -gt 2 ]]; then
+                                log_info "Removing old backup: ${backup_img}"
+                                docker rmi "$backup_img" 2>&1 || true
+                            fi
+                        done || true
+                        
+                        return 0
+                    else
+                        log_error "Application health check failed - rolling back..."
+                        rollback_to_backup_image
+                        return 1
+                    fi
+                else
+                    log_error "Containers not using the expected image after deployment"
+                    log_error "  Expected: ${latest_image_id:0:12}"
+                    log_error "  API: ${new_api_image_id:0:12}"
+                    log_error "  Worker: ${new_worker_image_id:0:12}"
+                    log_info "Attempting to fix..."
+                    fix_container_images "$api_container" "$worker_container"
+                    return $?
+                fi
+            else
+                log_error "Containers failed to start"
+                rollback_to_backup_image
+                return 1
+            fi
+        else
+            log_error "docker compose up failed"
+            rollback_to_backup_image
+            return 1
+        fi
+    fi
+    
+    # Step 5: Final verification (even if no update was needed)
+    log_info "Step 5: Final verification..."
+    
+    if container_running "$api_container" && container_running "$worker_container"; then
+        if verify_application_health "$api_container"; then
+            log_success "✅ Deployment verification complete - system is healthy!"
+            return 0
+        else
+            log_error "Application health check failed"
+            return 1
+        fi
+    else
+        log_error "Containers are not running"
+        return 1
+    fi
+}
+
+# Quick image check (non-destructive) - just reports status
+check_image_status() {
+    log_info "=========================================="
+    log_info "=== IMAGE STATUS CHECK ==="
+    log_info "=========================================="
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    # Get current running images
+    log_info "Current running containers:"
+    if container_running "$api_container"; then
+        local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+        local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+        local api_created=$(docker inspect --format='{{.Created}}' "$api_container" 2>/dev/null || echo "N/A")
+        log_info "  API: ${api_image} (ID: ${api_image_id:0:12}, Created: ${api_created})"
+    else
+        log_warning "  API: NOT RUNNING"
+    fi
+    
+    if container_running "$worker_container"; then
+        local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+        local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+        local worker_created=$(docker inspect --format='{{.Created}}' "$worker_container" 2>/dev/null || echo "N/A")
+        log_info "  Worker: ${worker_image} (ID: ${worker_image_id:0:12}, Created: ${worker_created})"
+    else
+        log_warning "  Worker: NOT RUNNING"
+    fi
+    
+    # List available images
+    log_info ""
+    log_info "Available images:"
+    local image_base="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api"
+    docker images "${image_base}" --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Size}}" | head -10 || true
+    
+    # List backup images
+    log_info ""
+    log_info "Backup images available for rollback:"
+    docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" || echo "  No backup images found"
+    
+    log_info ""
+    log_info "=========================================="
 }
 
 # Validate container dependencies
@@ -1917,6 +2748,70 @@ main() {
     exit $EXIT_SUCCESS
 }
 
+# Show usage/help
+show_usage() {
+    cat << EOF
+Healthcare Backend Deployment Script
+
+Usage: ./deploy.sh [COMMAND] [OPTIONS]
+
+Commands:
+  (default)         Run full deployment based on INFRA_CHANGED and APP_CHANGED env vars
+  verify-image      Verify and ensure latest image is deployed (with auto-recovery)
+  check-image       Quick image status check (non-destructive, just reports status)
+  post-verify       Run post-deployment verification only
+  help              Show this help message
+
+Options:
+  Environment variables:
+    DOCKER_IMAGE     Image to deploy (default: ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest)
+    IMAGE            Base image name (combined with IMAGE_TAG to form DOCKER_IMAGE)
+    IMAGE_TAG        Image tag (combined with IMAGE to form DOCKER_IMAGE)
+    INFRA_CHANGED    Set to 'true' if infrastructure changed
+    APP_CHANGED      Set to 'true' if application changed
+    CONTAINER_PREFIX Container name prefix (default: latest-)
+    OPENVIDU_URL     OpenVidu server URL (required for video features)
+
+Examples:
+  # Full deployment
+  ./deploy.sh
+  
+  # Verify and deploy latest image (can be run as a scheduled job)
+  ./deploy.sh verify-image
+  
+  # Quick check of current deployment status
+  ./deploy.sh check-image
+  
+  # Run post-deployment verification only
+  ./deploy.sh post-verify
+  
+  # Deploy specific image
+  DOCKER_IMAGE=ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:main-abc123 ./deploy.sh
+
+EOF
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    main "$@"
+    # Parse command-line arguments
+    case "${1:-}" in
+        verify-image)
+            verify_and_deploy_latest_image
+            exit $?
+            ;;
+        check-image)
+            check_image_status
+            exit $?
+            ;;
+        post-verify)
+            post_deployment_verification
+            exit $?
+            ;;
+        help|--help|-h)
+            show_usage
+            exit 0
+            ;;
+        *)
+            main "$@"
+            ;;
+    esac
 fi

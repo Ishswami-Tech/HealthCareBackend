@@ -525,19 +525,267 @@ verify_backup_mode() {
 }
 
 # ============================================================================
+# IMAGE VERIFICATION FUNCTIONS
+# ============================================================================
+
+# Verify containers are using the expected image
+verify_container_image() {
+    local container_name="$1"
+    local expected_image="${2:-}"
+    
+    if [[ -z "$container_name" ]]; then
+        return 1
+    fi
+    
+    if ! container_running "$container_name"; then
+        log_error "Container $container_name is not running"
+        return 1
+    fi
+    
+    local current_image=$(docker inspect --format='{{.Config.Image}}' "$container_name" 2>/dev/null || echo "")
+    local current_image_id=$(docker inspect --format='{{.Image}}' "$container_name" 2>/dev/null || echo "")
+    local created_at=$(docker inspect --format='{{.Created}}' "$container_name" 2>/dev/null || echo "")
+    
+    log_info "Container: $container_name"
+    log_info "  Image: $current_image"
+    log_info "  Image ID: ${current_image_id:0:12}"
+    log_info "  Created: $created_at"
+    
+    if [[ -n "$expected_image" ]]; then
+        if [[ "$current_image" == "$expected_image" ]] || [[ "$current_image" == *"$expected_image"* ]]; then
+            log_success "  ✓ Image matches expected: $expected_image"
+            return 0
+        else
+            log_error "  ✗ Image mismatch!"
+            log_error "    Expected: $expected_image"
+            log_error "    Actual: $current_image"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Verify all application containers are using latest image
+verify_app_images() {
+    log_info "Verifying application container images..."
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    local expected_image="${DOCKER_IMAGE:-}"
+    
+    local all_ok=true
+    
+    # Get expected image from environment or default
+    if [[ -z "$expected_image" ]]; then
+        expected_image="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
+    fi
+    
+    log_info "Expected image: $expected_image"
+    
+    # Verify API container
+    if container_running "$api_container"; then
+        if ! verify_container_image "$api_container" "$expected_image"; then
+            all_ok=false
+        fi
+    else
+        log_error "API container ($api_container) is not running"
+        all_ok=false
+    fi
+    
+    # Verify Worker container
+    if container_running "$worker_container"; then
+        if ! verify_container_image "$worker_container" "$expected_image"; then
+            all_ok=false
+        fi
+    else
+        log_error "Worker container ($worker_container) is not running"
+        all_ok=false
+    fi
+    
+    if $all_ok; then
+        log_success "All application containers are using the expected image"
+        echo "verified"
+        return 0
+    else
+        log_error "Image verification failed"
+        echo "failed"
+        return 1
+    fi
+}
+
+# Full image verification with auto-fix capability
+verify_and_fix_images() {
+    log_info "=========================================="
+    log_info "=== IMAGE VERIFICATION AND AUTO-FIX ==="
+    log_info "=========================================="
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    local expected_image="${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}"
+    
+    # Get current running images
+    local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "")
+    local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+    local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "")
+    local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+    
+    # Pull latest image from registry
+    log_info "Pulling latest image from registry..."
+    if docker pull "$expected_image" 2>&1; then
+        log_success "Successfully pulled latest image"
+    else
+        log_error "Failed to pull latest image"
+        return 1
+    fi
+    
+    local latest_image_id=$(docker images --format "{{.ID}}" "$expected_image" 2>/dev/null | head -n 1)
+    log_info "Latest image ID: ${latest_image_id:0:12}"
+    
+    # Compare and fix
+    local needs_fix=false
+    
+    if [[ -z "$api_image_id" ]] || [[ "$api_image_id" != "$latest_image_id" ]]; then
+        log_warning "API container is not using latest image"
+        needs_fix=true
+    fi
+    
+    if [[ -z "$worker_image_id" ]] || [[ "$worker_image_id" != "$latest_image_id" ]]; then
+        log_warning "Worker container is not using latest image"
+        needs_fix=true
+    fi
+    
+    if $needs_fix; then
+        log_info "Fixing containers to use latest image..."
+        
+        # Stop and remove containers
+        docker stop "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+        
+        # Start with latest image
+        export DOCKER_IMAGE="$expected_image"
+        local compose_file="${BASE_DIR}/devops/docker/docker-compose.prod.yml"
+        
+        if [[ -f "$compose_file" ]]; then
+            cd "$(dirname "$compose_file")" || return 1
+            if docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1; then
+                log_info "Containers recreated, waiting for startup..."
+                sleep 10
+                
+                # Verify fix
+                local new_api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "")
+                local new_worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "")
+                
+                if [[ "$new_api_image_id" == "$latest_image_id" ]] && [[ "$new_worker_image_id" == "$latest_image_id" ]]; then
+                    log_success "✓ Containers now using latest image"
+                    return 0
+                else
+                    log_error "Containers still not using latest image after fix attempt"
+                    return 1
+                fi
+            else
+                log_error "Failed to recreate containers"
+                return 1
+            fi
+        else
+            log_error "docker-compose.prod.yml not found"
+            return 1
+        fi
+    else
+        log_success "All containers are already using the latest image"
+        return 0
+    fi
+}
+
+# Quick status check (non-destructive)
+show_deployment_status() {
+    log_info "=========================================="
+    log_info "=== DEPLOYMENT STATUS ==="
+    log_info "=========================================="
+    
+    local api_container="${CONTAINER_PREFIX}api"
+    local worker_container="${CONTAINER_PREFIX}worker"
+    
+    # Infrastructure containers
+    log_info ""
+    log_info "Infrastructure Containers:"
+    log_info "─────────────────────────────────────"
+    docker ps --filter "name=postgres" --filter "name=dragonfly" --filter "name=openvidu" --filter "name=coturn" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10 || true
+    
+    # Application containers
+    log_info ""
+    log_info "Application Containers:"
+    log_info "─────────────────────────────────────"
+    docker ps --filter "name=${api_container}" --filter "name=${worker_container}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+    
+    # Image information
+    log_info ""
+    log_info "Container Images:"
+    log_info "─────────────────────────────────────"
+    if container_running "$api_container"; then
+        local api_image=$(docker inspect --format='{{.Config.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+        local api_image_id=$(docker inspect --format='{{.Image}}' "$api_container" 2>/dev/null || echo "N/A")
+        local api_created=$(docker inspect --format='{{.Created}}' "$api_container" 2>/dev/null || echo "N/A")
+        log_info "API: $api_image (ID: ${api_image_id:0:12})"
+        log_info "     Created: $api_created"
+    else
+        log_warning "API: NOT RUNNING"
+    fi
+    
+    if container_running "$worker_container"; then
+        local worker_image=$(docker inspect --format='{{.Config.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+        local worker_image_id=$(docker inspect --format='{{.Image}}' "$worker_container" 2>/dev/null || echo "N/A")
+        local worker_created=$(docker inspect --format='{{.Created}}' "$worker_container" 2>/dev/null || echo "N/A")
+        log_info "Worker: $worker_image (ID: ${worker_image_id:0:12})"
+        log_info "        Created: $worker_created"
+    else
+        log_warning "Worker: NOT RUNNING"
+    fi
+    
+    # Available backup images
+    log_info ""
+    log_info "Backup Images Available:"
+    log_info "─────────────────────────────────────"
+    local image_base="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api"
+    docker images "$image_base" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | head -5 || echo "  No backup images found"
+    
+    # Health status
+    log_info ""
+    log_info "Health Status:"
+    log_info "─────────────────────────────────────"
+    if container_running "$api_container"; then
+        local health_code=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        if [[ "$health_code" == "200" ]]; then
+            log_success "API Health: OK (HTTP 200)"
+        else
+            log_warning "API Health: $health_code"
+        fi
+    fi
+    
+    log_info ""
+    log_info "=========================================="
+}
+
+# ============================================================================
 # MAIN DISPATCHER
 # ============================================================================
 
 usage() {
-    echo "Usage: $0 [deployment|backup] [backup-id|all]"
+    echo "Usage: $0 [COMMAND] [OPTIONS]"
     echo ""
-    echo "Modes:"
+    echo "Commands:"
     echo "  deployment (default) - Post-deployment verification"
-    echo "  backup              - Backup integrity verification"
+    echo "  backup               - Backup integrity verification"
+    echo "  image                - Verify container images match expected"
+    echo "  fix-image            - Verify and fix container images (auto-update)"
+    echo "  status               - Show current deployment status (non-destructive)"
     echo ""
     echo "Examples:"
     echo "  $0                    # Post-deployment verification"
     echo "  $0 deployment         # Post-deployment verification"
+    echo "  $0 image              # Verify containers use correct image"
+    echo "  $0 fix-image          # Verify and auto-fix image issues"
+    echo "  $0 status             # Show deployment status"
     echo "  $0 backup success-2026-01-02-120000  # Verify specific backup"
     echo "  $0 backup all        # Verify all backups"
     exit 1
@@ -553,6 +801,18 @@ main() {
         backup)
             shift || true
             verify_backup_mode "$@"
+            ;;
+        image)
+            verify_app_images
+            ;;
+        fix-image)
+            verify_and_fix_images
+            ;;
+        status)
+            show_deployment_status
+            ;;
+        help|--help|-h)
+            usage
             ;;
         *)
             usage
