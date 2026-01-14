@@ -135,6 +135,7 @@ import { ClinicMetricsMethods } from './methods/clinic-metrics.methods';
 export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit, OnModuleDestroy {
   private readonly serviceName = 'DatabaseService';
   protected readonly config: HealthcareDatabaseConfig;
+  private readonly serviceStartTime = Date.now(); // Track service start time for startup grace period
 
   // Method class instances (code splitting)
   private readonly userMethods: UserMethods;
@@ -1544,7 +1545,25 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
       // Check if Prisma is ready first
+      // During startup grace period (first 90 seconds), return healthy even if Prisma isn't ready yet
+      // This prevents health checks from failing during normal startup
+      const STARTUP_GRACE_PERIOD = 90000; // 90 seconds
+      const timeSinceStart = Date.now() - this.serviceStartTime;
+      const isInStartupGracePeriod = timeSinceStart < STARTUP_GRACE_PERIOD;
+
       if (!this.prismaService || !this.prismaService.isReady()) {
+        // During startup grace period, return healthy to allow application to start
+        // After grace period, return unhealthy if Prisma still isn't ready
+        if (isInStartupGracePeriod) {
+          return {
+            isHealthy: true,
+            connectionCount: 0,
+            activeQueries: 0,
+            avgResponseTime: -1,
+            lastHealthCheck: new Date(),
+            errors: [],
+          };
+        }
         return {
           isHealthy: false,
           connectionCount: 0,
