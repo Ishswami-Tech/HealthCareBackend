@@ -230,6 +230,7 @@ export interface MiddlewareConfig {
   readonly enableVersioning?: boolean;
   readonly versioningType?: 'header' | 'uri' | 'media-type';
   readonly versioningHeader?: string;
+  readonly versioningUriPrefix?: string;
   readonly defaultVersion?: string;
   readonly globalPrefix?: string;
   readonly prefixExclude?: Array<string | { path: string; method: string }>;

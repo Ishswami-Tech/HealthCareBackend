@@ -775,13 +775,28 @@ async function bootstrap() {
     const validationPipeOptions: ValidationPipeOptions =
       ValidationPipeConfig.getOptions(loggingService);
 
+    // CRITICAL: For URI-based versioning, we need to split the prefix
+    // If apiPrefix is '/api/v1', we use '/api' as global prefix and 'v' as version prefix
+    // This allows routes to be accessible at /api/v1/... via URI versioning
+    let globalPrefixForConfig = apiPrefix;
+    let versioningUriPrefix: string | undefined;
+
+    // If prefix contains /v1, /v2, etc., extract it for URI versioning
+    if (apiPrefix && /\/v\d+$/.test(apiPrefix)) {
+      // Extract base prefix (e.g., '/api' from '/api/v1')
+      globalPrefixForConfig = apiPrefix.replace(/\/v\d+$/, '');
+      // Set version prefix to 'v' for URI versioning
+      versioningUriPrefix = 'v';
+    }
+
     const middlewareConfig: MiddlewareConfig = {
       validationPipe: validationPipeOptions,
       enableVersioning: true,
-      versioningType: 'header',
-      versioningHeader: 'X-API-Version',
+      versioningType: 'uri',
+      versioningUriPrefix: versioningUriPrefix || 'v',
       defaultVersion: '1',
-      ...(apiPrefix && apiPrefix.trim() !== '' && { globalPrefix: apiPrefix }),
+      ...(globalPrefixForConfig &&
+        globalPrefixForConfig.trim() !== '' && { globalPrefix: globalPrefixForConfig }),
       prefixExclude: [
         { path: '', method: 'GET' },
         { path: '/', method: 'GET' },
