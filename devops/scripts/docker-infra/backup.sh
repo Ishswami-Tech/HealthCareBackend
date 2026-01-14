@@ -162,11 +162,11 @@ backup_dragonfly() {
         if docker exec "$container" redis-cli ping >/dev/null 2>&1; then
             redis_cli_cmd="docker exec $container redis-cli"
             cli_available=true
-            log_info "Using redis-cli from Dragonfly container (default port)"
+            # Suppressing verbose connection message
         elif docker exec "$container" redis-cli -p 6379 ping >/dev/null 2>&1; then
             redis_cli_cmd="docker exec $container redis-cli -p 6379"
             cli_available=true
-            log_info "Using redis-cli from Dragonfly container (port 6379)"
+            # Suppressing verbose connection message
         else
             log_warning "redis-cli found but cannot connect to Dragonfly"
             cli_available=false
@@ -179,7 +179,7 @@ backup_dragonfly() {
         local dragonfly_host="dragonfly"
         local dragonfly_port="6379"
         redis_cli_cmd="docker exec ${REDIS_CONTAINER} redis-cli -h ${dragonfly_host} -p ${dragonfly_port}"
-        log_info "Using redis-cli from Redis container to connect to Dragonfly"
+        # Suppressing verbose connection message
     # Try host system redis-cli
     elif command -v redis-cli >/dev/null 2>&1; then
         cli_available=true
@@ -217,17 +217,17 @@ backup_dragonfly() {
             if [ -n "$backup_dir" ]; then
                 log_info "Dragonfly configured backup directory: ${backup_dir}, filename: ${db_filename}"
             else
-                log_info "Dragonfly using default directory, filename: ${db_filename}"
+                : # Suppressing verbose directory message
             fi
             
             # Try SAVE first (blocking but immediate)
-            log_info "Attempting SAVE command..."
+            # Suppressing verbose SAVE command message
             local save_output=$(eval "$redis_cli_cmd SAVE" 2>&1)
             local save_exit_code=$?
             
             if [ $save_exit_code -eq 0 ] && echo "$save_output" | grep -qiE "(OK|ok)"; then
                 save_success=true
-                log_info "SAVE command succeeded: ${save_output}"
+                # Suppressing verbose success message
             else
                 log_warning "SAVE command failed (exit: $save_exit_code, output: '${save_output}'), trying BGSAVE..."
                 # Try BGSAVE (background save) which is non-blocking
@@ -235,7 +235,7 @@ backup_dragonfly() {
                 local bgsave_exit_code=$?
                 
                 if [ $bgsave_exit_code -eq 0 ] && echo "$bgsave_output" | grep -qiE "(OK|Background saving|Background)"; then
-                    log_info "BGSAVE started: ${bgsave_output}, waiting for completion..."
+                    # Suppressing verbose BGSAVE start message
                     # Wait for BGSAVE to complete (max 60 seconds for large datasets)
                     local wait_count=0
                     local max_wait=60
@@ -248,16 +248,16 @@ backup_dragonfly() {
                             # Check if save was successful
                             if echo "$persistence_info" | grep -q "rdb_last_bgsave_status:ok"; then
                                 save_success=true
-                                log_info "BGSAVE completed successfully"
+                                # Suppressing verbose completion message
                                 break
                             else
                                 log_warning "BGSAVE completed but status is not OK"
                                 break
                             fi
                         fi
-                        # Show progress every 10 seconds
-                        if [ $((wait_count % 10)) -eq 0 ]; then
-                            log_info "BGSAVE in progress... (${wait_count}/${max_wait}s)"
+                        # Suppressing progress messages (only show if it takes too long)
+                        if [ $wait_count -eq $max_wait ]; then
+                            log_warning "BGSAVE taking longer than expected (${wait_count}s)"
                         fi
                     done
                     if [ "$save_success" = false ]; then
@@ -294,7 +294,7 @@ backup_dragonfly() {
                 if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
                     if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
                         rdb_found=true
-                        log_info "Found RDB file at: ${rdb_path}"
+                        # Suppressing verbose success message
                         break
                     else
                         log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
@@ -309,13 +309,13 @@ backup_dragonfly() {
             log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
             # Try to get more diagnostic info
             if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-                log_info "Checking Dragonfly INFO for RDB file location..."
+                # Suppressing verbose diagnostic message
                 local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
                 if [ -n "$persistence_info" ]; then
                     log_info "Dragonfly persistence info: ${persistence_info}"
                 fi
                 # Try to find RDB file using find command in container
-                log_info "Searching for dump.rdb files in container..."
+                # Suppressing verbose search message
                 local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
                 if [ -n "$found_files" ]; then
                     log_info "Found dump.rdb files in container: ${found_files}"
@@ -766,7 +766,7 @@ backup_dragonfly_to_path() {
         local dragonfly_host="dragonfly"
         local dragonfly_port="6379"
         redis_cli_cmd="docker exec ${REDIS_CONTAINER} redis-cli -h ${dragonfly_host} -p ${dragonfly_port}"
-        log_info "Using redis-cli from Redis container to connect to Dragonfly"
+        # Suppressing verbose connection message
     # Try host system redis-cli
     elif command -v redis-cli >/dev/null 2>&1; then
         cli_available=true
@@ -804,17 +804,17 @@ backup_dragonfly_to_path() {
             if [ -n "$backup_dir" ]; then
                 log_info "Dragonfly configured backup directory: ${backup_dir}, filename: ${db_filename}"
             else
-                log_info "Dragonfly using default directory, filename: ${db_filename}"
+                : # Suppressing verbose directory message
             fi
             
             # Try SAVE first (blocking but immediate)
-            log_info "Attempting SAVE command..."
+            # Suppressing verbose SAVE command message
             local save_output=$(eval "$redis_cli_cmd SAVE" 2>&1)
             local save_exit_code=$?
             
             if [ $save_exit_code -eq 0 ] && echo "$save_output" | grep -qiE "(OK|ok)"; then
                 save_success=true
-                log_info "SAVE command succeeded: ${save_output}"
+                # Suppressing verbose success message
             else
                 log_warning "SAVE command failed (exit: $save_exit_code, output: '${save_output}'), trying BGSAVE..."
                 # Try BGSAVE (background save) which is non-blocking
@@ -822,7 +822,7 @@ backup_dragonfly_to_path() {
                 local bgsave_exit_code=$?
                 
                 if [ $bgsave_exit_code -eq 0 ] && echo "$bgsave_output" | grep -qiE "(OK|Background saving|Background)"; then
-                    log_info "BGSAVE started: ${bgsave_output}, waiting for completion..."
+                    # Suppressing verbose BGSAVE start message
                     # Wait for BGSAVE to complete (max 60 seconds for large datasets)
                     local wait_count=0
                     local max_wait=60
@@ -835,16 +835,16 @@ backup_dragonfly_to_path() {
                             # Check if save was successful
                             if echo "$persistence_info" | grep -q "rdb_last_bgsave_status:ok"; then
                                 save_success=true
-                                log_info "BGSAVE completed successfully"
+                                # Suppressing verbose completion message
                                 break
                             else
                                 log_warning "BGSAVE completed but status is not OK"
                                 break
                             fi
                         fi
-                        # Show progress every 10 seconds
-                        if [ $((wait_count % 10)) -eq 0 ]; then
-                            log_info "BGSAVE in progress... (${wait_count}/${max_wait}s)"
+                        # Suppressing progress messages (only show if it takes too long)
+                        if [ $wait_count -eq $max_wait ]; then
+                            log_warning "BGSAVE taking longer than expected (${wait_count}s)"
                         fi
                     done
                     if [ "$save_success" = false ]; then
@@ -881,7 +881,7 @@ backup_dragonfly_to_path() {
                 if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
                     if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
                         rdb_found=true
-                        log_info "Found RDB file at: ${rdb_path}"
+                        # Suppressing verbose success message
                         break
                     else
                         log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
@@ -896,13 +896,13 @@ backup_dragonfly_to_path() {
             log_error "RDB file not found after SAVE. Checked paths: ${checked_paths[*]}"
             # Try to get more diagnostic info
             if [ "$cli_available" = true ] && [ -n "$redis_cli_cmd" ]; then
-                log_info "Checking Dragonfly INFO for RDB file location..."
+                # Suppressing verbose diagnostic message
                 local persistence_info=$(eval "$redis_cli_cmd INFO persistence" 2>/dev/null | grep -E "(rdb_last_save_time|rdb_last_bgsave_status)" || echo "")
                 if [ -n "$persistence_info" ]; then
                     log_info "Dragonfly persistence info: ${persistence_info}"
                 fi
                 # Try to find RDB file using find command in container
-                log_info "Searching for dump.rdb files in container..."
+                # Suppressing verbose search message
                 local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
                 if [ -n "$found_files" ]; then
                     log_info "Found dump.rdb files in container: ${found_files}"

@@ -494,7 +494,7 @@ deploy_application() {
     
     # CRITICAL: Force pull without using cache to ensure we get absolute latest from registry
     log_info "Pulling image (forcing fresh pull from registry)..."
-    if docker pull "${DOCKER_IMAGE}" 2>&1; then
+    if docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
         log_success "Successfully pulled image: ${DOCKER_IMAGE}"
         pull_success=true
         
@@ -529,7 +529,7 @@ deploy_application() {
         log_info "Trying fallback image: ${fallback_image}"
         export DOCKER_IMAGE="${fallback_image}"
         
-        if docker pull "${DOCKER_IMAGE}" 2>&1; then
+        if docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
             log_success "Successfully pulled fallback image: ${fallback_image}"
             log_warning "Using :latest tag instead of specific tag: ${original_docker_image}"
             log_warning "This ensures deployment continues even if SHA tag hasn't propagated yet"
@@ -1016,9 +1016,12 @@ deploy_application() {
                 return 1
             fi
         else
-            log_error "Application health check failed"
+            log_error "Application health check failed - database connection not established"
+            log_error "Pipeline will fail - application is not ready to serve traffic"
             log_info "=== API Container Logs (last 100 lines) ==="
             docker logs --tail 100 "$api_container" 2>&1 || true
+            log_info "=== Checking health endpoint directly ==="
+            docker exec "$api_container" curl -s http://localhost:8088/health 2>&1 || echo "Health endpoint not accessible"
             rollback_deployment
             return 1
         fi
@@ -1102,7 +1105,8 @@ post_deployment_verification() {
         
         # Step 3: Verify application health
         if ! verify_application_health "$api_container"; then
-            log_error "Application health check failed - attempting recovery..."
+            log_error "Application health check failed - database connection not established"
+            log_error "Attempting recovery..."
             if ! recover_unhealthy_containers "$api_container" "$worker_container"; then
                 continue
             fi
@@ -1215,37 +1219,44 @@ verify_container_images() {
     $all_correct
 }
 
-# Verify application health
+# Verify application readiness (requires actual database connection)
+# Uses /health/ready endpoint which checks if database is actually connected
+# This ensures pipeline fails if database connection is not established
 verify_application_health() {
     local api_container="$1"
-    local health_timeout=60
+    # Increased timeout to 180s (3 minutes) to account for database connection time in production
+    # Database connection can take 60-120s in production due to network latency, retries, etc.
+    local health_timeout=180
     local health_interval=10
     local elapsed=0
     
-    log_info "Verifying application health (timeout: ${health_timeout}s)..."
+    log_info "Verifying application health (requires database connection, timeout: ${health_timeout}s)..."
+    log_info "Using /health endpoint - this requires actual database connection (no grace period)"
     
     while [[ $elapsed -lt $health_timeout ]]; do
-        # Try internal health check first
+        # Try internal health check first (requires actual database connection)
         local health_response=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
         
         if [[ "$health_response" == "200" ]]; then
-            log_success "Application health check passed (HTTP 200)"
+            log_success "Application health check passed (HTTP 200) - database is connected"
             return 0
         fi
         
         # Try external health check
         local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
         if [[ "$external_response" == "200" ]]; then
-            log_success "Application health check passed (external HTTP 200)"
+            log_success "Application health check passed (external HTTP 200) - database is connected"
             return 0
         fi
         
-        log_info "Health check: internal=${health_response}, external=${external_response} - waiting..."
+        log_info "Health check: internal=${health_response}, external=${external_response} - waiting for database connection..."
         sleep $health_interval
         elapsed=$((elapsed + health_interval))
     done
     
-    log_error "Application health check timed out after ${health_timeout}s"
+    log_error "Application readiness check timed out after ${health_timeout}s"
+    log_error "Database connection was not established - pipeline will fail"
+    log_info "This means the application started but database connection failed or timed out"
     return 1
 }
 
@@ -1302,7 +1313,7 @@ recover_containers() {
     
     # Ensure image is available
     log_info "Ensuring image is available: ${DOCKER_IMAGE}"
-    docker pull "${DOCKER_IMAGE}" 2>&1 || {
+    docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1 || {
         log_error "Failed to pull image for recovery"
         return 1
     }
@@ -1340,7 +1351,7 @@ fix_container_images() {
     
     # Pull fresh image
     log_info "Pulling fresh image from registry..."
-    if ! docker pull "${DOCKER_IMAGE}" 2>&1; then
+    if ! docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
         log_error "Failed to pull fresh image"
         return 1
     fi
@@ -1625,7 +1636,7 @@ verify_and_deploy_latest_image() {
     
     # Pull latest image
     log_info "Pulling latest image: ${DOCKER_IMAGE}"
-    if ! docker pull "${DOCKER_IMAGE}" 2>&1; then
+    if ! docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
         log_error "Failed to pull latest image from registry"
         return 1
     fi
@@ -1754,10 +1765,11 @@ verify_and_deploy_latest_image() {
     
     if container_running "$api_container" && container_running "$worker_container"; then
         if verify_application_health "$api_container"; then
-            log_success "✅ Deployment verification complete - system is healthy!"
+            log_success "✅ Deployment verification complete - system is healthy and ready!"
             return 0
         else
-            log_error "Application health check failed"
+            log_error "Application health check failed - database connection not established"
+            log_error "Pipeline will fail - deployment verification unsuccessful"
             return 1
         fi
     else
