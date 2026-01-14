@@ -26,7 +26,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
 
 @ApiTags('payments')
-@Controller('api/payments')
+@Controller('payments')
 export class PaymentController {
   constructor(
     private readonly paymentService: PaymentService,

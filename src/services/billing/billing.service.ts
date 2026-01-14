@@ -1157,7 +1157,7 @@ export class BillingService {
         planId: subscription.planId,
         baseUrl,
         redirectUrl: `${baseUrl}/payment/callback`,
-        callbackUrl: `${baseUrl}/api/payments/webhook`,
+        callbackUrl: `${baseUrl}/api/v1/payments/webhook`,
       },
     };
 
@@ -1286,7 +1286,7 @@ export class BillingService {
         appointmentType,
         baseUrl,
         redirectUrl: `${baseUrl}/payment/callback`,
-        callbackUrl: `${baseUrl}/api/payments/webhook`,
+        callbackUrl: `${baseUrl}/api/v1/payments/webhook`,
       },
     };
 

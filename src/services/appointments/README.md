@@ -1,8 +1,7 @@
 # Appointments Service
 
 **Purpose:** Appointment scheduling with extensible plugin architecture
-**Location:** `src/services/appointments`
-**Status:** ✅ Production-ready
+**Location:** `src/services/appointments` **Status:** ✅ Production-ready
 
 ---
 
@@ -47,7 +46,8 @@ export class MyService {
 
 ## Available Plugins (14)
 
-1. **NotificationPlugin** - Send appointment notifications (Email, WhatsApp, Push, Socket)
+1. **NotificationPlugin** - Send appointment notifications (Email, WhatsApp,
+   Push, Socket)
 2. **ReminderPlugin** - Automated appointment reminders
 3. **QueueManagementPlugin** - Clinic queue optimization
 4. **PaymentPlugin** - Payment processing integration
@@ -66,11 +66,11 @@ export class MyService {
 
 ## API Endpoints
 
-| Endpoint | Method | Role | Description |
-|----------|--------|------|-------------|
-| `/api/appointments/plugins/info` | GET | SUPER_ADMIN, CLINIC_ADMIN | Get plugin information |
-| `/api/appointments/plugins/execute` | POST | SUPER_ADMIN, CLINIC_ADMIN | Execute plugin |
-| `/api/appointments/plugins/config/:name` | GET/POST | SUPER_ADMIN, CLINIC_ADMIN | Plugin configuration |
+| Endpoint                                    | Method   | Role                      | Description            |
+| ------------------------------------------- | -------- | ------------------------- | ---------------------- |
+| `/api/v1/appointments/plugins/info`         | GET      | SUPER_ADMIN, CLINIC_ADMIN | Get plugin information |
+| `/api/v1/appointments/plugins/execute`      | POST     | SUPER_ADMIN, CLINIC_ADMIN | Execute plugin         |
+| `/api/v1/appointments/plugins/config/:name` | GET/POST | SUPER_ADMIN, CLINIC_ADMIN | Plugin configuration   |
 
 [Full API documentation](../../docs/api/README.md)
 [API Integration Analysis](../../docs/API_INTEGRATION_ANALYSIS.md)
@@ -144,14 +144,19 @@ pnpm test appointments/plugins
 ## Troubleshooting
 
 **Issue 1: Plugin Not Executing**
+
 - **Cause:** Plugin not registered in PluginRegistry
-- **Solution:** Ensure plugin is added to `plugins/` folder and imported in module
+- **Solution:** Ensure plugin is added to `plugins/` folder and imported in
+  module
 
 **Issue 2: Queue Conflicts**
+
 - **Cause:** Multiple appointments scheduled at same time
-- **Solution:** Enable ConflictResolutionPlugin to automatically detect and prevent conflicts
+- **Solution:** Enable ConflictResolutionPlugin to automatically detect and
+  prevent conflicts
 
 **Issue 3: Notifications Not Sent**
+
 - **Cause:** NotificationPlugin configuration missing
 - **Solution:** Configure notification channels in plugin config
 
