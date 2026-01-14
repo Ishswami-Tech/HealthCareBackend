@@ -276,13 +276,27 @@ backup_dragonfly() {
         # Give SAVE a moment to complete file write (especially for large datasets)
         sleep 2
         
-        # Try multiple possible RDB file locations
-        local rdb_paths=(
+        # Build RDB file paths - prioritize configured path from Dragonfly CONFIG
+        local rdb_paths=()
+        
+        # First, try the configured path from CONFIG GET (most reliable)
+        if [ -n "$backup_dir" ] && [ -n "$db_filename" ]; then
+            local configured_path="${backup_dir}/${db_filename}"
+            rdb_paths+=("$configured_path")
+        fi
+        
+        # Then try common default locations
+        rdb_paths+=(
             "/data/dump.rdb"
             "/var/lib/dragonfly/dump.rdb"
             "/tmp/dump.rdb"
             "/dump.rdb"
         )
+        
+        # Also try with just the filename in common directories (in case dir is empty)
+        if [ -n "$db_filename" ] && [ "$db_filename" != "dump.rdb" ]; then
+            rdb_paths+=("/data/${db_filename}" "/var/lib/dragonfly/${db_filename}")
+        fi
         
         local rdb_found=false
         local checked_paths=()
@@ -294,7 +308,7 @@ backup_dragonfly() {
                 if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
                     if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
                         rdb_found=true
-                        # Suppressing verbose success message
+                        log_info "Found RDB file at configured path: ${rdb_path}"
                         break
                     else
                         log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
@@ -316,11 +330,11 @@ backup_dragonfly() {
                 fi
                 # Try to find RDB file using find command in container
                 # Suppressing verbose search message
-                local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
+                local found_files=$(docker exec "$container" find / -name "${db_filename:-dump.rdb}" -type f 2>/dev/null | head -5 || echo "")
                 if [ -n "$found_files" ]; then
-                    log_info "Found dump.rdb files in container: ${found_files}"
+                    log_info "Found ${db_filename:-dump.rdb} files in container: ${found_files}"
                 else
-                    log_warning "No dump.rdb files found in container"
+                    log_warning "No ${db_filename:-dump.rdb} files found in container"
                 fi
             fi
         fi
@@ -863,13 +877,27 @@ backup_dragonfly_to_path() {
         # Give SAVE a moment to complete file write (especially for large datasets)
         sleep 2
         
-        # Try multiple possible RDB file locations
-        local rdb_paths=(
+        # Build RDB file paths - prioritize configured path from Dragonfly CONFIG
+        local rdb_paths=()
+        
+        # First, try the configured path from CONFIG GET (most reliable)
+        if [ -n "$backup_dir" ] && [ -n "$db_filename" ]; then
+            local configured_path="${backup_dir}/${db_filename}"
+            rdb_paths+=("$configured_path")
+        fi
+        
+        # Then try common default locations
+        rdb_paths+=(
             "/data/dump.rdb"
             "/var/lib/dragonfly/dump.rdb"
             "/tmp/dump.rdb"
             "/dump.rdb"
         )
+        
+        # Also try with just the filename in common directories (in case dir is empty)
+        if [ -n "$db_filename" ] && [ "$db_filename" != "dump.rdb" ]; then
+            rdb_paths+=("/data/${db_filename}" "/var/lib/dragonfly/${db_filename}")
+        fi
         
         local rdb_found=false
         local checked_paths=()
@@ -881,7 +909,7 @@ backup_dragonfly_to_path() {
                 if docker cp "${container}:${rdb_path}" "$temp_rdb" 2>/dev/null; then
                     if [ -f "$temp_rdb" ] && [ -s "$temp_rdb" ]; then
                         rdb_found=true
-                        # Suppressing verbose success message
+                        log_info "Found RDB file at configured path: ${rdb_path}"
                         break
                     else
                         log_warning "RDB file at ${rdb_path} exists but is empty or copy failed"
@@ -903,11 +931,11 @@ backup_dragonfly_to_path() {
                 fi
                 # Try to find RDB file using find command in container
                 # Suppressing verbose search message
-                local found_files=$(docker exec "$container" find / -name "dump.rdb" -type f 2>/dev/null | head -5 || echo "")
+                local found_files=$(docker exec "$container" find / -name "${db_filename:-dump.rdb}" -type f 2>/dev/null | head -5 || echo "")
                 if [ -n "$found_files" ]; then
-                    log_info "Found dump.rdb files in container: ${found_files}"
+                    log_info "Found ${db_filename:-dump.rdb} files in container: ${found_files}"
                 else
-                    log_warning "No dump.rdb files found in container"
+                    log_warning "No ${db_filename:-dump.rdb} files found in container"
                 fi
             fi
         fi
