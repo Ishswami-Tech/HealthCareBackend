@@ -409,9 +409,25 @@ export class LoggingService {
         await this.cacheService.lTrim('logs', -10000, -1);
       }
     } catch (_cacheError) {
-      // Log cache errors but don't break - continue with other logging operations
+      // Handle cache errors gracefully - don't break logging operations
       const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-      console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
+
+      // Suppress initialization errors during bootstrap grace period
+      // These are expected when CacheService hasn't finished initializing yet
+      const isInitializationError =
+        errorMessage.includes('not initialized') ||
+        errorMessage.includes('providerFactory') ||
+        errorMessage.includes('getProvider') ||
+        errorMessage.includes('Cannot read properties of undefined');
+
+      const isDuringGracePeriod = Date.now() - this.serviceStartTime < this.STARTUP_GRACE_PERIOD;
+
+      // Only log errors if they're not initialization errors during grace period
+      if (!isInitializationError || !isDuringGracePeriod) {
+        // Log cache errors but don't break - continue with other logging operations
+        console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
+      }
+      // Silently ignore initialization errors during bootstrap - cache will be available after onModuleInit
     }
 
     try {
