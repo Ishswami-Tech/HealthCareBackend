@@ -98,7 +98,17 @@ export class JwtAuthService {
   async generateAccessToken(payload: TokenPayload): Promise<string> {
     try {
       // Use ConfigService (which uses dotenv) for environment variable access
-      const expiresInValue = this.configService.getEnv('JWT_ACCESS_EXPIRES_IN', '15m') || '15m';
+      // Ensure we always have a valid expiresIn value (string format like '15m', '1h', '7d')
+      const rawExpiresIn = this.configService.getEnv('JWT_ACCESS_EXPIRES_IN', '15m');
+      let expiresInValue: string = '15m'; // Default fallback
+
+      // Validate and normalize: if it's a number, convert to string with 's' suffix
+      if (typeof rawExpiresIn === 'number') {
+        expiresInValue = String(rawExpiresIn) + 's';
+      } else if (typeof rawExpiresIn === 'string' && rawExpiresIn.trim() !== '') {
+        expiresInValue = rawExpiresIn.trim();
+      }
+
       return await this.jwtService.signAsync(payload, {
         expiresIn: expiresInValue as SignOptions['expiresIn'],
       } as SignOptions);
@@ -123,7 +133,17 @@ export class JwtAuthService {
   async generateRefreshToken(payload: TokenPayload): Promise<string> {
     try {
       // Use ConfigService (which uses dotenv) for environment variable access
-      const expiresInValue = this.configService.getEnv('JWT_REFRESH_EXPIRES_IN', '7d');
+      // Ensure we always have a valid expiresIn value (string format like '15m', '1h', '7d')
+      const rawExpiresIn = this.configService.getEnv('JWT_REFRESH_EXPIRES_IN', '7d');
+      let expiresInValue: string = '7d'; // Default fallback
+
+      // Validate and normalize: if it's a number, convert to string with 's' suffix
+      if (typeof rawExpiresIn === 'number') {
+        expiresInValue = String(rawExpiresIn) + 's';
+      } else if (typeof rawExpiresIn === 'string' && rawExpiresIn.trim() !== '') {
+        expiresInValue = rawExpiresIn.trim();
+      }
+
       return await this.jwtService.signAsync(payload, {
         expiresIn: expiresInValue as SignOptions['expiresIn'],
       } as SignOptions);
