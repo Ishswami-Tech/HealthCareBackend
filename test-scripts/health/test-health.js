@@ -13,8 +13,11 @@ const healthTests = {
   async testHealthCheck(ctx) {
     // Health check is public, no auth needed and is excluded from /api/v1 prefix
     // So it's at /health, not /api/v1/health
-    const BASE_URL = 'http://localhost:8088';
-    const result = await httpRequestJson('GET', `${BASE_URL}/health`, null, {
+    // Get base URL from environment or use default
+    const baseUrl = process.env.BASE_URL || 'http://localhost:8088';
+    // Remove /api/v1 suffix if present (health endpoint doesn't use it)
+    const healthBaseUrl = baseUrl.replace(/\/api\/v1\/?$/, '');
+    const result = await httpRequestJson('GET', `${healthBaseUrl}/health`, null, {
       'User-Agent': 'healthcare-api-test',
     });
     // Health endpoint returns 200 even if degraded, so check for status 200

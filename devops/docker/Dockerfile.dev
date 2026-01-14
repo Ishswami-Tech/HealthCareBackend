@@ -29,16 +29,16 @@ RUN yarn install --frozen-lockfile --ignore-scripts --network-timeout 100000
 COPY . .
 
 # Verify config files and generate Prisma client
-# Prisma Client is generated to src/generated/prisma (app-local directory)
+# Prisma Client is generated to src/libs/infrastructure/database/prisma/generated (app-local directory)
 RUN test -f .swcrc && test -f nest-cli.json || (echo "[ERROR] SWC config files missing!" && exit 1) && \
     yarn prisma:generate && \
-    if [ ! -d /app/src/generated/prisma ]; then \
-      echo "[ERROR] Prisma Client generation failed - src/generated/prisma not found!" && exit 1; \
+    if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
+      echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && exit 1; \
     fi && \
-    echo "[OK] Prisma Client generated successfully to src/generated/prisma" && \
+    echo "[OK] Prisma Client generated successfully to src/libs/infrastructure/database/prisma/generated" && \
     # Create symlink for TypeScript resolution
     mkdir -p /app/node_modules/@prisma && \
-    ln -sf /app/src/generated/prisma /app/node_modules/@prisma/client
+    ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client
 
 ENV NODE_ENV=development \
     PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma

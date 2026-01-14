@@ -34,13 +34,13 @@ RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration file
 RUN yarn prisma:generate
 
 # Verify Prisma Client was generated correctly
-# Prisma Client is generated to src/generated/prisma (app-local directory)
-RUN if [ -d "src/generated/prisma" ]; then \
-  echo "[OK] Prisma Client generated successfully to src/generated/prisma" && \
+# Prisma Client is generated to src/libs/infrastructure/database/prisma/generated (app-local directory)
+RUN if [ -d "src/libs/infrastructure/database/prisma/generated" ]; then \
+  echo "[OK] Prisma Client generated successfully to src/libs/infrastructure/database/prisma/generated" && \
   echo "Client directory contents:" && \
-  ls -la src/generated/prisma/ | head -15 || true; \
+  ls -la src/libs/infrastructure/database/prisma/generated/ | head -15 || true; \
   else \
-  echo "[ERROR] Prisma Client generation failed - src/generated/prisma not found!" && \
+  echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && \
   exit 1; \
   fi
 
@@ -49,12 +49,12 @@ RUN if [ -d "src/generated/prisma" ]; then \
 # This allows TypeScript to resolve @prisma/client via standard module resolution
 RUN mkdir -p node_modules/@prisma && \
   if [ ! -e node_modules/@prisma/client ]; then \
-  ln -sf ../../src/generated/prisma node_modules/@prisma/client || \
+  ln -sf ../../src/libs/infrastructure/database/prisma/generated node_modules/@prisma/client || \
   (echo "[WARN] Could not create symlink, path mapping will be used" && true); \
   fi && \
   echo "[OK] @prisma/client symlink created for TypeScript resolution"
 
-# Prisma Client is in src/generated/prisma (app-local directory)
+# Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory)
 # No need to copy to node_modules/.prisma/client - we use the app-local location directly
 
 # Yarn uses real directories (not symlinks) - copy @prisma packages for Docker multi-stage build
@@ -112,9 +112,9 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/schema.prisma /app/dist/libs/infrastructure/database/prisma/
 
 # Copy generated Prisma client to dist for runtime access
-# Prisma Client is generated to src/generated/prisma and compiled to dist/generated/prisma
-RUN mkdir -p /app/dist/generated && \
-  cp -r /app/src/generated/prisma /app/dist/generated/
+# Prisma Client is generated to src/libs/infrastructure/database/prisma/generated and compiled to dist/libs/infrastructure/database/prisma/generated
+RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
+  cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
 # Production stage
 FROM node:20-slim AS production
@@ -136,7 +136,7 @@ WORKDIR /app
 
 COPY package.json yarn.lock ./
 # Skip postinstall script in production - Prisma client is already generated in builder stage
-# Prisma Client is in src/generated/prisma (app-local directory), not in node_modules
+# Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory), not in node_modules
 RUN yarn install --production --frozen-lockfile --ignore-scripts --ignore-engines && yarn cache clean
 
 # Remove yarn-installed @prisma packages to avoid conflicts
@@ -179,19 +179,19 @@ COPY --from=builder /app/src/libs/infrastructure/database/prisma/prisma.config.j
 # Copy migrations folder for prisma migrate deploy (CRITICAL for production deployments)
 # Without this, P3005 error occurs: "database schema is not empty" with no migrations
 COPY --from=builder /app/src/libs/infrastructure/database/prisma/migrations ./src/libs/infrastructure/database/prisma/migrations
-# Copy Prisma generated client from builder stage (generated during build to src/generated/prisma)
-COPY --from=builder /app/src/generated/prisma ./src/generated/prisma
-COPY --from=builder /app/dist/generated/prisma ./dist/generated/prisma
+# Copy Prisma generated client from builder stage (generated during build to src/libs/infrastructure/database/prisma/generated)
+COPY --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src/libs/infrastructure/database/prisma/generated
+COPY --from=builder /app/dist/libs/infrastructure/database/prisma/generated ./dist/libs/infrastructure/database/prisma/generated
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
 # Verify Prisma Client was copied correctly from builder stage
-RUN if [ ! -d /app/src/generated/prisma ]; then \
+RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
   echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
-  elif [ ! -f /app/src/generated/prisma/index.js ] && \
-       [ ! -f /app/src/generated/prisma/index.mjs ] && \
-       [ ! -f /app/src/generated/prisma/index.d.ts ]; then \
+  elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.js ] && \
+       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
+       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
   echo "[WARN] Prisma Client entry point not found in src, checking dist..." && \
-  if [ ! -d /app/dist/generated/prisma ]; then \
+  if [ ! -d /app/dist/libs/infrastructure/database/prisma/generated ]; then \
     echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
   fi; \
   else \
@@ -199,7 +199,7 @@ RUN if [ ! -d /app/src/generated/prisma ]; then \
   fi
 
 # Create entrypoint script - simplified for app-local Prisma Client location
-# Prisma Client is generated at build time to src/generated/prisma and compiled to dist/generated/prisma
+# Prisma Client is generated at build time to src/libs/infrastructure/database/prisma/generated and compiled to dist/libs/infrastructure/database/prisma/generated
 RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo 'set -e' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
@@ -209,11 +209,11 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
   echo '# Verify Prisma Client exists (generated during Docker build, not at runtime)' >> /app/entrypoint.sh && \
   echo 'echo "[INFO] Verifying Prisma Client (generated during Docker build)..."' >> /app/entrypoint.sh && \
-  echo 'if [ -d /app/dist/generated/prisma ] || [ -d /app/src/generated/prisma ]; then' >> /app/entrypoint.sh && \
+  echo 'if [ -d /app/dist/libs/infrastructure/database/prisma/generated ] || [ -d /app/src/libs/infrastructure/database/prisma/generated ]; then' >> /app/entrypoint.sh && \
   echo '  echo "[OK] Prisma Client found in app-local directory (from Docker build)"' >> /app/entrypoint.sh && \
   echo 'else' >> /app/entrypoint.sh && \
   echo '  echo "[ERROR] Prisma Client not found! It should have been generated during Docker build."' >> /app/entrypoint.sh && \
-  echo '  echo "[ERROR] Expected locations: /app/dist/generated/prisma or /app/src/generated/prisma"' >> /app/entrypoint.sh && \
+  echo '  echo "[ERROR] Expected locations: /app/dist/libs/infrastructure/database/prisma/generated or /app/src/libs/infrastructure/database/prisma/generated"' >> /app/entrypoint.sh && \
   echo '  exit 1' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
@@ -222,7 +222,7 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo 'if [ -L /app/node_modules/@prisma/client ]; then' >> /app/entrypoint.sh && \
   echo '  rm /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
   echo 'fi' >> /app/entrypoint.sh && \
-  echo 'ln -sf /app/src/generated/prisma /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
+  echo 'ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client' >> /app/entrypoint.sh && \
   echo 'echo "[OK] @prisma/client symlink created to app-local location"' >> /app/entrypoint.sh && \
   echo '' >> /app/entrypoint.sh && \
   echo 'echo "=========================================="' >> /app/entrypoint.sh && \
@@ -234,15 +234,15 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
   echo "[OK] Entrypoint script created"
 
 # Ensure @prisma/client symlink exists for TypeScript resolution
-# Prisma Client is in src/generated/prisma (app-local directory)
+# Prisma Client is in src/libs/infrastructure/database/prisma/generated (app-local directory)
 RUN mkdir -p /app/node_modules/@prisma && \
-  if [ ! -d /app/src/generated/prisma ]; then \
+  if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
   echo "[ERROR] Generated Prisma Client directory not found!" && exit 1; \
   fi && \
   if [ -L /app/node_modules/@prisma/client ] || [ -d /app/node_modules/@prisma/client ]; then \
   rm -rf /app/node_modules/@prisma/client; \
   fi && \
-  ln -sf /app/src/generated/prisma /app/node_modules/@prisma/client && \
+  ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client && \
   echo "[OK] @prisma/client symlink created to app-local location" && \
   if [ -d /app/node_modules/@prisma/client ] && [ "$(ls -A /app/node_modules/@prisma/client 2>/dev/null)" ]; then \
   echo "[OK] @prisma/client symlink verified and accessible"; \

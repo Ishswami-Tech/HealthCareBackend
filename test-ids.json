@@ -1,5 +1,6 @@
 {
   "clinics": ["7672bb05-4344-4ff1-a6df-dbefa6e6ab48", "8815ca56-7ad7-4acd-876f-7d0d839fe340"],
+  "clinicCodes": ["CL0001", "CL0002"],
   "clinicNames": ["Aadesh Ayurvedalay", "Shri Vishwamurti Ayurvedalay"],
   "demoDoctorId": "a588e7e6-8995-4c9c-bf90-4fd7b5345d66",
   "demoPatientId": "42981ab1-33c2-4add-b19c-3bb6c0026a75",
