@@ -1,14 +1,20 @@
-import { Controller, Get, Res, Query } from '@nestjs/common';
+import { Controller, Get, Res, Query, Inject, Optional, forwardRef } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
+import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
-  constructor(private readonly healthService: HealthService) {}
+  constructor(
+    private readonly healthService: HealthService,
+    @Optional()
+    @Inject(forwardRef(() => PrismaService))
+    private readonly prismaService?: PrismaService
+  ) {}
 
   /**
    * Unified Health Check Endpoint using HealthService
@@ -30,9 +36,9 @@ export class HealthController {
   @Public()
   @RateLimitGenerous() // Allow 1000 requests/minute per IP - generous for health checks but prevents abuse
   @ApiOperation({
-    summary: 'System health check',
+    summary: 'System health check (requires database connection)',
     description:
-      'Returns real-time health status of core services (database, cache, queue, logging, video). Use ?detailed=true for extended metrics.',
+      'Returns real-time health status of core services. Requires actual database connection. Returns 200 when ready, 503 when not ready. Use ?detailed=true for extended metrics.',
   })
   @ApiQuery({
     name: 'detailed',
@@ -43,7 +49,7 @@ export class HealthController {
   })
   @ApiResponse({
     status: 200,
-    description: 'Health check response',
+    description: 'Application is healthy and ready to serve traffic (database connected)',
     schema: {
       type: 'object',
       properties: {
@@ -93,23 +99,57 @@ export class HealthController {
       },
     },
   })
+  @ApiResponse({
+    status: 503,
+    description: 'Application is not ready (database not connected or services unhealthy)',
+  })
   async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
     try {
+      // CRITICAL: Check Prisma connection directly - requires actual database connection
+      // This ensures database is ACTUALLY connected before returning healthy
+      const isDatabaseConnected = this.prismaService?.isReady() ?? false;
+
       const isDetailed = detailed === 'true' || detailed === '1';
       const healthResult = isDetailed
         ? await this.healthService.getDetailedHealth()
         : await this.healthService.getHealth();
 
-      return res.status(200).send(healthResult);
+      const databaseStatus = healthResult.services?.database;
+
+      // Application is healthy only if:
+      // 1. Prisma is actually connected (isReady() returns true)
+      // 2. Health check shows database as healthy
+      // 3. Overall health status is healthy
+      if (
+        isDatabaseConnected &&
+        databaseStatus?.status === 'healthy' &&
+        healthResult.status === 'healthy'
+      ) {
+        // Database is connected and all services are healthy - return 200
+        return res.status(200).send(healthResult);
+      } else {
+        // Database not connected or services unhealthy - return 503
+        return res.status(503).send({
+          status: 'unhealthy',
+          timestamp: new Date().toISOString(),
+          message:
+            'Application is not ready - database connection in progress or services unhealthy',
+          database: {
+            connected: isDatabaseConnected,
+            healthStatus: databaseStatus?.status,
+            details: databaseStatus?.details,
+          },
+          services: healthResult.services,
+        });
+      }
     } catch (error) {
-      // HealthService should never throw, but handle gracefully if it does
+      // If health check fails, return 503
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const fallbackResponse = {
-        status: 'degraded',
+      return res.status(503).send({
+        status: 'unhealthy',
         timestamp: new Date().toISOString(),
         message: `Health check failed: ${errorMessage}`,
-      };
-      return res.status(200).send(fallbackResponse);
+      });
     }
   }
 }

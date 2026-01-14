@@ -250,12 +250,14 @@ restore_postgres() {
     # NOTE: This is NOT a health check - it's a safety measure for data consistency
     docker stop "${CONTAINER_PREFIX}api" "${CONTAINER_PREFIX}worker" 2>/dev/null || true
     
-    # Drop and recreate database
-    docker exec "$container" psql -U postgres -c "DROP DATABASE IF EXISTS userdb;" || true
-    docker exec "$container" psql -U postgres -c "CREATE DATABASE userdb;" || return 1
+    # Drop and recreate database (suppress verbose output, keep errors)
+    docker exec "$container" psql -U postgres -q -c "DROP DATABASE IF EXISTS userdb;" >/dev/null || true
+    docker exec "$container" psql -U postgres -q -c "CREATE DATABASE userdb;" >/dev/null || return 1
     
-    # Restore
-    if gunzip -c "$backup_file" | docker exec -i "$container" psql -U postgres userdb; then
+    # Restore (suppress verbose ALTER TABLE, CREATE INDEX, etc. output)
+    # Using -q flag and redirecting output to suppress verbose messages
+    log_info "Restoring database schema and data (this may take a moment)..."
+    if gunzip -c "$backup_file" | docker exec -i "$container" psql -U postgres -q userdb >/dev/null 2>&1; then
         log_success "PostgreSQL restore completed"
         
         # Cleanup temp file if from S3
@@ -263,7 +265,7 @@ restore_postgres() {
         
         return 0
     else
-        log_error "PostgreSQL restore failed"
+        log_error "PostgreSQL restore failed (check database container logs for details)"
         return 1
     fi
 }
@@ -472,12 +474,13 @@ disaster_recovery() {
     wait_for_health "postgres" 300 || exit 1
     wait_for_health "dragonfly" 300 || log_warning "Dragonfly not healthy"
     
-    # Restore PostgreSQL
-    log_info "Restoring PostgreSQL database..."
-    if gunzip -c "$POSTGRES_BACKUP" | docker exec -i postgres psql -U postgres -d userdb; then
+    # Restore PostgreSQL (suppress verbose output)
+    # Using -q flag and redirecting output to suppress verbose messages
+    log_info "Restoring PostgreSQL database (this may take a moment)..."
+    if gunzip -c "$POSTGRES_BACKUP" | docker exec -i postgres psql -U postgres -q -d userdb >/dev/null 2>&1; then
         log_success "PostgreSQL restored successfully"
     else
-        log_error "PostgreSQL restore failed"
+        log_error "PostgreSQL restore failed (check database container logs for details)"
         exit 1
     fi
     

@@ -1545,23 +1545,27 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
       // Check if Prisma is ready first
-      // During startup grace period (first 90 seconds), return healthy even if Prisma isn't ready yet
-      // This prevents health checks from failing during normal startup
-      const STARTUP_GRACE_PERIOD = 90000; // 90 seconds
+      // During startup grace period (first 180 seconds), return healthy for liveness checks
+      // BUT: For readiness checks, we require actual connection
+      // This prevents health checks from failing during normal startup in production
+      // Production factors: network latency, database load, connection pool initialization, retries
+      // Increased from 90s to 180s to account for production connection delays
+      const STARTUP_GRACE_PERIOD = 180000; // 180 seconds (3 minutes) - increased for production
       const timeSinceStart = Date.now() - this.serviceStartTime;
       const isInStartupGracePeriod = timeSinceStart < STARTUP_GRACE_PERIOD;
 
       if (!this.prismaService || !this.prismaService.isReady()) {
-        // During startup grace period, return healthy to allow application to start
+        // During startup grace period, return healthy for liveness (app is starting)
+        // But include a warning in errors to indicate connection is still in progress
         // After grace period, return unhealthy if Prisma still isn't ready
         if (isInStartupGracePeriod) {
           return {
-            isHealthy: true,
+            isHealthy: true, // Liveness: app is starting
             connectionCount: 0,
             activeQueries: 0,
             avgResponseTime: -1,
             lastHealthCheck: new Date(),
-            errors: [],
+            errors: ['Database connection in progress - not ready for requests yet'],
           };
         }
         return {

@@ -1171,6 +1171,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Files exist but instance not created yet - onModuleInit is still running
+      // Check if delegates are initialized (they're initialized before connection)
+      if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
+        this.prismaClient = PrismaService.sharedPrismaClient;
+        return this.prismaClient;
+      }
+
       // Wait a bit more for onModuleInit to complete
       if (attempt < maxRetries - 1) {
         if (this.loggingService) {
@@ -1186,6 +1192,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         while (Date.now() - startWait < retryDelay) {
           // Check if shared instance was created during wait
           if (PrismaService.sharedPrismaClient) {
+            this.prismaClient = PrismaService.sharedPrismaClient;
+            return this.prismaClient;
+          }
+          // Also check if delegates are initialized
+          if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
             this.prismaClient = PrismaService.sharedPrismaClient;
             return this.prismaClient;
           }
@@ -1294,6 +1305,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           assignDelegate<InvoiceDelegate>('invoice', 'invoice');
           assignDelegate<PaymentDelegate>('payment', 'payment');
           assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
+
+          // CRITICAL: Mark delegates as initialized IMMEDIATELY after assignment
+          // This allows other services to use delegates even if connection is still in progress
+          // The connection can happen in the background without blocking delegate access
+          PrismaService.isFullyInitialized = true;
+
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.INFO,
+              'PrismaClient delegates initialized - ready for use (connection in progress)',
+              'PrismaService.onModuleInit'
+            );
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           throw new HealthcareError(
@@ -1308,6 +1333,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     } else {
       // Use existing shared instance
       this.prismaClient = PrismaService.sharedPrismaClient;
+      // If shared instance exists, delegates are already initialized
+      PrismaService.isFullyInitialized = true;
     }
 
     // Initialize health check PrismaClient if needed
@@ -1343,7 +1370,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Store the connection promise so other services can wait for it
     // Add timeout to prevent hanging if database is not accessible
-    const CONNECTION_TIMEOUT_MS = 60000; // 60 seconds - reasonable timeout for database connection
+    // Connection happens in background - delegates are already ready
+    // CRITICAL: Don't await connection in onModuleInit - let it happen in background
+    // This allows application to start immediately while connection establishes
+    const CONNECTION_TIMEOUT_MS = 120000; // 120 seconds - increased for production network latency
 
     PrismaService.connectionPromise = Promise.race([
       this.connectWithRetry(),
@@ -1360,42 +1390,48 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       ),
     ]);
 
-    try {
-      await PrismaService.connectionPromise;
-      PrismaService.isConnected = true;
+    // CRITICAL: Don't await connection - let it happen in background
+    // This allows application to start immediately while connection establishes
+    // Health checks will report connection status, but app won't be blocked
+    PrismaService.connectionPromise
+      .then(() => {
+        PrismaService.isConnected = true;
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.INFO,
+            'Database connection established successfully (background connection)',
+            'PrismaService.onModuleInit'
+          );
+        }
+      })
+      .catch(error => {
+        // Log error but don't block application startup
+        // Application can start in degraded mode without database
+        // Delegates are already initialized, so services can still use PrismaClient
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            `Database connection failed during initialization: ${errorMessage}. Application will start in degraded mode. Delegates are ready but connection failed.`,
+            'PrismaService.onModuleInit',
+            { error: errorMessage }
+          );
+        }
+        // Don't throw - allow application to start without database
+        // Health checks will report database as unhealthy
+        // Delegates remain initialized (isFullyInitialized stays true) so services can still use PrismaClient
+        PrismaService.isConnected = false;
+      });
 
-      // Wait a short time to ensure all delegates are fully initialized
-      // This prevents "Invalid invocation" errors when services access delegates
-      // Prisma needs time to fully initialize all delegate properties
-      // Reduced from 5 seconds to 1 second - delegates initialize quickly after connection
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      PrismaService.isFullyInitialized = true;
-    } catch (error) {
-      // Log error but don't block application startup
-      // Application can start in degraded mode without database
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      if (this.loggingService) {
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.ERROR,
-          `Database connection failed during initialization: ${errorMessage}. Application will start in degraded mode.`,
-          'PrismaService.onModuleInit',
-          { error: errorMessage }
-        );
-      }
-      // Don't throw - allow application to start without database
-      // Health checks will report database as unhealthy
-      PrismaService.isConnected = false;
-      PrismaService.isFullyInitialized = false;
-    }
-
+    // Log that connection is starting in background
     if (this.loggingService) {
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.INFO,
-        'Prisma client fully initialized - delegates are now ready',
-        'PrismaService',
-        {}
+        'Database connection starting in background - application starting immediately (delegates ready)',
+        'PrismaService.onModuleInit'
       );
     }
   }
