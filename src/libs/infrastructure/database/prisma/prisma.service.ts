@@ -1364,10 +1364,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       await PrismaService.connectionPromise;
       PrismaService.isConnected = true;
 
-      // Wait an additional 5 seconds to ensure all delegates are fully initialized
+      // Wait a short time to ensure all delegates are fully initialized
       // This prevents "Invalid invocation" errors when services access delegates
       // Prisma needs time to fully initialize all delegate properties
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Reduced from 5 seconds to 1 second - delegates initialize quickly after connection
+      await new Promise(resolve => setTimeout(resolve, 1000));
       PrismaService.isFullyInitialized = true;
     } catch (error) {
       // Log error but don't block application startup
