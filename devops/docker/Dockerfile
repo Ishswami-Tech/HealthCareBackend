@@ -188,11 +188,11 @@ COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma 
 RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
   echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
   elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.js ] && \
-       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
-       [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
   echo "[WARN] Prisma Client entry point not found in src, checking dist..." && \
   if [ ! -d /app/dist/libs/infrastructure/database/prisma/generated ]; then \
-    echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
+  echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
   fi; \
   else \
   echo "[OK] Prisma Client verified - generated during build, copied to production stage"; \

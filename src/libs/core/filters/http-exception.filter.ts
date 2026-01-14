@@ -90,6 +90,64 @@ export class HttpExceptionFilter implements ExceptionFilter {
     /\/stacks$/i,
     /\/api\/v\d+\/health(\/|$)/i, // Ignore /api/v1/health, /api/v2/health, etc. (common monitoring endpoints)
     /\/health(\/|$)/i, // Ignore /health endpoint variations
+    // Security scanner probes (reduce log noise)
+    /\/ws\/v\d+\/cluster/i, // Kubernetes API endpoints (scanner probes)
+    /\/\.\./i, // Path traversal attempts
+    /\/etc\/passwd/i, // Common vulnerability probes
+    /\/cgi-bin/i, // CGI script probes
+    /\/cgi-mod/i, // CGI module probes
+    /\.php$/i, // PHP file probes
+    /\.aspx$/i, // ASP.NET probes
+    /\.jsp$/i, // JSP probes
+    /\.pl$/i, // Perl script probes
+    /\.cfm$/i, // ColdFusion probes
+    /\.cgi$/i, // CGI script probes
+    /\/admin\.(php|pl|jsp|aspx)/i, // Admin panel probes
+    /\/login\.(php|pl|jsp|aspx)/i, // Login page probes
+    /\/wp-/i, // WordPress probes
+    /\/magento/i, // Magento probes
+    /\/joomla/i, // Joomla probes
+    /\/confluence/i, // Confluence probes
+    /\/dana-na/i, // VPN probes
+    /\/CFIDE/i, // ColdFusion probes
+    /\/+CSCOE+/i, // Cisco VPN probes
+    /\/nmaplowercheck/i, // Nmap probes
+    /\/nice%20ports/i, // Port scanner probes
+    /\/Tri.*\.txt/i, // Scanner probes
+    /\/readme\.txt$/i, // Common file probes
+    /\/base\.cgi$/i, // CGI probes
+    /\/start\.(cgi|pl|php|cfm)/i, // Startup script probes
+    /\/localstart\.(pl|php|cfm)/i, // Local startup probes
+    /\/index\.(cgi|pl|php|cfm)/i, // Index script probes
+    /\/evox/i, // Evox probes
+    /\/geoserver/i, // GeoServer probes
+    /\/fog/i, // FOG probes
+    /\/helpdesk/i, // Helpdesk probes
+    /\/versa/i, // Versa probes
+    /\/rest\/applinks/i, // AppLinks probes
+    /\/administrator\/manifests/i, // Joomla admin probes
+    /\/language\/en-GB/i, // Joomla language probes
+    /\/ise\/img/i, // ISE probes
+    /\/dniapi/i, // DNA API probes
+    /\/dana-cached/i, // VPN cached probes
+    /\/human\.aspx/i, // ASP.NET probes
+    /\/home\.aspx/i, // ASP.NET probes
+    /\/Account\/Login/i, // ASP.NET login probes
+    /\/inicio\.aspx/i, // ASP.NET probes
+    /\/xml\/info\.xml$/i, // XML info probes
+    /\/magento_version$/i, // Magento version probes
+    /\/cluster\/list\.query$/i, // Cluster query probes
+    /\/indice\.shtml$/i, // SHTML probes
+    /\/p\/login/i, // Login path probes
+    /\/main\.jsa$/i, // JSA probes
+    /\/sdk$/i, // SDK probes
+    /\/check-version$/i, // Version check probes
+    // Next.js frontend routes (common when frontend hits backend)
+    /^\/_next/i, // Next.js internal routes
+    /^\/app(\/|$)/i, // Next.js app directory routes
+    /^\/api\/route(\/|$)/i, // Next.js API routes
+    /^\/index\.htm$/i, // Common index file probes
+    /^\/api-docs$/i, // Swagger docs (might be using /docs instead)
   ];
 
   /**
