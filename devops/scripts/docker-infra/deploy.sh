@@ -25,7 +25,11 @@ COTURN_CONTAINER="coturn"
 # Parse environment variables with defaults
 # These are set by CI/CD workflow, but we provide safe defaults for manual execution
 INFRA_CHANGED="${INFRA_CHANGED:-false}"
-APP_CHANGED="${APP_CHANGED:-false}"
+# CRITICAL: Default APP_CHANGED to true for production deployments (main branch)
+# This ensures we always deploy the latest image, preventing Docker from using cached :latest images
+# Note: This script is only called for production deployments (main branch) via CI/CD
+# For other branches, the deploy job doesn't run, so this default only affects production
+APP_CHANGED="${APP_CHANGED:-true}"
 INFRA_HEALTHY="${INFRA_HEALTHY:-true}"
 INFRA_STATUS="${INFRA_STATUS:-healthy}"
 BACKUP_ID="${BACKUP_ID:-}"
