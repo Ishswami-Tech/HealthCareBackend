@@ -4,9 +4,6 @@ import {
   Get,
   Query,
   Res,
-  Post,
-  Body,
-  Param,
   Inject,
   forwardRef,
   VERSION_NEUTRAL,
@@ -14,7 +11,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
-import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@logging';
@@ -23,16 +20,13 @@ import { LoggingService } from '@logging';
 import { LogType, LogLevel } from '@core/types';
 
 // Internal imports - DTOs
-import {
-  GetLogsQueryDto,
-  GetEventsQueryDto,
-  ClearLogsDto,
-  PaginatedLogsResponseDto,
-  PaginatedEventsResponseDto,
-} from '@dtos/logging.dto';
+import { GetLogsQueryDto, GetEventsQueryDto } from '@dtos/logging.dto';
 
 // Internal imports - Rate Limiting
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
+
+// Internal imports - Public decorator
+import { Public } from '@core/decorators';
 
 @ApiTags('logging')
 @Controller({ path: 'logger', version: VERSION_NEUTRAL })
@@ -184,8 +178,9 @@ export class LoggingController {
               </div>
             </div>
             <input type="text" id="searchInput" placeholder="Search logs..." style="padding: 8px; border: 1px solid #ddd; border-radius: 4px; min-width: 200px;" />
-            <button id="refreshButton" onclick="manualRefresh()">Refresh</button>
-            <button onclick="clearLogs()">Clear Logs</button>
+            <div class="button-group">
+              <button id="refreshButton" onclick="manualRefresh()">Refresh</button>
+            </div>
             <span id="refreshStatus"></span>
           </div>
           <div id="logsContent"></div>
@@ -203,7 +198,6 @@ export class LoggingController {
             </select>
             <div class="button-group">
               <button id="eventRefreshButton" onclick="manualRefresh()">Refresh</button>
-              <button id="clearEventsButton" class="danger" onclick="clearEvents()">Clear Events</button>
             </div>
             <span id="eventRefreshStatus" class="refresh-status"></span>
           </div>
@@ -219,6 +213,12 @@ export class LoggingController {
         const REFRESH_INTERVAL = 30000; // 30 seconds instead of 5 seconds
         let failedAttempts = 0;
         const MAX_FAILED_ATTEMPTS = 3;
+        
+        // Pagination state
+        let currentPage = 1;
+        let pageSize = 100; // Default items per page
+        let totalItems = 0;
+        let totalPages = 0;
 
         function updateRefreshStatus(isLoading, error = null) {
           const statusElement = document.getElementById(currentTab === 'logs' ? 'refreshStatus' : 'eventRefreshStatus');
@@ -241,35 +241,6 @@ export class LoggingController {
           }
         }
 
-        async function clearLogs() {
-          if (!confirm('Are you sure you want to clear all logs?')) return;
-          
-          try {
-            const response = await fetch('/logger/logs/clear', { method: 'POST' });
-            if (!response.ok) {
-              throw new Error('Failed to clear logs: ' + response.statusText);
-            }
-            refreshContent();
-          } catch (error) {
-            console.error('Error clearing logs:', error);
-            alert('Failed to clear logs');
-          }
-        }
-
-        async function clearEvents() {
-          if (!confirm('Are you sure you want to clear all events?')) return;
-          
-          try {
-            const response = await fetch('/logger/events/clear', { method: 'POST' });
-            if (!response.ok) {
-              throw new Error('Failed to clear events: ' + response.statusText);
-            }
-            refreshContent();
-          } catch (error) {
-            console.error('Error clearing events:', error);
-            alert('Failed to clear events');
-          }
-        }
 
         function handleTimeRangeChange() {
           const range = document.getElementById('timeRange').value;
@@ -291,13 +262,13 @@ export class LoggingController {
             const contentId = currentTab === 'logs' ? 'logsContent' : 'eventsContent';
             const container = document.getElementById(contentId);
             
-            let url = '/logger/' + currentTab + '/data';
+            // Use the main public API endpoints (no /data suffix)
+            let url = '/logger/' + currentTab;
             const params = new URLSearchParams();
             
-            // Set high limit to show ALL logs from cache (up to 10000 to match cache size)
-            // This ensures all logs appear in the UI, not just the first 100
-            params.append('limit', '10000');
-            params.append('page', '1');
+            // Use pagination settings
+            params.append('limit', pageSize.toString());
+            params.append('page', currentPage.toString());
             
             if (currentTab === 'logs') {
               const type = document.getElementById('logType').value;
@@ -336,13 +307,25 @@ export class LoggingController {
               throw new Error('Failed to fetch data: ' + response.statusText);
             }
             
-            const data = await response.json();
+            const responseData = await response.json();
             
-            // Handle paginated response format: { logs: [], meta: {} } or { events: [], meta: {} }
+            // Handle API response format: { success: true, data: { logs: [], pagination: {} }, message: '' }
+            // Extract data from nested structure
+            const apiData = responseData.data || responseData;
             const items = currentTab === 'logs' 
-              ? (data.logs || (Array.isArray(data) ? data : []))
-              : (data.events || (Array.isArray(data) ? data : []));
-            const meta = data.meta || {};
+              ? (apiData.logs || responseData.logs || (Array.isArray(responseData) ? responseData : []))
+              : (apiData.events || responseData.events || (Array.isArray(responseData) ? responseData : []));
+            
+            // Map pagination to meta format (API returns 'pagination', UI expects 'meta')
+            const pagination = apiData.pagination || responseData.pagination || {};
+            const meta = {
+              page: pagination.page || responseData.meta?.page || currentPage,
+              limit: pagination.limit || responseData.meta?.limit || pageSize,
+              total: pagination.total || responseData.meta?.total || items.length,
+              totalPages: pagination.totalPages || responseData.meta?.totalPages || Math.ceil((pagination.total || items.length) / (pagination.limit || pageSize)),
+              hasNext: pagination.hasNext !== undefined ? pagination.hasNext : (responseData.meta?.hasNext !== undefined ? responseData.meta.hasNext : false),
+              hasPrev: pagination.hasPrev !== undefined ? pagination.hasPrev : (responseData.meta?.hasPrev !== undefined ? responseData.meta.hasPrev : false),
+            };
             
             if (!items || items.length === 0) {
               const emptyMessage = currentTab === 'logs' 
@@ -354,17 +337,25 @@ export class LoggingController {
               return;
             }
 
-            // Show total count and pagination info if available
+            // Update pagination state from backend response
+            totalItems = meta.total || items.length;
+            totalPages = meta.totalPages || Math.ceil(totalItems / (meta.limit || pageSize));
+            currentPage = meta.page || currentPage;
+            pageSize = meta.limit || pageSize; // Sync pageSize with backend limit
+            
+            // Show total count and pagination info
             const itemType = currentTab === 'logs' ? 'logs' : 'events';
-            const moreInfo = meta.hasNext ? ' (more available - increase limit to see all)' : ' (all ' + itemType + ' shown)';
-            const itemsCount = items.length;
-            const totalCount = meta.total || 0;
-            const totalInfoHtml = '<div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px; color: #666; font-size: 0.9em;"><strong>Showing ' + itemsCount + ' of ' + totalCount + ' ' + itemType + '</strong>' + moreInfo + '</div>';
-            const totalInfo = meta.total ? totalInfoHtml : '';
+            const startItem = (currentPage - 1) * pageSize + 1;
+            const endItem = Math.min(currentPage * pageSize, totalItems);
+            const totalInfoHtml = '<div style="margin-bottom: 10px; padding: 10px; background: #f0f0f0; border-radius: 4px; color: #666; font-size: 0.9em;"><strong>Showing ' + startItem + '-' + endItem + ' of ' + totalItems + ' ' + itemType + '</strong></div>';
+            const totalInfo = totalInfoHtml;
+            
+            // Build pagination controls
+            const paginationHtml = buildPaginationControls();
             
             // Render logs or events based on current tab
             if (currentTab === 'logs') {
-              container.innerHTML = totalInfo + items.map(log => {
+              container.innerHTML = totalInfo + paginationHtml + items.map(log => {
                 const metadata = typeof (log as { metadata?: unknown }).metadata === 'string' ? JSON.parse((log as { metadata?: unknown }).metadata) : (log as { metadata?: unknown }).metadata;
                 return '<div class="entry">' +
                   '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +
@@ -376,7 +367,7 @@ export class LoggingController {
               }).join('');
             } else {
               // Render events
-              container.innerHTML = totalInfo + items.map(event => {
+              container.innerHTML = totalInfo + paginationHtml + items.map(event => {
                 const eventData = typeof (event as { data?: unknown }).data === 'string' 
                   ? JSON.parse((event as { data?: unknown }).data as string) 
                   : (event as { data?: unknown }).data;
@@ -427,6 +418,11 @@ export class LoggingController {
           document.getElementById('logsPanel').style.display = tab === 'logs' ? 'block' : 'none';
           document.getElementById('eventsPanel').style.display = tab === 'events' ? 'block' : 'none';
           
+          // Reset pagination when switching tabs
+          currentPage = 1;
+          totalItems = 0;
+          totalPages = 0;
+          
           // Reset refresh state
           stopAutoRefresh();
           startAutoRefresh();
@@ -436,6 +432,85 @@ export class LoggingController {
           clearInterval(refreshInterval);
           refreshContent();
           startAutoRefresh();
+        }
+        
+        function buildPaginationControls() {
+          if (totalPages <= 1) return '';
+          
+          let html = '<div style="margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">';
+          
+          // Page size selector
+          html += '<div style="display: flex; align-items: center; gap: 10px;">';
+          html += '<label for="pageSize" style="font-size: 0.9em; color: #666;">Items per page:</label>';
+          html += '<select id="pageSize" onchange="changePageSize()" style="padding: 5px 10px; border: 1px solid #ddd; border-radius: 4px;">';
+          html += '<option value="50"' + (pageSize === 50 ? ' selected' : '') + '>50</option>';
+          html += '<option value="100"' + (pageSize === 100 ? ' selected' : '') + '>100</option>';
+          html += '<option value="200"' + (pageSize === 200 ? ' selected' : '') + '>200</option>';
+          html += '<option value="500"' + (pageSize === 500 ? ' selected' : '') + '>500</option>';
+          html += '<option value="1000"' + (pageSize === 1000 ? ' selected' : '') + '>1000</option>';
+          html += '</select>';
+          html += '</div>';
+          
+          // Pagination buttons
+          html += '<div style="display: flex; align-items: center; gap: 10px;">';
+          
+          // First page
+          html += '<button onclick="goToPage(1)" ' + (currentPage === 1 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : 'style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;"') + '>First</button>';
+          
+          // Previous page
+          html += '<button onclick="goToPage(' + (currentPage - 1) + ')" ' + (currentPage === 1 ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : 'style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;"') + '>Previous</button>';
+          
+          // Page numbers (show current page and 2 pages on each side)
+          const startPage = Math.max(1, currentPage - 2);
+          const endPage = Math.min(totalPages, currentPage + 2);
+          
+          if (startPage > 1) {
+            html += '<button onclick="goToPage(1)" style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">1</button>';
+            if (startPage > 2) {
+              html += '<span style="padding: 8px;">...</span>';
+            }
+          }
+          
+          for (let i = startPage; i <= endPage; i++) {
+            html += '<button onclick="goToPage(' + i + ')" ' + 
+                    (i === currentPage ? 'style="padding: 8px 12px; border: 1px solid #007bff; background: #007bff; color: white; border-radius: 4px; cursor: pointer; font-weight: bold;"' : 
+                     'style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;"') + 
+                    '>' + i + '</button>';
+          }
+          
+          if (endPage < totalPages) {
+            if (endPage < totalPages - 1) {
+              html += '<span style="padding: 8px;">...</span>';
+            }
+            html += '<button onclick="goToPage(' + totalPages + ')" style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;">' + totalPages + '</button>';
+          }
+          
+          // Next page
+          html += '<button onclick="goToPage(' + (currentPage + 1) + ')" ' + (currentPage === totalPages ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : 'style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;"') + '>Next</button>';
+          
+          // Last page
+          html += '<button onclick="goToPage(' + totalPages + ')" ' + (currentPage === totalPages ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : 'style="padding: 8px 12px; border: 1px solid #ddd; background: white; border-radius: 4px; cursor: pointer;"') + '>Last</button>';
+          
+          html += '</div>';
+          html += '</div>';
+          
+          return html;
+        }
+        
+        function goToPage(page) {
+          if (page < 1 || page > totalPages || page === currentPage) return;
+          currentPage = page;
+          refreshContent(true);
+        }
+        
+        function changePageSize() {
+          const select = document.getElementById('pageSize');
+          const newSize = parseInt(select.value);
+          if (newSize !== pageSize) {
+            pageSize = newSize;
+            currentPage = 1; // Reset to first page when changing page size
+            refreshContent(true);
+          }
         }
 
         // Start auto-refresh when page loads
@@ -483,27 +558,71 @@ export class LoggingController {
   }
 
   @Get()
+  @Public() // Public - no authentication required
   async getUI(@Res() reply: FastifyReply) {
     reply.header('Content-Type', 'text/html');
     return reply.send(this.getHtmlTemplate('logs'));
   }
 
-  @Get('events')
+  @Get('ui/events')
+  @Public() // Public - no authentication required
   async getEventsPage(@Res() reply: FastifyReply) {
     reply.header('Content-Type', 'text/html');
     return reply.send(this.getHtmlTemplate('events'));
   }
 
-  @Get('logs/data')
+  @Get('logs')
+  @Public() // Public - no authentication required
   @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
-  @ApiOperation({ summary: 'Get paginated logs with filtering' })
+  @ApiOperation({
+    summary: 'Get logs (Public API)',
+    description:
+      'Public API endpoint to retrieve logs in JSON format. Supports pagination and filtering. No authentication required.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Paginated logs retrieved successfully',
-    type: PaginatedLogsResponseDto,
+    description: 'Logs retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        data: {
+          type: 'object',
+          properties: {
+            logs: { type: 'array' },
+            pagination: { type: 'object' },
+          },
+        },
+        message: { type: 'string' },
+      },
+    },
   })
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  async getLogs(@Query() query: GetLogsQueryDto): Promise<PaginatedLogsResponseDto> {
+  async getLogs(@Query() query: GetLogsQueryDto): Promise<{
+    success: boolean;
+    data: {
+      logs: Array<{
+        id: string;
+        type: string;
+        level: string;
+        message: string;
+        context: string;
+        timestamp: string;
+        metadata: Record<string, unknown>;
+        clinicId?: string;
+        userId?: string;
+      }>;
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+        hasNext: boolean;
+        hasPrev: boolean;
+      };
+    };
+    message: string;
+  }> {
     try {
       const result = await this.loggingService.getLogs(
         query.type,
@@ -515,13 +634,47 @@ export class LoggingController {
         query.search
       );
 
-      // Map logs to ensure disabled property is set
-      const mappedLogs = result.logs.map((log: unknown) => ({
-        ...(log as Record<string, unknown>),
-        disabled: false, // Ensure disabled property is always set
-      }));
+      // Format logs for public API response
+      const formattedLogs = result.logs.map((log: unknown) => {
+        const logEntry = log as {
+          id: string;
+          type: string;
+          level: string;
+          message: string;
+          context: string;
+          timestamp: string;
+          metadata: Record<string, unknown>;
+          clinicId?: string;
+          userId?: string;
+        };
+        return {
+          id: logEntry.id,
+          type: logEntry.type,
+          level: logEntry.level,
+          message: logEntry.message,
+          context: logEntry.context,
+          timestamp: logEntry.timestamp,
+          metadata: logEntry.metadata || {},
+          ...(logEntry.clinicId && { clinicId: logEntry.clinicId }),
+          ...(logEntry.userId && { userId: logEntry.userId }),
+        };
+      });
 
-      return new PaginatedLogsResponseDto(mappedLogs, result.meta);
+      return {
+        success: true,
+        data: {
+          logs: formattedLogs,
+          pagination: {
+            page: result.meta.page,
+            limit: result.meta.limit,
+            total: result.meta.total,
+            totalPages: result.meta.totalPages,
+            hasNext: result.meta.hasNext,
+            hasPrev: result.meta.hasPrev,
+          },
+        },
+        message: 'Logs retrieved successfully',
+      };
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -533,26 +686,92 @@ export class LoggingController {
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
-      // Return empty paginated result on error
-      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
-      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
-      return new PaginatedLogsResponseDto([], meta);
+
+      return {
+        success: false,
+        data: {
+          logs: [],
+          pagination: {
+            page: query.page || 1,
+            limit: query.limit || 100,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        },
+        message: error instanceof Error ? error.message : 'Failed to retrieve logs',
+      };
     }
   }
 
-  @Get('events/data')
+  @Get('events')
+  @Public() // Public - no authentication required
   @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
-  @ApiOperation({ summary: 'Get paginated events with filtering' })
+  @ApiOperation({
+    summary: 'Get events (Public API)',
+    description:
+      'Public API endpoint to retrieve events in JSON format. Supports pagination and filtering. No authentication required.',
+  })
   @ApiResponse({
     status: 200,
-    description: 'Paginated events retrieved successfully',
-    type: PaginatedEventsResponseDto,
+    description: 'Events retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        success: { type: 'boolean', example: true },
+        data: {
+          type: 'object',
+          properties: {
+            events: { type: 'array' },
+            pagination: { type: 'object' },
+          },
+        },
+        message: { type: 'string' },
+      },
+    },
   })
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  async getEvents(@Query() query: GetEventsQueryDto): Promise<PaginatedEventsResponseDto> {
+  async getEvents(@Query() query: GetEventsQueryDto): Promise<{
+    success: boolean;
+    data: {
+      events: Array<{
+        id: string;
+        type: string;
+        data: Record<string, unknown>;
+        timestamp: string | Date;
+        clinicId?: string;
+        userId?: string;
+      }>;
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+        hasNext: boolean;
+        hasPrev: boolean;
+      };
+    };
+    message: string;
+  }> {
     try {
       const result = await this.loggingService.getEvents(query.type, query.page, query.limit);
-      return new PaginatedEventsResponseDto(result.events, result.meta);
+
+      return {
+        success: true,
+        data: {
+          events: result.events,
+          pagination: {
+            page: result.meta.page,
+            limit: result.meta.limit,
+            total: result.meta.total,
+            totalPages: result.meta.totalPages,
+            hasNext: result.meta.hasNext,
+            hasPrev: result.meta.hasPrev,
+          },
+        },
+        message: 'Events retrieved successfully',
+      };
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -564,76 +783,22 @@ export class LoggingController {
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
-      // Return empty paginated result on error
-      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
-      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
-      return new PaginatedEventsResponseDto([], meta);
+
+      return {
+        success: false,
+        data: {
+          events: [],
+          pagination: {
+            page: query.page || 1,
+            limit: query.limit || 100,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+          },
+        },
+        message: error instanceof Error ? error.message : 'Failed to retrieve events',
+      };
     }
-  }
-
-  @Get('logs/clinic/:clinicId')
-  @RateLimitAPI({ points: 100, duration: 60 }) // 100 requests per minute
-  @ApiOperation({ summary: 'Get paginated logs filtered by clinic ID' })
-  @ApiParam({ name: 'clinicId', description: 'Clinic ID to filter logs', example: 'CL0001' })
-  @ApiResponse({
-    status: 200,
-    description: 'Paginated clinic logs retrieved successfully',
-    type: PaginatedLogsResponseDto,
-  })
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  async getLogsByClinic(
-    @Param('clinicId') clinicId: string,
-    @Query() query: GetLogsQueryDto
-  ): Promise<PaginatedLogsResponseDto> {
-    try {
-      const result = await this.loggingService.getLogsByClinic(
-        clinicId,
-        query.type,
-        query.startTime ? new Date(query.startTime) : undefined,
-        query.endTime ? new Date(query.endTime) : undefined,
-        query.level,
-        query.page,
-        query.limit,
-        query.search
-      );
-
-      // Map logs to ensure disabled property is set
-      const mappedLogs = result.logs.map((log: unknown) => ({
-        ...(log as Record<string, unknown>),
-        disabled: false,
-      }));
-
-      return new PaginatedLogsResponseDto(mappedLogs, result.meta);
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to fetch clinic logs',
-        'LoggingController',
-        {
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-          clinicId,
-        }
-      );
-      // Return empty paginated result on error
-      const { PaginationMetaDto } = await import('@dtos/common-response.dto');
-      const meta = new PaginationMetaDto(query.page || 1, query.limit || 100, 0);
-      return new PaginatedLogsResponseDto([], meta);
-    }
-  }
-
-  @Post('logs/clear')
-  @RateLimitAPI({ points: 10, duration: 60 }) // 10 requests per minute (more restrictive for destructive operation)
-  @ApiOperation({ summary: 'Clear logs from cache and optionally from database' })
-  @ApiResponse({ status: 200, description: 'Logs cleared successfully' })
-  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
-  async clearLogs(@Body() body: ClearLogsDto): Promise<{ success: boolean; message: string }> {
-    return await this.loggingService.clearLogs(body.clearDatabase || false);
-  }
-
-  @Post('events/clear')
-  async clearEvents(): Promise<{ success: boolean; message: string }> {
-    return (await this.loggingService.clearEvents()) as { success: boolean; message: string };
   }
 }

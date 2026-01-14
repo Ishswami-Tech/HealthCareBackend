@@ -163,6 +163,33 @@ export class LoggingService {
       this.disableSystemUserLookup = true;
     }
     this.initMetricsBuffering();
+
+    // Log cache service availability on startup (one-time check)
+    setImmediate(() => {
+      if (!this.cacheService) {
+        console.warn(
+          '[LoggingService] Cache service not injected - logs will NOT appear in dashboard. ' +
+            'Ensure CacheModule is imported and CACHE_SERVICE provider is available.'
+        );
+      } else {
+        // Verify cache is actually working by checking if we can call a method
+        this.cacheService
+          .lLen('logs')
+          .then(count => {
+            // Cache service connected successfully (silent in production)
+            if (!this.configService?.isProduction()) {
+              console.warn(
+                `[LoggingService] Cache service connected. Current log count in cache: ${count}`
+              );
+            }
+          })
+          .catch(() => {
+            console.warn(
+              '[LoggingService] Cache service injected but not connected - logs may not appear in dashboard'
+            );
+          });
+      }
+    });
   }
 
   /**
@@ -327,6 +354,18 @@ export class LoggingService {
     }
   }
 
+  /**
+   * Log a message with type, level, context, and metadata
+   *
+   * CRITICAL: This method ALWAYS stores ALL logs in cache, regardless of:
+   * - Log type (AUDIT, ERROR, SYSTEM, SECURITY, etc.)
+   * - Log level (DEBUG, INFO, WARN, ERROR)
+   * - Whether log is "noisy" or not
+   * - Any other condition
+   *
+   * Every single log call results in cache storage for UI dashboard visibility.
+   * No exceptions, no filtering, no conditions - ALL logs are stored.
+   */
   async log(
     type: LogType,
     level: LogLevel,
@@ -358,6 +397,22 @@ export class LoggingService {
       },
       timestamp: timestamp.toISOString(),
     };
+
+    // CRITICAL: Store in cache FIRST (before any other processing) to ensure ALL logs are stored
+    // This happens unconditionally - no type checking, no level filtering, no conditions
+    // Every single log is stored in cache for UI dashboard visibility
+    try {
+      if (this.cacheService) {
+        const logJson = JSON.stringify(logEntry);
+        await this.cacheService.rPush('logs', logJson);
+        // Keep last 10000 logs (all types, all levels)
+        await this.cacheService.lTrim('logs', -10000, -1);
+      }
+    } catch (_cacheError) {
+      // Log cache errors but don't break - continue with other logging operations
+      const errorMessage = _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
+      console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
+    }
 
     try {
       // Terminal output for both development and production
@@ -511,31 +566,9 @@ export class LoggingService {
         }
       }
 
-      // High-performance cache logging
-      // ALWAYS store ALL logs in cache (regardless of level, type, or noise) for dashboard visibility
-      // This ensures ALL logs from ALL systems appear in the logger dashboard
-      // No filtering - every log entry is stored for complete visibility
-      try {
-        if (this.cacheService) {
-          await Promise.all([
-            this.cacheService.rPush('logs', JSON.stringify(logEntry)),
-            // Increased from 5000 to 10000 to keep more logs visible (all systems, all levels)
-            this.cacheService.lTrim('logs', -10000, -1), // Keep last 10000 logs for comprehensive visibility
-          ]);
-        } else {
-          // Log warning if cache service is not available (but don't break logging)
-          console.warn(
-            '[LoggingService] Cache service not available - logs will not appear in dashboard'
-          );
-        }
-      } catch (_cacheError) {
-        // Log cache errors for debugging (but don't break logging)
-        const errorMessage =
-          _cacheError instanceof Error ? _cacheError.message : String(_cacheError);
-        console.error(`[LoggingService] Failed to store log in cache: ${errorMessage}`);
-        // Silent fail for cache logging - resilient for high scale
-        // Cache logging failures shouldn't break the logging service
-      }
+      // NOTE: Cache storage already happened at the start of this method (line ~382)
+      // This ensures ALL logs are stored in cache BEFORE any other processing
+      // No need to store again here - already done unconditionally
 
       // Add to metrics buffer for monitoring
       this.addToMetricsBuffer(logEntry);
@@ -663,6 +696,12 @@ export class LoggingService {
       try {
         if (this.cacheService) {
           cachedLogs = (await this.cacheService.lRange('logs', 0, -1)) || [];
+          // Debug: Log cache read results in development
+          if (!this.configService?.isProduction()) {
+            console.warn(
+              `[LoggingService] Retrieved ${cachedLogs.length} logs from cache (key: 'logs')`
+            );
+          }
         } else {
           // Log warning if cache service is not available
           console.warn(
@@ -672,7 +711,9 @@ export class LoggingService {
       } catch (cacheError) {
         // Log cache read errors for debugging
         const errorMessage = cacheError instanceof Error ? cacheError.message : String(cacheError);
+        const errorStack = cacheError instanceof Error ? cacheError.stack : 'No stack trace';
         console.error(`[LoggingService] Failed to read logs from cache: ${errorMessage}`);
+        console.error(`[LoggingService] Cache read error stack: ${errorStack}`);
         cachedLogs = [];
       }
       const parsedCacheLogs: LogEntry[] = cachedLogs
@@ -718,24 +759,35 @@ export class LoggingService {
           return bTime - aTime;
         });
 
-      // If no database service, return cache logs only
-      if (!this.databaseService) {
-        // Calculate total
-        const total = parsedCacheLogs.length;
+      // BEST APPROACH: Cache-only for UI (most robust)
+      // Cache contains ALL logs (all types, all levels) - stored on every log() call
+      // Database is only for audit trail persistence, not for UI display
+      // This ensures:
+      // 1. ALL logs are visible (not just audit logs)
+      // 2. Fast and real-time performance
+      // 3. Proper filtering on all log types
+      // 4. No duplicates or missing logs
+      // 5. No database overhead for UI queries
 
-        // Apply pagination
-        const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
+      // Calculate total
+      const total = parsedCacheLogs.length;
 
-        // Create pagination metadata
-        const meta = new PaginationMetaDto(currentPage, take, total);
+      // Apply pagination
+      const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
 
-        return {
-          logs: paginatedLogs,
-          meta,
-        };
-      }
+      // Create pagination metadata
+      const meta = new PaginationMetaDto(currentPage, take, total);
 
-      // Database is available - try to combine cache + database logs
+      return {
+        logs: paginatedLogs,
+        meta,
+      };
+
+      // NOTE: Database logs are NOT included in UI for these reasons:
+      // 1. Database only has audit logs (subset), not all log types
+      // 2. Cache has ALL logs (all types, all levels) - complete dataset
+      // 3. Combining would create duplicates and miss non-audit logs
+      // 4. Database is for persistence/audit trail only, not UI display
       // Optimized database query for 1M users
       const whereClause: unknown = {
         timestamp: {
@@ -767,62 +819,67 @@ export class LoggingService {
           };
         }
 
-        const dbLogs = (await this.databaseService.executeHealthcareRead(async client => {
-          // Access auditLog delegate using dot notation for consistency
-          const auditLog = (
-            client as {
-              auditLog: {
-                findMany: (args: unknown) => Promise<
-                  Array<{
-                    id: string;
-                    action: string;
-                    description: string;
-                    timestamp: Date;
-                    userId: string;
-                    ipAddress: string | null;
-                    device: string | null;
-                    clinicId: string | null;
-                  }>
-                >;
-              };
-            }
-          ).auditLog;
-          return (await auditLog.findMany({
-            where: whereClause as PrismaDelegateArgs,
-            orderBy: {
-              timestamp: 'desc',
-            },
-            take: 1000, // Increased for 1M users
-            select: {
-              id: true,
-              action: true,
-              description: true,
-              timestamp: true,
-              userId: true,
-              ipAddress: true,
-              device: true,
-              clinicId: true,
-            },
-          })) as unknown as Array<{
-            id: string;
-            action: string;
-            description: string | null;
-            timestamp: Date;
-            userId: string;
-            ipAddress: string | null;
-            device: string | null;
-            clinicId: string | null;
-          }>;
-        })) as unknown as Array<{
-          id: string;
-          action: string;
-          description: string | null;
-          timestamp: Date;
-          userId: string;
-          ipAddress: string | null;
-          device: string | null;
-          clinicId: string | null;
-        }>;
+        const dbLogs =
+          this.databaseService !== undefined && this.databaseService !== null
+            ? ((await (
+                this.databaseService as NonNullable<typeof this.databaseService>
+              ).executeHealthcareRead(async client => {
+                // Access auditLog delegate using dot notation for consistency
+                const auditLog = (
+                  client as {
+                    auditLog: {
+                      findMany: (args: unknown) => Promise<
+                        Array<{
+                          id: string;
+                          action: string;
+                          description: string;
+                          timestamp: Date;
+                          userId: string;
+                          ipAddress: string | null;
+                          device: string | null;
+                          clinicId: string | null;
+                        }>
+                      >;
+                    };
+                  }
+                ).auditLog;
+                return (await auditLog.findMany({
+                  where: whereClause as PrismaDelegateArgs,
+                  orderBy: {
+                    timestamp: 'desc',
+                  },
+                  take: 1000, // Increased for 1M users
+                  select: {
+                    id: true,
+                    action: true,
+                    description: true,
+                    timestamp: true,
+                    userId: true,
+                    ipAddress: true,
+                    device: true,
+                    clinicId: true,
+                  },
+                })) as unknown as Array<{
+                  id: string;
+                  action: string;
+                  description: string | null;
+                  timestamp: Date;
+                  userId: string;
+                  ipAddress: string | null;
+                  device: string | null;
+                  clinicId: string | null;
+                }>;
+              })) as unknown as Array<{
+                id: string;
+                action: string;
+                description: string | null;
+                timestamp: Date;
+                userId: string;
+                ipAddress: string | null;
+                device: string | null;
+                clinicId: string | null;
+              }>)
+            : [];
 
         const dbResult: LogEntry[] = (
           dbLogs as Array<{
@@ -884,12 +941,16 @@ export class LoggingService {
 
         // Apply search filter if not already applied (should already be filtered, but double-check)
         let filteredLogs = combinedLogs;
-        if (search) {
-          filteredLogs = combinedLogs.filter(
-            log =>
-              log.message.toLowerCase().includes(search.toLowerCase()) ||
-              log.context.toLowerCase().includes(search.toLowerCase())
-          );
+        if (search !== undefined && search !== null) {
+          const searchStr = String(search).trim();
+          if (searchStr !== '') {
+            const searchLower = searchStr.toLowerCase();
+            filteredLogs = combinedLogs.filter(
+              log =>
+                log.message.toLowerCase().includes(searchLower) ||
+                log.context.toLowerCase().includes(searchLower)
+            );
+          }
         }
 
         // Calculate total before pagination

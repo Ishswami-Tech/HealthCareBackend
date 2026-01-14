@@ -956,7 +956,23 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       const ttl = this.getTTLByPriority(event.priority);
       await this.cacheService.set(eventKey, JSON.stringify(event), ttl);
 
-      // Add to indices
+      // CRITICAL: Store event in 'events' list for UI dashboard (like logs are stored in 'logs' list)
+      // This ensures ALL events appear in the logger dashboard
+      // Convert EnterpriseEventPayload to EventEntry format for UI
+      // EnterpriseEventPayload has 'metadata' not 'payload', use metadata or spread the event
+      const eventEntry = {
+        id: event.eventId,
+        type: event.eventType,
+        data: event.metadata || {},
+        timestamp: event.timestamp,
+        ...(event.clinicId && { clinicId: event.clinicId }),
+        ...(event.userId && { userId: event.userId }),
+      };
+      await this.cacheService.rPush('events', JSON.stringify(eventEntry));
+      // Keep last 10000 events (matching logs cache size)
+      await this.cacheService.lTrim('events', -10000, -1);
+
+      // Add to indices (sorted sets for advanced queries)
       const timestamp = new Date(event.timestamp).getTime();
       await this.cacheService.zadd('events:by_timestamp', timestamp, event.eventId);
       await this.cacheService.zadd(
