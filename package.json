@@ -167,6 +167,7 @@
   },
   "packageManager": "yarn@1.22.22",
   "resolutions": {
-    "jws": ">=4.0.1"
+    "jws": ">=4.0.1",
+    "hono": ">=4.11.4"
   }
 }
