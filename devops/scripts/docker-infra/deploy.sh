@@ -511,40 +511,54 @@ deploy_application() {
         log_success "Image is available and ready for deployment"
     fi
     
-    # CRITICAL: Stop and remove old containers to ensure new image is used
+    # CRITICAL: ALWAYS stop and remove old containers to ensure new image is used
     # NOTE: Only stopping/removing api and worker containers, NOT infrastructure containers (postgres, dragonfly, etc.)
     # Backup already created above, so it's safe to stop and remove containers
+    # This is CRITICAL - containers must be stopped/removed even if they appear stopped
+    # to ensure docker-compose uses the new image instead of recreating with old image
     log_info "Stopping old API/Worker containers (infrastructure containers are NOT affected)..."
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
-    
-    log_info "Removing old API/Worker containers..."
-    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
-    
-    # CRITICAL: Also use docker stop/rm directly as fallback to ensure containers are fully stopped
-    # This handles cases where docker compose might not fully stop containers
     local api_container="${CONTAINER_PREFIX}api"
     local worker_container="${CONTAINER_PREFIX}worker"
     
-    if container_running "$api_container"; then
-        log_info "Force stopping API container: $api_container"
-        docker stop "$api_container" 2>&1 || true
-        docker rm -f "$api_container" 2>&1 || true
-    fi
+    # Step 1: Stop via docker compose (graceful)
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
     
-    if container_running "$worker_container"; then
-        log_info "Force stopping Worker container: $worker_container"
-        docker stop "$worker_container" 2>&1 || true
-        docker rm -f "$worker_container" 2>&1 || true
-    fi
+    # Step 2: Remove via docker compose
+    docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
     
-    # Verify containers are actually stopped/removed
+    # Step 3: ALWAYS force stop/remove directly (regardless of container state)
+    # This ensures containers are removed even if docker compose didn't catch them
+    log_info "Force stopping API/Worker containers directly (ensuring complete removal)..."
+    docker stop "$api_container" "$worker_container" 2>&1 || true
+    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    
+    # Step 4: Kill if still running (last resort)
     if container_running "$api_container" || container_running "$worker_container"; then
-        log_warning "Containers still running after stop/remove - forcing removal..."
+        log_warning "Containers still running after stop/remove - forcing kill..."
         docker kill "$api_container" "$worker_container" 2>&1 || true
         docker rm -f "$api_container" "$worker_container" 2>&1 || true
     fi
     
-    log_success "Old containers stopped and removed"
+    # Step 5: Final verification - ensure containers are completely gone
+    local max_cleanup_attempts=3
+    local cleanup_attempt=0
+    while [[ $cleanup_attempt -lt $max_cleanup_attempts ]] && (container_running "$api_container" || container_running "$worker_container"); do
+        cleanup_attempt=$((cleanup_attempt + 1))
+        log_warning "Containers still exist after cleanup attempt $cleanup_attempt/$max_cleanup_attempts - retrying..."
+        docker kill "$api_container" "$worker_container" 2>&1 || true
+        docker rm -f "$api_container" "$worker_container" 2>&1 || true
+        sleep 2
+    done
+    
+    if container_running "$api_container" || container_running "$worker_container"; then
+        log_error "CRITICAL: Failed to stop/remove containers after $max_cleanup_attempts attempts"
+        log_error "This will prevent new image from being deployed"
+        log_error "API container status: $(docker ps -a --filter "name=$api_container" --format "{{.Status}}" || echo "unknown")"
+        log_error "Worker container status: $(docker ps -a --filter "name=$worker_container" --format "{{.Status}}" || echo "unknown")"
+        return 1
+    fi
+    
+    log_success "Old containers stopped and removed completely"
     
     # CRITICAL: Verify new image was pulled and get its image ID
     log_info "Verifying new image is available and different from old image..."
