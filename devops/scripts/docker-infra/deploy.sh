@@ -877,8 +877,13 @@ deploy_application() {
         
         log_success "Application containers started successfully"
         
-        # Wait for health (4 minutes with 30 second intervals - API takes time to start)
-        if wait_for_health "${CONTAINER_PREFIX}api" 240 30; then
+        # Wait for health (6 minutes with 30 second intervals - API takes time to start, database connection can take up to 120s)
+        # Increased from 240s to 360s to account for:
+        # - Container startup: ~10-30s
+        # - Database connection: up to 120s (with retries)
+        # - Health check grace period: 180s
+        # - Buffer for production network latency
+        if wait_for_health "${CONTAINER_PREFIX}api" 360 30; then
             # CRITICAL: Only cleanup images AFTER successful deployment
             # This ensures we can rollback if deployment fails
             log_info "Deployment successful - cleaning up old images (keeping only latest + 1 backup)..."
