@@ -15,8 +15,8 @@
         "outDir": "dist/src"
       },
       {
-        "include": "src/generated/prisma/**/*",
-        "outDir": "dist/generated/prisma"
+        "include": "src/libs/infrastructure/database/prisma/generated/**/*",
+        "outDir": "dist/libs/infrastructure/database/prisma/generated"
       }
     ],
     "watchAssets": true,
