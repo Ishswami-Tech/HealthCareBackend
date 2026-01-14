@@ -2875,9 +2875,10 @@ main() {
             log_info "Infrastructure is healthy - deploying application only"
             deploy_application || exit $EXIT_ERROR
         else
-            log_info "No changes detected - ensuring application containers are running..."
+            log_info "No changes detected - but checking if image update is needed..."
             
-            # Always check if application containers are running, start them if not
+            # CRITICAL: Even if no code changes, we should check if the :latest image in registry is newer
+            # This handles cases where the image was updated but change detection didn't catch it
             local api_container="${CONTAINER_PREFIX}api"
             local worker_container="${CONTAINER_PREFIX}worker"
             
@@ -2885,7 +2886,16 @@ main() {
                 log_info "Application containers not running - starting them..."
                 deploy_application || exit $EXIT_ERROR
             else
-                log_info "Application containers are already running"
+                # Containers are running, but check if we need to update the image
+                # For :latest tag, always check if registry has newer image
+                local image_tag=$(echo "${DOCKER_IMAGE:-}" | cut -d: -f2 || echo "latest")
+                if [[ "$image_tag" == "latest" ]] || [[ -z "${DOCKER_IMAGE:-}" ]]; then
+                    log_info "Using :latest tag - forcing image update to ensure latest version is deployed..."
+                    log_info "This ensures we always use the absolute latest image from registry"
+                    deploy_application || exit $EXIT_ERROR
+                else
+                    log_info "Application containers are already running with specific tag - no action needed"
+                fi
             fi
             
             # Still verify infrastructure health even if no changes
