@@ -399,6 +399,7 @@ deploy_application() {
     # Docker may cache images even with --pull always if the tag is the same
     log_info "Removing old image with same tag to force fresh pull..."
     local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    local image_tag=$(echo "${DOCKER_IMAGE}" | cut -d: -f2)
     
     # Stop and remove containers first so we can remove the image
     local api_container="${CONTAINER_PREFIX}api"
@@ -410,12 +411,28 @@ deploy_application() {
         docker rm -f "$api_container" "$worker_container" 2>&1 || true
     fi
     
-    # Remove all images with the same tag (including dangling ones)
-    if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${DOCKER_IMAGE}$"; then
-        log_info "Found existing image with tag ${DOCKER_IMAGE}, removing to force fresh pull..."
-        docker rmi "${DOCKER_IMAGE}" 2>&1 || {
-            log_warning "Could not remove old image (may have other tags) - will force pull anyway"
-        }
+    # For :latest tag, we need to be more aggressive about removing old images
+    # because Docker might use cached :latest even after pulling
+    if [[ "$image_tag" == "latest" ]]; then
+        log_info "Detected :latest tag - removing ALL images with this repository to force fresh pull..."
+        # Remove all images with the same repository (not just the tag)
+        # This ensures we get a completely fresh pull
+        docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | while read -r img; do
+            if [[ -n "$img" ]] && [[ "$img" == *"${image_base}"* ]]; then
+                log_info "Removing old image: ${img}"
+                docker rmi "$img" 2>&1 || {
+                    log_warning "Could not remove image ${img} (may be in use) - will continue"
+                }
+            fi
+        done || true
+    else
+        # For specific tags (SHA-based), only remove the exact tag
+        if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${DOCKER_IMAGE}$"; then
+            log_info "Found existing image with tag ${DOCKER_IMAGE}, removing to force fresh pull..."
+            docker rmi "${DOCKER_IMAGE}" 2>&1 || {
+                log_warning "Could not remove old image (may have other tags) - will force pull anyway"
+            }
+        fi
     fi
     
     # Also remove any dangling images with the same repository
@@ -432,6 +449,45 @@ deploy_application() {
     log_info "Attempting to pull: ${DOCKER_IMAGE}"
     
     local pull_success=false
+    
+    # CRITICAL: For :latest tag, get the digest from registry FIRST to verify we're pulling the latest
+    # This ensures we're not using a cached :latest tag
+    local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+    local image_tag=$(echo "${DOCKER_IMAGE}" | cut -d: -f2)
+    
+    if [[ "$image_tag" == "latest" ]]; then
+        log_info "Detected :latest tag - verifying latest digest from registry..."
+        # Get the latest digest from registry (requires authentication)
+        if [[ -n "${GITHUB_TOKEN:-}" ]] && [[ -n "${GITHUB_USERNAME:-}" ]]; then
+            log_info "Authenticating with GHCR to get latest image digest..."
+            echo "${GITHUB_TOKEN}" | docker login "${REGISTRY:-ghcr.io}" -u "${GITHUB_USERNAME}" --password-stdin 2>&1 || {
+                log_warning "Failed to authenticate with GHCR - will pull without digest verification"
+            }
+        fi
+        
+        # Try to get manifest digest from registry
+        local registry_digest=""
+        if command -v docker &> /dev/null; then
+            registry_digest=$(docker manifest inspect "${DOCKER_IMAGE}" 2>/dev/null | grep -o '"digest":"[^"]*"' | head -n 1 | cut -d'"' -f4 || echo "")
+        fi
+        
+        if [[ -n "$registry_digest" ]]; then
+            log_info "Latest image digest in registry: ${registry_digest:0:30}..."
+            
+            # Check if local image has the same digest
+            local local_digest=$(docker images --format "{{.Digest}}" "${DOCKER_IMAGE}" 2>/dev/null | head -n 1 || echo "")
+            if [[ -n "$local_digest" ]] && [[ "$local_digest" == "$registry_digest" ]]; then
+                log_info "Local image digest matches registry - image is up to date"
+            else
+                log_info "Local image digest differs from registry - will pull fresh image"
+                log_info "  Local: ${local_digest:0:30}..."
+                log_info "  Registry: ${registry_digest:0:30}..."
+            fi
+        else
+            log_warning "Could not get digest from registry - will pull anyway"
+        fi
+    fi
+    
     # CRITICAL: Force pull without using cache to ensure we get absolute latest from registry
     log_info "Pulling image (forcing fresh pull from registry)..."
     if docker pull "${DOCKER_IMAGE}" 2>&1; then
@@ -441,9 +497,19 @@ deploy_application() {
         # Verify the image was actually pulled (not using cached version)
         local pulled_image_id=$(docker images --format "{{.ID}}" "${DOCKER_IMAGE}" | head -n 1)
         local pulled_image_digest=$(docker images --format "{{.Digest}}" "${DOCKER_IMAGE}" | head -n 1 || echo "")
+        local pulled_image_created=$(docker images --format "{{.CreatedAt}}" "${DOCKER_IMAGE}" | head -n 1 || echo "")
         log_info "Pulled image ID: ${pulled_image_id:0:12}"
+        log_info "Pulled image created: ${pulled_image_created}"
         if [[ -n "$pulled_image_digest" ]] && [[ "$pulled_image_digest" != "<none>" ]]; then
             log_info "Pulled image digest: ${pulled_image_digest:0:30}..."
+            
+            # For :latest tag, verify digest matches registry
+            if [[ "$image_tag" == "latest" ]] && [[ -n "$registry_digest" ]] && [[ "$pulled_image_digest" != "$registry_digest" ]]; then
+                log_warning "⚠️  WARNING: Pulled image digest doesn't match registry digest!"
+                log_warning "   This might indicate the image wasn't fully updated"
+                log_warning "   Registry: ${registry_digest:0:30}..."
+                log_warning "   Local: ${pulled_image_digest:0:30}..."
+            fi
         fi
     else
         log_warning "Failed to pull image with specific tag: ${DOCKER_IMAGE}"
