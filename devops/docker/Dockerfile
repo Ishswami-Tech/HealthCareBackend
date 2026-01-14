@@ -244,10 +244,12 @@ RUN mkdir -p /app/node_modules/@prisma && \
   fi && \
   ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client && \
   echo "[OK] @prisma/client symlink created to app-local location" && \
-  if [ -d /app/node_modules/@prisma/client ] && [ "$(ls -A /app/node_modules/@prisma/client 2>/dev/null)" ]; then \
+  if [ -L /app/node_modules/@prisma/client ] && [ -e /app/node_modules/@prisma/client ] && [ "$(ls -A /app/node_modules/@prisma/client 2>/dev/null)" ]; then \
   echo "[OK] @prisma/client symlink verified and accessible"; \
+  elif [ -L /app/node_modules/@prisma/client ]; then \
+  echo "[WARN] @prisma/client symlink exists but target may not be accessible (entrypoint will verify at runtime)"; \
   else \
-  echo "[WARN] @prisma/client symlink exists but not accessible (entrypoint will fix at runtime)"; \
+  echo "[ERROR] @prisma/client symlink creation failed!" && exit 1; \
   fi
 
 ARG NODE_ENV=production

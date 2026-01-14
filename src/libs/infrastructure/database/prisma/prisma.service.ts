@@ -987,6 +987,82 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
       // Possible Prisma client locations
       const possiblePaths = [
+        // App-local location (Docker build generates to this location)
+        path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.js'
+        ),
+        path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.mjs'
+        ),
+        path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.d.ts'
+        ),
+        // Compiled app-local location (dist)
+        path.join(
+          cwd,
+          'dist',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.js'
+        ),
+        path.join(
+          cwd,
+          'dist',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.mjs'
+        ),
+        path.join(
+          cwd,
+          'dist',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.d.ts'
+        ),
+        // Docker-specific app-local paths
+        isDocker ? '/app/src/libs/infrastructure/database/prisma/generated/index.js' : null,
+        isDocker ? '/app/src/libs/infrastructure/database/prisma/generated/index.mjs' : null,
+        isDocker ? '/app/src/libs/infrastructure/database/prisma/generated/index.d.ts' : null,
+        isDocker ? '/app/dist/libs/infrastructure/database/prisma/generated/index.js' : null,
+        isDocker ? '/app/dist/libs/infrastructure/database/prisma/generated/index.mjs' : null,
+        isDocker ? '/app/dist/libs/infrastructure/database/prisma/generated/index.d.ts' : null,
+        // Symlink location (node_modules/@prisma/client points to app-local location)
+        path.join(cwd, 'node_modules', '@prisma', 'client', 'index.js'),
+        path.join(cwd, 'node_modules', '@prisma', 'client', 'index.mjs'),
+        path.join(cwd, 'node_modules', '@prisma', 'client', 'index.d.ts'),
+        isDocker ? '/app/node_modules/@prisma/client/index.js' : null,
+        isDocker ? '/app/node_modules/@prisma/client/index.mjs' : null,
+        isDocker ? '/app/node_modules/@prisma/client/index.d.ts' : null,
         // Standard location (works in both local and Docker)
         path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js'),
         // Docker-specific paths
@@ -995,6 +1071,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         // Alternative locations
         path.join(cwd, 'dist', 'node_modules', '.prisma', 'client', 'index.js'),
         // Fallback to check directory existence
+        path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+        path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+        path.join(cwd, 'node_modules', '@prisma', 'client'),
         path.join(cwd, 'node_modules', '.prisma', 'client'),
       ].filter((p): p is string => p !== null);
 
@@ -1006,11 +1085,17 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             const stats = fs.statSync(clientPath);
             if (stats.isDirectory()) {
               const indexPath = path.join(clientPath, 'index.js');
-              if (fs.existsSync(indexPath)) {
+              const indexMjsPath = path.join(clientPath, 'index.mjs');
+              const indexDtsPath = path.join(clientPath, 'index.d.ts');
+              if (
+                fs.existsSync(indexPath) ||
+                fs.existsSync(indexMjsPath) ||
+                fs.existsSync(indexDtsPath)
+              ) {
                 return true;
               }
             } else if (stats.isFile()) {
-              // It's the index.js file itself
+              // It's the index.js/index.mjs/index.d.ts file itself
               return true;
             }
           }
@@ -1020,6 +1105,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
+      // If no paths found, return false
       return false;
     } catch {
       return false;
