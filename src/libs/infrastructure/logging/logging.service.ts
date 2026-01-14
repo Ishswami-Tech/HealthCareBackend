@@ -383,12 +383,15 @@ export class LoggingService {
         const isImportantSecurityLog =
           type === LogType.SECURITY && (level === LogLevel.ERROR || level === LogLevel.WARN);
         const isCriticalError = level === LogLevel.ERROR;
+        // Show AUDIT logs with INFO level (important business events like successful registrations)
+        const isImportantAuditLog = type === LogType.AUDIT && level === LogLevel.INFO;
 
         shouldShowInTerminal =
           isCriticalError ||
           level === LogLevel.WARN ||
           isImportantSystemLog ||
-          isImportantSecurityLog;
+          isImportantSecurityLog ||
+          isImportantAuditLog;
 
         // In production, filter out noisy logs (but allow critical errors and important system logs)
         if (shouldShowInTerminal && !isCriticalError && !isImportantSystemLog) {
