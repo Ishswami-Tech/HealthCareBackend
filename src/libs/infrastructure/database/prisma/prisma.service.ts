@@ -253,20 +253,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Load PrismaClient from the fixed app-local directory
-   * Prisma Client is generated at build time to src/generated/prisma
-   * and compiled to dist/generated/prisma in production
+   * Prisma Client is generated at build time to src/libs/infrastructure/database/prisma/generated
+   * and compiled to dist/libs/infrastructure/database/prisma/generated in production
    */
   private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
     const requireModule = createRequire(path.join(cwd, 'package.json'));
 
     // Try paths in order of preference:
-    // 1. dist/generated/prisma (production - compiled code)
-    // 2. src/generated/prisma (development - source code)
+    // 1. dist/libs/infrastructure/database/prisma/generated (production - compiled code)
+    // 2. src/libs/infrastructure/database/prisma/generated (development - source code)
     // 3. @prisma/client (via path alias)
     const possiblePaths = [
-      path.join(cwd, 'dist', 'generated', 'prisma'),
-      path.join(cwd, 'src', 'generated', 'prisma'),
+      path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+      path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
       '@prisma/client',
     ];
 

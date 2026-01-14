@@ -6,7 +6,10 @@
 const http = require('http');
 const https = require('https');
 
-const BASE_URL = 'http://localhost:8088/api/v1';
+// BASE_URL is dynamically updated by test-production-apis.js
+// Default: localhost for development
+// Production: https://backend-service-v1.ishswami.in/api/v1
+const BASE_URL = process.env.BASE_URL || 'https://backend-service-v1.ishswami.in/api/v1';
 
 // Colors for console output
 const colors = {
@@ -134,7 +137,7 @@ class TestContext {
     const defaultHeaders = {
       'X-API-Version': '1',
       'User-Agent': 'healthcare-api-test',
-      'Accept': 'application/json',
+      Accept: 'application/json',
       ...(authHeader && { Authorization: authHeader }),
       ...(this.clinicId && { 'X-Clinic-ID': this.clinicId }),
       ...(body ? { 'Content-Type': 'application/json' } : {}),
@@ -191,8 +194,13 @@ class TestContext {
       const testIdsPath = path.join(process.cwd(), 'test-ids.json');
       const testIds = JSON.parse(fs.readFileSync(testIdsPath, 'utf8'));
 
-      if (!this.clinicId && testIds.clinics && testIds.clinics.length > 0) {
-        this.clinicId = testIds.clinics[0];
+      if (!this.clinicId) {
+        // Prefer clinic codes (CL0001, CL0002) over UUIDs for readability
+        if (testIds.clinicCodes && testIds.clinicCodes.length > 0) {
+          this.clinicId = testIds.clinicCodes[0];
+        } else if (testIds.clinics && testIds.clinics.length > 0) {
+          this.clinicId = testIds.clinics[0];
+        }
       }
       if (!this.doctorId && testIds.demoDoctorId) {
         this.doctorId = testIds.demoDoctorId;
@@ -201,7 +209,17 @@ class TestContext {
         this.patientId = testIds.demoPatientId;
       }
       if (!this.locationId && testIds.locations) {
-        const clinicIndex = testIds.clinics?.indexOf(this.clinicId) ?? 0;
+        // Determine clinic index from clinicCodes or clinics array
+        let clinicIndex = 0;
+        if (testIds.clinicCodes && this.clinicId) {
+          clinicIndex = testIds.clinicCodes.indexOf(this.clinicId);
+          if (clinicIndex === -1 && testIds.clinics) {
+            clinicIndex = testIds.clinics.indexOf(this.clinicId);
+          }
+        } else if (testIds.clinics && this.clinicId) {
+          clinicIndex = testIds.clinics.indexOf(this.clinicId);
+        }
+        clinicIndex = clinicIndex >= 0 ? clinicIndex : 0;
         const locationKey = clinicIndex === 0 ? 'clinic1' : 'clinic2';
         if (testIds.locations[locationKey] && testIds.locations[locationKey].length > 0) {
           this.locationId = testIds.locations[locationKey][0];
@@ -261,5 +279,3 @@ module.exports = {
   TestContext,
   TEST_USERS,
 };
-
-
