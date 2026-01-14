@@ -260,7 +260,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
                 'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
               );
             }
-            return `${baseUrl}/api/payments/phonepe/webhook`;
+            return `${baseUrl}/api/v1/payments/phonepe/webhook`;
           })(),
         ...(options.customerPhone && { mobileNumber: options.customerPhone }),
         paymentInstrument: {
@@ -464,7 +464,7 @@ export class PhonePePaymentAdapter extends BasePaymentAdapter {
                 'Missing baseUrl in payment metadata. BASE_URL or API_URL must be set in environment configuration.'
               );
             }
-            return `${baseUrl}/api/payments/phonepe/refund-webhook`;
+            return `${baseUrl}/api/v1/payments/phonepe/refund-webhook`;
           })(),
       };
 
