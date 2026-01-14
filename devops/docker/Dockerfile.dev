@@ -33,7 +33,7 @@ COPY . .
 RUN test -f .swcrc && test -f nest-cli.json || (echo "[ERROR] SWC config files missing!" && exit 1) && \
     yarn prisma:generate && \
     if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
-      echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && exit 1; \
+    echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && exit 1; \
     fi && \
     echo "[OK] Prisma Client generated successfully to src/libs/infrastructure/database/prisma/generated" && \
     # Create symlink for TypeScript resolution
