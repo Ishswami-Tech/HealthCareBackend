@@ -1437,8 +1437,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Check if Prisma client is ready (initialized and connected)
-   * Also checks if delegates are available to prevent "Invalid invocation" errors
+   * Check if Prisma client is ready (initialized with delegates)
+   * Returns true if delegates are initialized, even if connection is in progress
+   * This allows health checks to pass during startup while connection establishes in background
    */
   isReady(): boolean {
     // First ensure client is initialized
@@ -1454,7 +1455,6 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     const hasClient = !!this.prismaClient;
     const hasQueryRaw =
       typeof (this.prismaClient as unknown as { $queryRaw?: unknown }).$queryRaw === 'function';
-    const isConnected = PrismaService.isConnected;
 
     // CRITICAL: We don't check delegates here because accessing them triggers Prisma's
     // internal validation which logs "Invalid invocation" errors even if we catch them.
@@ -1464,7 +1464,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Also check if Prisma is fully initialized (delegates ready)
     const isFullyInitialized = PrismaService.isFullyInitialized;
 
-    return hasClient && hasQueryRaw && isConnected && isFullyInitialized;
+    // For health checks: If delegates are initialized, consider it ready even if connection is in progress
+    // The connection happens in background, so delegates being ready means Prisma is functional
+    // Actual database operations will wait for connection via waitUntilReady()
+    if (hasClient && hasQueryRaw && isFullyInitialized) {
+      // If delegates are ready, we're ready (connection can happen in background)
+      // Only require isConnected for actual database operations, not for health checks
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Check if database is actually connected (not just delegates ready)
+   * Use this for health checks that require actual database connection
+   */
+  isConnected(): boolean {
+    return PrismaService.isConnected;
   }
 
   /**

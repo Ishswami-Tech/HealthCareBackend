@@ -106,8 +106,10 @@ export class HealthController {
   async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
     try {
       // CRITICAL: Check Prisma connection directly - requires actual database connection
-      // This ensures database is ACTUALLY connected before returning healthy
-      const isDatabaseConnected = this.prismaService?.isReady() ?? false;
+      // isReady() now returns true when delegates are ready (connection can be in progress)
+      // So we need to check isConnected() separately to ensure actual connection
+      const isPrismaReady = this.prismaService?.isReady() ?? false;
+      const isDatabaseConnected = this.prismaService?.isConnected() ?? false;
 
       const isDetailed = detailed === 'true' || detailed === '1';
       const healthResult = isDetailed
@@ -117,10 +119,12 @@ export class HealthController {
       const databaseStatus = healthResult.services?.database;
 
       // Application is healthy only if:
-      // 1. Prisma is actually connected (isReady() returns true)
-      // 2. Health check shows database as healthy
-      // 3. Overall health status is healthy
+      // 1. Prisma delegates are ready (isReady() returns true)
+      // 2. Database is actually connected (isConnected is true)
+      // 3. Health check shows database as healthy
+      // 4. Overall health status is healthy
       if (
+        isPrismaReady &&
         isDatabaseConnected &&
         databaseStatus?.status === 'healthy' &&
         healthResult.status === 'healthy'
