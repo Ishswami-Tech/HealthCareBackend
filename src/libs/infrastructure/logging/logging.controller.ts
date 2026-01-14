@@ -172,10 +172,10 @@ export class LoggingController {
                 <option value="1">Last 1 hour</option>
                 <option value="6">Last 6 hours</option>
                 <option value="12">Last 12 hours</option>
-                <option value="24" selected>Last 24 hours</option>
+                <option value="24">Last 24 hours</option>
                 <option value="168">Last 7 days</option>
                 <option value="720">Last 30 days</option>
-                <option value="all">All Time (from cache)</option>
+                <option value="all" selected>All Time (from cache)</option>
                 <option value="custom">Custom Range</option>
               </select>
               <div id="customRange" style="display: none;">
