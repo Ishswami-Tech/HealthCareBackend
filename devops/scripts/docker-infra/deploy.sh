@@ -809,35 +809,112 @@ deploy_application() {
         
         # Wait for health (4 minutes with 30 second intervals - API takes time to start)
         if wait_for_health "${CONTAINER_PREFIX}api" 240 30; then
-            # CRITICAL: Only remove old backup images AFTER successful deployment
+            # CRITICAL: Only cleanup images AFTER successful deployment
             # This ensures we can rollback if deployment fails
-            log_info "Deployment successful - cleaning up old backup images..."
+            log_info "Deployment successful - cleaning up old images (keeping only latest + 1 backup)..."
             local image_name_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
-            if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]] && [[ -n "${image_name_base}" ]]; then
-                # Keep the most recent backup, remove older ones
-                docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | while read -r backup_img; do
-                    if [[ -n "$backup_img" ]] && [[ "$backup_img" != "$OLD_IMAGE_BACKUP_TAG" ]]; then
-                        log_info "Removing old backup image: ${backup_img}"
-                        docker rmi "$backup_img" 2>&1 || true
-                    fi
-                done || true
-                log_info "Kept most recent backup image: ${OLD_IMAGE_BACKUP_TAG}"
-            fi
-            
-            # Also remove old images that are not the current one and not backups
-            log_info "Removing old non-backup images..."
             local current_running_image=$(docker inspect --format='{{.Config.Image}}' "${CONTAINER_PREFIX}api" 2>/dev/null || echo "")
+            
             if [[ -n "${image_name_base}" ]]; then
-                docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | while read -r img; do
-                    if [[ -n "$img" ]] && \
-                       [[ "$img" == *"healthcare-api"* ]] && \
-                       [[ "$img" != *"rollback-backup"* ]] && \
-                       [[ "$img" != "$current_running_image" ]] && \
-                       [[ "$img" != "${DOCKER_IMAGE}" ]]; then
-                        log_info "Removing old image: ${img}"
-                        docker rmi "$img" 2>&1 || true
+                # Step 1: Keep only the most recent backup image, remove all older backups
+                log_info "Step 1: Cleaning up old backup images (keeping only most recent)..."
+                if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+                    # Find all backup images, sort by creation date (newest first)
+                    local backup_images=()
+                    while IFS= read -r backup_img; do
+                        [[ -n "$backup_img" ]] && backup_images+=("$backup_img")
+                    done < <(docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | sort -r)
+                    
+                    local kept_backup=false
+                    for backup_img in "${backup_images[@]}"; do
+                        if [[ "$backup_img" == "$OLD_IMAGE_BACKUP_TAG" ]]; then
+                            if [[ "$kept_backup" == "false" ]]; then
+                                log_info "Keeping most recent backup image: ${backup_img}"
+                                kept_backup=true
+                            else
+                                log_info "Removing duplicate backup image: ${backup_img}"
+                                docker rmi "$backup_img" 2>&1 || true
+                            fi
+                        else
+                            log_info "Removing old backup image: ${backup_img}"
+                            docker rmi "$backup_img" 2>&1 || true
+                        fi
+                    done
+                    
+                    if [[ "$kept_backup" == "true" ]]; then
+                        log_success "Kept most recent backup image: ${OLD_IMAGE_BACKUP_TAG}"
                     fi
-                done || true
+                else
+                    # If OLD_IMAGE_BACKUP_TAG is not set, keep only the most recent backup
+                    local backup_images=()
+                    while IFS= read -r backup_img; do
+                        [[ -n "$backup_img" ]] && backup_images+=("$backup_img")
+                    done < <(docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | sort -r)
+                    
+                    local backup_count=0
+                    for backup_img in "${backup_images[@]}"; do
+                        backup_count=$((backup_count + 1))
+                        if [[ $backup_count -eq 1 ]]; then
+                            log_info "Keeping most recent backup image: ${backup_img}"
+                        else
+                            log_info "Removing old backup image: ${backup_img}"
+                            docker rmi "$backup_img" 2>&1 || true
+                        fi
+                    done
+                fi
+                
+                # Step 2: Remove all old non-backup images (keep only current running image)
+                log_info "Step 2: Removing old non-backup images (keeping only current running image)..."
+                local images_to_keep=("${DOCKER_IMAGE}" "$current_running_image")
+                if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
+                    images_to_keep+=("${OLD_IMAGE_BACKUP_TAG}")
+                fi
+                
+                while IFS= read -r img; do
+                    if [[ -n "$img" ]] && [[ "$img" == *"healthcare-api"* ]] && [[ "$img" != *"rollback-backup"* ]]; then
+                        local should_keep=false
+                        for keep_img in "${images_to_keep[@]}"; do
+                            if [[ "$img" == "$keep_img" ]]; then
+                                should_keep=true
+                                break
+                            fi
+                        done
+                        
+                        if [[ "$should_keep" == "false" ]]; then
+                            log_info "Removing old image: ${img}"
+                            docker rmi "$img" 2>&1 || true
+                        else
+                            log_info "Keeping image: ${img}"
+                        fi
+                    fi
+                done < <(docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}")
+                
+                # Step 3: Final verification - ensure only latest + 1 backup exist
+                log_info "Step 3: Verifying final image state..."
+                local final_images=()
+                while IFS= read -r img; do
+                    [[ -n "$img" ]] && [[ "$img" == *"healthcare-api"* ]] && final_images+=("$img")
+                done < <(docker images "${image_name_base}" --format "{{.Repository}}:{{.Tag}}")
+                
+                local backup_count=0
+                local non_backup_count=0
+                for img in "${final_images[@]}"; do
+                    if [[ "$img" == *"rollback-backup"* ]]; then
+                        backup_count=$((backup_count + 1))
+                    else
+                        non_backup_count=$((non_backup_count + 1))
+                    fi
+                done
+                
+                log_info "Final image state: ${non_backup_count} non-backup image(s), ${backup_count} backup image(s)"
+                if [[ $backup_count -gt 1 ]]; then
+                    log_warning "Multiple backup images found (expected: 1) - this should not happen"
+                fi
+                if [[ $non_backup_count -gt 1 ]]; then
+                    log_warning "Multiple non-backup images found (expected: 1) - this should not happen"
+                fi
+                
+                log_success "Image cleanup completed - only latest image + 1 backup remain"
             fi
             
             # Create success backup after successful deployment
@@ -1542,17 +1619,38 @@ verify_and_deploy_latest_image() {
                     if verify_application_health "$api_container"; then
                         log_success "✅ Application is healthy!"
                         
-                        # Cleanup old backup images (keep last 2)
-                        log_info "Cleaning up old backup images..."
+                        # Cleanup old backup images (keep only 1 most recent backup)
+                        log_info "Cleaning up old backup images (keeping only most recent)..."
                         local image_base=$(echo "${DOCKER_IMAGE}" | cut -d: -f1)
+                        local backup_images=()
+                        while IFS= read -r backup_img; do
+                            [[ -n "$backup_img" ]] && backup_images+=("$backup_img")
+                        done < <(docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | sort -r)
+                        
                         local backup_count=0
-                        docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}" | grep "rollback-backup" | sort -r | while read -r backup_img; do
+                        for backup_img in "${backup_images[@]}"; do
                             backup_count=$((backup_count + 1))
-                            if [[ $backup_count -gt 2 ]]; then
+                            if [[ $backup_count -eq 1 ]]; then
+                                log_info "Keeping most recent backup: ${backup_img}"
+                            else
                                 log_info "Removing old backup: ${backup_img}"
                                 docker rmi "$backup_img" 2>&1 || true
                             fi
                         done || true
+                        
+                        # Also remove old non-backup images (keep only current)
+                        log_info "Removing old non-backup images..."
+                        local current_running_image=$(docker inspect --format='{{.Config.Image}}' "${api_container}" 2>/dev/null || echo "")
+                        while IFS= read -r img; do
+                            if [[ -n "$img" ]] && \
+                               [[ "$img" == *"healthcare-api"* ]] && \
+                               [[ "$img" != *"rollback-backup"* ]] && \
+                               [[ "$img" != "$current_running_image" ]] && \
+                               [[ "$img" != "${DOCKER_IMAGE}" ]]; then
+                                log_info "Removing old image: ${img}"
+                                docker rmi "$img" 2>&1 || true
+                            fi
+                        done < <(docker images "${image_base}" --format "{{.Repository}}:{{.Tag}}")
                         
                         return 0
                     else
