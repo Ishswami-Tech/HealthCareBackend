@@ -40,10 +40,10 @@ METADATA_FILE="${BACKUP_DIR}/metadata/${BACKUP_ID}.json"
 
 # Results
 declare -A BACKUP_RESULTS
-BACKUP_RESULTS["postgres_local"]="failed"
-BACKUP_RESULTS["postgres_s3"]="failed"
-BACKUP_RESULTS["dragonfly_local"]="failed"
-BACKUP_RESULTS["dragonfly_s3"]="failed"
+BACKUP_RESULTS[postgres_local]="failed"
+BACKUP_RESULTS[postgres_s3]="failed"
+BACKUP_RESULTS[dragonfly_local]="failed"
+BACKUP_RESULTS[dragonfly_s3]="failed"
 
 # Backup PostgreSQL
 backup_postgres() {
@@ -72,16 +72,16 @@ backup_postgres() {
         local db_size=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT pg_size_pretty(pg_database_size('userdb'));" 2>/dev/null | xargs || echo "unknown")
         local table_count=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
         
-        BACKUP_RESULTS["postgres_local"]="success"
+        BACKUP_RESULTS[postgres_local]="success"
         log_success "PostgreSQL backup created: ${backup_file}"
         
         # Upload to S3
         local s3_path="backups/postgres/postgres-${TIMESTAMP}.sql.gz"
         if s3_upload "$backup_file" "$s3_path"; then
-            BACKUP_RESULTS["postgres_s3"]="success"
+            BACKUP_RESULTS[postgres_s3]="success"
         else
             log_warning "S3 upload failed, but local backup succeeded"
-            BACKUP_RESULTS["postgres_s3"]="failed"
+            BACKUP_RESULTS[postgres_s3]="failed"
         fi
         
         # Store metadata - extract backup type from path if present
@@ -96,8 +96,8 @@ backup_postgres() {
         fi
         
         # Extract array values to variables for use in heredoc (fixes syntax error)
-        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
-        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+        local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]}"
         
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
@@ -351,21 +351,21 @@ backup_dragonfly() {
                     key_count=$(eval "$redis_cli_cmd DBSIZE" 2>/dev/null | xargs || echo "0")
                 fi
                 
-                BACKUP_RESULTS["dragonfly_local"]="success"
+                BACKUP_RESULTS[dragonfly_local]="success"
                 log_success "Dragonfly backup created: ${backup_file}"
                 
                 # Upload to S3
                 local s3_path="backups/dragonfly/dragonfly-${TIMESTAMP}.rdb.gz"
                 if s3_upload "$backup_file" "$s3_path"; then
-                    BACKUP_RESULTS["dragonfly_s3"]="success"
+                    BACKUP_RESULTS[dragonfly_s3]="success"
                 else
                     log_warning "S3 upload failed, but local backup succeeded"
-                    BACKUP_RESULTS["dragonfly_s3"]="failed"
+                    BACKUP_RESULTS[dragonfly_s3]="failed"
                 fi
                 
                 # Extract array values to variables for use in heredoc (fixes syntax error)
-                local dragonfly_local_status="${BACKUP_RESULTS["dragonfly_local"]}"
-                local dragonfly_s3_status="${BACKUP_RESULTS["dragonfly_s3"]}"
+                local dragonfly_local_status="${BACKUP_RESULTS[dragonfly_local]}"
+                local dragonfly_s3_status="${BACKUP_RESULTS[dragonfly_s3]}"
                 
                 # Store metadata
                 cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF
@@ -418,8 +418,8 @@ create_metadata() {
         fi
         
         # Extract array values to variables for use in heredoc (fixes syntax error)
-        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
-        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+        local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]}"
         
         cat > "$METADATA_FILE" <<EOF
 {
@@ -686,7 +686,7 @@ backup_postgres_to_path() {
         local db_size=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT pg_size_pretty(pg_database_size('userdb'));" 2>/dev/null | xargs || echo "unknown")
         local table_count=$(docker exec "$container" psql -U postgres -d userdb -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | xargs || echo "0")
         
-        BACKUP_RESULTS["postgres_local"]="success"
+        BACKUP_RESULTS[postgres_local]="success"
         log_success "PostgreSQL backup created: ${backup_file}"
         
         # Upload to S3 with retry logic
@@ -694,10 +694,10 @@ backup_postgres_to_path() {
         local backup_type=$(basename "$backup_dir_name" 2>/dev/null || echo "postgres")
         local s3_path="backups/postgres/${backup_type}/postgres-${TIMESTAMP}.sql.gz"
         if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
-            BACKUP_RESULTS["postgres_s3"]="success"
+            BACKUP_RESULTS[postgres_s3]="success"
         else
             log_warning "S3 upload failed, but local backup succeeded"
-            BACKUP_RESULTS["postgres_s3"]="failed"
+            BACKUP_RESULTS[postgres_s3]="failed"
         fi
         
         # Store metadata - extract backup type from path if present
@@ -712,8 +712,8 @@ backup_postgres_to_path() {
         fi
         
         # Extract array values to variables for use in heredoc (fixes syntax error)
-        local postgres_local_status="${BACKUP_RESULTS["postgres_local"]}"
-        local postgres_s3_status="${BACKUP_RESULTS["postgres_s3"]}"
+        local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+        local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]}"
         
         # Store metadata
         cat > "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json" <<EOF
@@ -952,7 +952,7 @@ backup_dragonfly_to_path() {
                     key_count=$(eval "$redis_cli_cmd DBSIZE" 2>/dev/null | xargs || echo "0")
                 fi
                 
-                BACKUP_RESULTS["dragonfly_local"]="success"
+                BACKUP_RESULTS[dragonfly_local]="success"
                 log_success "Dragonfly backup created: ${backup_file}"
                 
                 # Upload to S3 with retry logic
@@ -960,15 +960,15 @@ backup_dragonfly_to_path() {
                 local backup_type=$(basename "$backup_dir_name" 2>/dev/null || echo "dragonfly")
                 local s3_path="backups/dragonfly/${backup_type}/dragonfly-${TIMESTAMP}.rdb.gz"
                 if s3_upload_with_retry "$backup_file" "$s3_path" 3 5; then
-                    BACKUP_RESULTS["dragonfly_s3"]="success"
+                    BACKUP_RESULTS[dragonfly_s3]="success"
                 else
                     log_warning "S3 upload failed, but local backup succeeded"
-                    BACKUP_RESULTS["dragonfly_s3"]="failed"
+                    BACKUP_RESULTS[dragonfly_s3]="failed"
                 fi
                 
                 # Extract array values to variables for use in heredoc (fixes syntax error)
-                local dragonfly_local_status="${BACKUP_RESULTS["dragonfly_local"]}"
-                local dragonfly_s3_status="${BACKUP_RESULTS["dragonfly_s3"]}"
+                local dragonfly_local_status="${BACKUP_RESULTS[dragonfly_local]}"
+                local dragonfly_s3_status="${BACKUP_RESULTS[dragonfly_s3]}"
                 
                 # Store metadata
                 cat > "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json" <<EOF

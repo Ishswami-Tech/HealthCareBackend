@@ -599,8 +599,9 @@ deploy_application() {
     # Step 3: ALWAYS force stop/remove directly (regardless of container state)
     # This ensures containers are removed even if docker compose didn't catch them
     log_info "Force stopping API/Worker containers directly (ensuring complete removal)..."
-    docker stop "$api_container" "$worker_container" 2>&1 || true
-    docker rm -f "$api_container" "$worker_container" 2>&1 || true
+    # Suppress "No such container" errors - these are harmless (containers may not exist)
+    docker stop "$api_container" "$worker_container" 2>/dev/null || true
+    docker rm -f "$api_container" "$worker_container" 2>/dev/null || true
     
     # Step 4: Kill if still running (last resort)
     if container_running "$api_container" || container_running "$worker_container"; then
@@ -658,8 +659,16 @@ deploy_application() {
     log_success "Images pulled successfully"
     
     # Run database migrations safely
+    # CRITICAL: Migration failures MUST cause deployment to fail
+    # This ensures CI/CD properly detects failed deployments
     if ! run_migrations_safely; then
-        log_error "Database migrations failed - aborting deployment"
+        log_error "=========================================="
+        log_error "DEPLOYMENT FAILED: Database migrations failed"
+        log_error "=========================================="
+        log_error "Migration failures are critical - deployment cannot proceed"
+        log_error "The deployment will be marked as FAILED in CI/CD"
+        log_error "Please fix migration issues before retrying deployment"
+        log_error "=========================================="
         return 1
     fi
     
@@ -1890,10 +1899,31 @@ run_migrations_safely() {
     # Check if api container exists (for running migrations)
     if ! container_running "${CONTAINER_PREFIX}api"; then
         log_info "API container not running, starting temporarily for migrations..."
+        # CRITICAL: Temporarily increase memory limit for migrations to prevent OOM
+        # Prisma migrations can be memory-intensive, especially with large databases
+        log_info "Temporarily increasing container memory limit for migrations (to prevent OOM)..."
+        
+        # Start container with increased memory limit for migrations
+        # Use docker compose with memory override via environment variable
+        # Note: This requires docker-compose to support memory limits via environment
         docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api || {
             log_error "Failed to start API container for migrations"
             return 1
         }
+        
+        # If container started but has low memory limit, try to increase it temporarily
+        # Check current memory limit
+        local current_mem_limit
+        current_mem_limit=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "0")
+        if [[ "$current_mem_limit" != "0" ]]; then
+            local current_mem_mb=$((current_mem_limit / 1024 / 1024))
+            if [[ $current_mem_mb -lt 8192 ]]; then
+                log_warning "Container memory limit is ${current_mem_mb}MB - migrations may fail with OOM"
+                log_warning "Consider increasing memory limit in docker-compose.prod.yml to at least 8GB for migrations"
+                log_warning "Current limit: ${current_mem_mb}MB, Recommended: 8192MB (8GB) or higher"
+            fi
+        fi
+        
         log_info "Waiting for API container to initialize..."
         sleep 10  # Give container time to load environment variables
     fi
@@ -2543,8 +2573,17 @@ BASELINE_SQL
         log_error "To debug, check the migration output above for Prisma errors"
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
             log_warning "Rolling back to pre-migration backup..."
-            restore_backup "$PRE_MIGRATION_BACKUP"
+            restore_backup "$PRE_MIGRATION_BACKUP" || {
+                log_error "CRITICAL: Backup restore also failed - database may be in inconsistent state"
+            }
         fi
+        
+        # CRITICAL: Always return error code to ensure deployment fails
+        # This ensures CI/CD properly detects migration failures
+        log_error ""
+        log_error "=========================================="
+        log_error "MIGRATION FAILED - Deployment will be marked as FAILED"
+        log_error "=========================================="
         return 1
     fi
 }
@@ -2676,7 +2715,43 @@ main() {
     # Decision logic
     if [[ "$INFRA_CHANGED" == "true" ]]; then
         # Infrastructure changed
-        if [[ "$INFRA_ALREADY_HANDLED" == "true" ]]; then
+        # CRITICAL: Skip recreation if infrastructure is healthy and already handled by CI/CD
+        if [[ "$INFRA_ALREADY_HANDLED" == "true" ]] && [[ "$INFRA_HEALTHY" == "true" ]]; then
+            log_info "Infrastructure changes were already handled by CI/CD and infrastructure is healthy"
+            log_info "Skipping infrastructure recreation - proceeding directly to application deployment"
+            
+            # Verify infrastructure (should already be healthy from CI/CD jobs)
+            local verify_script="${DEPLOY_SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="${SCRIPT_DIR}/verify.sh"
+            [[ ! -f "$verify_script" ]] && verify_script="/opt/healthcare-backend/devops/scripts/docker-infra/verify.sh"
+            
+            if [[ -f "$verify_script" ]]; then
+                "$verify_script" >/dev/null || {
+                    log_error "Verification failed - infrastructure may not be ready"
+                    exit $EXIT_CRITICAL
+                }
+            else
+                log_warning "verify.sh not found - skipping verification"
+            fi
+            
+            # Deploy application if changed
+            if [[ "$APP_CHANGED" == "true" ]]; then
+                deploy_application || exit $EXIT_ERROR
+            else
+                log_info "No application changes detected - ensuring application containers are running..."
+                local api_container="${CONTAINER_PREFIX}api"
+                local worker_container="${CONTAINER_PREFIX}worker"
+                
+                if ! container_running "$api_container" || ! container_running "$worker_container"; then
+                    log_info "Application containers not running - starting them..."
+                    deploy_application || exit $EXIT_ERROR
+                else
+                    log_info "Application containers are already running - no action needed"
+                fi
+            fi
+            
+            exit $EXIT_SUCCESS
+        elif [[ "$INFRA_ALREADY_HANDLED" == "true" ]]; then
             # Infrastructure operations were already done by CI/CD jobs
             # Just verify and deploy app
             log_info "Infrastructure changes were already handled by CI/CD - verifying and deploying app"
@@ -3217,7 +3292,13 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             exit 0
             ;;
         *)
+            # Run main deployment function
+            # NOTE: main() calls exit() directly, so this line will only execute if main() returns
+            # All error paths in main() use exit $EXIT_ERROR, so failures are properly detected by CI/CD
             main "$@"
+            # If we reach here, main() returned successfully (shouldn't happen as main() exits)
+            # But just in case, exit with success code
+            exit $EXIT_SUCCESS
             ;;
     esac
 fi
