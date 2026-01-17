@@ -1898,6 +1898,35 @@ run_migrations_safely() {
         sleep 10  # Give container time to load environment variables
     fi
     
+    # Verify container is actually healthy (not just running but crashed)
+    log_info "Verifying container health..."
+    local container_status
+    container_status=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+    local container_exit_code
+    container_exit_code=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.ExitCode}}' 2>/dev/null || echo "0")
+    
+    if [[ "$container_status" != "running" ]]; then
+        log_error "API container is not running (status: $container_status)"
+        if [[ "$container_exit_code" != "0" ]] && [[ "$container_exit_code" != "" ]]; then
+            log_error "Container exit code: $container_exit_code"
+            if [[ "$container_exit_code" == "137" ]]; then
+                log_error "Exit code 137 indicates the container was killed (likely Out of Memory - OOM)"
+                log_error "Check container logs: docker logs ${CONTAINER_PREFIX}api"
+                log_error "Check system memory: free -h"
+            fi
+        fi
+        log_error "Cannot proceed with migrations - container must be running"
+        return 1
+    fi
+    
+    # Check if container process is actually running (not just created)
+    if ! docker exec "${CONTAINER_PREFIX}api" sh -c "exit 0" >/dev/null 2>&1; then
+        log_error "API container exists but is not responding to commands"
+        log_error "Container may be crashing or in a bad state"
+        log_error "Check container logs: docker logs ${CONTAINER_PREFIX}api"
+        return 1
+    fi
+    
     # Verify container has DATABASE_URL before proceeding
     log_info "Verifying container environment..."
     if ! docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL >/dev/null 2>&1; then
@@ -1909,14 +1938,111 @@ run_migrations_safely() {
     # Use PRISMA_SCHEMA_PATH from environment or default path
     local schema_path="${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}"
     
-    # Get DATABASE_URL from container environment (it should be set by docker-compose)
-    local database_url
-    database_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "")
+    # Helper function to validate DATABASE_URL format
+    validate_database_url() {
+        local url="$1"
+        # Check if URL is empty
+        if [[ -z "$url" ]]; then
+            return 1
+        fi
+        # Check if it looks like an error message (contains common error keywords)
+        if [[ "$url" =~ (FailedPrecondition|Error|ERROR|error|container.*init process|No such container) ]]; then
+            return 1
+        fi
+        # Check if it's a valid PostgreSQL URL format
+        if [[ ! "$url" =~ ^postgresql:// ]] && [[ ! "$url" =~ ^postgres:// ]]; then
+            return 1
+        fi
+        # Check if it contains required components (@ symbol for password, :// for protocol)
+        if [[ ! "$url" =~ @ ]] || [[ ! "$url" =~ :// ]]; then
+            return 1
+        fi
+        return 0
+    }
     
-    # If DATABASE_URL is not in container, try to get it from docker-compose or use default
-    if [[ -z "$database_url" ]]; then
-        log_warning "DATABASE_URL not found in container environment, using default..."
-        database_url="postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60"
+   
+    
+    local database_url
+    local env_production_path="${SCRIPT_DIR}/../../.env.production"
+    
+    # Priority 1: Check if DATABASE_URL is set in deployment script environment (from GitHub Actions)
+    if [[ -n "${DATABASE_URL:-}" ]] && validate_database_url "${DATABASE_URL}"; then
+        database_url="${DATABASE_URL}"
+        log_info "Using DATABASE_URL from GitHub Actions/environment variable"
+    else
+        # Priority 2: Try to read from .env.production file (backup from previous deployment)
+        log_info "DATABASE_URL not found in environment, checking .env.production file..."
+        if [[ -f "$env_production_path" ]]; then
+            # Read DATABASE_URL from .env.production
+            # Handle both formats: DATABASE_URL=value and DATABASE_URL="value" or DATABASE_URL='value'
+            local env_db_url
+            env_db_url=$(grep -E "^DATABASE_URL=" "$env_production_path" 2>/dev/null | head -n 1 | sed 's/^DATABASE_URL=//' | sed 's/^["'\'']//;s/["'\'']$//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || echo "")
+            
+            if [[ -n "$env_db_url" ]] && validate_database_url "$env_db_url"; then
+                database_url="$env_db_url"
+                log_success "Using DATABASE_URL from .env.production file (backup from previous deployment)"
+            else
+                if [[ -n "$env_db_url" ]]; then
+                    log_warning "DATABASE_URL found in .env.production but is invalid format"
+                else
+                    log_warning "DATABASE_URL not found in .env.production file"
+                fi
+            fi
+        else
+            log_warning ".env.production file not found at: $env_production_path"
+        fi
+        
+        # Priority 3: Try to read from existing container environment (if container is running)
+        if [[ -z "${database_url:-}" ]]; then
+            log_info "DATABASE_URL not found in .env.production, checking existing container..."
+            if container_running "${CONTAINER_PREFIX}api"; then
+                local db_url_output
+                db_url_output=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>&1)
+                local docker_exit_code=$?
+                
+                # Check if docker exec succeeded and output is valid
+                if [[ $docker_exit_code -eq 0 ]] && validate_database_url "$db_url_output"; then
+                    database_url="$db_url_output"
+                    log_success "Using DATABASE_URL from existing container environment"
+                else
+                    log_warning "Failed to read valid DATABASE_URL from container (exit code: $docker_exit_code)"
+                    if [[ -n "$db_url_output" ]]; then
+                        log_warning "Container output (first 100 chars): ${db_url_output:0:100}***"
+                    fi
+                fi
+            else
+                log_warning "Container ${CONTAINER_PREFIX}api is not running, cannot read DATABASE_URL from container"
+            fi
+        fi
+        
+        # Priority 4: FAIL if DATABASE_URL is still not found (security - no hardcoded credentials)
+        if [[ -z "${database_url:-}" ]]; then
+            log_error "=========================================="
+            log_error "SECURITY ERROR: DATABASE_URL not found!"
+            log_error "=========================================="
+            log_error "DATABASE_URL must be provided via one of:"
+            log_error "  1. GitHub Actions environment variable/secrets (recommended)"
+            log_error "  2. .env.production file (backup from previous deployment)"
+            log_error "  3. Existing running container environment"
+            log_error ""
+            log_error "For security reasons, no hardcoded DATABASE_URL is allowed."
+            log_error "Please ensure DATABASE_URL is set in GitHub Actions secrets or .env.production file."
+            log_error ""
+            log_error "To fix:"
+            log_error "  - Set DATABASE_URL in GitHub Actions workflow secrets/env vars"
+            log_error "  - Or ensure .env.production exists with DATABASE_URL"
+            log_error "  - Or ensure container is running with DATABASE_URL in environment"
+            log_error "=========================================="
+            return 1
+        fi
+    fi
+    
+    # Final validation of the database_url we're about to use
+    if ! validate_database_url "$database_url"; then
+        log_error "ERROR: DATABASE_URL validation failed!"
+        log_error "URL value (first 100 chars): ${database_url:0:100}***"
+        log_error "This indicates a serious configuration issue - DATABASE_URL is malformed"
+        return 1
     fi
     
     # Always run password fix script first to ensure PostgreSQL password matches DATABASE_URL
@@ -1924,11 +2050,31 @@ run_migrations_safely() {
     if [[ -f "${SCRIPT_DIR}/fix-database-password.sh" ]]; then
         if "${SCRIPT_DIR}/fix-database-password.sh"; then
             log_success "Database password verified/fixed"
-            # Get updated DATABASE_URL from container after fix
-            database_url=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>/dev/null || echo "$database_url")
+            # Get updated DATABASE_URL from container after fix (with validation)
+            local updated_db_url
+            local updated_output
+            updated_output=$(docker exec "${CONTAINER_PREFIX}api" printenv DATABASE_URL 2>&1)
+            local update_exit_code=$?
+            
+            if [[ $update_exit_code -eq 0 ]] && validate_database_url "$updated_output"; then
+                database_url="$updated_output"
+                log_info "Updated DATABASE_URL from container after password fix"
+            else
+                log_warning "Could not read valid DATABASE_URL from container after password fix, keeping previous value"
+                if [[ -n "$updated_output" ]] && [[ "$updated_output" != "$database_url" ]]; then
+                    log_warning "Container returned (first 100 chars): ${updated_output:0:100}***"
+                fi
+            fi
         else
             log_warning "Password fix script had issues, but continuing..."
         fi
+    fi
+    
+    # Validate DATABASE_URL one more time before proceeding
+    if ! validate_database_url "$database_url"; then
+        log_error "ERROR: DATABASE_URL is invalid after password fix!"
+        log_error "URL value (first 100 chars): ${database_url:0:100}***"
+        return 1
     fi
     
     # Verify database connection before running migrations
@@ -2341,6 +2487,57 @@ BASELINE_SQL
                     log_error "Failed to create baseline via SQL"
                 fi
             fi
+        fi
+        
+        # Check if container crashed during migration (exit code 137 = killed, often OOM)
+        if [[ $migration_exit_code -eq 137 ]]; then
+            log_error ""
+            log_error "=========================================="
+            log_error "CRITICAL: Container was killed during migration (exit code 137)"
+            log_error "This typically indicates Out of Memory (OOM) condition"
+            log_error "=========================================="
+            
+            # Check container status
+            local container_status_after
+            container_status_after=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+            local container_exit_code_after
+            container_exit_code_after=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.State.ExitCode}}' 2>/dev/null || echo "0")
+            
+            log_error "Container status after migration failure: $container_status_after"
+            log_error "Container exit code: $container_exit_code_after"
+            
+            # Check system memory if available
+            if command -v free >/dev/null 2>&1; then
+                log_error "System memory status:"
+                free -h 2>/dev/null || true
+            fi
+            
+            # Check container memory limits
+            local mem_limit
+            mem_limit=$(docker inspect "${CONTAINER_PREFIX}api" --format '{{.HostConfig.Memory}}' 2>/dev/null || echo "unknown")
+            if [[ "$mem_limit" != "0" ]] && [[ "$mem_limit" != "unknown" ]]; then
+                local mem_limit_mb=$((mem_limit / 1024 / 1024))
+                log_error "Container memory limit: ${mem_limit_mb}MB"
+            fi
+            
+            log_error ""
+            log_error "RECOMMENDED ACTIONS:"
+            log_error "1. Increase container memory limit in docker-compose.prod.yml"
+            log_error "2. Check container logs: docker logs ${CONTAINER_PREFIX}api"
+            log_error "3. Check system memory: free -h"
+            log_error "4. Consider running migrations with lower memory footprint"
+            log_error "5. Check if other containers are consuming too much memory"
+            log_error ""
+        fi
+        
+        # Check if DATABASE_URL was corrupted in the output
+        if echo "$migration_output" | grep -q "FailedPrecondition\|container.*init process"; then
+            log_error ""
+            log_error "WARNING: Migration output contains container error messages"
+            log_error "This suggests the container crashed or is in a bad state"
+            log_error "The DATABASE_URL may have been corrupted during container failure"
+            log_error "Check container logs: docker logs ${CONTAINER_PREFIX}api"
+            log_error ""
         fi
         
         log_error "To debug, check the migration output above for Prisma errors"

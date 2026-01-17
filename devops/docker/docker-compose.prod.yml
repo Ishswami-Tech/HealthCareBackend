@@ -311,7 +311,9 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
       # Can run on 6 vCPU/12GB RAM initially (Docker will enforce limits)
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60
+      # SECURITY: DATABASE_URL must be set via GitHub Actions (environment variable) or .env.production
+      # No hardcoded default for security - prevents credential exposure
+      DATABASE_URL: ${DATABASE_URL}
       # Cache Provider Configuration (Dragonfly is the only cache provider in production)
       CACHE_PROVIDER: dragonfly
       
@@ -448,7 +450,10 @@ services:
       DOCKER_ENV: "true"
       
       # Database Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=30&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=15&max_connections=30
+      # SECURITY: DATABASE_URL must be set via GitHub Actions (environment variable) or .env.production
+      # No hardcoded default for security - prevents credential exposure
+      # Worker uses smaller connection pool (adjust connection_limit in DATABASE_URL if needed)
+      DATABASE_URL: ${DATABASE_URL}
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is the only cache provider in production)
