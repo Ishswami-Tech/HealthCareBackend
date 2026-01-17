@@ -1035,7 +1035,25 @@ deploy_application() {
             log_info "=== API Container Logs (last 100 lines) ==="
             docker logs --tail 100 "$api_container" 2>&1 || true
             log_info "=== Checking health endpoint directly ==="
-            docker exec "$api_container" curl -s http://localhost:8088/health 2>&1 || echo "Health endpoint not accessible"
+            # Use Node.js instead of curl (curl not available in container)
+            docker exec "$api_container" node -e "
+                const http = require('http');
+                http.get('http://localhost:8088/health', (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => { data += chunk; });
+                    res.on('end', () => {
+                        console.log('Status:', res.statusCode);
+                        console.log('Response:', data);
+                        process.exit(res.statusCode === 200 ? 0 : 1);
+                    });
+                }).on('error', (err) => {
+                    console.error('Error:', err.message);
+                    process.exit(1);
+                }).setTimeout(5000, () => {
+                    console.error('Timeout');
+                    process.exit(1);
+                });
+            " 2>&1 || echo "Health endpoint not accessible"
             rollback_deployment
             return 1
         fi
@@ -1248,15 +1266,26 @@ verify_application_health() {
     log_info "Using /health endpoint - this requires actual database connection (no grace period)"
     
     while [[ $elapsed -lt $health_timeout ]]; do
-        # Try internal health check first (requires actual database connection)
-        local health_response=$(docker exec "$api_container" curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
+        # Try internal health check using Node.js (curl not available in container)
+        # Use Node.js to make HTTP request since it's available in the container
+        local health_response="000"
+        if docker exec "$api_container" node -e "
+            const http = require('http');
+            const req = http.get('http://localhost:8088/health', (res) => {
+                process.exit(res.statusCode === 200 ? 0 : 1);
+            });
+            req.on('error', () => process.exit(1));
+            req.setTimeout(5000, () => { req.destroy(); process.exit(1); });
+        " 2>/dev/null; then
+            health_response="200"
+        fi
         
         if [[ "$health_response" == "200" ]]; then
             log_success "Application health check passed (HTTP 200) - database is connected"
             return 0
         fi
         
-        # Try external health check
+        # Try external health check (from host, curl should be available on host)
         local external_response=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8088/health 2>/dev/null || echo "000")
         if [[ "$external_response" == "200" ]]; then
             log_success "Application health check passed (external HTTP 200) - database is connected"

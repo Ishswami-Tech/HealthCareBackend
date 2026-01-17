@@ -3,9 +3,6 @@ import { ConfigModule } from '@config';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { FastifySessionStoreAdapter } from './fastify-session-store.adapter';
-// Import directly from database.module to avoid TDZ with @infrastructure/database barrel.
-// GuardsModule->SessionModule->barrel caused "Cannot access '_databasemodule' before initialization".
-// Use forwardRef to break circular dependency: GuardsModule -> SessionModule -> CacheModule -> GuardsModule
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
@@ -35,8 +32,8 @@ import { LoggingModule } from '@infrastructure/logging';
   imports: [
     ConfigModule,
     JwtModule,
-    forwardRef(() => DatabaseModule), // Use forwardRef to break circular dependency
-    forwardRef(() => CacheModule), // Required for FastifySessionStoreAdapter to use CacheService
+    forwardRef(() => DatabaseModule),
+    forwardRef(() => CacheModule),
     // Use forwardRef to break: GuardsModule -> SessionModule -> CacheModule -> GuardsModule
     LoggingModule,
   ],
