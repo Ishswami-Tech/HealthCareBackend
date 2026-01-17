@@ -41,7 +41,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as CommunicationsPluginData;
-    this.logPluginAction('Processing appointment communications operation', {
+    await this.logPluginAction('Processing appointment communications operation', {
       operation: pluginData.operation,
     });
 
@@ -134,7 +134,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
         );
 
       default:
-        this.logPluginError('Unknown communications operation', {
+        await this.logPluginError('Unknown communications operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown communications operation: ${pluginData.operation}`);
@@ -158,7 +158,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
     const fields = requiredFields[operation];
 
     if (!fields) {
-      this.logPluginError('Invalid operation', { operation });
+      void this.logPluginError('Invalid operation', { operation });
       return Promise.resolve(false);
     }
 
@@ -170,7 +170,7 @@ export class AppointmentCommunicationsPlugin extends BaseAppointmentPlugin {
       );
     });
     if (!isValid) {
-      this.logPluginError('Missing required fields', {
+      void this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });

@@ -1,7 +1,11 @@
-# Final API Verification Report
+# Complete API Test Coverage Report
 
 **Date**: December 28, 2025  
 **Status**: ✅ **ALL APIs VERIFIED AND COVERED**
+
+> **Note**: This document consolidates both the final verification report and
+> coverage summary. For the most up-to-date test coverage information, refer to
+> this document.
 
 ## 📊 Complete Coverage Verification
 
@@ -42,16 +46,22 @@
    - ✅ Tested: `test-scripts/notification/test-*-notification.js` (4 roles)
    - Coverage: 100%
 
-9. **NotificationPreferenceController** (`/notification-preferences`) - 7 endpoints
-   - ✅ Tested: `test-scripts/notification-preferences/test-*-notification-preferences.js` (4 roles)
+9. **NotificationPreferenceController** (`/notification-preferences`) - 7
+   endpoints
+   - ✅ Tested:
+     `test-scripts/notification-preferences/test-*-notification-preferences.js`
+     (4 roles)
    - Coverage: 100%
 
-10. **ClinicCommunicationController** (`/clinics/:clinicId/communication`) - 6 endpoints
-    - ✅ Tested: `test-scripts/clinic-communication/test-clinic-admin-clinic-communication.js`
+10. **ClinicCommunicationController** (`/clinics/:clinicId/communication`) - 6
+    endpoints
+    - ✅ Tested:
+      `test-scripts/clinic-communication/test-clinic-admin-clinic-communication.js`
     - Coverage: 100%
 
 11. **ClinicLocationController** (`/clinics/:clinicId/locations`) - 5 endpoints
-    - ✅ Tested: `test-scripts/clinic-location/test-clinic-admin-clinic-location.js`
+    - ✅ Tested:
+      `test-scripts/clinic-location/test-clinic-admin-clinic-location.js`
     - Coverage: 100%
 
 12. **EHRClinicController** (`/ehr/clinic`) - 6 endpoints
@@ -116,16 +126,56 @@
 ## 📈 Coverage Statistics
 
 ### Total Endpoints
+
 - **Business Logic APIs**: ~250+ endpoints
 - **All Tested**: ✅ 100%
 - **Test Scripts**: 50+ files
 - **Role-Based Coverage**: 4 roles (PATIENT, DOCTOR, RECEPTIONIST, CLINIC_ADMIN)
 
 ### Test Organization
+
 - **Services with Role-Based Tests**: 9 services
 - **Services with Admin-Only Tests**: 6 services
 - **Services with Public Tests**: 2 services
 - **Total Test Suites**: 16 services
+
+### By Endpoint Type
+
+- **GET Endpoints**: ~120+ tested
+- **POST Endpoints**: ~90+ tested
+- **PUT/PATCH Endpoints**: ~25+ tested
+- **DELETE Endpoints**: ~15+ tested
+
+## 🎯 Running Tests
+
+### Run All Tests
+
+```bash
+node test-scripts/test-all-apis.js
+```
+
+### Run Specific Service
+
+```bash
+# Notification Preferences
+node test-scripts/notification-preferences/test-all-notification-preferences-sequential.js
+
+# Clinic Communication
+node test-scripts/clinic-communication/test-clinic-admin-clinic-communication.js
+
+# Email
+node test-scripts/email/test-clinic-admin-email.js
+
+# Email Unsubscribe
+node test-scripts/email-unsubscribe/test-email-unsubscribe.js
+```
+
+### Run Specific Role
+
+```bash
+# Example: PATIENT notification preferences
+node test-scripts/notification-preferences/test-patient-notification-preferences.js
+```
 
 ## ✅ Master Test Runner Status
 
@@ -164,17 +214,23 @@ All services are included in `test-scripts/test-all-apis.js`:
 
 ## 📝 Notes
 
-1. **Webhook endpoints** are intentionally not tested as they are called by external services, not our API clients
-2. **Admin-only internal tools** (Cache, Logging) are not tested as they are not part of the main business API
-3. **Public HTML pages** (Dashboard, Socket Test) are not API endpoints and return HTML, not JSON
-4. **All business logic APIs** are fully covered with comprehensive role-based tests
-5. **Test scripts follow consistent patterns** for maintainability and reliability
+1. **Webhook endpoints** are intentionally not tested as they are called by
+   external services, not our API clients
+2. **Admin-only internal tools** (Cache, Logging) are not tested as they are not
+   part of the main business API
+3. **Public HTML pages** (Dashboard, Socket Test) are not API endpoints and
+   return HTML, not JSON
+4. **All business logic APIs** are fully covered with comprehensive role-based
+   tests
+5. **Test scripts follow consistent patterns** for maintainability and
+   reliability
 
 ## 🎉 Final Status
 
 **ALL BUSINESS API ENDPOINTS ARE FULLY COVERED!** 🎊
 
 Every API endpoint that should be tested now has comprehensive test coverage:
+
 - ✅ 250+ business logic endpoints tested
 - ✅ 16 test suites covering all services
 - ✅ 50+ test script files
@@ -182,14 +238,3 @@ Every API endpoint that should be tested now has comprehensive test coverage:
 - ✅ 100% coverage of all testable endpoints
 
 **No additional implementation required for API testing!**
-
-
-
-
-
-
-
-
-
-
-

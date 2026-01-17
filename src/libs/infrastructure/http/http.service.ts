@@ -189,27 +189,80 @@ export class HttpService {
     // Create observable with retry logic
     const request$ = this.nestHttpService.request<T>(axiosConfig).pipe(
       catchError((error: unknown) => {
-        // Log error
+        // Log error with detailed information
+        const axiosError = error as {
+          code?: string;
+          errno?: string;
+          syscall?: string;
+          address?: string;
+          port?: number;
+          message?: string;
+          config?: { url?: string };
+          response?: { status?: number; statusText?: string; data?: unknown };
+        };
+        const errorCode = axiosError.code || (error as { code?: string })?.code;
+        const errorMessage =
+          axiosError.message || (error instanceof Error ? error.message : String(error));
+
+        // Use original requested URL, not the URL from error.config (which might be after redirects)
+        // This ensures we log the URL that was actually requested, not a redirected URL
+        const loggedUrl = url; // Always use the original URL parameter
+
+        // Determine log level based on error type and context
+        // Health check failures and connection errors are less critical than application errors
+        // Also check if this is a logger endpoint check (should use localhost, not external URL)
+        const isHealthCheck = url.includes('/health') || url.includes('/api/health');
+        const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
+        const isOpenViduCheck =
+          url.includes('openvidu') || url.includes('backend-service-v1-video');
+        const errorStatus = axiosError.response?.status;
+        // 403/401 from OpenVidu are expected (server is responding, just blocking access)
+        // These should be treated as healthy, not logged as errors
+        const isExpectedOpenVidu403 =
+          isOpenViduCheck && (errorStatus === 403 || errorStatus === 401);
+        const isConnectionError =
+          errorCode === 'ECONNREFUSED' ||
+          errorCode === 'ENOTFOUND' ||
+          errorCode === 'ETIMEDOUT' ||
+          errorCode === 'EHOSTUNREACH' ||
+          errorCode === 'ENETUNREACH';
+        const isExpectedFailure =
+          isHealthCheck || isConnectionError || isLoggerCheck || isExpectedOpenVidu403;
+        // Don't log at all for expected OpenVidu 403/401 (they're treated as healthy)
+        const shouldSkipLogging = isExpectedOpenVidu403;
+        const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
+        const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+
+        // Skip logging for expected OpenVidu 403/401 responses (they're treated as healthy)
+        // The validateStatus function will handle these as valid responses
+        if (shouldSkipLogging) {
+          // Still throw the error so validateStatus can handle it, but don't log
+          return throwError(() => error);
+        }
+
         if (this.loggingService) {
           void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.ERROR,
-            `HTTP ${method} ${url} failed`,
+            logType,
+            logLevel,
+            `HTTP ${method} ${loggedUrl} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
             'HttpService',
             {
               requestId,
               method,
-              url,
-              error: error instanceof Error ? error.message : String(error),
-              statusCode:
-                error &&
-                typeof error === 'object' &&
-                'response' in error &&
-                error.response &&
-                typeof error.response === 'object' &&
-                'status' in error.response
-                  ? (error.response.status as number)
-                  : undefined,
+              url: loggedUrl, // Use original URL, not redirected URL
+              originalUrl: url, // Keep original for reference
+              errorUrl: axiosError.config?.url, // Show if different (redirect happened)
+              error: errorMessage,
+              errorCode,
+              errno: axiosError.errno,
+              syscall: axiosError.syscall,
+              address: axiosError.address,
+              port: axiosError.port,
+              responseStatus: axiosError.response?.status,
+              responseStatusText: axiosError.response?.statusText,
+              isHealthCheck,
+              isLoggerCheck,
+              isConnectionError,
             }
           );
         }
@@ -325,16 +378,63 @@ export class HttpService {
       // Network or other errors
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      // Extract more detailed error information
+      const axiosError = error as {
+        code?: string;
+        errno?: string;
+        syscall?: string;
+        address?: string;
+        port?: number;
+        message?: string;
+        response?: { status?: number; statusText?: string; data?: unknown };
+      };
+
+      const errorCode = axiosError.code || (error as { code?: string })?.code;
+      const errorDetails = {
+        url,
+        method,
+        requestDuration,
+        error: errorMessage,
+        errorCode,
+        errno: axiosError.errno,
+        syscall: axiosError.syscall,
+        address: axiosError.address,
+        port: axiosError.port,
+      };
+
+      // Determine log level based on error type and context
+      // Health check failures and connection errors are less critical than application errors
+      const isHealthCheck = url.includes('/health') || url.includes('/api/health');
+      const isConnectionError =
+        errorCode === 'ECONNREFUSED' ||
+        errorCode === 'ENOTFOUND' ||
+        errorCode === 'ETIMEDOUT' ||
+        errorCode === 'EHOSTUNREACH' ||
+        errorCode === 'ENETUNREACH';
+      const isExpectedFailure = isHealthCheck || isConnectionError;
+      const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
+      const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
+
+      // Log detailed error for debugging (especially for connection errors)
+      if (this.loggingService) {
+        void this.loggingService.log(
+          logType,
+          logLevel,
+          `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (code: ${errorCode})` : ''}`,
+          'HttpService.request',
+          {
+            ...errorDetails,
+            isHealthCheck,
+            isConnectionError,
+          }
+        );
+      }
+
       throw new HealthcareError(
         ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
-        `HTTP ${method} ${url} failed: ${errorMessage}`,
+        `HTTP ${method} ${url} failed: ${errorMessage}${errorCode ? ` (${errorCode})` : ''}`,
         undefined,
-        {
-          url,
-          method,
-          requestDuration,
-          error: errorMessage,
-        },
+        errorDetails,
         'HttpService.request'
       );
     }

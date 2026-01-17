@@ -1,14 +1,21 @@
 # Email Integration Guide
 
-**Purpose:** Complete guide for email system integration, configuration, and troubleshooting  
+**Purpose:** Complete guide for email system integration, configuration, and
+troubleshooting  
 **Status:** ✅ Production-ready  
 **Last Updated:** 2025
 
 > **📚 Related Guides:**
-> - **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** - Comprehensive overview of all communication channels (email, push, WhatsApp, SMS)
-> - **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** - Detailed AWS SES setup and configuration
-> 
-> **When to use this guide:** Use this guide for detailed email provider setup (ZeptoMail, AWS SES, SMTP). For system-wide communication overview, see the Communication System Complete Guide.
+>
+> - **[Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md)** -
+>   Comprehensive overview of all communication channels (email, push, WhatsApp,
+>   SMS)
+> - **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** - Detailed AWS SES
+>   setup and configuration
+>
+> **When to use this guide:** Use this guide for detailed email provider setup
+> (ZeptoMail, AWS SES, SMTP). For system-wide communication overview, see the
+> Communication System Complete Guide.
 
 ---
 
@@ -30,16 +37,17 @@
 
 ## Overview
 
-The Healthcare Backend supports **multiple email providers** through a flexible, multi-tenant architecture:
+The Healthcare Backend supports **multiple email providers** through a flexible,
+multi-tenant architecture:
 
 ### Supported Providers
 
-| Provider | Status | Usage | Default |
-|----------|--------|-------|---------|
-| **ZeptoMail** | ✅ Primary | Multi-tenant + Legacy | ✅ Yes |
-| **AWS SES** | ✅ Available | Multi-tenant only | No |
-| **SMTP** | ✅ Available | Multi-tenant + Legacy | No |
-| **Mailtrap** | ✅ Available | Legacy only (dev/test) | No |
+| Provider      | Status       | Usage                  | Default |
+| ------------- | ------------ | ---------------------- | ------- |
+| **ZeptoMail** | ✅ Primary   | Multi-tenant + Legacy  | ✅ Yes  |
+| **AWS SES**   | ✅ Available | Multi-tenant only      | No      |
+| **SMTP**      | ✅ Available | Multi-tenant + Legacy  | No      |
+| **Mailtrap**  | ✅ Available | Legacy only (dev/test) | No      |
 
 ### System Architecture
 
@@ -55,6 +63,7 @@ The system uses **two parallel paths**:
 ### Multi-Tenant System (Recommended)
 
 **Flow:**
+
 ```
 EmailService.sendSimpleEmail(options, clinicId)
   ↓
@@ -70,6 +79,7 @@ Email sent via provider-specific API
 ```
 
 **Used By:**
+
 - `CommunicationService.sendEmail()` - Extracts `clinicId` from metadata
 - `AuthService.requestOtp()` - Passes `clinicId` when available
 - `AppointmentNotificationService` - Uses `clinicId` from notification data
@@ -77,6 +87,7 @@ Email sent via provider-specific API
 ### Legacy System (Backward Compatibility)
 
 **Flow:**
+
 ```
 EmailService.sendEmail(options) // no clinicId
   ↓
@@ -89,6 +100,7 @@ Email sent via legacy provider
 ```
 
 **Used By:**
+
 - Services that don't have `clinicId` context
 - Legacy code paths
 
@@ -98,9 +110,11 @@ Email sent via legacy provider
 
 ### Overview
 
-**ZeptoMail** (Zoho's transactional email service) is the **primary email provider** for all clinics.
+**ZeptoMail** (Zoho's transactional email service) is the **primary email
+provider** for all clinics.
 
 **API Documentation:**
+
 - Official API: https://www.zoho.com/zeptomail/help/api/email-sending.html
 - NPM Package: https://www.npmjs.com/package/zeptomail
 
@@ -112,7 +126,7 @@ Email sent via legacy provider
 # ZeptoMail Configuration (Primary Email Provider)
 ZEPTOMAIL_ENABLED=true
 # Send Mail Token (without "Zoho-enczapikey" prefix - it's added automatically)
-ZEPTOMAIL_SEND_MAIL_TOKEN=PHtE6r0MRrrj2DEp9hYHs/a7H8GhMY54+...
+ZEPTOMAIL_SEND_MAIL_TOKEN=YOUR_ZEPTOMAIL_SEND_MAIL_TOKEN_HERE
 # From email must be from a verified domain in your ZeptoMail Mail Agent
 ZEPTOMAIL_FROM_EMAIL=noreply@yourdomain.com
 ZEPTOMAIL_FROM_NAME=Healthcare App
@@ -123,12 +137,14 @@ ZEPTOMAIL_API_BASE_URL=https://api.zeptomail.com/v1.1
 
 #### Token Format
 
-**Important:** The token should be provided **without** the `Zoho-enczapikey` prefix. The adapter automatically adds this prefix in the Authorization header.
+**Important:** The token should be provided **without** the `Zoho-enczapikey`
+prefix. The adapter automatically adds this prefix in the Authorization header.
 
-- ✅ **Correct**: `PHtE6r0MRrrj2DEp9hYHs/a7H8GhMY54+...`
-- ❌ **Incorrect**: `Zoho-enczapikey PHtE6r0MRrrj2DEp9hYHs/a7H8GhMY54+...`
+- ✅ **Correct**: `YOUR_ZEPTOMAIL_SEND_MAIL_TOKEN_HERE`
+- ❌ **Incorrect**: `Zoho-enczapikey YOUR_ZEPTOMAIL_SEND_MAIL_TOKEN_HERE`
 
-**Note:** If you accidentally include the prefix, the adapter will automatically strip it.
+**Note:** If you accidentally include the prefix, the adapter will automatically
+strip it.
 
 #### Getting Your Send Mail Token
 
@@ -154,7 +170,8 @@ Authorization: Zoho-enczapikey <your-send-mail-token>
 
 #### Request Format
 
-The adapter automatically formats requests according to ZeptoMail API specification:
+The adapter automatically formats requests according to ZeptoMail API
+specification:
 
 ```json
 {
@@ -187,6 +204,7 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 ### Features
 
 ✅ **Implemented:**
+
 - Email sending with full API support
 - Multi-tenant clinic-specific routing
 - Environment variable fallback
@@ -201,13 +219,16 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 ### Error Handling
 
 **Common Error Codes:**
+
 - `INVALID_CREDENTIALS`: Invalid Send Mail Token
 - `INVALID_FROM_ADDRESS`: From email not verified in Mail Agent
 - `RATE_LIMIT_EXCEEDED`: Too many requests
 - `INVALID_RECIPIENT`: Invalid recipient email address
 
 **Retry Logic:**
-- Automatic retry for retryable errors (INTERNAL_ERROR, SERVICE_UNAVAILABLE, TIMEOUT, RATE_LIMIT_EXCEEDED)
+
+- Automatic retry for retryable errors (INTERNAL_ERROR, SERVICE_UNAVAILABLE,
+  TIMEOUT, RATE_LIMIT_EXCEEDED)
 - Exponential backoff via `BaseEmailAdapter.sendWithRetry()`
 - Max retries: 3 (configurable)
 
@@ -216,6 +237,7 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 #### Issue: "ZeptoMail Send Mail Token is required"
 
 **Solution:**
+
 1. Ensure `ZEPTOMAIL_SEND_MAIL_TOKEN` is set in `.env`
 2. Or configure clinic-specific credentials in database
 3. Verify token doesn't include "Zoho-enczapikey" prefix
@@ -223,6 +245,7 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 #### Issue: "ZeptoMail fromEmail is required"
 
 **Solution:**
+
 1. Set `ZEPTOMAIL_FROM_EMAIL` in `.env`
 2. Ensure the email domain is verified in your ZeptoMail Mail Agent
 3. Or configure clinic-specific `fromEmail` in database
@@ -230,6 +253,7 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 #### Issue: Emails not being sent
 
 **Check:**
+
 1. Verify Mail Agent is active in ZeptoMail dashboard
 2. Check domain verification status
 3. Review application logs for error details
@@ -239,9 +263,11 @@ The adapter automatically formats requests according to ZeptoMail API specificat
 
 ## AWS SES Integration (Fallback)
 
-See [AWS_SES_COMPLETE_GUIDE.md](./AWS_SES_COMPLETE_GUIDE.md) for complete AWS SES setup and configuration.
+See [AWS_SES_COMPLETE_GUIDE.md](./AWS_SES_COMPLETE_GUIDE.md) for complete AWS
+SES setup and configuration.
 
 **Quick Setup:**
+
 ```env
 AWS_SES_FROM_EMAIL=noreply@yourdomain.com
 AWS_SES_FROM_NAME=Healthcare App
@@ -268,6 +294,7 @@ EMAIL_FROM=noreply@yourdomain.com
 ### Usage
 
 SMTP can be used in both:
+
 - **Multi-tenant system**: Per-clinic SMTP configuration
 - **Legacy system**: Global SMTP configuration via `EMAIL_PROVIDER=smtp`
 
@@ -280,6 +307,7 @@ SMTP can be used in both:
 Each clinic can configure its own email provider credentials:
 
 **Via API:**
+
 ```http
 PUT /api/v1/clinics/{clinicId}/communication/config
 {
@@ -310,6 +338,7 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 ```
 
 **Via Environment Variables:**
+
 ```env
 # Clinic-specific (by clinic name)
 CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=clinic_token
@@ -334,17 +363,18 @@ CLINIC_AADESH_ZEPTOMAIL_SEND_MAIL_TOKEN=clinic_token
 
 ### All Environment Files
 
-| File | Purpose | Status |
-|------|---------|--------|
-| `.env` | Local development | ✅ Configured |
+| File               | Purpose                 | Status        |
+| ------------------ | ----------------------- | ------------- |
+| `.env`             | Local development       | ✅ Configured |
 | `.env.development` | Development environment | ✅ Configured |
-| `.env.production` | Production environment | ✅ Configured |
-| `.env.example` | Template for new setups | ✅ Configured |
-| `.env.local` | Local overrides | ✅ Configured |
+| `.env.production`  | Production environment  | ✅ Configured |
+| `.env.example`     | Template for new setups | ✅ Configured |
+| `.env.local`       | Local overrides         | ✅ Configured |
 
 ### Required Variables
 
 **ZeptoMail (Primary):**
+
 ```env
 ZEPTOMAIL_ENABLED=true
 ZEPTOMAIL_SEND_MAIL_TOKEN=your_token
@@ -354,6 +384,7 @@ ZEPTOMAIL_BOUNCE_ADDRESS=bounces@yourdomain.com
 ```
 
 **AWS SES (Optional):**
+
 ```env
 AWS_SES_FROM_EMAIL=noreply@yourdomain.com
 AWS_SES_FROM_NAME=Healthcare App
@@ -363,6 +394,7 @@ AWS_SECRET_ACCESS_KEY=your_secret
 ```
 
 **SMTP (Optional):**
+
 ```env
 EMAIL_HOST=smtp.yourdomain.com
 EMAIL_PORT=587
@@ -428,24 +460,29 @@ await emailService.sendEmail({
 ### Retry Logic
 
 The system includes automatic retry logic for retryable errors:
-- **Retryable Errors**: INTERNAL_ERROR, SERVICE_UNAVAILABLE, TIMEOUT, RATE_LIMIT_EXCEEDED
+
+- **Retryable Errors**: INTERNAL_ERROR, SERVICE_UNAVAILABLE, TIMEOUT,
+  RATE_LIMIT_EXCEEDED
 - **Max Retries**: 3 (configurable)
 - **Backoff Strategy**: Exponential backoff
 
 ### Error Codes
 
 **ZeptoMail:**
+
 - `INVALID_CREDENTIALS`: Invalid token
 - `INVALID_FROM_ADDRESS`: Unverified domain
 - `RATE_LIMIT_EXCEEDED`: Too many requests
 - `INVALID_RECIPIENT`: Invalid email address
 
 **AWS SES:**
+
 - `MessageRejected`: Email rejected
 - `MailFromDomainNotVerified`: Domain not verified
 - `AccountSendingPaused`: Account paused
 
 **SMTP:**
+
 - Connection errors
 - Authentication failures
 - Timeout errors
@@ -459,6 +496,7 @@ The system includes automatic retry logic for retryable errors:
 #### 1. Emails Not Sending
 
 **Check:**
+
 - Verify provider credentials are correct
 - Check domain verification status (ZeptoMail/AWS SES)
 - Review application logs for errors
@@ -468,6 +506,7 @@ The system includes automatic retry logic for retryable errors:
 #### 2. Multi-Tenant Routing Not Working
 
 **Check:**
+
 - Ensure `clinicId` is provided in email calls
 - Verify clinic configuration exists in database
 - Check environment variable patterns
@@ -476,6 +515,7 @@ The system includes automatic retry logic for retryable errors:
 #### 3. Wrong Provider Being Used
 
 **Check:**
+
 - Verify `EMAIL_PROVIDER` env var (for legacy system)
 - Check clinic configuration in database
 - Review provider priority settings
@@ -537,8 +577,11 @@ The system includes automatic retry logic for retryable errors:
 
 ## Related Documentation
 
-- [Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) - Main overview
-- [AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md) - AWS SES setup, best practices, and compliance audit
-- [Superadmin Clinic Management](./SUPERADMIN_CLINIC_MANAGEMENT.md) - Clinic configuration
-- [Admin Clinic Credentials Setup](./SUPERADMIN_CLINIC_MANAGEMENT.md#communication-configuration) - Credential management
-
+- [Communication System Complete Guide](./COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) -
+  Main overview
+- [AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md) - AWS SES setup, best
+  practices, and compliance audit
+- [Superadmin Clinic Management](./SUPERADMIN_CLINIC_MANAGEMENT.md) - Clinic
+  configuration
+- [Admin Clinic Credentials Setup](./SUPERADMIN_CLINIC_MANAGEMENT.md#communication-configuration) -
+  Credential management

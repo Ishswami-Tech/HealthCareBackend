@@ -51,14 +51,32 @@ export default function createStagingConfig(): Config {
       apiPrefix: getEnvWithDefault('API_PREFIX', DEFAULT_CONFIG.API_PREFIX),
       environment: 'production' as const, // Use production type for staging (same security level)
       isDev: false, // Not development mode
-      host: getEnvWithDefault(ENV_VARS.HOST, 'staging-api.ishswami.in'),
+      host:
+        getEnv(ENV_VARS.HOST) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.HOST}. Please set HOST in .env.staging`
+          );
+        })(),
       bindAddress: getEnvWithDefault(ENV_VARS.BIND_ADDRESS, '0.0.0.0'),
+      // CRITICAL: Must be set via BASE_URL or API_URL environment variable (no hardcoded defaults)
       baseUrl: removeTrailingSlash(
-        getEnvWithDefault(ENV_VARS.BASE_URL, '') ||
-          getEnvWithDefault(ENV_VARS.API_URL, '') ||
-          'http://staging-api.ishswami.in'
+        getEnv(ENV_VARS.BASE_URL) ||
+          getEnv(ENV_VARS.API_URL) ||
+          (() => {
+            throw new Error(
+              `Missing required environment variable: ${ENV_VARS.BASE_URL} or ${ENV_VARS.API_URL}. ` +
+                `Please set BASE_URL or API_URL in .env.staging`
+            );
+          })()
       ),
-      apiUrl: getEnvWithDefault(ENV_VARS.API_URL, 'http://staging-api.ishswami.in'),
+      apiUrl:
+        getEnv(ENV_VARS.API_URL) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.API_URL}. Please set API_URL in .env.staging`
+          );
+        })(),
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
@@ -67,14 +85,26 @@ export default function createStagingConfig(): Config {
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, ''),
       prismaStudio: getEnvWithDefault(ENV_VARS.PRISMA_STUDIO_URL, '/prisma'),
-      frontend: getEnvWithDefault(ENV_VARS.FRONTEND_URL, 'http://staging.ishswami.in'),
+      frontend:
+        getEnv(ENV_VARS.FRONTEND_URL) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.FRONTEND_URL}. Please set FRONTEND_URL in .env.staging`
+          );
+        })(),
     },
     database: {
       // Use helper functions (which use dotenv) for environment variable access
+      // SECURITY: No hardcoded database URLs with passwords in staging
       url:
-        getEnvWithDefault('DATABASE_URL_STAGING', '') ||
-        getEnvWithDefault(ENV_VARS.DATABASE_URL, '') ||
-        'postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20',
+        getEnv(ENV_VARS.DATABASE_URL) ||
+        getEnv('DATABASE_URL_STAGING') ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.DATABASE_URL}. ` +
+              `Please set DATABASE_URL in .env.staging`
+          );
+        })(),
       sqlInjectionPrevention: {
         enabled: getEnvBoolean('DB_SQL_INJECTION_PREVENTION', true), // Production-like security
       },
@@ -143,10 +173,20 @@ export default function createStagingConfig(): Config {
     },
     cors: {
       // Use helper functions (which use dotenv) for environment variable access
-      origin: getEnvWithDefault(
-        ENV_VARS.CORS_ORIGIN,
-        'https://staging.ishswami.in,https://www.staging.ishswami.in'
-      ),
+      origin:
+        getEnv(ENV_VARS.CORS_ORIGIN) ||
+        (() => {
+          // CORS_ORIGIN is recommended but not required - derive from FRONTEND_URL if not set
+          const frontendUrl = getEnv(ENV_VARS.FRONTEND_URL);
+          if (frontendUrl) {
+            const domain = frontendUrl.replace(/^https?:\/\//, '').split('/')[0];
+            return `https://${domain},https://www.${domain}`;
+          }
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.CORS_ORIGIN} or ${ENV_VARS.FRONTEND_URL}. ` +
+              `Please set CORS_ORIGIN or FRONTEND_URL in .env.staging`
+          );
+        })(),
       credentials: getEnvBoolean('CORS_CREDENTIALS', true),
       methods: getEnvWithDefault('CORS_METHODS', 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'),
     },

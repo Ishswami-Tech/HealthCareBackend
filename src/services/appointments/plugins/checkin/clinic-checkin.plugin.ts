@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { CheckInService } from './check-in.service';
 import type { CheckInData } from '@core/types/appointment.types';
+import { LoggingService } from '@logging';
 
 interface CheckInPluginData {
   operation: string;
@@ -21,13 +22,18 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   readonly version = '1.0.0';
   readonly features = ['check-in', 'queue-management', 'consultation-start'];
 
-  constructor(private readonly checkInService: CheckInService) {
-    super();
+  constructor(
+    private readonly checkInService: CheckInService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as CheckInPluginData;
-    this.logPluginAction('Processing clinic check-in operation', {
+    await this.logPluginAction('Processing clinic check-in operation', {
       operation: pluginData.operation,
     });
 
@@ -120,14 +126,14 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
         );
 
       default:
-        this.logPluginError('Unknown check-in operation', {
+        await this.logPluginError('Unknown check-in operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown check-in operation: ${pluginData.operation}`);
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as CheckInPluginData;
     // Validate that required fields are present for each operation
     const requiredFields: Record<string, string[]> = {
@@ -148,8 +154,8 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     const fields = requiredFields[operation];
 
     if (!fields) {
-      this.logPluginError('Invalid operation', { operation });
-      return Promise.resolve(false);
+      await this.logPluginError('Invalid operation', { operation });
+      return false;
     }
 
     const isValid = fields.every((field: unknown) => {
@@ -159,12 +165,12 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       );
     });
     if (!isValid) {
-      this.logPluginError('Missing required fields', {
+      await this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });
     }
 
-    return Promise.resolve(isValid);
+    return isValid;
   }
 }

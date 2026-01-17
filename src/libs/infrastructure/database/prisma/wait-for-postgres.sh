@@ -34,7 +34,7 @@ rm -rf /app/node_modules/.prisma
 
 # Generate Prisma Client
 echo "Generating Prisma Client..."
-npx prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma
+yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js
 
 # Verify client generation
 if [ ! -d "/app/node_modules/.prisma/client" ]; then
@@ -44,7 +44,7 @@ fi
 
 # Run Prisma Migrations
 echo "Running Prisma Migrations..."
-npx prisma migrate deploy --schema=./src/libs/infrastructure/database/prisma/schema.prisma
+yarn prisma migrate deploy --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js
 
 # Don't automatically reset the database in production-like environments
 if [ "$NODE_ENV" = "development" ] || [ "$APP_ENV" = "development" ]; then
@@ -52,14 +52,14 @@ if [ "$NODE_ENV" = "development" ] || [ "$APP_ENV" = "development" ]; then
   # Only reset if explicitly requested via environment variable
   if [ "$RESET_DB" = "true" ]; then
     echo "Resetting database as requested..."
-    npx prisma migrate reset --force --schema=./src/libs/infrastructure/database/prisma/schema.prisma
+    yarn prisma migrate reset --force --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js
   fi
   
   # Check if seeding has already been done
   if [ ! -f "$SEED_FLAG_FILE" ]; then
     # Seed the database using the regular seed.ts
     echo "Seeding the database using seed.ts..."
-    npx ts-node src/libs/infrastructure/database/prisma/seed.ts
+    yarn ts-node src/libs/infrastructure/database/prisma/seed.ts
     
     # Create a flag file to indicate that seeding has been done
     touch "$SEED_FLAG_FILE"

@@ -76,7 +76,7 @@ function setupConsoleRedirect(loggingService: LoggingService) {
 }
 
 // Add environment type
-const validEnvironments = ['development', 'production', 'staging', 'test'] as const;
+const validEnvironments = ['development', 'production', 'staging', 'test', 'local-prod'] as const;
 type Environment = (typeof validEnvironments)[number];
 
 // Framework adapter instance - initialized in bootstrap
@@ -637,7 +637,8 @@ async function bootstrap() {
     let envConfig: ReturnType<typeof productionConfig> | ReturnType<typeof developmentConfig>;
     if (environment === 'production') {
       envConfig = productionConfig();
-    } else if (environment === 'staging') {
+    } else if (environment === 'staging' || environment === 'local-prod') {
+      // local-prod uses staging config (production-like but for local testing)
       envConfig = stagingConfig();
     } else if (environment === 'test') {
       envConfig = testConfig();
@@ -774,13 +775,28 @@ async function bootstrap() {
     const validationPipeOptions: ValidationPipeOptions =
       ValidationPipeConfig.getOptions(loggingService);
 
+    // CRITICAL: For URI-based versioning, we need to split the prefix
+    // If apiPrefix is '/api/v1', we use '/api' as global prefix and 'v' as version prefix
+    // This allows routes to be accessible at /api/v1/... via URI versioning
+    let globalPrefixForConfig = apiPrefix;
+    let versioningUriPrefix: string | undefined;
+
+    // If prefix contains /v1, /v2, etc., extract it for URI versioning
+    if (apiPrefix && /\/v\d+$/.test(apiPrefix)) {
+      // Extract base prefix (e.g., '/api' from '/api/v1')
+      globalPrefixForConfig = apiPrefix.replace(/\/v\d+$/, '');
+      // Set version prefix to 'v' for URI versioning
+      versioningUriPrefix = 'v';
+    }
+
     const middlewareConfig: MiddlewareConfig = {
       validationPipe: validationPipeOptions,
       enableVersioning: true,
-      versioningType: 'header',
-      versioningHeader: 'X-API-Version',
+      versioningType: 'uri',
+      versioningUriPrefix: versioningUriPrefix || 'v',
       defaultVersion: '1',
-      ...(apiPrefix && apiPrefix.trim() !== '' && { globalPrefix: apiPrefix }),
+      ...(globalPrefixForConfig &&
+        globalPrefixForConfig.trim() !== '' && { globalPrefix: globalPrefixForConfig }),
       prefixExclude: [
         { path: '', method: 'GET' },
         { path: '/', method: 'GET' },
@@ -1150,7 +1166,7 @@ async function bootstrap() {
                   setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
                 } else {
                   logger.error(
-                    `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: pnpm prisma:studio`
+                    `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
                   );
                 }
               });
@@ -1164,7 +1180,7 @@ async function bootstrap() {
                     setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
                   } else if (code !== 0) {
                     logger.error(
-                      `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: pnpm prisma:studio`
+                      `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
                     );
                   }
                 } else {
@@ -1200,7 +1216,7 @@ async function bootstrap() {
                 setTimeout(() => startPrismaStudio(retryCount + 1), retryDelay);
               } else {
                 logger.error(
-                  `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: pnpm prisma:studio`
+                  `[Prisma Studio] Failed to start after ${maxRetries} retries. You can start it manually with: yarn prisma:studio`
                 );
               }
             }
@@ -1300,18 +1316,22 @@ async function bootstrap() {
         await loggingService.log(
           LogType.ERROR,
           AppLogLevel.ERROR,
-          `Failed to start application: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
+          `Failed to start application: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
           'Bootstrap',
           {
-            _error: _error instanceof Error ? _error.message : 'Unknown _error',
+            error: _error instanceof Error ? _error.message : 'Unknown error',
             stack: _error instanceof Error ? _error.stack : 'No stack trace available',
             details: _error,
           }
         );
       } catch (logError) {
+        // Last resort - LoggingService itself failed
+        // These logs will NOT appear in logger dashboard, only in terminal
         console.error('CRITICAL: Failed to log through LoggingService:', logError);
       }
     } else {
+      // Last resort - LoggingService not available
+      // These logs will NOT appear in logger dashboard, only in terminal
       console.error('CRITICAL: Failed to start application:', _error);
     }
 
@@ -1320,7 +1340,27 @@ async function bootstrap() {
         await app.close();
       }
     } catch (closeError) {
-      console.error('CRITICAL: Failed to close application:', closeError);
+      // Try to log close error through LoggingService if available
+      if (loggingService) {
+        try {
+          await loggingService.log(
+            LogType.ERROR,
+            AppLogLevel.ERROR,
+            'Failed to close application',
+            'Bootstrap',
+            {
+              error: closeError instanceof Error ? closeError.message : String(closeError),
+              stack: closeError instanceof Error ? closeError.stack : undefined,
+            }
+          );
+        } catch {
+          // Last resort - LoggingService failed
+          console.error('CRITICAL: Failed to close application:', closeError);
+        }
+      } else {
+        // Last resort - LoggingService not available
+        console.error('CRITICAL: Failed to close application:', closeError);
+      }
     }
 
     process.exit(1);
@@ -1328,6 +1368,9 @@ async function bootstrap() {
 }
 
 bootstrap().catch((_error: unknown) => {
+  // Bootstrap-level error handler - LoggingService may not be available yet
+  // This is the absolute last resort - LoggingService is not initialized at this point
+  // These logs will NOT appear in logger dashboard, only in terminal
   console.error('CRITICAL: Fatal error during bootstrap:', _error);
   process.exit(1);
 });

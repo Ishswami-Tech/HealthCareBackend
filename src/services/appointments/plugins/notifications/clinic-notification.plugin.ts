@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentNotificationService } from './appointment-notification.service';
+import { LoggingService } from '@infrastructure/logging';
 import type { NotificationData } from '@core/types/appointment.types';
 
 interface NotificationPluginData {
@@ -37,13 +38,18 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
     'notification-analytics',
   ];
 
-  constructor(private readonly notificationService: AppointmentNotificationService) {
-    super();
+  constructor(
+    private readonly notificationService: AppointmentNotificationService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as NotificationPluginData;
-    this.logPluginAction('Processing clinic notification operation', {
+    await this.logPluginAction('Processing clinic notification operation', {
       operation: pluginData.operation,
     });
 
@@ -103,14 +109,14 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         return await this.sendAppointmentCancellation(data);
 
       default:
-        this.logPluginError('Unknown notification operation', {
+        await this.logPluginError('Unknown notification operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown notification operation: ${pluginData.operation}`);
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as NotificationPluginData;
     const requiredFields: Record<string, string[]> = {
       sendNotification: ['notificationData'],
@@ -132,14 +138,14 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
     const required = requiredFields[operation];
 
     if (!required) {
-      this.logPluginError('Unknown operation for validation', { operation });
+      await this.logPluginError('Unknown operation for validation', { operation });
       return Promise.resolve(false);
     }
 
     for (const field of required) {
       const fieldValue = (pluginData as unknown as Record<string, unknown>)[field];
       if (!fieldValue) {
-        this.logPluginError(`Missing required field: ${field}`, {
+        await this.logPluginError(`Missing required field: ${field}`, {
           operation,
           field,
         });

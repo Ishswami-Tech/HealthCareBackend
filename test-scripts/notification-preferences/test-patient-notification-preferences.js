@@ -129,14 +129,3 @@ runPatientNotificationPreferenceTests().catch(error => {
   console.error('Patient notification preference tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-

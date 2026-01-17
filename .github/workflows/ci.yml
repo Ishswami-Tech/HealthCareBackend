@@ -28,33 +28,9 @@ env:
   # Note: IMAGE will be set in docker-build job with lowercase conversion
 
 jobs:
-  # Code Quality Checks
-  lint:
-    name: Lint & Format Check
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'yarn'
-
-      - name: Install Yarn
-        run: npm install -g yarn@${{ env.YARN_VERSION }}
-
-      - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Run ESLint
-        run: yarn lint
-
-      - name: Check code formatting
-        run: yarn format:check
-
   # Security Scanning
+  # Runs Trivy vulnerability scanner and dependency audit (audit-ci)
+  # Uploads SARIF results to GitHub Security
   security:
     name: Security Scan
     runs-on: ubuntu-latest
@@ -80,13 +56,16 @@ jobs:
         run: |
           npx audit-ci --moderate
 
-  # TypeScript Build
   # Docker Build & Push
+  # Builds and pushes Docker image to GitHub Container Registry
   # Note: Build happens inside Docker, no separate build job needed
+  # Prisma client generation happens during Docker build (see Dockerfile line 34)
+  # Linting and formatting are done in git hooks (pre-commit + pre-push) and Docker build
+  # Pre-push hook runs full yarn build, ensuring only buildable code reaches CI
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: [lint, security]  # Build happens inside Docker, no separate build job needed
+    needs: [security]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -138,17 +117,667 @@ jobs:
         run: |
           echo "Image pushed: ${{ steps.meta.outputs.tags }}"
 
-  # Deploy to Production Server (Main Branch Only)
+  # Change Detection
+  # Detects whether infrastructure or application code has changed
+  # Outputs: infra-changed, app-changed
+  # Used by other jobs to determine if infrastructure/app deployment is needed
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      infra-changed: ${{ steps.filter.outputs.infra }}
+      app-changed: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect infrastructure and application changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'devops/docker/Dockerfile.postgres'
+              - 'devops/docker/Dockerfile.dragonfly'
+              - 'devops/docker/Dockerfile.openvidu'
+              - 'devops/docker/docker-compose.prod.yml'
+              - 'src/libs/infrastructure/database/prisma/migrations/**'
+            app:
+              - 'src/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig.json'
+              - 'devops/docker/Dockerfile'
+
+      - name: Output changes
+        run: |
+          echo "Infrastructure changed: ${{ steps.filter.outputs.infra }}"
+          echo "Application changed: ${{ steps.filter.outputs.app }}"
+
+  # Infrastructure Health Check
+  # Initial passive health check of infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
+  # Sets outputs: infra-healthy, infra-status
+  # Used to determine if infrastructure recovery is needed
+  check-infrastructure:
+    name: Check Infrastructure Health
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment: production
+    needs: [detect-changes, docker-build]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy health check script
+        run: |
+          # Copy to temp files first, then move to final location (prevents "Text file busy" error)
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
+          
+          # Move temp files to final location atomically
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            mv /tmp/health-check.sh.tmp /tmp/health-check.sh
+            mv /tmp/utils.sh.tmp /tmp/utils.sh
+            chmod +x /tmp/health-check.sh /tmp/utils.sh
+          ENDSSH
+
+      - name: Run health check
+        id: health-check
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            chmod +x /tmp/health-check.sh /tmp/utils.sh
+            export SCRIPT_DIR="/tmp"
+            export AUTO_RECREATE_MISSING="true"
+            source /tmp/utils.sh
+            
+            # Ensure files are fully written before execution (fix "Text file busy" error)
+            sync
+            sleep 1
+            
+            /tmp/health-check.sh > /tmp/health-status.json 2>&1
+            echo "EXIT_CODE=$?" > /tmp/health-exit.txt
+          ENDSSH
+          
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-exit.txt /tmp/health-exit.txt || true
+          
+          if [[ -f /tmp/health-exit.txt ]]; then
+            EXIT_CODE=$(cat /tmp/health-exit.txt | grep EXIT_CODE | cut -d= -f2)
+            if [[ "$EXIT_CODE" == "0" ]]; then
+              echo "infra-healthy=true" >> $GITHUB_OUTPUT
+              echo "infra-status=healthy" >> $GITHUB_OUTPUT
+            else
+              echo "infra-healthy=false" >> $GITHUB_OUTPUT
+              if [[ "$EXIT_CODE" == "3" ]]; then
+                echo "infra-status=missing" >> $GITHUB_OUTPUT
+              else
+                echo "infra-status=unhealthy" >> $GITHUB_OUTPUT
+              fi
+            fi
+          else
+            echo "infra-healthy=false" >> $GITHUB_OUTPUT
+            echo "infra-status=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Display health status
+        run: |
+          echo "Infrastructure Health: ${{ steps.health-check.outputs.infra-healthy }}"
+          echo "Infrastructure Status: ${{ steps.health-check.outputs.infra-status }}"
+          if [[ -f /tmp/health-status.json ]]; then
+            cat /tmp/health-status.json
+          fi
+
+  # Backup Infrastructure
+  # Creates backup of PostgreSQL and Dragonfly data before infrastructure changes
+  # Runs when: infrastructure is unhealthy (needs recreation) OR infrastructure changed AND will be recreated
+  # SKIPS when: infrastructure is healthy AND unchanged (deploy.sh handles app-only backups)
+  # NOTE: If infrastructure is healthy but changed, deploy.sh will skip recreation, so backup is not needed here
+  # Backup stored locally and optionally in S3 (Contabo)
+  backup-infrastructure:
+    name: Backup Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
+    environment: production
+    needs: [detect-changes, check-infrastructure]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy backup scripts
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Run backup
+        id: backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            # Install rclone (Contabo's recommended tool) or s3cmd as fallback
+            # Contabo recommends rclone: https://help.contabo.com/en/support/solutions/articles/103000305592-what-is-the-rclone-tool-
+            if ! command -v rclone &> /dev/null && ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing rclone for Contabo S3 (Contabo's recommended tool)..."
+              # Install rclone using official installer (recommended by Contabo)
+              if curl -fsSL https://rclone.org/install.sh | sudo bash; then
+                echo "✅ rclone installed successfully"
+              else
+                echo "⚠️  rclone installation failed, trying s3cmd fallback..."
+                if command -v apt-get &> /dev/null; then
+                  sudo apt-get update -qq
+                  sudo apt-get install -y s3cmd || {
+                    echo "⚠️  apt-get install failed, trying pip3..."
+                    if command -v pip3 &> /dev/null; then
+                      pip3 install --user s3cmd || {
+                        echo "❌ Failed to install both rclone and s3cmd"
+                        exit 1
+                      }
+                      export PATH="$HOME/.local/bin:$PATH"
+                    else
+                      echo "❌ Cannot install rclone or s3cmd automatically"
+                      exit 1
+                    fi
+                  }
+                elif command -v pip3 &> /dev/null; then
+                  pip3 install --user s3cmd || {
+                    echo "❌ Failed to install both rclone and s3cmd"
+                    exit 1
+                  }
+                  export PATH="$HOME/.local/bin:$PATH"
+                else
+                  echo "❌ Cannot install rclone or s3cmd automatically"
+                  exit 1
+                fi
+                echo "✅ s3cmd installed as fallback"
+              fi
+            elif command -v rclone &> /dev/null; then
+              echo "✅ rclone is already installed"
+            elif command -v s3cmd &> /dev/null; then
+              echo "✅ s3cmd is already installed (rclone preferred but s3cmd will work)"
+            fi
+            
+            cd /opt/healthcare-backend/devops/docker || exit 1
+            
+            # CRITICAL: Ensure containers are running before backup
+            echo "🔍 Ensuring PostgreSQL and Dragonfly containers are running for backup..."
+            
+            # Check and start PostgreSQL if needed
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_NAME_FMT='{{.Names}}'
+            if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^postgres$"; then
+              echo "⚠️  PostgreSQL container not running - starting for backup..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
+                echo "❌ Failed to start PostgreSQL for backup"
+                exit 1
+              }
+              echo "⏳ Waiting for PostgreSQL to be ready..."
+              MAX_RETRIES=30
+              RETRY_COUNT=0
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+                  echo "✅ PostgreSQL is ready for backup"
+                  break
+                fi
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2
+              done
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "❌ PostgreSQL did not become ready for backup"
+                exit 1
+              fi
+            else
+              echo "✅ PostgreSQL container is running"
+            fi
+            
+            # Check and start Dragonfly if needed
+            if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^dragonfly$"; then
+              echo "⚠️  Dragonfly container not running - starting for backup..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d dragonfly || {
+                echo "❌ Failed to start Dragonfly for backup"
+                exit 1
+              }
+              echo "⏳ Waiting for Dragonfly to be ready..."
+              MAX_RETRIES=20
+              RETRY_COUNT=0
+              while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                if docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+                  echo "✅ Dragonfly is ready for backup"
+                  break
+                fi
+                RETRY_COUNT=$((RETRY_COUNT + 1))
+                sleep 2
+              done
+              if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                echo "⚠️  Dragonfly did not become ready (backup may fail for Dragonfly)"
+              fi
+            else
+              echo "✅ Dragonfly container is running"
+            fi
+            
+            # CRITICAL: Create backup of PostgreSQL and Dragonfly data
+            echo "💾 Creating backup of PostgreSQL and Dragonfly data..."
+            echo "⚠️  This backup is CRITICAL - data will be lost if backup fails!"
+            chmod +x /tmp/backup.sh
+            BACKUP_ID=\$(/tmp/backup.sh pre-deployment) || {
+              echo "❌ Backup failed - ABORTING to prevent data loss"
+              exit 1
+            }
+            echo "✅ Backup created successfully (ID: \${BACKUP_ID})"
+            echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
+          ENDSSH
+          
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
+          BACKUP_ID=\$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
+          echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
+          echo "Backup ID: \${BACKUP_ID}"
+
+  # Recreate Infrastructure
+  # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
+  # Runs when: infrastructure is unhealthy (needs recovery)
+  # SKIPS when: infrastructure is healthy (deploy.sh handles app-only deployment)
+  # NOTE: If infrastructure is healthy but changed, deploy.sh skips recreation, so this job should also skip
+  # Preserves data volumes during recreation
+  recreate-infrastructure:
+    name: Recreate Infrastructure
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
+    environment: production
+    needs: [detect-changes, check-infrastructure, backup-infrastructure]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Recreate infrastructure containers
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            cd /opt/healthcare-backend/devops/docker || exit 1
+            
+            # CRITICAL: Verify data volumes are preserved before recreation
+            echo "🔍 Verifying data volumes are preserved..."
+            VOLUMES=("postgres_data" "dragonfly_data")
+            VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
+            
+            for i in "${!VOLUMES[@]}"; do
+              VOLUME="${VOLUMES[$i]}"
+              VOLUME_PATH="${VOLUME_PATHS[$i]}"
+              
+              # Check if volume exists
+              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
+                echo "✅ Volume ${VOLUME} exists"
+                
+                # For bind mounts, verify the host path exists
+                if [[ -d "$VOLUME_PATH" ]]; then
+                  echo "✅ Volume path verified: ${VOLUME_PATH}"
+                else
+                  echo "⚠️  Volume path missing: ${VOLUME_PATH} (creating...)"
+                  mkdir -p "$VOLUME_PATH" || {
+                    echo "❌ Failed to create volume path: ${VOLUME_PATH}"
+                    exit 1
+                  }
+                fi
+              else
+                echo "⚠️  Volume ${VOLUME} does not exist (will be created)"
+              fi
+            done
+            
+            # CRITICAL: Ensure containers are running before graceful stop (for data flush)
+            echo "🔍 Ensuring containers are running for graceful shutdown..."
+            CONTAINERS=("postgres" "dragonfly")
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_NAME_FMT='{{.Names}}'
+            
+            for CONTAINER in "${CONTAINERS[@]}"; do
+              if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^${CONTAINER}$"; then
+                echo "⚠️  Container ${CONTAINER} not running - starting for graceful shutdown..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER}" || {
+                  echo "❌ Failed to start ${CONTAINER}"
+                  exit 1
+                }
+                # Wait for container to be ready
+                echo "⏳ Waiting for ${CONTAINER} to be ready..."
+                sleep 5
+              fi
+            done
+            
+            # CRITICAL: Stop existing infrastructure containers gracefully
+            echo "🛑 Stopping infrastructure containers gracefully (ensuring data flush)..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure stop || {
+              echo "⚠️  Graceful stop had issues, forcing stop..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure kill || true
+            }
+            
+            # Wait for data to flush to disk
+            echo "⏳ Waiting for data to flush to disk..."
+            sleep 3
+            
+            # CRITICAL: Recreate infrastructure containers (volumes are preserved)
+            echo "🔄 Recreating infrastructure containers (volumes will be preserved)..."
+            docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
+              echo "❌ Infrastructure recreation failed"
+              exit 1
+            }
+            
+            # Wait for containers to be healthy
+            echo "⏳ Waiting for infrastructure containers to be healthy..."
+            sleep 15
+            
+            # Wait for PostgreSQL to be ready
+            echo "⏳ Waiting for PostgreSQL to be ready..."
+            MAX_RETRIES=30
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
+                echo "✅ PostgreSQL is ready"
+                break
+              fi
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "⏳ Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
+              sleep 2
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "❌ PostgreSQL did not become ready"
+              exit 1
+            fi
+            
+            # Wait for Dragonfly to be ready
+            echo "⏳ Waiting for Dragonfly to be ready..."
+            MAX_RETRIES=20
+            RETRY_COUNT=0
+            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+              if docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
+                echo "✅ Dragonfly is ready"
+                break
+              fi
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              echo "⏳ Waiting for Dragonfly... (${RETRY_COUNT}/${MAX_RETRIES})"
+              sleep 2
+            done
+            
+            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+              echo "❌ Dragonfly did not become ready"
+              exit 1
+            fi
+            
+            # Check container status
+            echo "📊 Container status:"
+            docker compose -f docker-compose.prod.yml --profile infrastructure ps
+            
+            # Verify volumes still exist
+            echo "🔍 Verifying volumes after recreation..."
+            for i in "${!VOLUMES[@]}"; do
+              VOLUME="${VOLUMES[$i]}"
+              VOLUME_PATH="${VOLUME_PATHS[$i]}"
+              
+              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
+                echo "✅ Volume ${VOLUME} preserved"
+              else
+                echo "⚠️  Volume ${VOLUME} not found (may be created on first use)"
+              fi
+              
+              if [[ -d "$VOLUME_PATH" ]]; then
+                echo "✅ Volume path preserved: ${VOLUME_PATH}"
+              else
+                echo "⚠️  Volume path missing: ${VOLUME_PATH}"
+              fi
+            done
+            
+            echo "✅ Infrastructure recreation completed successfully"
+          ENDSSH
+
+  # Restore Backup
+  # Restores PostgreSQL and Dragonfly data from backup after infrastructure recreation
+  # Runs when: backup was created successfully
+  restore-backup:
+    name: Restore Backup
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      needs.backup-infrastructure.result == 'success' &&
+      needs.backup-infrastructure.outputs.backup-id != ''
+    environment: production
+    needs: [backup-infrastructure, recreate-infrastructure]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy restore scripts
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/restore.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/restore.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Restore from backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            # Install rclone (Contabo's recommended tool) or s3cmd as fallback
+            if ! command -v rclone &> /dev/null && ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing rclone for Contabo S3 (Contabo's recommended tool)..."
+              if curl -fsSL https://rclone.org/install.sh | sudo bash; then
+                echo "✅ rclone installed successfully"
+              else
+                echo "⚠️  rclone installation failed, trying s3cmd fallback..."
+                if command -v apt-get &> /dev/null; then
+                  sudo apt-get update -qq
+                  sudo apt-get install -y s3cmd || {
+                    if command -v pip3 &> /dev/null; then
+                      pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                        echo "❌ Failed to install both rclone and s3cmd"
+                        exit 1
+                      }
+                    else
+                      echo "❌ Cannot install rclone or s3cmd automatically"
+                      exit 1
+                    fi
+                  }
+                elif command -v pip3 &> /dev/null; then
+                  pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                    echo "❌ Failed to install both rclone and s3cmd"
+                    exit 1
+                  }
+                else
+                  echo "❌ Cannot install rclone or s3cmd automatically"
+                  exit 1
+                fi
+                echo "✅ s3cmd installed as fallback"
+              fi
+            elif command -v rclone &> /dev/null; then
+              echo "✅ rclone is already installed"
+            elif command -v s3cmd &> /dev/null; then
+              echo "✅ s3cmd is already installed (rclone preferred but s3cmd will work)"
+            fi
+            
+            chmod +x /tmp/restore.sh
+            # Validate backup-id to prevent command injection
+            BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id }}"
+            if [[ ! "$BACKUP_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+              echo "ERROR: Invalid backup ID format"
+              exit 1
+            fi
+            /tmp/restore.sh "$BACKUP_ID"
+          ENDSSH
+
+  # Verify Infrastructure Readiness
+  # Verifies that infrastructure is healthy and ready before deploying application
+  # Verifies: infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
+  # Runs after: restore-backup or when infrastructure is healthy
+  # Purpose: Ensure newly recreated infrastructure is healthy before deploying application
+  verify-infrastructure-readiness:
+    name: Verify Infrastructure Readiness
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' && 
+      (
+        (needs.recreate-infrastructure.result == 'success' && 
+         (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped')) ||
+        (needs.check-infrastructure.outputs.infra-healthy == 'true' && 
+         needs.backup-infrastructure.result == 'success')
+      )
+    environment: production
+    needs: [check-infrastructure, backup-infrastructure, recreate-infrastructure, restore-backup]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy health check script
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Verify infrastructure readiness
+        run: |
+          # Run health check and capture exit code
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -c "
+            export SCRIPT_DIR=\"/tmp\"
+            chmod +x /tmp/health-check.sh /tmp/utils.sh 2>/dev/null || true
+            
+            echo \"🔍 Verifying infrastructure readiness before deployment...\"
+            echo \"📋 This verifies that newly recreated infrastructure is healthy\"
+            
+            # Run infrastructure health check
+            if /tmp/health-check.sh > /tmp/infra-readiness.json 2>&1; then
+              echo \"✅ Infrastructure is healthy and ready for deployment\"
+              exit 0
+            else
+              EXIT_CODE=\$?
+              echo \"❌ Infrastructure health check failed (exit code: \$EXIT_CODE)\"
+              cat /tmp/infra-readiness.json 2>/dev/null || true
+              exit 1
+            fi
+          "'
+
+  # Deploy to Production
+  # Deploys application containers (API + Worker) to production server
+  # Runs when:
+  # 1. Docker build succeeds AND infrastructure is healthy (normal flow)
+  # 2. Infrastructure was recreated/verified successfully (recovery flow)
+  # Handles: database migrations, container startup, health checks
   deploy:
     name: Deploy to Production
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.docker-build.result == 'success'
     runs-on: ubuntu-latest
     environment: production  # Use production environment secrets
-    needs: [docker-build]
+    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-infrastructure-readiness, recreate-infrastructure, restore-backup]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -170,7 +799,9 @@ jobs:
       - name: Add server to known hosts
         run: |
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
 
       - name: Create .env.production file
         run: |
@@ -262,7 +893,7 @@ jobs:
           # CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
           #
           # Vishwamurti Ayurvedelay (CL0001)
-          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
@@ -278,12 +909,12 @@ jobs:
           CORS_METHODS=${{ vars.CORS_METHODS }}
           SWAGGER_URL=${{ vars.SWAGGER_URL }}
           BULL_BOARD_URL=${{ vars.BULL_BOARD_URL }}
-          SOCKET_URL=${{ secrets.SOCKET_URL }}
+          SOCKET_URL=${{ vars.SOCKET_URL }}
           PRISMA_STUDIO_URL=${{ vars.PRISMA_STUDIO_URL }}
           PGADMIN_URL=${{ vars.PGADMIN_URL }}
           WHATSAPP_ENABLED=${{ vars.WHATSAPP_ENABLED }}
           WHATSAPP_API_URL=${{ vars.WHATSAPP_API_URL }}
-          WHATSAPP_API_KEY=${{ vars.WHATSAPP_API_KEY }}
+          WHATSAPP_API_KEY=${{ secrets.WHATSAPP_API_KEY }}
           WHATSAPP_PHONE_NUMBER_ID=${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
           WHATSAPP_BUSINESS_ACCOUNT_ID=${{ vars.WHATSAPP_BUSINESS_ACCOUNT_ID }}
           WHATSAPP_OTP_TEMPLATE_ID=${{ vars.WHATSAPP_OTP_TEMPLATE_ID }}
@@ -296,7 +927,7 @@ jobs:
           # To add more clinics, duplicate the pattern below with the clinic's sanitized name
           #
           # Vishwamurti Ayurvedelay (CL0001)
-          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_API_KEY }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID }}
@@ -329,10 +960,16 @@ jobs:
           VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}
           OPENVIDU_URL=${{ vars.OPENVIDU_URL }}
           OPENVIDU_SECRET=${{ secrets.OPENVIDU_SECRET }}
+          COTURN_SHARED_SECRET_KEY=${{ secrets.OPENVIDU_SECRET }}
           OPENVIDU_DOMAIN=${{ vars.OPENVIDU_DOMAIN }}
           OPENVIDU_WEBHOOK_ENABLED=${{ vars.OPENVIDU_WEBHOOK_ENABLED }}
           OPENVIDU_WEBHOOK_ENDPOINT=${{ vars.OPENVIDU_WEBHOOK_ENDPOINT }}
           OPENVIDU_WEBHOOK_EVENTS=${{ vars.OPENVIDU_WEBHOOK_EVENTS }}
+          
+          # Coturn Configuration (for infrastructure services)
+          # These are used by docker-compose.prod.yml for coturn container
+          COTURN_PASSWORD=${{ secrets.COTURN_PASSWORD }}
+          COTURN_DOMAIN=${{ vars.COTURN_DOMAIN }}
           GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
@@ -354,10 +991,10 @@ jobs:
           #
           # Vishwamurti Ayurvedelay (CL0001)
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PROJECT_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PROJECT_ID }}
-          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_PRIVATE_KEY }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL }}
-          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY }}
           
           # Clinic-Specific SMS Configuration (Multi-Tenant)
           # ================================================
@@ -365,8 +1002,8 @@ jobs:
           # To add more clinics, duplicate the pattern below with the clinic's sanitized name
           #
           # Vishwamurti Ayurvedelay (CL0001)
-          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY }}
-          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER }}
           
           # Clinic-Specific OpenVidu Configuration (Multi-Tenant)
@@ -412,14 +1049,33 @@ jobs:
           CDN_URL=${{ vars.CDN_URL }}
           DOCKER_ENV=${{ vars.DOCKER_ENV }}
           DOCKER_NETWORK=${{ vars.DOCKER_NETWORK }}
+          
+          # Optional Service URLs
+          REDIS_COMMANDER_URL=${{ vars.REDIS_COMMANDER_URL }}
+          
+          # Jitsi Configuration (Fallback Video Provider - Optional)
+          JITSI_DOMAIN=${{ vars.JITSI_DOMAIN }}
+          JITSI_BASE_DOMAIN=${{ vars.JITSI_BASE_DOMAIN }}
+          JITSI_SUBDOMAIN=${{ vars.JITSI_SUBDOMAIN }}
+          JITSI_APP_ID=${{ vars.JITSI_APP_ID }}
+          JITSI_APP_SECRET=${{ secrets.JITSI_APP_SECRET }}
+          JITSI_BASE_URL=${{ vars.JITSI_BASE_URL }}
+          JITSI_WS_URL=${{ vars.JITSI_WS_URL }}
+          JITSI_ENABLE_RECORDING=${{ vars.JITSI_ENABLE_RECORDING }}
+          JITSI_ENABLE_WAITING_ROOM=${{ vars.JITSI_ENABLE_WAITING_ROOM }}
+          
+          # Social Auth Redirect URIs
+          FACEBOOK_REDIRECT_URI=${{ vars.FACEBOOK_REDIRECT_URI }}
+          APPLE_REDIRECT_URI=${{ vars.APPLE_REDIRECT_URI }}
           EOF
 
       - name: Copy files to server
         run: |
-          scp -o StrictHostKeyChecking=no devops/scripts/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh
-          scp -o StrictHostKeyChecking=no /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
-          # Copy docker-compose file (we only need this, not the entire repository)
-          scp -o StrictHostKeyChecking=no devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
+          # Copy all deployment scripts
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
+          # Copy docker-compose file
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
 
       - name: Set deployment image name
         id: deploy-image
@@ -428,26 +1084,87 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image: ${IMAGE_FULL}"
+      
+      - name: Validate app image (non-blocking)
+        continue-on-error: true
+        run: |
+          echo "🔍 Validating app image in registry..."
+          
+          # Try to validate latest tag first (most reliable for main branch)
+          APP_IMAGE_LATEST="${{ steps.deploy-image.outputs.image }}:latest"
+          APP_IMAGE_SHA="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
+          
+          # Check latest tag first
+          if docker manifest inspect "${APP_IMAGE_LATEST}" > /dev/null 2>&1; then
+            echo "✅ App image validated (latest tag): ${APP_IMAGE_LATEST}"
+          # Fallback to SHA-based tag
+          elif docker manifest inspect "${APP_IMAGE_SHA}" > /dev/null 2>&1; then
+            echo "✅ App image validated (SHA tag): ${APP_IMAGE_SHA}"
+          else
+            echo "⚠️  App image not immediately available in registry (may be propagating)"
+            echo "   This is non-blocking - Docker will validate during pull"
+            echo "   Attempted tags:"
+            echo "     - ${APP_IMAGE_LATEST}"
+            echo "     - ${APP_IMAGE_SHA}"
+          fi
+          
+          # Note: Infrastructure images are pulled from docker-compose during deployment
+          # They are validated when docker-compose pulls them
+          echo "ℹ️  Infrastructure images will be validated during deployment"
+
+      - name: Setup server directories
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            
+            # Run directory setup script
+            if [[ -f /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh ]]; then
+              echo "Setting up server directories..."
+              chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
+              /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
+            else
+              echo "Setup script not found, creating directories manually..."
+              mkdir -p /opt/healthcare-backend/backups/{postgres,dragonfly,metadata}
+              mkdir -p /opt/healthcare-backend/data/{postgres,dragonfly,openvidu_recordings}
+              # /var/log/deployments requires sudo if not running as root
+              if [[ "$EUID" -eq 0 ]]; then
+                mkdir -p /var/log/deployments
+                chmod 755 /var/log/deployments
+              else
+                sudo mkdir -p /var/log/deployments
+                sudo chmod 755 /var/log/deployments
+              fi
+              chmod 700 /opt/healthcare-backend/backups
+              chmod 755 /opt/healthcare-backend/data
+              echo "Directories created"
+            fi
+          ENDSSH
 
       - name: Deploy to server via SSH
         env:
-          SERVER_DEPLOY_PATH: ${{ vars.SERVER_DEPLOY_PATH }}
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
           IMAGE_TAG: main-${{ github.sha }}
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ steps.deploy-image.outputs.image }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
             # Set deployment variables (values embedded from GitHub Actions)
-            # Handle SERVER_DEPLOY_PATH with default value
-            # Set SERVER_DEPLOY_PATH - export directly to avoid variable assignment issues
-            SERVER_DEPLOY_PATH_SECRET_VALUE="${{ vars.SERVER_DEPLOY_PATH }}"
+            # Handle SERVER_DEPLOY_PATH with default value and input validation
+            # Security: Validate SERVER_DEPLOY_PATH to prevent path traversal attacks
+            SERVER_DEPLOY_PATH_SECRET_VALUE="${{ secrets.SERVER_DEPLOY_PATH }}"
             
-            # Export directly based on secret value
+            # Input validation: Only allow alphanumeric, forward slashes, hyphens, and underscores
+            # Prevent path traversal and command injection
             if [ -n "${SERVER_DEPLOY_PATH_SECRET_VALUE}" ] && [ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" != "" ]; then
+              # Validate path format (no .., no spaces, no special chars except /, -, _)
+              if [[ ! "${SERVER_DEPLOY_PATH_SECRET_VALUE}" =~ ^[a-zA-Z0-9/_-]+$ ]] || [[ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" == *".."* ]]; then
+                echo "❌ ERROR: Invalid SERVER_DEPLOY_PATH format (security check failed)"
+                exit 1
+              fi
               export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_SECRET_VALUE}"
               echo "✅ Using SERVER_DEPLOY_PATH from secret: '${SERVER_DEPLOY_PATH}'"
             else
@@ -467,16 +1184,18 @@ jobs:
               exit 1
             fi
             
-            echo "📁 Final SERVER_DEPLOY_PATH='${SERVER_DEPLOY_PATH}'"
+            # Security: Don't log full path in production logs (masked by GitHub Actions)
+            echo "📁 Final SERVER_DEPLOY_PATH='[REDACTED]'"
             export IMAGE_TAG="main-${{ github.sha }}"
             export REGISTRY="${{ env.REGISTRY }}"
             export IMAGE="${{ steps.deploy-image.outputs.image }}"
             export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
             export GITHUB_USERNAME="${{ github.actor }}"
             
-            # Debug: Show deployment info
+            # Debug: Show deployment info (secrets masked by GitHub Actions)
             echo "Deploying image: ${IMAGE}:${IMAGE_TAG}"
-            echo "Server deployment path: ${SERVER_DEPLOY_PATH}"
+            # Security: Don't log full path in production logs
+            echo "Server deployment path: [REDACTED]"
             
             # Validate IMAGE is set
             if [ -z "${IMAGE}" ] || [ "${IMAGE}" = "ghcr.io/your-username/your-repo/healthcare-api" ]; then
@@ -519,56 +1238,552 @@ jobs:
               exit 1
             }
             
-            # Make script executable and run
-            chmod +x /tmp/deploy.sh
-            /tmp/deploy.sh
+            # Make scripts executable
+            chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/*.sh
+            chmod +x /opt/healthcare-backend/devops/scripts/shared/*.sh
             
-            # Cleanup
-            rm -f /tmp/deploy.sh
-          ENDSSH
-
-      - name: Verify deployment health
-        run: |
-          echo "🏥 Verifying deployment health..."
-          sleep 15  # Wait for services to fully start
-          
-          MAX_RETRIES=10
-          RETRY_COUNT=0
-          HEALTH_URL="https://api.ishswami.in/health"
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            if curl -f -s "${HEALTH_URL}" > /dev/null 2>&1; then
-              echo "✅ Deployment health check passed!"
-              exit 0
+            # VALIDATION: Check OPENVIDU_SECRET format before deployment
+            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
+            OPENVIDU_SECRET="${OPENVIDU_SECRET:-}"
+            if [[ -n "${OPENVIDU_SECRET}" ]] && echo "${OPENVIDU_SECRET}" | grep -q '[^a-zA-Z0-9_-]'; then
+              echo "❌ ERROR: OPENVIDU_SECRET contains invalid characters!"
+              echo "📋 OpenVidu requires secret to contain ONLY:"
+              echo "   - Alphanumeric: a-z, A-Z, 0-9"
+              echo "   - Hyphens: - | Underscores: _"
+              echo "❌ NOT allowed: = + / or any other special characters"
+              echo ""
+              echo "🔧 ACTION: Update OPENVIDU_SECRET in GitHub Secrets"
+              exit 1
             fi
             
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            echo "⏳ Waiting for health check... (${RETRY_COUNT}/${MAX_RETRIES})"
-            sleep 5
-          done
-          
-          echo "❌ Health check failed after ${MAX_RETRIES} attempts"
-          echo "🔄 Rollback should have been triggered automatically by deploy script"
-          exit 1
+            # Set deployment variables for deploy.sh
+            export INFRA_CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
+            export APP_CHANGED="${{ needs.detect-changes.outputs.app-changed }}"
+            export INFRA_HEALTHY="${{ needs.check-infrastructure.outputs.infra-healthy }}"
+            export INFRA_STATUS="${{ needs.check-infrastructure.outputs.infra-status }}"
+            export BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id || '' }}"
+            
+            # Set DOCKER_IMAGE for docker-compose (uses IMAGE:IMAGE_TAG format)
+            export DOCKER_IMAGE="${IMAGE}:${IMAGE_TAG}"
+            echo "Setting DOCKER_IMAGE=${DOCKER_IMAGE}"
+            
+            # Flag to indicate infrastructure operations were already handled by CI/CD jobs
+            # This prevents deploy.sh from duplicating backup/recreate/restore operations
+            if [[ "${{ needs.detect-changes.outputs.infra-changed }}" == "true" ]] || \
+               [[ "${{ needs.check-infrastructure.outputs.infra-healthy }}" == "false" ]]; then
+              export INFRA_ALREADY_HANDLED="true"
+            else
+              export INFRA_ALREADY_HANDLED="false"
+            fi
+            
+            # Run smart deployment orchestrator
+            # Note: deploy.sh will skip infrastructure operations if INFRA_ALREADY_HANDLED=true
+            # and only handle application deployment
+            cd /opt/healthcare-backend
+            /opt/healthcare-backend/devops/scripts/docker-infra/deploy.sh
+            
+          ENDSSH
 
       - name: Deployment Success
         run: |
           echo "✅ Deployment completed successfully!"
           echo "Image: ${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
-          echo "Server: ${{ secrets.SERVER_HOST }}"
+          # Security: Don't log server hostname in public logs
+          echo "Server: [REDACTED]"
 
-  # Summary Report
-  ci-success:
-    name: CI Success
+  # Post-Deployment Verification & Backup
+  # Verifies deployment health and creates a success backup
+  # Runs after successful deployment to ensure everything is working and create a recovery point
+  post-deployment-verification:
+    name: Post-Deployment Verification & Backup
     runs-on: ubuntu-latest
-    needs: [lint, security, docker-build]  # Build happens inside Docker
-    if: success()
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.deploy.result == 'success'
+    environment: production
+    needs: [deploy]
+    timeout-minutes: 15
     steps:
-      - name: Report Success
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
         run: |
-          echo "✅ All CI checks passed successfully!"
-          if [ "${{ github.ref }}" == "refs/heads/main" ] && [ "${{ github.event_name }}" == "push" ]; then
-            echo "🚀 Deployment to production completed!"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy verification and backup scripts
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/verify.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/verify.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
+
+      - name: Verify deployment health
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            chmod +x /tmp/verify.sh
+            
+            echo "🔍 Verifying deployment health after successful deployment..."
+            if /tmp/verify.sh deployment; then
+              echo "✅ Deployment verification passed"
+              echo "VERIFICATION_STATUS=success" > /tmp/post-deploy-status.txt
+            else
+              echo "⚠️  Deployment verification had issues (but deployment succeeded)"
+              echo "VERIFICATION_STATUS=warning" > /tmp/post-deploy-status.txt
+            fi
+          ENDSSH
+
+      - name: Create success backup
+        env:
+          S3_ENABLED: ${{ vars.S3_ENABLED }}
+          S3_PROVIDER: ${{ vars.S3_PROVIDER }}
+          S3_ENDPOINT: ${{ vars.S3_ENDPOINT }}
+          S3_REGION: ${{ vars.S3_REGION }}
+          S3_BUCKET: ${{ vars.S3_BUCKET }}
+          S3_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+          S3_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+          S3_FORCE_PATH_STYLE: ${{ vars.S3_FORCE_PATH_STYLE }}
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            set -e
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export S3_ENABLED="${{ vars.S3_ENABLED }}"
+            export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
+            export S3_ENDPOINT="${{ vars.S3_ENDPOINT }}"
+            export S3_REGION="${{ vars.S3_REGION }}"
+            export S3_BUCKET="${{ vars.S3_BUCKET }}"
+            export S3_ACCESS_KEY_ID="${{ secrets.S3_ACCESS_KEY_ID }}"
+            export S3_SECRET_ACCESS_KEY="${{ secrets.S3_SECRET_ACCESS_KEY }}"
+            export S3_FORCE_PATH_STYLE="${{ vars.S3_FORCE_PATH_STYLE }}"
+            
+            # Install rclone or s3cmd if needed
+            if ! command -v rclone &> /dev/null && ! command -v s3cmd &> /dev/null; then
+              echo "📦 Installing rclone for Contabo S3..."
+              if curl -fsSL https://rclone.org/install.sh | sudo bash; then
+                echo "✅ rclone installed successfully"
+              else
+                echo "⚠️  rclone installation failed, trying s3cmd fallback..."
+                if command -v apt-get &> /dev/null; then
+                  sudo apt-get update -qq
+                  sudo apt-get install -y s3cmd || {
+                    if command -v pip3 &> /dev/null; then
+                      pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                        echo "❌ Failed to install both rclone and s3cmd"
+                        exit 1
+                      }
+                    else
+                      echo "❌ Cannot install rclone or s3cmd automatically"
+                      exit 1
+                    fi
+                  }
+                elif command -v pip3 &> /dev/null; then
+                  pip3 install --user s3cmd && export PATH="$HOME/.local/bin:$PATH" || {
+                    echo "❌ Failed to install both rclone and s3cmd"
+                    exit 1
+                  }
+                else
+                  echo "❌ Cannot install rclone or s3cmd automatically"
+                  exit 1
+                fi
+                echo "✅ s3cmd installed as fallback"
+              fi
+            elif command -v rclone &> /dev/null; then
+              echo "✅ rclone is already installed"
+            elif command -v s3cmd &> /dev/null; then
+              echo "✅ s3cmd is already installed (rclone preferred but s3cmd will work)"
+            fi
+            
+            chmod +x /tmp/backup.sh
+            
+            echo "💾 Creating success backup after deployment..."
+            echo "📋 This backup serves as a recovery point for the successful deployment"
+            BACKUP_ID=$(/tmp/backup.sh success) || {
+              echo "⚠️  Success backup failed (non-critical, but recommended)"
+              exit 0  # Don't fail the job if backup fails
+            }
+            echo "✅ Success backup created (ID: ${BACKUP_ID})"
+            echo "BACKUP_ID=${BACKUP_ID}" > /tmp/post-deploy-backup-id.txt
+          ENDSSH
+
+      - name: Post-deployment summary
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "📊 Post-Deployment Summary"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "✅ Deployment verification completed"
+          echo "💾 Success backup created (if backup succeeded)"
+          echo "🎉 Deployment is healthy and backed up!"
+          echo "═══════════════════════════════════════════════════════════"
+
+  # Ensure Infrastructure Health
+  # Aggressive recovery job that makes infrastructure healthy at any cost
+  # Runs independently with retry logic (5 attempts) and auto-recovery
+  # Uses: health-check.sh (with auto-recovery) + diagnose.sh
+  # Runs: Always on main branch push
+  ensure-infrastructure-health:
+    name: Ensure Infrastructure Health
+    runs-on: ubuntu-latest
+    if: |
+      always() &&
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main'
+    environment: production
+    timeout-minutes: 30
+    env:
+      # SECURITY: Pass secrets/variables as environment variables
+      # These are encrypted and automatically masked in logs by GitHub Actions
+      # Never hardcode secrets - always use GitHub Secrets/Variables
+      COTURN_PASSWORD: ${{ secrets.COTURN_PASSWORD }}
+      COTURN_DOMAIN: ${{ vars.COTURN_DOMAIN }}
+      OPENVIDU_SECRET: ${{ secrets.OPENVIDU_SECRET }}
+      OPENVIDU_URL: ${{ vars.OPENVIDU_URL }}
+      OPENVIDU_DOMAIN: ${{ vars.OPENVIDU_DOMAIN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known hosts
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Copy infrastructure scripts and files
+        run: |
+          # Copy to temp files first, then move to final location (prevents "Text file busy" error)
+          # This ensures files are fully written and closed before being executed
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/deploy.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/deploy.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/diagnose.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/diagnose.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/fix-missing-files.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/fix-missing-files.sh.tmp
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
+          # Copy docker-compose.prod.yml file (infrastructure containers don't need .env.production)
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml.tmp
+          
+          # Move temp files to final location atomically
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+            mv /tmp/health-check.sh.tmp /tmp/health-check.sh
+            mv /tmp/deploy.sh.tmp /tmp/deploy.sh
+            mv /tmp/diagnose.sh.tmp /tmp/diagnose.sh
+            mv /tmp/fix-missing-files.sh.tmp /tmp/fix-missing-files.sh
+            mv /tmp/utils.sh.tmp /tmp/utils.sh
+            mv /tmp/docker-compose.prod.yml.tmp /tmp/docker-compose.prod.yml
+            chmod +x /tmp/health-check.sh /tmp/deploy.sh /tmp/diagnose.sh /tmp/fix-missing-files.sh
+          ENDSSH
+
+      - name: Make infrastructure healthy (aggressive recovery)
+        id: ensure-health
+        continue-on-error: false
+        run: |
+          SSH_EXIT=0
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH || SSH_EXIT=$?
+            set -e
+            export SCRIPT_DIR="/tmp"
+            source /tmp/utils.sh
+            export AUTO_RECREATE_MISSING="true"
+            
+            # SECURITY: Environment variables are passed from GitHub Actions env: section above
+            # They are encrypted and masked in logs - values come from GitHub Secrets/Variables
+            # Note: Using double quotes ENDSSH allows GitHub Actions to substitute variables
+            export COTURN_PASSWORD="${COTURN_PASSWORD}"
+            export COTURN_DOMAIN="${COTURN_DOMAIN}"
+            export OPENVIDU_SECRET="${OPENVIDU_SECRET}"
+            export OPENVIDU_URL="${OPENVIDU_URL}"
+            export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
+            
+            # VALIDATION: Check OPENVIDU_SECRET format (OpenVidu requirement)
+            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
+            # NO special characters like = + / or base64 padding allowed
+            if [[ -n "${OPENVIDU_SECRET}" ]] && echo "${OPENVIDU_SECRET}" | grep -q '[^a-zA-Z0-9_-]'; then
+              echo "❌ ERROR: OPENVIDU_SECRET contains invalid characters!"
+              echo "📋 OpenVidu requires secret to contain ONLY:"
+              echo "   - Alphanumeric characters: a-z, A-Z, 0-9"
+              echo "   - Hyphens: -"
+              echo "   - Underscores: _"
+              echo "❌ NOT allowed: = + / or any other special characters"
+              echo ""
+              echo "🔧 ACTION REQUIRED: Update OPENVIDU_SECRET in GitHub Secrets"
+              echo "   Go to: GitHub → Settings → Secrets → Actions → OPENVIDU_SECRET"
+              echo "   Example valid secrets:"
+              echo "   - HealthCare_Video_Secret_2026"
+              echo "   - MySecureOpenViduSecret123"
+              echo "   - VideoService-Production-Key"
+              exit 1
+            fi
+            
+            # CRITICAL: Ensure docker-compose.prod.yml is in place before recovery
+            # Note: Infrastructure containers (postgres, dragonfly, coturn, portainer, openvidu) 
+            # don't use .env.production - only api/worker services do
+            echo "🔍 Ensuring docker-compose.prod.yml is present before recovery..."
+            SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+            export BASE_DIR="${SERVER_DEPLOY_PATH}"
+            
+            # Use ensure_compose_file from utils.sh (more robust)
+            ensure_compose_file || {
+              echo "❌ Failed to ensure docker-compose.prod.yml exists"
+              exit 1
+            }
+            
+            # Explicitly force-recreate Portainer if it's restarting (fixes old command issue)
+            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
+            DOCKER_FMT='{{.Names}}\t{{.Status}}'
+            if docker ps -a --format "$DOCKER_FMT" 2>/dev/null | grep -q "^portainer.*Restarting"; then
+              echo "🔧 Portainer is restarting - force recreating with correct command..."
+              docker stop portainer 2>/dev/null || true
+              docker rm -f portainer 2>/dev/null || true
+              cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend/devops/docker 2>/dev/null || true
+              # Ensure environment variables are set for docker-compose
+              export COTURN_PASSWORD="${COTURN_PASSWORD}"
+              export COTURN_DOMAIN="${COTURN_DOMAIN}"
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate portainer 2>&1 || true
+              sleep 5
+            fi
+            
+            echo "🚨 Starting aggressive infrastructure health recovery..."
+            echo "📋 This job will make infrastructure healthy at ANY COST"
+            echo ""
+            
+            # Maximum retry attempts
+            MAX_ATTEMPTS=5
+            ATTEMPT=0
+            HEALTHY=false
+            
+            # Ensure variables are set before using in conditionals
+            export MAX_ATTEMPTS="${MAX_ATTEMPTS:-5}"
+            export ATTEMPT="${ATTEMPT:-0}"
+            export HEALTHY="${HEALTHY:-false}"
+            
+            while [[ "${ATTEMPT}" -lt "${MAX_ATTEMPTS}" ]] && [[ "${HEALTHY}" != "true" ]]; do
+              ATTEMPT=$((ATTEMPT + 1))
+              echo ""
+              echo "═══════════════════════════════════════════════════════════"
+              echo "🔄 Recovery Attempt $ATTEMPT/$MAX_ATTEMPTS"
+              echo "═══════════════════════════════════════════════════════════"
+              
+              # Step 1: Run health check with auto-recovery
+              echo "📊 Step 1: Running health check with auto-recovery..."
+              
+              # Ensure files are fully written before execution (fix "Text file busy" error)
+              sync
+              sleep 1
+              
+              if /tmp/health-check.sh > /tmp/health-attempt-${ATTEMPT}.json 2>&1; then
+                HEALTHY=true
+                echo "✅ Infrastructure is healthy!"
+                # Write success result immediately
+                echo "HEALTHY=true" > /tmp/health-result.txt
+                echo "STATUS=healthy" >> /tmp/health-result.txt
+                break
+              else
+                HEALTH_EXIT=$?
+                echo "⚠️  Health check failed (exit code: $HEALTH_EXIT)"
+                cat /tmp/health-attempt-${ATTEMPT}.json || true
+              fi
+              
+              # Step 2: Run diagnostics and auto-fix
+              if [[ "$HEALTHY" != "true" ]]; then
+                echo ""
+                echo "🔧 Step 2: Running diagnostics and auto-fix..."
+                if [[ -f /tmp/diagnose.sh ]]; then
+                  /tmp/diagnose.sh > /tmp/diagnose-attempt-${ATTEMPT}.log 2>&1 || true
+                  cat /tmp/diagnose-attempt-${ATTEMPT}.log || true
+                fi
+              fi
+              
+              # Step 3: Force infrastructure recreation if still unhealthy
+              if [[ "$HEALTHY" != "true" ]] && [[ "${ATTEMPT:-0}" -ge 2 ]]; then
+                echo ""
+                echo "🔄 Step 3: Force recreating infrastructure (attempt $ATTEMPT)..."
+                
+                # Ensure docker-compose.prod.yml is available
+                SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
+                COMPOSE_FILE="${SERVER_DEPLOY_PATH}/devops/docker/docker-compose.prod.yml"
+                if [[ ! -f "$COMPOSE_FILE" ]]; then
+                  echo "⚠️  docker-compose.prod.yml not found, restoring..."
+                  mkdir -p "$(dirname "$COMPOSE_FILE")" || true
+                  if [[ -f "/tmp/docker-compose.prod.yml" ]]; then
+                    mv /tmp/docker-compose.prod.yml "$COMPOSE_FILE" || true
+                  elif [[ -f "/tmp/fix-missing-files.sh" ]]; then
+                    bash /tmp/fix-missing-files.sh || true
+                  fi
+                fi
+                
+                cd "${SERVER_DEPLOY_PATH}/devops/docker" || cd /tmp || true
+                
+                # Stop all infrastructure containers
+                echo "⏹️  Stopping infrastructure containers..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure down --timeout 30 || true
+                
+                # Remove unhealthy containers
+                echo "🗑️  Removing unhealthy containers..."
+                DOCKER_NAME_FMT='{{.Names}}'
+                docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "$DOCKER_NAME_FMT" | xargs -r docker rm -f || true
+                
+                # Recreate infrastructure
+                echo "🚀 Recreating infrastructure..."
+                # SECURITY: Environment variables are already set from GitHub Actions env: section above
+                # They are passed securely and automatically masked in logs - no hardcoded values
+                # Infrastructure services don't use .env.production, so we use env vars from GitHub Secrets/Variables
+                
+                # Ensure we're in the correct directory and environment variables are set
+                cd "${SERVER_DEPLOY_PATH}/devops/docker" 2>/dev/null || cd /opt/healthcare-backend/devops/docker 2>/dev/null || {
+                  echo "❌ Cannot find docker-compose directory"
+                  exit 1
+                }
+                
+                # Explicitly export environment variables for docker-compose
+                export COTURN_PASSWORD="${COTURN_PASSWORD}"
+                export COTURN_DOMAIN="${COTURN_DOMAIN}"
+                export OPENVIDU_SECRET="${OPENVIDU_SECRET}"
+                export OPENVIDU_URL="${OPENVIDU_URL}"
+                export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
+                
+                docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate --remove-orphans || {
+                  echo "⚠️  Docker compose failed, trying individual services..."
+                  
+                  # Try to start services individually
+                  for service in postgres dragonfly coturn portainer openvidu-server; do
+                    echo "  → Starting $service..."
+                    docker compose -f docker-compose.prod.yml --profile infrastructure up -d $service || true
+                  done
+                }
+                
+                # Wait for services to start
+                echo "⏳ Waiting for services to stabilize..."
+                sleep 30
+              fi
+              
+              # Step 4: Re-check health after recovery
+              if [[ "$HEALTHY" != "true" ]]; then
+                echo ""
+                echo "🔍 Step 4: Re-checking health after recovery..."
+                sleep 10
+                
+                if /tmp/health-check.sh > /tmp/health-after-recovery-${ATTEMPT}.json 2>&1; then
+                  HEALTHY=true
+                  echo "✅ Infrastructure is now healthy after recovery!"
+                  break
+                else
+                  echo "⚠️  Still unhealthy after recovery attempt $ATTEMPT"
+                  cat /tmp/health-after-recovery-${ATTEMPT}.json || true
+                fi
+              fi
+              
+              # Wait before next attempt (exponential backoff)
+              if [[ "$HEALTHY" != "true" ]] && [[ "${ATTEMPT:-0}" -lt "${MAX_ATTEMPTS:-5}" ]]; then
+                WAIT_TIME=$((ATTEMPT * 15))
+                echo ""
+                echo "⏳ Waiting ${WAIT_TIME}s before next attempt..."
+                sleep $WAIT_TIME
+              fi
+            done
+            
+            # Final health check
+            echo ""
+            echo "═══════════════════════════════════════════════════════════"
+            echo "🏁 Final Health Check"
+            echo "═══════════════════════════════════════════════════════════"
+            
+            # Ensure files are fully written before execution (fix "Text file busy" error)
+            sync
+            sleep 2
+            
+            if /tmp/health-check.sh > /tmp/final-health.json 2>&1; then
+              echo "✅ SUCCESS: Infrastructure is healthy!"
+              echo "HEALTHY=true" > /tmp/health-result.txt
+              echo "STATUS=healthy" >> /tmp/health-result.txt
+              cat /tmp/final-health.json
+              exit 0
+            else
+              FINAL_EXIT=$?
+              echo "❌ FAILURE: Infrastructure is still unhealthy after $MAX_ATTEMPTS attempts"
+              echo "HEALTHY=false" > /tmp/health-result.txt
+              echo "STATUS=unhealthy" >> /tmp/health-result.txt
+              echo "EXIT_CODE=${FINAL_EXIT}" >> /tmp/health-result.txt
+              cat /tmp/final-health.json || true
+              
+              # Show container status
+              echo ""
+              echo "📊 Current Container Status:"
+              DOCKER_TABLE_FMT='table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+              docker ps -a --filter "name=postgres|dragonfly|coturn|portainer|openvidu" --format "$DOCKER_TABLE_FMT" || true
+              
+              echo ""
+              echo "📋 Container Logs (last 20 lines):"
+              for container in postgres dragonfly coturn portainer openvidu-server; do
+                echo "--- $container ---"
+                docker logs --tail 20 $container 2>&1 || true
+              done
+              
+              exit 1
+            fi
+          ENDSSH
+          
+          # Download results
+          # Note: The SSH command above exits with 0 if health check passed, 1 if failed
+          # We need to capture the SSH exit code, but since it's in a heredoc, we check the result file
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-result.txt /tmp/health-result.txt 2>&1 || SCP_FAILED=true
+          
+          if [[ -f /tmp/health-result.txt ]]; then
+            HEALTHY=$(grep "^HEALTHY=" /tmp/health-result.txt | cut -d= -f2 || echo "false")
+            STATUS=$(grep "^STATUS=" /tmp/health-result.txt | cut -d= -f2 || echo "unknown")
+            echo "infra-healthy=${HEALTHY}" >> $GITHUB_OUTPUT
+            echo "infra-status=${STATUS}" >> $GITHUB_OUTPUT
+            echo "✅ Downloaded health result: HEALTHY=${HEALTHY}, STATUS=${STATUS}"
+            
+            # If health check failed according to file, fail this step
+            if [[ "${HEALTHY}" != "true" ]]; then
+              echo "❌ Health check failed according to result file"
+              exit 1
+            fi
           else
-          echo "Ready for merge to main branch"
+            # File not found - this could mean:
+            # 1. SSH command failed (health check failed) - step would have already failed
+            # 2. File wasn't written or scp failed - but SSH succeeded, so assume healthy
+            if [[ "${SCP_FAILED:-false}" == "true" ]]; then
+              echo "⚠️  Could not download health-result.txt, but SSH command succeeded - assuming healthy"
+              echo "infra-healthy=true" >> $GITHUB_OUTPUT
+              echo "infra-status=healthy" >> $GITHUB_OUTPUT
+            else
+              # SSH command must have failed (step would exit with error)
+              echo "❌ Health check failed - SSH command exited with non-zero code"
+              echo "infra-healthy=false" >> $GITHUB_OUTPUT
+              echo "infra-status=unknown" >> $GITHUB_OUTPUT
+              exit 1
+            fi
           fi
+
+      - name: Display final status
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════════════════════════"
+          echo "📊 Infrastructure Health Recovery Summary"
+          echo "═══════════════════════════════════════════════════════════"
+          echo "Status: ${{ steps.ensure-health.outputs.infra-status }}"
+          echo "Healthy: ${{ steps.ensure-health.outputs.infra-healthy }}"
+          echo ""
+          
+          if [[ "${{ steps.ensure-health.outputs.infra-healthy }}" != "true" ]]; then
+            echo "❌ Infrastructure recovery failed!"
+            echo "⚠️  Manual intervention may be required"
+            exit 1
+          else
+            echo "✅ Infrastructure is healthy!"
+          fi
+

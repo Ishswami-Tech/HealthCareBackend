@@ -95,8 +95,9 @@ services:
       # Values are loaded from .env.development via env_file directive above
       # IMPORTANT: Inside Docker, use container name (openvidu-server) not localhost
       # NOTE: OpenVidu in dev mode uses HTTP (SERVER_SSL_ENABLED=false)
+      # OPENVIDU_URL should be set in .env.development, but allow fallback for local dev
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: http://openvidu-server:4443
+      OPENVIDU_URL: ${OPENVIDU_URL:-http://openvidu-server:4443}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
       OPENVIDU_DOMAIN: ${OPENVIDU_DOMAIN:-localhost}
       # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
@@ -182,8 +183,8 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed') &&
-        echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
+        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
+        echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Running Prisma Database Sync (Development Mode)...' &&
         echo 'Using db push for development (no migration history required)...' &&
@@ -197,6 +198,9 @@ services:
     image: postgres:16
     platform: linux/amd64
     container_name: healthcare-postgres
+    # NOTE: Port 5432 exposed for local development convenience
+    # In production/staging, this port should be commented out for security
+    # Access via: docker exec -it healthcare-postgres psql -U postgres
     ports:
       - "5432:5432"
     environment:
@@ -316,6 +320,46 @@ services:
       retries: 5
       start_period: 30s
 
+  # Portainer - Docker Management UI (like Vercel Dashboard)
+  # Provides comprehensive Docker management: containers, images, networks, volumes, logs, stats
+  # Access at: http://localhost:9000
+  # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: healthcare-portainer
+    ports:
+      - "9000:9000"
+      - "9443:9443"  # HTTPS port (optional)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - healthcare-network
+    restart: unless-stopped
+    # Optimized command: minimal logging, no analytics
+    command: >
+      -H unix:///var/run/docker.sock
+      --no-analytics
+    environment:
+      # Minimize disk usage: reduce logging, disable telemetry
+      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+    # Strict resource limits to prevent excessive disk usage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M  # Minimal memory allocation
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s  # Reduced frequency to save resources
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
   worker:
     build:
       context: ../..
@@ -384,8 +428,8 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma || echo 'Prisma generate completed') &&
-        echo 'Fixing Prisma issues (sourcemaps, types, pnpm)...' &&
+        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
+        echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
         (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
         echo 'Starting worker process...' &&
         yarn exec ts-node -r tsconfig-paths/register src/worker-bootstrap.ts
@@ -698,6 +742,10 @@ volumes:
     name: healthcare_jitsi_jicofo_config
   jitsi_jvb_config:
     name: healthcare_jitsi_jvb_config
+  portainer_data:
+    name: healthcare_portainer_data
+    # Portainer data is minimal: only stores user preferences and settings
+    # Expected size: < 50MB (snapshots disabled, minimal logging)
 
 networks:
   healthcare-network:

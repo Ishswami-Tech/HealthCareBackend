@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentReminderService } from './appointment-reminder.service';
+import { LoggingService } from '@infrastructure/logging';
 import type { ReminderRule } from '@core/types/appointment.types';
 
 interface ReminderPluginData {
@@ -40,13 +41,18 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     'reminder-analytics',
   ];
 
-  constructor(private readonly reminderService: AppointmentReminderService) {
-    super();
+  constructor(
+    private readonly reminderService: AppointmentReminderService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = this.validatePluginData(data);
-    this.logPluginAction('Processing clinic reminder operation', {
+    await this.logPluginAction('Processing clinic reminder operation', {
       operation: pluginData.operation,
     });
 
@@ -121,7 +127,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
         return await this.schedulePaymentReminder(data);
 
       default:
-        this.logPluginError('Unknown reminder operation', {
+        await this.logPluginError('Unknown reminder operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown reminder operation: ${pluginData.operation}`);
@@ -139,7 +145,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     return record as unknown as ReminderPluginData;
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     try {
       const pluginData = this.validatePluginData(data);
       const requiredFields: Record<string, string[]> = {
@@ -166,13 +172,13 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       const required = requiredFields[operation];
 
       if (!required) {
-        this.logPluginError('Unknown operation for validation', { operation });
+        await this.logPluginError('Unknown operation for validation', { operation });
         return Promise.resolve(false);
       }
 
       for (const field of required) {
         if (!pluginData[field as keyof ReminderPluginData]) {
-          this.logPluginError(`Missing required field: ${field}`, {
+          await this.logPluginError(`Missing required field: ${field}`, {
             operation,
             field,
           });

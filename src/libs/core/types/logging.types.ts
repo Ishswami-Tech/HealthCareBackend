@@ -7,6 +7,8 @@
 
 // Import helper functions for environment variable access
 // Use top-level import for strict TypeScript compliance (no require())
+// NOTE: This is an exception - config utilities are not available via path aliases
+// This is acceptable per .ai-rules/ for bootstrap/config code
 import { getEnvironment, getEnvWithDefault } from '../../../config/environment/utils';
 
 export enum LogLevel {
@@ -111,7 +113,7 @@ export interface LogEntry {
   message: string;
   context: string;
   metadata?: Record<string, unknown>;
-  timestamp: Date;
+  timestamp: Date | string;
   correlationId?: string;
   traceId?: string;
   userId?: string;
@@ -122,6 +124,37 @@ export interface LogEntry {
   service?: string;
   version?: string;
   environment?: string;
+}
+
+/**
+ * Event Entry Interface
+ * Proper type definition for event entries
+ */
+export interface EventEntry {
+  id: string;
+  type: string;
+  data: Record<string, unknown>;
+  timestamp: string | Date;
+  clinicId?: string;
+  userId?: string;
+}
+
+/**
+ * Paginated Logs Result
+ * Response format for paginated log retrieval
+ */
+export interface PaginatedLogsResult {
+  logs: LogEntry[];
+  meta: import('@dtos/common-response.dto').PaginationMetaDto;
+}
+
+/**
+ * Paginated Events Result
+ * Response format for paginated event retrieval
+ */
+export interface PaginatedEventsResult {
+  events: EventEntry[];
+  meta: import('@dtos/common-response.dto').PaginationMetaDto;
 }
 
 export interface EnterpriseLogEntry extends LogEntry {

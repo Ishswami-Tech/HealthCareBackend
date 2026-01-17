@@ -13,6 +13,7 @@ import { SessionManagementService } from '@core/session/session-management.servi
 import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';
 import { SocialAuthService } from './core/social-auth.service';
+import { OtpService } from './core/otp.service';
 import {
   LoginDto,
   RegisterDto,
@@ -48,7 +49,8 @@ export class AuthService {
     private readonly sessionService: SessionManagementService,
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService,
-    private readonly socialAuthService: SocialAuthService
+    private readonly socialAuthService: SocialAuthService,
+    private readonly otpService: OtpService
   ) {
     // Defensive check: ensure configService is available
     if (!this.configService) {
@@ -188,7 +190,10 @@ export class AuthService {
   /**
    * User registration
    */
-  async register(registerDto: RegisterDto): Promise<AuthResponse> {
+  async register(
+    registerDto: RegisterDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<AuthResponse> {
     try {
       // Validate clinicId is provided (required)
       if (!registerDto.clinicId) {
@@ -199,8 +204,19 @@ export class AuthService {
         );
       }
 
-      // Validate clinic exists and is active
-      const clinic = await this.databaseService.findClinicByIdSafe(registerDto.clinicId);
+      // Resolve clinic UUID from clinicId (handles both UUID and clinic code like "CL0001")
+      let clinicUUID = registerDto.clinicId;
+      try {
+        // Import resolveClinicUUID utility
+        const { resolveClinicUUID } = await import('@utils/clinic.utils');
+        clinicUUID = await resolveClinicUUID(this.databaseService, registerDto.clinicId);
+      } catch (_resolveError) {
+        // If resolveClinicUUID fails, the clinic doesn't exist or is invalid
+        throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
+      }
+
+      // Validate clinic exists and is active using resolved UUID
+      const clinic = await this.databaseService.findClinicByIdSafe(clinicUUID);
       if (!clinic) {
         throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
       }
@@ -210,6 +226,30 @@ export class AuthService {
           `Clinic with ID ${registerDto.clinicId} is not active`,
           'AuthService.register'
         );
+      }
+
+      // Update registerDto with resolved UUID for consistency
+      registerDto.clinicId = clinicUUID;
+
+      // Verify OTP if provided
+      // Verify OTP if provided
+      if (registerDto.otp) {
+        const identifier = registerDto.phone || registerDto.email;
+        if (!identifier) {
+          throw this.errors.validationError(
+            'identifier',
+            'Phone or Email required for OTP verification',
+            'AuthService.register'
+          );
+        }
+        const verificationResult = await this.otpService.verifyOtp(identifier, registerDto.otp);
+        if (!verificationResult.success) {
+          throw this.errors.validationError(
+            'otp',
+            verificationResult.message || 'Invalid OTP',
+            'AuthService.register'
+          );
+        }
       }
 
       // Check if user already exists
@@ -222,13 +262,14 @@ export class AuthService {
       // Hash password
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
 
-      // Calculate age from dateOfBirth if provided, otherwise default to 25
+      // Create user data with proper typing using UserCreateInput
+      // Calculate age if DOB provided
       const age = registerDto.dateOfBirth
         ? Math.floor(
             (Date.now() - new Date(registerDto.dateOfBirth).getTime()) /
               (365.25 * 24 * 60 * 60 * 1000)
           )
-        : 25;
+        : undefined;
 
       // Create user data with proper typing using UserCreateInput
       const userCreateInput: UserCreateInput = {
@@ -236,10 +277,10 @@ export class AuthService {
         password: hashedPassword,
         userid: uuidv4(),
         name: `${registerDto.firstName} ${registerDto.lastName}`,
-        age,
+        ...(age !== undefined ? { age } : {}),
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
-        phone: registerDto.phone,
+        ...(registerDto.phone ? { phone: registerDto.phone } : {}),
         ...(registerDto.dateOfBirth && {
           dateOfBirth: new Date(registerDto.dateOfBirth),
         }),
@@ -248,7 +289,7 @@ export class AuthService {
         ...(registerDto.role && { role: registerDto.role }),
         primaryClinicId: registerDto.clinicId, // Always set primaryClinicId (required)
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
-        isVerified: false,
+        isVerified: !!registerDto.otp || !!registerDto.googleId, // Set verified if OTP or Social
       };
 
       // Use createUserSafe from DatabaseService
@@ -297,8 +338,8 @@ export class AuthService {
       // Fastify session will be set in controller if request object is available
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: 'Registration',
-        ipAddress: '127.0.0.1',
+        userAgent: sessionMetadata?.userAgent || 'Registration',
+        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { registration: true },
         clinicId: registerDto.clinicId,
       });
@@ -312,7 +353,13 @@ export class AuthService {
         ...(user.phone && { phone: user.phone }),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
-      const tokens = await this.generateTokens(userForTokens, session.sessionId);
+      const tokens = await this.generateTokens(
+        userForTokens,
+        session.sessionId,
+        undefined,
+        sessionMetadata?.userAgent,
+        sessionMetadata?.ipAddress
+      );
 
       // Send welcome email
       // Use clinicId from registration for multi-tenant email routing
@@ -380,7 +427,10 @@ export class AuthService {
   /**
    * User login
    */
-  async login(loginDto: LoginDto): Promise<AuthResponse> {
+  async login(
+    loginDto: LoginDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<AuthResponse> {
     try {
       // Find user directly without caching for login (password must be fresh)
       // Use findUserByEmailForAuth which explicitly selects the password field
@@ -431,8 +481,8 @@ export class AuthService {
       const clinicId = loginDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: 'Login',
-        ipAddress: '127.0.0.1',
+        userAgent: sessionMetadata?.userAgent || 'Login',
+        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { login: true },
         ...(clinicId && { clinicId }),
       });
@@ -446,7 +496,13 @@ export class AuthService {
         ...(user.phone && { phone: user.phone }),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
-      const tokens = await this.generateTokens(userForTokens, session.sessionId);
+      const tokens = await this.generateTokens(
+        userForTokens,
+        session.sessionId,
+        undefined,
+        sessionMetadata?.userAgent,
+        sessionMetadata?.ipAddress
+      );
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
@@ -502,14 +558,17 @@ export class AuthService {
   /**
    * Refresh access token with enhanced security
    */
-  async refreshToken(refreshTokenDto: RefreshTokenDto): Promise<AuthTokens> {
+  async refreshToken(
+    refreshTokenDto: RefreshTokenDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<AuthTokens> {
     try {
       // Use enhanced JWT refresh with security validation
       return await this.jwtAuthService.refreshEnhancedToken(
         refreshTokenDto.refreshToken,
         refreshTokenDto.deviceFingerprint,
-        refreshTokenDto.userAgent,
-        refreshTokenDto.ipAddress
+        sessionMetadata?.userAgent || refreshTokenDto.userAgent,
+        sessionMetadata?.ipAddress || refreshTokenDto.ipAddress
       );
     } catch (_error) {
       await this.logging.log(
@@ -529,7 +588,10 @@ export class AuthService {
   /**
    * Logout user
    */
-  async logout(sessionId: string): Promise<{ success: boolean; message: string }> {
+  async logout(
+    sessionId: string,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<{ success: boolean; message: string }> {
     try {
       // Try to invalidate session, but don't fail if cache is unavailable
       try {
@@ -572,7 +634,11 @@ export class AuthService {
         LogLevel.INFO,
         `User logged out: session ${sessionId}`,
         'AuthService.logout',
-        { sessionId }
+        {
+          sessionId,
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
+        }
       );
 
       return {
@@ -599,7 +665,8 @@ export class AuthService {
    * Request password reset
    */
   async requestPasswordReset(
-    requestDto: PasswordResetRequestDto
+    requestDto: PasswordResetRequestDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.databaseService.findUserByEmailSafe(requestDto.email);
@@ -630,7 +697,20 @@ export class AuthService {
         template: EmailTemplate.PASSWORD_RESET,
         context: {
           name: `${user.firstName} ${user.lastName}`,
-          resetUrl: `${this.configService.getUrlsConfig()?.frontend ?? this.configService.getEnv('FRONTEND_URL') ?? 'https://ishswami.in'}/reset-password?token=${resetToken}`,
+          resetUrl: (() => {
+            const frontendUrl =
+              this.configService.getUrlsConfig()?.frontend ??
+              this.configService.getEnv('FRONTEND_URL');
+
+            if (!frontendUrl) {
+              throw new Error(
+                'Missing required environment variable: FRONTEND_URL. ' +
+                  'Cannot generate password reset URL without frontend URL.'
+              );
+            }
+
+            return `${frontendUrl}/reset-password?token=${resetToken}`;
+          })(),
         },
         ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
       });
@@ -646,7 +726,12 @@ export class AuthService {
         LogLevel.INFO,
         `Password reset requested for: ${user.email}`,
         'AuthService.requestPasswordReset',
-        { userId: user.id, email: user.email }
+        {
+          userId: user.id,
+          email: user.email,
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
+        }
       );
 
       return {
@@ -672,7 +757,13 @@ export class AuthService {
   /**
    * Reset password
    */
-  async resetPassword(resetDto: PasswordResetDto): Promise<{ success: boolean; message: string }> {
+  /**
+   * Reset password
+   */
+  async resetPassword(
+    resetDto: PasswordResetDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<{ success: boolean; message: string }> {
     try {
       // Verify reset token
       const userId = await this.cacheService.get<string>(`password_reset:${resetDto.token}`);
@@ -722,7 +813,12 @@ export class AuthService {
         LogLevel.INFO,
         `Password reset successful for: ${user.email}`,
         'AuthService.resetPassword',
-        { userId: user.id, email: user.email }
+        {
+          userId: user.id,
+          email: user.email,
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
+        }
       );
 
       return {
@@ -749,80 +845,65 @@ export class AuthService {
    */
   async changePassword(
     userId: string,
-    changePasswordDto: ChangePasswordDto
+    changeDto: ChangePasswordDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<{ success: boolean; message: string }> {
     try {
-      // Use findUserByEmailForAuth pattern but for user ID
-      // We need to get the user's email first, then use findUserByEmailForAuth
-      const userById: UserWithRelations | null =
-        await this.databaseService.findUserByIdSafe(userId);
+      const userResult = await this.databaseService.findUserByIdSafe(userId);
+      // userResult doesn't contain password, need to fetch it explicitly for comparison if needed
+      // But actually findUserByIdSafe might not return password depending on implementation.
+      // Let's assume we need to verify current password.
 
-      if (!userById) {
+      const userWithPassword = (await this.databaseService.findUserByEmailForAuth(
+        userResult?.email || ''
+      )) as (UserWithRelations & { password: string }) | null;
+
+      if (!userWithPassword || !userWithPassword.password) {
         throw this.errors.userNotFound(userId, 'AuthService.changePassword');
-      }
-
-      // Now get the user with password using findUserByEmailForAuth
-      const userResult = await this.databaseService.findUserByEmailForAuth(userById.email);
-
-      if (!userResult) {
-        throw this.errors.userNotFound(userId, 'AuthService.changePassword');
-      }
-
-      // Type assertion: userResult has password field
-      const user: UserWithRelations & { password: string } = userResult;
-
-      // Check if user has a password
-      if (!user.password) {
-        throw this.errors.invalidCredentials('AuthService.changePassword');
       }
 
       // Verify current password
-      const isCurrentPasswordValid = await bcrypt.compare(
-        changePasswordDto.currentPassword,
-        user.password
+      const isPasswordValid = await bcrypt.compare(
+        changeDto.currentPassword,
+        userWithPassword.password
       );
-      if (!isCurrentPasswordValid) {
-        throw this.errors.validationError(
-          'currentPassword',
-          'Current password is incorrect',
-          'AuthService.changePassword'
-        );
-      }
-
-      // Validate new password matches confirmation
-      if (changePasswordDto.newPassword !== changePasswordDto.confirmPassword) {
-        throw this.errors.validationError(
-          'confirmPassword',
-          'New password and confirmation password do not match',
-          'AuthService.changePassword'
-        );
+      if (!isPasswordValid) {
+        throw this.errors.invalidCredentials('AuthService.changePassword');
       }
 
       // Hash new password
-      const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 12);
+      const hashedPassword = await bcrypt.hash(changeDto.newPassword, 12);
 
-      // Update password - use type assertion to include password field
-      await this.databaseService.updateUserSafe(user.id, {
+      // Update password
+      await this.databaseService.updateUserSafe(userId, {
         password: hashedPassword,
         passwordChangedAt: new Date(),
         updatedAt: new Date(),
       } as UserUpdateInput);
 
-      // Invalidate all user sessions except current
-      await this.sessionService.revokeAllUserSessions(user.id);
+      // Invalidate all user sessions
+      await this.sessionService.revokeAllUserSessions(userId);
+
+      // Invalidate user cache
+      await this.invalidateUserCache(userId, userWithPassword.primaryClinicId || undefined);
 
       // Emit password changed event
       await this.eventService.emit('user.password_changed', {
-        userId: user.id,
-        email: user.email,
+        userId: userId,
+        email: userWithPassword.email,
       });
 
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `Password changed successfully for: ${user.email}`,
+        `Password changed for user: ${userId}`,
         'AuthService.changePassword',
-        { userId: user.id, email: user.email }
+        {
+          userId,
+          email: userWithPassword.email,
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
+        }
       );
 
       return {
@@ -833,7 +914,7 @@ export class AuthService {
       await this.logging.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Password change failed for user ${userId}`,
+        `Change password failed for user ${userId}`,
         'AuthService.changePassword',
         {
           userId,
@@ -848,7 +929,10 @@ export class AuthService {
   /**
    * Request OTP
    */
-  async requestOtp(requestDto: RequestOtpDto): Promise<{ success: boolean; message: string }> {
+  async requestOtp(
+    requestDto: RequestOtpDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<{ success: boolean; message: string }> {
     try {
       const user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
 
@@ -916,16 +1000,17 @@ export class AuthService {
         ...(clinicId && { clinicId }),
       });
 
+      const isPhone = !!user.phone;
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `OTP sent to: ${user.email}${user.phone ? ` and ${user.phone}` : ''}`,
+        `OTP requested for: ${requestDto.identifier}`,
         'AuthService.requestOtp',
         {
-          userId: user.id,
-          email: user.email,
-          ...(user.phone && { phone: user.phone }),
-          ...(clinicId && { clinicId }),
+          identifier: requestDto.identifier,
+          method: isPhone ? 'SMS' : 'Email',
+          ipAddress: sessionMetadata?.ipAddress,
+          userAgent: sessionMetadata?.userAgent,
         }
       );
 
@@ -952,7 +1037,10 @@ export class AuthService {
   /**
    * Verify OTP
    */
-  async verifyOtp(verifyDto: VerifyOtpRequestDto): Promise<AuthResponse> {
+  async verifyOtp(
+    verifyDto: VerifyOtpRequestDto,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<AuthResponse> {
     try {
       const user = await this.databaseService.findUserByEmailSafe(verifyDto.email);
 
@@ -983,8 +1071,8 @@ export class AuthService {
       const clinicId = verifyDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
-        userAgent: 'OTP Login',
-        ipAddress: '127.0.0.1',
+        userAgent: sessionMetadata?.userAgent || 'OTP Login',
+        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { otpLogin: true },
         ...(clinicId && { clinicId }),
       });
@@ -1003,7 +1091,13 @@ export class AuthService {
           : {}),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
-      const tokens = await this.generateTokens(userForTokens, session.sessionId);
+      const tokens = await this.generateTokens(
+        userForTokens,
+        session.sessionId,
+        undefined,
+        sessionMetadata?.userAgent,
+        sessionMetadata?.ipAddress
+      );
 
       // Update last login
       await this.databaseService.updateUserSafe(user.id, {
@@ -1096,7 +1190,11 @@ export class AuthService {
    * @param clinicId - Optional clinic ID for multi-tenant context
    * @returns AuthResponse with JWT tokens and user information
    */
-  async authenticateWithGoogle(googleToken: string, clinicId?: string): Promise<AuthResponse> {
+  async authenticateWithGoogle(
+    googleToken: string,
+    clinicId?: string,
+    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+  ): Promise<AuthResponse> {
     try {
       // Verify Google token and get user info
       const socialAuthResult = await this.socialAuthService.authenticateWithGoogle(googleToken);
@@ -1138,8 +1236,8 @@ export class AuthService {
       // Create session
       const session = await this.sessionService.createSession({
         userId: fullUser.id,
-        userAgent: 'Google OAuth',
-        ipAddress: '127.0.0.1',
+        userAgent: sessionMetadata?.userAgent || 'Google OAuth',
+        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { googleOAuth: true, isNewUser: socialAuthResult.isNewUser },
         ...(finalClinicId && { clinicId: finalClinicId }),
       });
@@ -1162,7 +1260,13 @@ export class AuthService {
         ...(fullUser.primaryClinicId && { primaryClinicId: fullUser.primaryClinicId }),
       };
 
-      const tokens = await this.generateTokens(userForTokens, session.sessionId);
+      const tokens = await this.generateTokens(
+        userForTokens,
+        session.sessionId,
+        undefined,
+        sessionMetadata?.userAgent,
+        sessionMetadata?.ipAddress
+      );
 
       // Update last login
       await this.databaseService.updateUserSafe(fullUser.id, {

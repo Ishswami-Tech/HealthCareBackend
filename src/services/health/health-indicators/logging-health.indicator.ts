@@ -1,12 +1,13 @@
 /**
  * Logging Health Indicator for Health Module
  * @class LoggingHealthIndicator
- * @description Health indicator for logging service using @nestjs/terminus
+ * @description Health indicator for logging service (no Terminus dependency)
+ * Uses only LoggingService (per .ai-rules/ coding standards)
  * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthIndicatorResult } from './types';
 import { LoggingHealthMonitorService } from '@infrastructure/logging/logging-health-monitor.service';
 import type { LoggingHealthMonitorStatus } from '@core/types';
 import { BaseHealthIndicator } from './base-health.indicator';

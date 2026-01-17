@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentLocationService } from './appointment-location.service';
+import { LoggingService } from '@infrastructure/logging';
 
 interface LocationPluginData {
   operation: string;
@@ -13,13 +14,18 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
   readonly version = '1.0.0';
   readonly features = ['location-management', 'qr-codes', 'multi-location'];
 
-  constructor(private readonly locationService: AppointmentLocationService) {
-    super();
+  constructor(
+    private readonly locationService: AppointmentLocationService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as LocationPluginData;
-    this.logPluginAction('Processing clinic location operation', {
+    await this.logPluginAction('Processing clinic location operation', {
       operation: pluginData.operation,
     });
 
@@ -56,14 +62,14 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
         return await this.locationService.invalidateDoctorsCache(pluginData.locationId, 'clinic');
 
       default:
-        this.logPluginError('Unknown location operation', {
+        await this.logPluginError('Unknown location operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown location operation: ${pluginData.operation}`);
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as LocationPluginData;
     // Validate that required fields are present for each operation
     const requiredFields: Record<string, string[]> = {
@@ -88,7 +94,7 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
       );
     });
     if (!isValid) {
-      this.logPluginError('Missing required fields', {
+      await this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });

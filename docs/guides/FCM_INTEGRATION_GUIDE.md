@@ -2,7 +2,8 @@
 
 ## Step-by-Step Integration for Healthcare Backend
 
-This guide will walk you through integrating Firebase Cloud Messaging (FCM) as the primary push notification provider for your healthcare application.
+This guide will walk you through integrating Firebase Cloud Messaging (FCM) as
+the primary push notification provider for your healthcare application.
 
 ---
 
@@ -18,12 +19,14 @@ This guide will walk you through integrating Firebase Cloud Messaging (FCM) as t
 ## 🚀 Step 1: Create Firebase Project
 
 ### 1.1 Go to Firebase Console
+
 1. Visit [Firebase Console](https://console.firebase.google.com/)
 2. Click **"Add project"** or select an existing project
 3. Enter project name (e.g., "Healthcare App")
 4. Click **"Continue"**
 
 ### 1.2 Configure Project
+
 1. **Google Analytics** (Optional but recommended):
    - Enable/disable Google Analytics
    - Select or create Analytics account
@@ -37,19 +40,23 @@ This guide will walk you through integrating Firebase Cloud Messaging (FCM) as t
 ## 🔑 Step 2: Get Service Account Credentials
 
 ### 2.1 Enable Cloud Messaging API
+
 1. In Firebase Console, go to **Project Settings** (gear icon)
 2. Click on **"Cloud Messaging"** tab
 3. Note the **Server key** (you'll need this later for SNS if needed)
 
 ### 2.2 Generate Service Account Key
+
 1. Go to **Project Settings** → **Service Accounts** tab
 2. Click **"Generate new private key"**
 3. Click **"Generate key"** in the dialog
-4. A JSON file will download (e.g., `healthcare-app-firebase-adminsdk-xxxxx.json`)
+4. A JSON file will download (e.g.,
+   `healthcare-app-firebase-adminsdk-xxxxx.json`)
 
 **⚠️ IMPORTANT**: Keep this file secure! It contains sensitive credentials.
 
 ### 2.3 Extract Credentials from JSON
+
 Open the downloaded JSON file. You'll need these values:
 
 ```json
@@ -67,6 +74,7 @@ Open the downloaded JSON file. You'll need these values:
 ```
 
 **Extract these values:**
+
 - `project_id` → `FIREBASE_PROJECT_ID`
 - `private_key` → `FIREBASE_PRIVATE_KEY`
 - `client_email` → `FIREBASE_CLIENT_EMAIL`
@@ -89,21 +97,26 @@ FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@your-project-id.iam.gserviceaccoun
 ### 3.2 Important Notes for Private Key
 
 **⚠️ CRITICAL**: The `FIREBASE_PRIVATE_KEY` must include:
-- The full key including `-----BEGIN PRIVATE KEY-----` and `-----END PRIVATE KEY-----`
+
+- The full key including `-----BEGIN PRIVATE KEY-----` and
+  `-----END PRIVATE KEY-----`
 - All `\n` characters (newlines) must be preserved
 - Use double quotes in `.env` file
 - The key should be on a single line with `\n` characters
 
 **Example:**
+
 ```bash
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n"
 ```
 
 ### 3.3 Alternative: Use Config Service
 
-If you're using the enhanced ConfigService, you can also add these to your configuration files:
+If you're using the enhanced ConfigService, you can also add these to your
+configuration files:
 
 **`src/config/environment/development.config.ts`**:
+
 ```typescript
 export default {
   firebase: {
@@ -131,14 +144,17 @@ export default {
    - Add it to your iOS project (Xcode)
 
 7. **Add Firebase SDK**:
+
    ```bash
    # Using CocoaPods
    pod 'Firebase/Messaging'
    ```
 
 8. **Configure APNs**:
-   - Go to **Project Settings** → **Cloud Messaging** → **Apple app configuration**
-   - Upload your **APNs Authentication Key** (`.p8` file) or **APNs Certificate** (`.p12` file)
+   - Go to **Project Settings** → **Cloud Messaging** → **Apple app
+     configuration**
+   - Upload your **APNs Authentication Key** (`.p8` file) or **APNs
+     Certificate** (`.p12` file)
    - Enter your **Key ID** and **Team ID**
 
 ### 4.2 Add Android App to Firebase
@@ -154,6 +170,7 @@ export default {
    - Place it in `android/app/` directory
 
 7. **Add Firebase SDK**:
+
    ```gradle
    // android/build.gradle
    dependencies {
@@ -162,7 +179,7 @@ export default {
 
    // android/app/build.gradle
    apply plugin: 'com.google.gms.google-services'
-   
+
    dependencies {
        implementation 'com.google.firebase:firebase-messaging:23.3.1'
    }
@@ -175,11 +192,13 @@ export default {
 ### 5.1 Check Service Initialization
 
 1. Start your backend server:
+
    ```bash
-   npm run start:dev
+   yarn start:dev
    ```
 
 2. Check logs for Firebase initialization:
+
    ```
    [INFO] Firebase push notification service initialized successfully
    ```
@@ -193,11 +212,13 @@ export default {
 ### 5.2 Test Push Notification via API
 
 **Using Swagger UI** (if available):
+
 1. Go to `http://localhost:8088/api/docs`
 2. Navigate to **Notification** endpoints
 3. Use the **"Send Push Notification"** endpoint
 
 **Using cURL**:
+
 ```bash
 curl -X POST http://localhost:8088/api/v1/communication/push \
   -H "Content-Type: application/json" \
@@ -216,6 +237,7 @@ curl -X POST http://localhost:8088/api/v1/communication/push \
 ### 5.3 Get Device Token from Mobile App
 
 **iOS (Swift)**:
+
 ```swift
 import FirebaseMessaging
 
@@ -240,6 +262,7 @@ Messaging.messaging().token { token, error in
 ```
 
 **Android (Kotlin)**:
+
 ```kotlin
 import com.google.firebase.messaging.FirebaseMessaging
 
@@ -268,6 +291,7 @@ curl http://localhost:8088/api/v1/communication/health
 ```
 
 Expected response:
+
 ```json
 {
   "healthy": true,
@@ -281,10 +305,12 @@ Expected response:
 ### 6.2 Check Logs
 
 After sending a test notification, check logs for:
+
 - ✅ `Push notification sent successfully via FCM`
 - ✅ `messageId: projects/your-project/messages/0:xxxxx`
 
 If FCM fails, you should see:
+
 - ⚠️ `FCM push notification failed, attempting SNS backup`
 - ✅ `Push notification sent successfully via SNS backup`
 
@@ -298,14 +324,17 @@ If FCM fails, you should see:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Navigate to **Billing** → **Account Management**
-3. Contact Google Cloud Support to request a **Business Associate Agreement (BAA)**
+3. Contact Google Cloud Support to request a **Business Associate Agreement
+   (BAA)**
 4. Complete the BAA signing process
 
-**Note**: This is required if you're sending PHI (Protected Health Information) via push notifications.
+**Note**: This is required if you're sending PHI (Protected Health Information)
+via push notifications.
 
 ### 7.2 Configure Data Encryption
 
 Ensure your notification payloads:
+
 - ✅ Don't include PHI in notification body/title
 - ✅ Use encrypted deep links to app screens
 - ✅ Store sensitive data in secure app storage
@@ -318,6 +347,7 @@ Ensure your notification payloads:
 ### Issue: "Firebase credentials not provided"
 
 **Solution**:
+
 1. Check `.env` file has all three variables
 2. Verify private key includes `\n` characters
 3. Restart the server after changing `.env`
@@ -325,6 +355,7 @@ Ensure your notification payloads:
 ### Issue: "Failed to initialize Firebase"
 
 **Solution**:
+
 1. Verify credentials are correct
 2. Check private key format (must include BEGIN/END markers)
 3. Ensure service account has proper permissions
@@ -332,6 +363,7 @@ Ensure your notification payloads:
 ### Issue: "Invalid registration token"
 
 **Solution**:
+
 1. Verify device token is correct
 2. Check if token is expired (tokens can expire)
 3. Re-register device token from mobile app
@@ -339,6 +371,7 @@ Ensure your notification payloads:
 ### Issue: Notifications not received on iOS
 
 **Solution**:
+
 1. Verify APNs certificate/key is uploaded to Firebase
 2. Check iOS app has notification permissions
 3. Verify `GoogleService-Info.plist` is in the project
@@ -347,6 +380,7 @@ Ensure your notification payloads:
 ### Issue: Notifications not received on Android
 
 **Solution**:
+
 1. Verify `google-services.json` is in correct location
 2. Check Firebase SDK is properly integrated
 3. Verify app has notification permissions
@@ -359,6 +393,7 @@ Ensure your notification payloads:
 ### 8.1 Monitor Delivery Rates
 
 Check Firebase Console → **Cloud Messaging** → **Reports**:
+
 - Delivery success rate
 - Failure reasons
 - Platform breakdown (iOS vs Android)
@@ -366,6 +401,7 @@ Check Firebase Console → **Cloud Messaging** → **Reports**:
 ### 8.2 Set Up Alerts
 
 Configure alerts for:
+
 - High failure rates
 - Service downtime
 - Invalid token errors
@@ -428,6 +464,7 @@ Configure alerts for:
 ## 🆘 Support
 
 If you encounter issues:
+
 1. Check the troubleshooting section above
 2. Review Firebase Console logs
 3. Check backend application logs
@@ -436,4 +473,3 @@ If you encounter issues:
 ---
 
 **Last Updated**: January 2025
-

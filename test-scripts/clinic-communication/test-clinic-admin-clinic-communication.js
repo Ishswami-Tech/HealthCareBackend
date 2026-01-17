@@ -15,10 +15,7 @@ const clinicAdminClinicCommunicationTests = {
       ctx.recordTest('Get Communication Config', false, true);
       return false;
     }
-    const result = await ctx.makeRequest(
-      'GET',
-      `/clinics/${ctx.clinicId}/communication/config`
-    );
+    const result = await ctx.makeRequest('GET', `/clinics/${ctx.clinicId}/communication/config`);
     const passed = result.ok || result.status === 404;
     ctx.recordTest('Get Communication Config', passed);
     return passed;
@@ -29,27 +26,23 @@ const clinicAdminClinicCommunicationTests = {
       ctx.recordTest('Update Communication Config', false, true);
       return false;
     }
-    const result = await ctx.makeRequest(
-      'PUT',
-      `/clinics/${ctx.clinicId}/communication/config`,
-      {
-        email: {
-          primary: {
-            provider: 'smtp',
-            enabled: true,
-            credentials: {
-              host: 'smtp.example.com',
-              port: '587',
-              user: 'test@example.com',
-              password: 'test123',
-            },
-            priority: 1,
+    const result = await ctx.makeRequest('PUT', `/clinics/${ctx.clinicId}/communication/config`, {
+      email: {
+        primary: {
+          provider: 'smtp',
+          enabled: true,
+          credentials: {
+            host: 'smtp.example.com',
+            port: '587',
+            user: 'test@example.com',
+            password: 'test123',
           },
-          defaultFrom: 'test@example.com',
-          defaultFromName: 'Test Clinic',
+          priority: 1,
         },
-      }
-    );
+        defaultFrom: 'test@example.com',
+        defaultFromName: 'Test Clinic',
+      },
+    });
     const passed = result.ok || result.status === 400;
     ctx.recordTest('Update Communication Config', passed);
     return passed;
@@ -60,18 +53,14 @@ const clinicAdminClinicCommunicationTests = {
       ctx.recordTest('Update SES Config', false, true);
       return false;
     }
-    const result = await ctx.makeRequest(
-      'PUT',
-      `/clinics/${ctx.clinicId}/communication/ses`,
-      {
-        region: 'us-east-1',
-        accessKeyId: 'test-key',
-        secretAccessKey: 'test-secret',
-        fromEmail: 'test@example.com',
-        fromName: 'Test Clinic',
-        enabled: true,
-      }
-    );
+    const result = await ctx.makeRequest('PUT', `/clinics/${ctx.clinicId}/communication/ses`, {
+      region: 'us-east-1',
+      accessKeyId: 'test-key',
+      secretAccessKey: 'test-secret',
+      fromEmail: 'test@example.com',
+      fromName: 'Test Clinic',
+      enabled: true,
+    });
     const passed = result.ok || result.status === 400;
     ctx.recordTest('Update SES Config', passed);
     return passed;
@@ -159,14 +148,3 @@ runClinicAdminClinicCommunicationTests().catch(error => {
   console.error('CLINIC_ADMIN clinic communication tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-

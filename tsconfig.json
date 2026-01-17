@@ -27,6 +27,8 @@
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
     "allowJs": false,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
     "paths": {
       "@database/*": ["src/libs/infrastructure/database/*"],
       "@infrastructure/*": ["src/libs/infrastructure/*"],
@@ -46,7 +48,8 @@
       "@payment/*": ["src/libs/payment/*"],
       "@config": ["src/config"],
       "@config/*": ["src/config/*"],
-      "@prisma/client": ["src/libs/infrastructure/database/prisma/generated/client"]
+      "@generated/prisma": ["src/libs/infrastructure/database/prisma/generated"],
+      "@prisma/client": ["src/libs/infrastructure/database/prisma/generated"]
     }
   },
   "include": ["src/**/*.ts", "scripts/**/*.ts"],
@@ -54,9 +57,9 @@
     "node_modules",
     "dist",
     "**/prisma.config.js",
-    "**/generated/**",
-    "src/libs/infrastructure/database/generated"
-    // Note: src/libs/infrastructure/database/prisma/generated is NOT excluded
-    // to allow TypeScript to resolve types from Prisma Client
+    "src/libs/infrastructure/database/prisma/generated",
+    "src/libs/infrastructure/database/prisma/seed.ts"
+    // Note: Prisma generated client is NOT excluded to allow TypeScript to resolve types from Prisma Client
+    // Note: seed.ts is excluded as it's only used for development/testing
   ]
 }

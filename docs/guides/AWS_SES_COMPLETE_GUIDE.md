@@ -1,8 +1,10 @@
 # 📧 AWS SES Complete Integration Guide
 
-> **Comprehensive guide for AWS SES setup, multi-tenant configuration, and best practices**
+> **Comprehensive guide for AWS SES setup, multi-tenant configuration, and best
+> practices**
 
-This guide covers everything you need to set up AWS SES for your healthcare application, from initial configuration to multi-tenant support.
+This guide covers everything you need to set up AWS SES for your healthcare
+application, from initial configuration to multi-tenant support.
 
 ## 📋 Table of Contents
 
@@ -35,17 +37,20 @@ This guide covers everything you need to set up AWS SES for your healthcare appl
 ### Step 1: Create AWS Account & IAM User
 
 #### 1.1 Create AWS Account
+
 1. Go to [AWS Console](https://console.aws.amazon.com/)
 2. Sign up or sign in to your AWS account
 3. Complete account verification if required
 
 #### 1.2 Create IAM User for SES
+
 1. Go to **IAM** → **Users** → **Add users**
 2. Enter username: `healthcare-ses-user`
 3. Select **"Programmatic access"**
 4. Click **"Next: Permissions"**
 
 #### 1.3 Attach SES Permissions
+
 1. Click **"Attach existing policies directly"**
 2. Search for and select:
    - `AmazonSESFullAccess` (or create custom policy with minimal permissions)
@@ -54,13 +59,15 @@ This guide covers everything you need to set up AWS SES for your healthcare appl
 5. Click **"Create user"**
 
 #### 1.4 Save Access Keys
+
 1. **IMPORTANT**: Copy the **Access Key ID** and **Secret Access Key**
 2. Save them securely (you won't be able to see the secret key again)
 3. These will be your `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
 
 ### Step 2: Choose AWS Region
 
-1. Select your preferred AWS region (e.g., `us-east-1`, `us-west-2`, `eu-west-1`)
+1. Select your preferred AWS region (e.g., `us-east-1`, `us-west-2`,
+   `eu-west-1`)
 2. **Important**: SES is region-specific. Choose a region close to your users
 3. This will be your `AWS_REGION`
 
@@ -116,6 +123,7 @@ AWS_SNS_REGION=us-east-1
 SES will provide DNS records to add:
 
 1. **SPF Record** (TXT):
+
    ```
    v=spf1 include:amazonses.com ~all
    ```
@@ -125,6 +133,7 @@ SES will provide DNS records to add:
    - Add all provided CNAME records
 
 3. **DMARC Record** (TXT) - Optional but recommended:
+
    ```
    v=DMARC1; p=quarantine; rua=mailto:dmarc@healthcare.com
    ```
@@ -144,6 +153,7 @@ SES will provide DNS records to add:
 ## Production Access
 
 **By default, SES is in sandbox mode**:
+
 - Can only send to verified email addresses
 - Limited to 200 emails per day
 - 1 email per second
@@ -167,10 +177,12 @@ SES will provide DNS records to add:
 
 For multi-tenant support, you have two options:
 
-1. **Shared SNS Topic (Recommended)**: One SNS topic for all clinics, with email-based routing
+1. **Shared SNS Topic (Recommended)**: One SNS topic for all clinics, with
+   email-based routing
 2. **Per-Clinic SNS Topics**: Separate SNS topic for each clinic
 
 The shared topic approach is recommended because:
+
 - Simpler to manage
 - Lower AWS costs
 - Our system automatically identifies clinics from source email addresses
@@ -181,12 +193,19 @@ The shared topic approach is recommended because:
 ## SNS Topic Setup
 
 > **Important**: SNS Topics and Configuration Sets are **different**:
-> - **SNS Topics** (AWS SNS service): Used to receive notifications/events from SES (bounces, complaints, deliveries). You subscribe your webhook endpoint to these topics.
-> - **Configuration Sets** (AWS SES service): Used to group email sending configurations, event publishing settings, and reputation tracking. You can assign a configuration set to emails when sending.
+>
+> - **SNS Topics** (AWS SNS service): Used to receive notifications/events from
+>   SES (bounces, complaints, deliveries). You subscribe your webhook endpoint
+>   to these topics.
+> - **Configuration Sets** (AWS SES service): Used to group email sending
+>   configurations, event publishing settings, and reputation tracking. You can
+>   assign a configuration set to emails when sending.
 
-**Key Point**: SNS Topics are created in the **AWS SNS Console** (not SES console). Then you configure SES to send events to those topics.
+**Key Point**: SNS Topics are created in the **AWS SNS Console** (not SES
+console). Then you configure SES to send events to those topics.
 
 **Process Flow**:
+
 1. Create SNS Topic in **SNS Console** → Get Topic ARN
 2. Configure SES in **SES Console** → Select the SNS Topic for event publishing
 3. Subscribe your webhook to the SNS Topic → Receive events
@@ -206,38 +225,45 @@ The shared topic approach is recommended because:
 
 #### Step 2: Configure SES Event Publishing
 
-**Important**: You must create the SNS topic first (Step 1) before you can select it in SES.
+**Important**: You must create the SNS topic first (Step 1) before you can
+select it in SES.
 
 1. Go to AWS SES Console: https://console.aws.amazon.com/ses/
 2. Click **"Verified identities"** (or **"Identities"** in some regions)
 3. For each verified domain/email:
    - Click on the identity name
    - Go to the **"Notifications"** tab
-   - You'll see a section called **"Feedback notifications"** with a table showing:
+   - You'll see a section called **"Feedback notifications"** with a table
+     showing:
      - **Feedback type**: Bounce, Complaint, Delivery
      - **SNS topic**: Currently showing "No SNS Topic" for all
      - **Include original headers**: Currently showing "-"
-   - Click the **"Edit"** button on the right side of the "Feedback notifications" section
+   - Click the **"Edit"** button on the right side of the "Feedback
+     notifications" section
    - In the edit dialog, you'll see options for each feedback type:
-     - **Bounce notifications**: 
+     - **Bounce notifications**:
        - Select **"SNS topic"** (not "Email" or "SQS queue")
        - Choose your topic from the dropdown (the topic you created in Step 1)
        - If you don't see your topic, make sure you're in the same AWS region
-     - **Complaint notifications**: 
+     - **Complaint notifications**:
        - Select **"SNS topic"**
        - Choose the same topic
-     - **Delivery notifications** (optional): 
+     - **Delivery notifications** (optional):
        - Select **"SNS topic"**
        - Choose the same topic
    - Click **"Save changes"** or **"Save"**
 
 **What you'll see after saving**:
+
 - The table will update to show your SNS topic ARN for each feedback type
 - Instead of "No SNS Topic", you'll see your topic name or ARN
 
 **Note**: If you don't see a dropdown with topics in the edit dialog, you can:
-- Click **"Create SNS topic"** link (if available) - this will create a new topic
-- Or manually enter the Topic ARN: `arn:aws:sns:us-east-1:123456789012:healthcare-ses-events`
+
+- Click **"Create SNS topic"** link (if available) - this will create a new
+  topic
+- Or manually enter the Topic ARN:
+  `arn:aws:sns:us-east-1:123456789012:healthcare-ses-events`
 
 #### Step 3: Subscribe Your Webhook Endpoint
 
@@ -324,6 +350,7 @@ Authorization: Bearer <token>
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
@@ -414,12 +441,12 @@ await this.communicationConfigService.saveClinicConfig({
 
 ### API Endpoints
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/v1/clinics/{clinicId}/communication/config` | GET | Get clinic communication config |
-| `/api/v1/clinics/{clinicId}/communication/config` | PUT | Update full communication config |
-| `/api/v1/clinics/{clinicId}/communication/ses` | PUT | Update SES config only (quick) |
-| `/api/v1/clinics/{clinicId}/communication/test-email` | POST | Test email configuration |
+| Endpoint                                              | Method | Description                      |
+| ----------------------------------------------------- | ------ | -------------------------------- |
+| `/api/v1/clinics/{clinicId}/communication/config`     | GET    | Get clinic communication config  |
+| `/api/v1/clinics/{clinicId}/communication/config`     | PUT    | Update full communication config |
+| `/api/v1/clinics/{clinicId}/communication/ses`        | PUT    | Update SES config only (quick)   |
+| `/api/v1/clinics/{clinicId}/communication/test-email` | POST   | Test email configuration         |
 
 ### Required Permissions
 
@@ -467,11 +494,13 @@ aws sns list-subscriptions-by-topic \
 ### 5. Check Service Initialization
 
 1. Start your backend server:
+
    ```bash
-   npm run start:dev
+   yarn start:dev
    ```
 
 2. Check logs for SES initialization:
+
    ```
    [INFO] AWS SES email service initialized successfully
    ```
@@ -486,47 +515,56 @@ aws sns list-subscriptions-by-topic \
 
 ## Best Practices & Compliance Audit
 
-> **Note:** This section provides a comprehensive audit of AWS SES best practices and compliance requirements. Use this checklist to ensure your implementation meets AWS requirements for production access.
+> **Note:** This section provides a comprehensive audit of AWS SES best
+> practices and compliance requirements. Use this checklist to ensure your
+> implementation meets AWS requirements for production access.
 
 ### ✅ Implemented Best Practices
 
 #### 1. Email Validation ✅
+
 - ✅ Email format validation before sending
 - ✅ Recipient, CC, BCC validation
 - ✅ Sender email validation
 - **Location:** `src/libs/communication/adapters/base/base-email-adapter.ts`
 
 #### 2. Retry Logic ✅
+
 - ✅ Exponential backoff (1s, 2s, 4s)
 - ✅ Maximum 3 retries
 - ✅ Proper error logging
 - **Location:** `src/libs/communication/adapters/base/base-email-adapter.ts`
 
 #### 3. Error Handling ✅
+
 - ✅ Comprehensive error logging
 - ✅ Error tracking with message IDs
 - ✅ Graceful failure handling
 - **Location:** All email adapters
 
 #### 4. Rate Limiting ✅
+
 - ✅ Bulk email batching (10 emails per batch)
 - ✅ Delays between batches (100ms)
 - ✅ Prevents rate limit violations
 - **Location:** `src/libs/communication/channels/email/ses-email.service.ts`
 
 #### 5. Email Templates ✅
+
 - ✅ Professional HTML templates
 - ✅ Responsive design
 - ✅ Clear messaging
 - **Location:** `src/libs/communication/templates/emailTemplates/`
 
 #### 6. Domain Authentication ✅
+
 - ✅ Domain verified
 - ✅ DKIM configured and enabled
 - ✅ Custom MAIL FROM domain configured
 - ✅ SPF records configured
 
 #### 7. Logging ✅
+
 - ✅ Comprehensive logging service
 - ✅ Email send success/failure tracking
 - ✅ Message ID tracking
@@ -541,17 +579,20 @@ aws sns list-subscriptions-by-topic \
 **Status:** Implementation needed
 
 **What's Missing:**
+
 - SNS webhook handler for bounce notifications
 - Automatic removal of bounced emails from mailing lists
 - Bounce rate monitoring
 - Distinction between hard/soft bounces
 
 **AWS Requirement:**
+
 - Bounce rate should be < 5%
 - Hard bounces must be removed immediately
 - Soft bounces should be retried with backoff
 
 **Implementation Needed:**
+
 ```typescript
 // Webhook handler: src/libs/communication/adapters/email/ses/webhooks/ses-webhook.controller.ts
 // Handle SNS notifications for bounces
@@ -566,17 +607,20 @@ aws sns list-subscriptions-by-topic \
 **Status:** Implementation needed
 
 **What's Missing:**
+
 - SNS webhook handler for complaint notifications
 - Automatic removal of complainers from mailing lists
 - Complaint rate monitoring
 - Suppression list management
 
 **AWS Requirement:**
+
 - Complaint rate should be < 0.1%
 - Complainers must be removed immediately
 - Must maintain suppression list
 
 **Implementation Needed:**
+
 ```typescript
 // Webhook handler: src/libs/communication/adapters/email/ses/webhooks/ses-webhook.controller.ts
 // Handle SNS notifications for complaints
@@ -590,40 +634,47 @@ aws sns list-subscriptions-by-topic \
 **Status:** Implementation needed
 
 **What's Missing:**
+
 - Unsubscribe links in email templates
 - Unsubscribe endpoint
 - Unsubscribe handling logic
 - Preference management
 
 **AWS Requirement:**
+
 - All transactional emails should include unsubscribe option
 - One-click unsubscribe must be implemented
 - Unsubscribe requests must be processed immediately
 
 **Implementation Needed:**
+
 - Add unsubscribe links to all email templates
 - Create unsubscribe endpoint (`/email/unsubscribe`)
 - Update user preferences in database
 - Add to suppression list
 
-**Note:** Unsubscribe endpoints exist but templates need unsubscribe links added.
+**Note:** Unsubscribe endpoints exist but templates need unsubscribe links
+added.
 
 #### 4. Suppression List Management ❌ **CRITICAL**
 
 **Status:** Implementation needed
 
 **What's Missing:**
+
 - Suppression list in database
 - Check before sending emails
 - Integration with SES suppression list
 - Automatic suppression on bounce/complaint
 
 **AWS Requirement:**
+
 - Must maintain suppression list
 - Must check suppression list before sending
 - Must sync with SES suppression list
 
 **Implementation Needed:**
+
 ```typescript
 // Create: src/services/email/suppression-list.service.ts
 // Database model for suppression list
@@ -636,17 +687,20 @@ aws sns list-subscriptions-by-topic \
 **Status:** Not implemented
 
 **What's Missing:**
+
 - Configuration sets for different email types
 - Event publishing configuration
 - Separate tracking for transactional vs marketing
 
 **AWS Recommendation:**
+
 - Create configuration sets for:
   - Transactional emails
   - Notifications
   - System alerts
 
 **Implementation Needed:**
+
 - Create configuration sets in AWS SES
 - Use configuration sets in SendEmailCommand
 - Configure event publishing per set
@@ -658,12 +712,14 @@ aws sns list-subscriptions-by-topic \
 **Status:** Basic validation only
 
 **What's Missing:**
+
 - Only format validation (regex)
 - No email existence verification
 - No disposable email detection
 - No role-based email detection
 
 **Recommendation:**
+
 - Integrate with email validation API (optional)
 - At minimum: Better format validation
 - Check for common invalid patterns
@@ -673,6 +729,7 @@ aws sns list-subscriptions-by-topic \
 **Status:** Basic logging only
 
 **What's Missing:**
+
 - Bounce rate tracking
 - Complaint rate tracking
 - Delivery rate tracking
@@ -680,6 +737,7 @@ aws sns list-subscriptions-by-topic \
 - Alerting on high bounce/complaint rates
 
 **Recommendation:**
+
 - Track metrics in database
 - Set up CloudWatch alarms
 - Alert when bounce rate > 5%
@@ -690,6 +748,7 @@ aws sns list-subscriptions-by-topic \
 ### 📋 Implementation Priority
 
 #### **Priority 1: CRITICAL (Must Implement Before Production)**
+
 1. ✅ Bounce handling webhook
 2. ✅ Complaint handling webhook
 3. ⚠️ Unsubscribe links in templates
@@ -697,11 +756,13 @@ aws sns list-subscriptions-by-topic \
 5. ⚠️ Suppression list management
 
 #### **Priority 2: HIGH (Should Implement Soon)**
+
 6. ⚠️ Configuration sets
 7. ⚠️ Bounce/complaint rate monitoring
 8. ⚠️ CloudWatch integration
 
 #### **Priority 3: RECOMMENDED (Nice to Have)**
+
 9. ⚠️ Enhanced email validation
 10. ⚠️ Email analytics dashboard
 
@@ -710,6 +771,7 @@ aws sns list-subscriptions-by-topic \
 ### 🚨 Action Items Checklist
 
 #### **Immediate (Before Production Access):**
+
 - [ ] Implement bounce webhook handler
 - [ ] Implement complaint webhook handler
 - [ ] Add unsubscribe links to all email templates
@@ -719,12 +781,14 @@ aws sns list-subscriptions-by-topic \
 - [ ] Configure SES event publishing
 
 #### **Short-term (Within 1 Week):**
+
 - [ ] Create configuration sets
 - [ ] Implement bounce/complaint rate monitoring
 - [ ] Set up CloudWatch alarms
 - [ ] Test webhook endpoints
 
 #### **Long-term (Within 1 Month):**
+
 - [ ] Enhanced email validation
 - [ ] Email analytics dashboard
 - [ ] A/B testing for email content
@@ -736,7 +800,9 @@ aws sns list-subscriptions-by-topic \
 Based on this audit, here's what you can tell AWS in your response:
 
 #### **Bounce Management:**
+
 ✅ "We have implemented comprehensive bounce handling:
+
 - SNS webhook endpoint for bounce notifications
 - Automatic removal of hard bounces from mailing lists
 - Soft bounce retry logic with exponential backoff
@@ -744,7 +810,9 @@ Based on this audit, here's what you can tell AWS in your response:
 - Suppression list management for bounced addresses"
 
 #### **Complaint Management:**
+
 ✅ "We have implemented complaint handling:
+
 - SNS webhook endpoint for complaint notifications
 - Immediate removal of complainers from mailing lists
 - Complaint rate monitoring (target: < 0.1%)
@@ -752,7 +820,9 @@ Based on this audit, here's what you can tell AWS in your response:
 - Regular review of complaint patterns"
 
 #### **Unsubscribe Management:**
+
 ✅ "We have implemented unsubscribe functionality:
+
 - One-click unsubscribe links in all emails
 - Immediate processing of unsubscribe requests
 - User preference management in database
@@ -760,7 +830,9 @@ Based on this audit, here's what you can tell AWS in your response:
 - Clear unsubscribe instructions"
 
 #### **List Maintenance:**
+
 ✅ "We maintain recipient lists through:
+
 - Database storage with consent flags
 - Regular validation of email addresses
 - Suppression list for bounced/complained addresses
@@ -772,6 +844,7 @@ Based on this audit, here's what you can tell AWS in your response:
 ### ✅ Current Status Summary
 
 **What's Working:**
+
 - ✅ Domain verified and authenticated
 - ✅ Email sending functional
 - ✅ Basic validation and error handling
@@ -779,6 +852,7 @@ Based on this audit, here's what you can tell AWS in your response:
 - ✅ Rate limiting in place
 
 **What Needs Work:**
+
 - ❌ Bounce/complaint handling (CRITICAL)
 - ❌ Unsubscribe functionality (CRITICAL)
 - ❌ Suppression list (CRITICAL)
@@ -787,7 +861,8 @@ Based on this audit, here's what you can tell AWS in your response:
 
 **Overall Grade:** B- (Good foundation, missing critical compliance features)
 
-**Next Steps:** Implement Priority 1 items before requesting production access approval.
+**Next Steps:** Implement Priority 1 items before requesting production access
+approval.
 
 ---
 
@@ -817,6 +892,7 @@ Based on this audit, here's what you can tell AWS in your response:
 #### Configure Email Encryption
 
 **For PHI emails**, ensure:
+
 - ✅ TLS encryption in transit (SES default)
 - ✅ No PHI in email subject lines
 - ✅ Use encrypted deep links instead of PHI in body
@@ -824,7 +900,8 @@ Based on this audit, here's what you can tell AWS in your response:
 
 ### Security Best Practices
 
-1. **Encrypt Credentials**: The system automatically encrypts credentials before storing
+1. **Encrypt Credentials**: The system automatically encrypts credentials before
+   storing
 2. **Use IAM Roles**: Prefer IAM roles over access keys when possible
 3. **Rotate Keys**: Regularly rotate AWS access keys
 4. **Limit Permissions**: Use IAM policies with minimal required permissions:
@@ -853,20 +930,24 @@ Based on this audit, here's what you can tell AWS in your response:
 ### Email Authentication (SPF, DKIM, DMARC)
 
 **SPF (Sender Policy Framework)**:
+
 ```
 v=spf1 include:amazonses.com ~all
 ```
 
 **DKIM (DomainKeys Identified Mail)**:
+
 - SES automatically signs emails with DKIM when domain is verified
 - Add all provided CNAME records to your DNS
 
 **DMARC (Domain-based Message Authentication)**:
+
 ```
 v=DMARC1; p=quarantine; rua=mailto:dmarc@healthcare.com; pct=100
 ```
 
 **Verify configuration**:
+
 ```bash
 # Check SPF
 dig TXT healthcare.com
@@ -906,6 +987,7 @@ dig TXT _dmarc.healthcare.com
 ### "AWS credentials not provided"
 
 **Solution**:
+
 1. Check `.env` file has all AWS variables
 2. Verify `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are correct
 3. Restart server after changing `.env`
@@ -913,6 +995,7 @@ dig TXT _dmarc.healthcare.com
 ### "Email address is not verified"
 
 **Solution**:
+
 1. Verify the email address in SES console
 2. Check spam folder for verification email
 3. For production, verify the entire domain
@@ -920,6 +1003,7 @@ dig TXT _dmarc.healthcare.com
 ### "Account is in sandbox mode"
 
 **Solution**:
+
 1. Request production access (see Production Access section)
 2. Wait for AWS approval
 3. Or verify recipient email addresses for testing
@@ -927,6 +1011,7 @@ dig TXT _dmarc.healthcare.com
 ### "Message rejected: Email address not verified"
 
 **Solution**:
+
 1. In sandbox mode, recipient must be verified
 2. Verify recipient email in SES console
 3. Or request production access
@@ -934,6 +1019,7 @@ dig TXT _dmarc.healthcare.com
 ### "Sending quota exceeded"
 
 **Solution**:
+
 1. Check your sending quota in SES dashboard
 2. Request quota increase if needed
 3. Implement rate limiting in your application
@@ -941,6 +1027,7 @@ dig TXT _dmarc.healthcare.com
 ### "High bounce rate"
 
 **Solution**:
+
 1. Verify email addresses before sending
 2. Remove invalid addresses from your list
 3. Implement double opt-in for subscriptions
@@ -949,6 +1036,7 @@ dig TXT _dmarc.healthcare.com
 ### "High complaint rate"
 
 **Solution**:
+
 1. Ensure recipients opted in
 2. Include unsubscribe links
 3. Send relevant content only
@@ -958,6 +1046,7 @@ dig TXT _dmarc.healthcare.com
 ### "Failed to update SES configuration"
 
 **Solution**:
+
 1. Check that all required fields are provided
 2. Verify AWS credentials are valid
 3. Ensure IAM user has SES permissions
@@ -965,6 +1054,7 @@ dig TXT _dmarc.healthcare.com
 ### "Test email failed"
 
 **Solution**:
+
 1. Verify SES identity (domain/email) is verified
 2. Check SES is out of sandbox mode (if needed)
 3. Verify fromEmail matches verified identity
@@ -973,6 +1063,7 @@ dig TXT _dmarc.healthcare.com
 ### "Cannot find SNS topic option in SES Notifications"
 
 **Solution**:
+
 1. **Make sure you created the SNS topic first**:
    - Go to AWS SNS Console (NOT SES console)
    - Create the topic there first
@@ -1002,12 +1093,14 @@ dig TXT _dmarc.healthcare.com
 ### Cost Optimization
 
 **Tips to reduce costs**:
+
 - Use EC2/ECS to send emails (free tier applies)
 - Batch emails when possible
 - Use email templates to reduce size
 - Monitor and remove invalid email addresses
 
 **Example**:
+
 - 100,000 emails/month
 - Cost: ~$3.80/month (after free tier)
 
@@ -1026,10 +1119,13 @@ dig TXT _dmarc.healthcare.com
 
 **Configuration Sets** are different from SNS Topics:
 
-- **Configuration Sets**: Part of AWS SES. Used to group email sending configurations, event publishing settings, and reputation tracking.
-- **SNS Topics**: Part of AWS SNS. Used to receive and route notifications (bounces, complaints, deliveries) to your application.
+- **Configuration Sets**: Part of AWS SES. Used to group email sending
+  configurations, event publishing settings, and reputation tracking.
+- **SNS Topics**: Part of AWS SNS. Used to receive and route notifications
+  (bounces, complaints, deliveries) to your application.
 
 **How they work together**:
+
 1. Create a **Configuration Set** in SES
 2. Configure the Configuration Set to publish events to an **SNS Topic**
 3. Subscribe your webhook endpoint to the **SNS Topic**
@@ -1044,7 +1140,8 @@ dig TXT _dmarc.healthcare.com
    - `marketing` - For marketing emails
    - `notifications` - For notifications
 4. Configure each set:
-   - **Event publishing**: Select your SNS topic for bounces, complaints, deliveries
+   - **Event publishing**: Select your SNS topic for bounces, complaints,
+     deliveries
    - **Reputation metrics**: Enable tracking
    - **Delivery options**: Configure delivery settings
 5. **Use in your code**: When sending emails, include `ConfigurationSetName`:
@@ -1053,7 +1150,9 @@ dig TXT _dmarc.healthcare.com
 const command = new SendEmailCommand({
   Source: 'noreply@example.com',
   Destination: { ToAddresses: ['user@example.com'] },
-  Message: { /* ... */ },
+  Message: {
+    /* ... */
+  },
   ConfigurationSetName: 'transactional', // ← Use the configuration set
 });
 ```
@@ -1095,6 +1194,7 @@ For high-volume sending:
 ### Set Up CloudWatch Metrics
 
 Monitor SES metrics:
+
 - `Send` - Number of emails sent
 - `Bounce` - Number of bounces
 - `Complaint` - Number of spam complaints
@@ -1108,7 +1208,8 @@ Monitor SES metrics:
 1. Go to **SES** → **Verified identities**
 2. Click on your verified identity (domain or email)
 3. Go to **"Notifications"** tab
-4. Configure event publishing to your SNS topic (see Step 2 in SNS Topic Setup section)
+4. Configure event publishing to your SNS topic (see Step 2 in SNS Topic Setup
+   section)
 
 **Method 2: Via Configuration Sets (Advanced)**
 
@@ -1121,7 +1222,8 @@ Monitor SES metrics:
    - **Deliveries**: Select your SNS topic (optional)
 5. When sending emails, include `ConfigurationSetName` in your SendEmailCommand
 
-**Note**: For most use cases, Method 1 (via Verified Identity) is simpler and sufficient.
+**Note**: For most use cases, Method 1 (via Verified Identity) is simpler and
+sufficient.
 
 ---
 
@@ -1221,6 +1323,7 @@ curl -X GET "https://api.your-domain.com/api/v1/clinics/$CLINIC_ID/communication
 ## Support
 
 If you encounter issues:
+
 1. Check the troubleshooting section above
 2. Review AWS CloudWatch logs
 3. Check backend application logs
@@ -1231,4 +1334,3 @@ If you encounter issues:
 ---
 
 **Last Updated**: January 2025
-

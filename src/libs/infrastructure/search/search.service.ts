@@ -133,7 +133,24 @@ export class SearchService {
     limit = 20
   ): Promise<SearchResult<{ id: string; name: string; email: string; phone?: string }>> {
     const users = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.user.findMany({
+      const userClient = client as unknown as {
+        user: {
+          findMany: (args: {
+            where: unknown;
+            select: { id: true; name: true; email: true; phone: true; primaryClinicId: true };
+            take: number;
+          }) => Promise<
+            Array<{
+              id: string;
+              name: string | null;
+              email: string;
+              phone: string | null;
+              primaryClinicId: string | null;
+            }>
+          >;
+        };
+      };
+      return await userClient.user.findMany({
         where: {
           OR: [
             { name: { contains: query, mode: 'insensitive' as const } },
@@ -154,16 +171,24 @@ export class SearchService {
     });
 
     return {
-      hits: users.map(user => ({
-        id: user.id,
-        score: 1,
-        source: {
+      hits: users.map(
+        (user: {
+          id: string;
+          name: string | null;
+          email: string;
+          phone: string | null;
+          primaryClinicId: string | null;
+        }) => ({
           id: user.id,
-          name: user.name ?? '',
-          email: user.email,
-          ...(user.phone ? { phone: user.phone } : {}),
-        },
-      })),
+          score: 1,
+          source: {
+            id: user.id,
+            name: user.name ?? '',
+            email: user.email,
+            ...(user.phone ? { phone: user.phone } : {}),
+          },
+        })
+      ),
       total: users.length,
       took: 0,
     };
@@ -180,7 +205,34 @@ export class SearchService {
     SearchResult<{ id: string; patientId: string; doctorId: string; date: Date; status: string }>
   > {
     const appointments = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.appointment.findMany({
+      const appointmentClient = client as unknown as {
+        appointment: {
+          findMany: (args: {
+            where: unknown;
+            select: {
+              id: true;
+              patientId: true;
+              doctorId: true;
+              date: true;
+              status: true;
+              clinicId: true;
+              notes: true;
+            };
+            take: number;
+          }) => Promise<
+            Array<{
+              id: string;
+              patientId: string;
+              doctorId: string | null;
+              date: Date;
+              status: string;
+              clinicId: string;
+              notes: string | null;
+            }>
+          >;
+        };
+      };
+      return await appointmentClient.appointment.findMany({
         where: {
           notes: { contains: query, mode: 'insensitive' as const },
           ...(clinicId && { clinicId }),
@@ -199,17 +251,27 @@ export class SearchService {
     });
 
     return {
-      hits: appointments.map(appointment => ({
-        id: appointment.id,
-        score: 1,
-        source: {
+      hits: appointments.map(
+        (appointment: {
+          id: string;
+          patientId: string;
+          doctorId: string | null;
+          date: Date;
+          status: string;
+          clinicId: string;
+          notes: string | null;
+        }) => ({
           id: appointment.id,
-          patientId: appointment.patientId,
-          doctorId: appointment.doctorId ?? '',
-          date: appointment.date,
-          status: appointment.status,
-        },
-      })),
+          score: 1,
+          source: {
+            id: appointment.id,
+            patientId: appointment.patientId,
+            doctorId: appointment.doctorId ?? '',
+            date: appointment.date,
+            status: appointment.status,
+          },
+        })
+      ),
       total: appointments.length,
       took: 0,
     };
@@ -225,7 +287,24 @@ export class SearchService {
     limit = 20
   ): Promise<SearchResult<{ id: string; patientId: string; recordType: string; report?: string }>> {
     const records = await this.databaseService.executeHealthcareRead(async client => {
-      return await client.healthRecord.findMany({
+      const healthRecordClient = client as unknown as {
+        healthRecord: {
+          findMany: (args: {
+            where: unknown;
+            select: { id: true; patientId: true; recordType: true; report: true; clinicId: true };
+            take: number;
+          }) => Promise<
+            Array<{
+              id: string;
+              patientId: string;
+              recordType: string;
+              report: string | null;
+              clinicId: string;
+            }>
+          >;
+        };
+      };
+      return await healthRecordClient.healthRecord.findMany({
         where: {
           report: { contains: query, mode: 'insensitive' as const },
           ...(patientId && { patientId }),
@@ -243,16 +322,24 @@ export class SearchService {
     });
 
     return {
-      hits: records.map(record => ({
-        id: record.id,
-        score: 1,
-        source: {
+      hits: records.map(
+        (record: {
+          id: string;
+          patientId: string;
+          recordType: string;
+          report: string | null;
+          clinicId: string;
+        }) => ({
           id: record.id,
-          patientId: record.patientId,
-          recordType: record.recordType,
-          ...(record.report ? { report: record.report } : {}),
-        },
-      })),
+          score: 1,
+          source: {
+            id: record.id,
+            patientId: record.patientId,
+            recordType: record.recordType,
+            ...(record.report ? { report: record.report } : {}),
+          },
+        })
+      ),
       total: records.length,
       took: 0,
     };

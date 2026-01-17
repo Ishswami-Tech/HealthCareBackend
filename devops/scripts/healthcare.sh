@@ -5,8 +5,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DOCKER_SCRIPT="$SCRIPT_DIR/docker.sh"
-K8S_SCRIPT="$SCRIPT_DIR/k8s.sh"
+DEV_DOCKER_SCRIPT="$SCRIPT_DIR/dev/docker.sh"
+DEV_K8S_SCRIPT="$SCRIPT_DIR/dev/k8s.sh"
+DOCKER_PROD_SCRIPT="$SCRIPT_DIR/docker-infra/deploy.sh"
+K8S_PROD_SCRIPT="$SCRIPT_DIR/kubernetes/deploy.sh"
 
 # Colors
 BLUE='\033[0;34m'
@@ -26,38 +28,42 @@ show_help() {
     echo "Usage: $0 <platform> <command> [options]"
     echo ""
     echo "Platforms:"
-    echo "  docker, d     Docker Compose operations"
-    echo "  k8s, k        Kubernetes operations"
+    echo "  dev           Development operations (local Docker/K8s)"
+    echo "  docker        Docker production operations"
+    echo "  k8s, k8s      Kubernetes production operations"
     echo ""
-    echo "Docker Commands:"
-    echo "  start              Start all services"
-    echo "  stop               Stop all services"
-    echo "  restart            Restart all services"
-    echo "  status             Show service status"
-    echo "  logs [service]     Show logs"
-    echo "  monitor [service]  Monitor logs"
-    echo "  health             Check health"
-    echo "  clean              Clean all resources"
-    echo "  shell [service]    Open shell"
+    echo "Development Commands:"
+    echo "  dev docker <cmd>     Local Docker Compose operations"
+    echo "  dev k8s <cmd>        Local Kubernetes operations"
     echo ""
-    echo "Kubernetes Commands:"
+    echo "Docker Production Commands:"
+    echo "  deploy                    Smart deployment orchestrator"
+    echo "  health-check              Infrastructure health monitoring"
+    echo "  backup [type|retry|setup-cron]  Backup operations"
+    echo "    backup hourly|daily|weekly|pre-deployment|success  Create backup"
+    echo "    backup retry            Retry failed S3 uploads"
+    echo "    backup setup-cron        Setup automated backup cron jobs"
+    echo "  restore [id|disaster id]  Restore operations"
+    echo "    restore [backup-id]     Restore from backup (local/S3)"
+    echo "    restore disaster [id]   Disaster recovery from S3"
+    echo "  diagnose                  Auto-debugging"
+    echo "  verify [deployment|backup] Verification operations"
+    echo "    verify                  Post-deployment verification (default)"
+    echo "    verify backup [id|all]  Verify backup integrity"
+    echo "  setup-directories         Setup server directories"
+    echo ""
+    echo "Kubernetes Production Commands:"
     echo "  deploy <env>              Deploy to environment"
     echo "  setup-secrets <env>       Setup secrets"
-    echo "  generate-secrets <type>   Generate secrets"
-    echo "  configure-domain <type> [domain]  Configure domain"
     echo "  status                    Show status"
-    echo "  logs <resource>            Show logs"
-    echo "  port-forward [svc] [port]  Port forward"
-    echo "  shell [pod]                Open shell"
-    echo "  teardown [env]             Delete resources"
-    echo "  validate-secrets          Validate secrets"
+    echo "  logs <resource>           Show logs"
     echo "  backup                    Trigger backup"
     echo ""
     echo "Examples:"
-    echo "  $0 docker start                    # Start Docker services"
-    echo "  $0 docker logs api                  # Show Docker API logs"
-    echo "  $0 k8s deploy local                 # Deploy to local K8s"
-    echo "  $0 k8s logs deployment/healthcare-api"
+    echo "  $0 dev docker start                    # Start local Docker services"
+    echo "  $0 docker deploy                        # Deploy Docker production"
+    echo "  $0 docker health-check                  # Check Docker infrastructure"
+    echo "  $0 k8s deploy production                # Deploy to K8s production"
     echo ""
 }
 
@@ -66,13 +72,76 @@ main() {
     local platform="${1:-help}"
     
     case "$platform" in
+        dev)
+            shift || true
+            local sub_platform="${1:-help}"
+            case "$sub_platform" in
+                docker|d)
+                    shift || true
+                    bash "$DEV_DOCKER_SCRIPT" "$@"
+                    ;;
+                k8s|k|kubernetes)
+                    shift || true
+                    bash "$DEV_K8S_SCRIPT" "$@"
+                    ;;
+                *)
+                    echo "❌ Unknown dev platform: $sub_platform"
+                    echo "Use: dev docker <cmd> or dev k8s <cmd>"
+                    exit 1
+                    ;;
+            esac
+            ;;
         docker|d)
             shift || true
-            bash "$DOCKER_SCRIPT" "$@"
+            # Route to appropriate Docker script
+            local cmd="${1:-deploy}"
+            # Security: Validate command name (prevent path traversal)
+            if [[ "$cmd" == *"/"* ]] || [[ "$cmd" == *".."* ]] || [[ "$cmd" == *"$"* ]] || [[ "$cmd" == *"`"* ]]; then
+                echo "❌ Invalid command name (security check failed): $cmd"
+                exit 1
+            fi
+            case "$cmd" in
+                deploy|health-check|backup|restore|diagnose|verify|setup-directories)
+                    bash "${SCRIPT_DIR}/docker-infra/${cmd}.sh" "${@:2}"
+                    ;;
+                fix-db-password|fix-database-password)
+                    bash "${SCRIPT_DIR}/docker-infra/fix-database-password.sh" "${@:2}"
+                    ;;
+                clean-rebuild|clean-and-rebuild)
+                    bash "${SCRIPT_DIR}/docker-infra/clean-and-rebuild.sh" "${@:2}"
+                    ;;
+                *)
+                    # Try as direct script name (with validation)
+                    if [[ -f "${SCRIPT_DIR}/docker-infra/${cmd}.sh" ]]; then
+                        bash "${SCRIPT_DIR}/docker-infra/${cmd}.sh" "${@:2}"
+                    else
+                        echo "❌ Unknown Docker command: $cmd"
+                        echo "Available: deploy, health-check, backup, restore, diagnose, verify, setup-directories"
+                        echo ""
+                        echo "Subcommands:"
+                        echo "  backup retry|setup-cron"
+                        echo "  restore disaster [id]"
+                        echo "  verify backup [id|all]"
+                        exit 1
+                    fi
+                    ;;
+            esac
             ;;
-        k8s|k|kubernetes)
+        k8s|kubernetes)
             shift || true
-            bash "$K8S_SCRIPT" "$@"
+            # Route to Kubernetes production scripts
+            local cmd="${1:-deploy}"
+            # Security: Validate command name (prevent path traversal)
+            if [[ "$cmd" == *"/"* ]] || [[ "$cmd" == *".."* ]] || [[ "$cmd" == *"$"* ]] || [[ "$cmd" == *"`"* ]]; then
+                echo "❌ Invalid command name (security check failed): $cmd"
+                exit 1
+            fi
+            if [[ -f "${SCRIPT_DIR}/kubernetes/${cmd}.sh" ]]; then
+                bash "${SCRIPT_DIR}/kubernetes/${cmd}.sh" "${@:2}"
+            else
+                # Fallback to dev k8s script for now
+                bash "$DEV_K8S_SCRIPT" "$@"
+            fi
             ;;
         help|--help|-h|"")
             show_help
