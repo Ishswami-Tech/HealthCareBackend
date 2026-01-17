@@ -21,6 +21,7 @@ import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
 import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
 import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
+import { SessionManagementService } from '@core/session/session-management.service';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';
 
 /**
@@ -145,6 +146,7 @@ export class JwtAuthGuard implements CanActivate {
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
     @Inject(ConfigService) private readonly configService: ConfigService,
+    private readonly sessionManagementService: SessionManagementService,
     @Inject(forwardRef(() => RateLimitService))
     private readonly rateLimitService?: RateLimitService
   ) {}
@@ -445,99 +447,55 @@ export class JwtAuthGuard implements CanActivate {
   /**
    * Get session data from cache and parse it
    */
+  /**
+   * Get session data via SessionManagementService (handles partitioning)
+   */
   private async getSessionData(userId: string, sessionId: string): Promise<SessionData | null> {
-    const sessionKeys = [`session:${userId}:${sessionId}`, `session:${sessionId}`];
+    const fullSession = await this.sessionManagementService.getSession(sessionId);
 
-    for (const sessionKey of sessionKeys) {
-      const sessionRaw = await this.cacheService.get<unknown>(sessionKey);
-      const sessionData = this.normalizeSessionRecord(sessionRaw);
-
-      if (sessionData) {
-        if (!sessionData.isActive) {
-          return null;
-        }
-
-        const lastActivity = new Date(sessionData.lastActivityAt).getTime();
-        const inactivityDuration = Date.now() - lastActivity;
-        if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
-          // Session is still valid but inactive for a while
-          // This is just for logging, we'll still return the session
-        }
-
-        return sessionData;
-      }
-    }
-
-    return null;
-  }
-
-  private normalizeSessionRecord(session: unknown): SessionData | null {
-    if (!session) {
+    if (!fullSession) {
       return null;
     }
 
-    let record: unknown = session;
-    if (typeof session === 'string') {
-      try {
-        record = JSON.parse(session) as unknown;
-      } catch {
-        return null;
-      }
-    }
-
-    if (!record || typeof record !== 'object') {
+    // Verify ownership
+    if (fullSession.userId !== userId) {
       return null;
     }
 
-    const data = record as Record<string, unknown>;
-    const sessionId = typeof data['sessionId'] === 'string' ? data['sessionId'] : null;
-    if (!sessionId) {
+    if (!fullSession.isActive) {
       return null;
     }
 
-    const isActive =
-      typeof data['isActive'] === 'boolean' ? data['isActive'] : !(data['isActive'] === 'false');
-
+    // Convert FullSessionData to RedisSessionData shape expected by the rest of the guard
     const lastActivityAt =
-      typeof data['lastActivityAt'] === 'string'
-        ? data['lastActivityAt']
-        : data['lastActivity'] instanceof Date
-          ? data['lastActivity'].toISOString()
-          : typeof data['lastActivity'] === 'string'
-            ? data['lastActivity']
-            : new Date().toISOString();
+      fullSession.lastActivity instanceof Date
+        ? fullSession.lastActivity.toISOString()
+        : new Date(fullSession.lastActivity).toISOString();
 
-    const deviceInfoSource =
-      typeof data['deviceInfo'] === 'object' && data['deviceInfo'] !== null
-        ? (data['deviceInfo'] as Record<string, unknown>)
-        : undefined;
+    // Reconstruct device fingerprint from userAgent
+    const userAgent = fullSession.userAgent || 'unknown';
+    const deviceFingerprint = crypto.createHash('sha256').update(userAgent).digest('hex');
 
-    const userAgent =
-      (deviceInfoSource?.['userAgent'] as string | undefined) ||
-      (typeof data['userAgent'] === 'string' ? data['userAgent'] : 'unknown');
-
-    const ipAddress =
-      typeof data['ipAddress'] === 'string'
-        ? data['ipAddress']
-        : typeof data['metadata'] === 'object' &&
-            data['metadata'] !== null &&
-            typeof (data['metadata'] as Record<string, unknown>)['ipAddress'] === 'string'
-          ? ((data['metadata'] as Record<string, unknown>)['ipAddress'] as string)
-          : 'unknown';
-
-    const deviceFingerprint =
-      typeof data['deviceFingerprint'] === 'string' ? data['deviceFingerprint'] : '';
-
-    return {
-      sessionId,
-      isActive,
+    const mappedSession: SessionData = {
+      sessionId: fullSession.sessionId,
+      isActive: fullSession.isActive,
       lastActivityAt,
       deviceFingerprint,
       deviceInfo: {
-        userAgent,
+        userAgent: userAgent,
       },
-      ipAddress,
+      ipAddress: fullSession.ipAddress || 'unknown',
     };
+
+    // Check inactivity threshold
+    const lastActivity = new Date(lastActivityAt).getTime();
+    const inactivityDuration = Date.now() - lastActivity;
+    if (inactivityDuration > this.SESSION_ACTIVITY_THRESHOLD) {
+      // Session is still valid but inactive for a while
+      // This is just for logging
+    }
+
+    return mappedSession;
   }
 
   private async validateSession(

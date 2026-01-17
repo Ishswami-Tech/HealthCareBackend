@@ -14,7 +14,7 @@ export type UserCreateInput = {
   password: string;
   userid: string;
   name: string;
-  age: number;
+  age?: number;
   firstName: string;
   lastName: string;
   phone?: string;

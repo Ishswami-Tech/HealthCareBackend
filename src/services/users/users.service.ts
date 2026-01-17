@@ -533,13 +533,27 @@ export class UsersService {
       // Prevent users from updating clinicId
       delete cleanedData.clinicId;
 
-      // Handle date conversion properly
+      // Handle date conversion properly and calculate age
       if (cleanedData.dateOfBirth && typeof cleanedData.dateOfBirth === 'string') {
         try {
           // Validate date format - keep as string for Prisma
           const dateValue = cleanedData.dateOfBirth;
-          new Date(dateValue); // Validate date format
-          // Keep as string for Prisma - no need to reassign to itself
+          const birthDate = new Date(dateValue);
+
+          if (isNaN(birthDate.getTime())) {
+            throw new Error('Invalid date');
+          }
+
+          // Calculate age
+          const today = new Date();
+          let age = today.getFullYear() - birthDate.getFullYear();
+          const m = today.getMonth() - birthDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+            age--;
+          }
+
+          // Add age to payload using type-safe extension
+          (cleanedData as UpdateUserDto & { age: number }).age = age;
         } catch (_error: unknown) {
           void this.loggingService.log(
             LogType.ERROR,
@@ -630,9 +644,71 @@ export class UsersService {
           );
         }
 
-        // Remove doctor-specific fields from main update
         delete cleanedData.specialization;
         delete cleanedData.experience;
+      }
+
+      // Handle Emergency Contact (Relation)
+      if (cleanedData['emergencyContact']) {
+        const emergencyContactData = cleanedData['emergencyContact'] as {
+          name: string;
+          relationship: string;
+          phone: string;
+          alternatePhone?: string;
+          address?: string;
+        };
+
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            // Find existing contact
+            const existingContacts = await typedClient.emergencyContact.findMany({
+              where: { userId: id } as PrismaDelegateArgs,
+            });
+
+            if (existingContacts.length > 0) {
+              // Update the first one
+              await typedClient.emergencyContact.update({
+                where: { id: existingContacts[0]!.id } as PrismaDelegateArgs,
+                data: {
+                  name: emergencyContactData.name,
+                  relationship: emergencyContactData.relationship,
+                  phone: emergencyContactData.phone,
+                  alternatePhone: emergencyContactData.alternatePhone,
+                  address: emergencyContactData.address,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            } else {
+              // Create new
+              await typedClient.emergencyContact.create({
+                data: {
+                  userId: id,
+                  name: emergencyContactData.name,
+                  relationship: emergencyContactData.relationship,
+                  phone: emergencyContactData.phone,
+                  alternatePhone: emergencyContactData.alternatePhone,
+                  address: emergencyContactData.address,
+                } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }
+          },
+          {
+            userId: id,
+            clinicId: String(
+              (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+            ),
+            resourceType: 'EMERGENCY_CONTACT',
+            operation: 'UPSERT',
+            resourceId: id,
+            userRole: 'system',
+            details: { emergencyContact: emergencyContactData },
+          }
+        );
+
+        // Remove from user update data to avoid schema mismatch (User model has emergencyContact string?)
+        // Schema has emergencyContact: String? AND emergencyContacts: EmergencyContact[].
+        // We want to use the relation. But we should also perhaps clear strict checking or ensure we don't pass object to string field.
+        delete cleanedData['emergencyContact'];
       }
 
       // Update the user record using updateUserSafe or executeHealthcareWrite
