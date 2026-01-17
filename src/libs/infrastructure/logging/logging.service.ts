@@ -4,8 +4,9 @@ import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 
 // Internal imports - Infrastructure
-import type { DatabaseService } from '@infrastructure/database/database.service';
 import type { CacheService } from '@infrastructure/cache/cache.service';
+import { EventService } from '@infrastructure/events'; // ADD: EventService for event-driven audit logging
+import { EventCategory, EventPriority, type EnterpriseEventPayload } from '@core/types'; // ADD: Event types
 
 // Internal imports - Core
 import { HealthcareError } from '@core/errors';
@@ -22,7 +23,6 @@ import {
   type PaginatedLogsResult,
   type PaginatedEventsResult,
 } from '@core/types';
-import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
 import { PaginationMetaDto } from '@dtos/common-response.dto';
@@ -110,20 +110,8 @@ export class LoggingService {
   private readonly maxBufferSize = 10000; // Increased for 1M users
   private readonly flushInterval = 5000; // 5 seconds for 1M users
   private metricsFlushInterval!: NodeJS.Timeout;
-  // Cache system user to avoid querying database on every log (prevents connection pool exhaustion)
-  private cachedSystemUser: { id: string } | null = null;
-  private systemUserCacheTime = 0;
-  private systemUserCacheInitialized = false;
-  private disableSystemUserLookup = false;
-  private readonly configuredSystemUserId: string | null;
-  private readonly systemUserCacheTTL = 3600000; // 1 hour cache
-  private readonly systemUserNegativeCacheTTL = 300000; // 5 minutes when missing
-  // Flag to disable database logging when connection pool is exhausted
+  // Flag to disable audit logging when event emission fails (connection pool exhausted)
   private isDatabaseLoggingDisabled = false;
-  // Mutex to prevent concurrent system user queries (race condition protection)
-  private systemUserQueryPromise: Promise<{ id: string } | null> | null = null;
-  private static globalSystemUserLookupDisabled = false;
-  private static systemUserWarningLogged = false;
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup
   // Error tracking for observability
@@ -133,35 +121,15 @@ export class LoggingService {
   constructor(
     @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
-    @Optional()
-    @Inject('DATABASE_SERVICE')
-    private readonly databaseService?: DatabaseService,
+    private readonly eventService: EventService, // EventService for event-driven audit logging
     @Optional()
     @Inject('CACHE_SERVICE')
     private readonly cacheService?: CacheService
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.serviceName = this.configService.getEnv('SERVICE_NAME', 'healthcare') || 'healthcare';
-    this.configuredSystemUserId =
-      this.configService?.getEnv('LOGGING_SYSTEM_USER_ID') ||
-      this.configService?.getEnv('SYSTEM_USER_ID') ||
-      null;
-    const disableLookupEnv =
-      this.configService?.getEnvBoolean('LOGGING_DISABLE_SYSTEM_USER_LOOKUP', false) ||
-      this.configService?.getEnvBoolean('DISABLE_SYSTEM_USER_LOOKUP', false) ||
-      (!this.configService?.isProduction() &&
-        !this.configService?.getEnvBoolean('LOGGING_DISABLE_SYSTEM_USER_LOOKUP', false));
 
-    if (disableLookupEnv) {
-      LoggingService.globalSystemUserLookupDisabled = true;
-      LoggingService.systemUserWarningLogged = true;
-      this.disableSystemUserLookup = true;
-      LoggingService.systemUserWarningLogged = true;
-    }
-
-    if (LoggingService.globalSystemUserLookupDisabled) {
-      this.disableSystemUserLookup = true;
-    }
+    // Initialize metrics buffering
     this.initMetricsBuffering();
 
     // Log cache service availability on startup (one-time check)
@@ -192,128 +160,8 @@ export class LoggingService {
     });
   }
 
-  /**
-   * Get cached system user to avoid querying database on every log
-   * This prevents connection pool exhaustion from logging operations
-   * CRITICAL: Uses mutex to prevent concurrent queries (race condition protection)
-   */
-  private async getCachedSystemUser(): Promise<{ id: string } | null> {
-    if (!this.databaseService) {
-      return null;
-    }
-
-    if (LoggingService.globalSystemUserLookupDisabled || this.disableSystemUserLookup) {
-      return null;
-    }
-
-    if (this.configuredSystemUserId) {
-      if (
-        !this.cachedSystemUser ||
-        this.cachedSystemUser.id !== this.configuredSystemUserId ||
-        !this.systemUserCacheInitialized
-      ) {
-        this.cachedSystemUser = { id: this.configuredSystemUserId };
-        this.systemUserCacheTime = Date.now();
-        this.systemUserCacheInitialized = true;
-      }
-      return this.cachedSystemUser;
-    }
-
-    if (this.disableSystemUserLookup) {
-      return null;
-    }
-
-    const now = Date.now();
-    if (this.systemUserCacheInitialized) {
-      const ttl =
-        this.cachedSystemUser !== null ? this.systemUserCacheTTL : this.systemUserNegativeCacheTTL;
-      if (now - this.systemUserCacheTime < ttl) {
-        return this.cachedSystemUser;
-      }
-    }
-
-    // CRITICAL: If database logging is disabled, don't try to fetch (prevents loops)
-    if (this.isDatabaseLoggingDisabled) {
-      // Return cached user if available, otherwise null
-      return this.cachedSystemUser;
-    }
-
-    // CRITICAL: Use mutex to prevent concurrent queries (race condition protection)
-    // If a query is already in progress, wait for it instead of starting a new one
-    if (this.systemUserQueryPromise) {
-      return this.systemUserQueryPromise;
-    }
-
-    // Create a new query promise and store it as the mutex
-    this.systemUserQueryPromise = (async (): Promise<{ id: string } | null> => {
-      try {
-        // Double-check cache after acquiring mutex (another thread might have set it)
-        if (this.systemUserCacheInitialized) {
-          const ttl =
-            this.cachedSystemUser !== null
-              ? this.systemUserCacheTTL
-              : this.systemUserNegativeCacheTTL;
-          if (Date.now() - this.systemUserCacheTime < ttl) {
-            return this.cachedSystemUser;
-          }
-        }
-        if (!this.databaseService) {
-          return null;
-        }
-        const systemUser = (await Promise.race([
-          this.databaseService.findUserByEmailSafe('system@healthcare.local').then(user => {
-            return user ? { id: user.id } : null;
-          }),
-          new Promise<null>((_, reject) => {
-            setTimeout(() => {
-              reject(new Error('System user fetch timeout'));
-            }, 3000); // 3 second timeout
-          }),
-        ])) as { id: string } | null;
-
-        this.cachedSystemUser = systemUser;
-        this.systemUserCacheTime = Date.now();
-        this.systemUserCacheInitialized = true;
-
-        if (!systemUser) {
-          this.disableSystemUserLookup = true;
-          LoggingService.globalSystemUserLookupDisabled = true;
-          if (!LoggingService.systemUserWarningLogged) {
-            LoggingService.systemUserWarningLogged = true;
-            console.warn(
-              '[LoggingService] System user account not found; audit DB logging disabled.'
-            );
-          }
-        }
-
-        return systemUser;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        if (
-          errorMessage.includes('timeout') ||
-          errorMessage.includes('TIMEOUT') ||
-          errorMessage.includes('too many clients') ||
-          errorMessage.includes('connection')
-        ) {
-          this.isDatabaseLoggingDisabled = true;
-          setTimeout(() => {
-            this.isDatabaseLoggingDisabled = false;
-          }, 300000);
-        }
-        // Cache null to avoid tight retry loops
-        this.cachedSystemUser = null;
-        this.systemUserCacheTime = Date.now();
-        this.systemUserCacheInitialized = true;
-        this.disableSystemUserLookup = true;
-        LoggingService.globalSystemUserLookupDisabled = true;
-        return null;
-      } finally {
-        this.systemUserQueryPromise = null;
-      }
-    })();
-
-    return this.systemUserQueryPromise;
-  }
+  // NOTE: getCachedSystemUser() method removed - no longer needed with event-driven audit logging
+  // Audit logging is now handled by AuditLogListener via EventService events
 
   private initMetricsBuffering() {
     // More frequent flushing for 1M users - every 5 seconds
@@ -499,86 +347,62 @@ export class LoggingService {
 
       // ALWAYS store logs in cache (even if noisy) for dashboard visibility
       // CRITICAL: ERROR and WARN level logs are NEVER filtered as noisy - they must always appear
-      // Only skip database logging for noisy/timeout logs (but still store in cache)
+      // Only skip audit logging for noisy/timeout logs (but still store in cache)
       if (!isNoisyLog && !isTimeoutOrConnectionError) {
         try {
-          // Enhanced database logging with better error handling
-          // CRITICAL: Skip database logging if we're in a recursive loop or connection pool is exhausted
-          // This prevents connection pool exhaustion from logging operations
-          if (this.databaseService && !this.isDatabaseLoggingDisabled) {
-            // Use cached system user to avoid querying database on every log
-            // This prevents connection pool exhaustion from logging operations
-            try {
-              const systemUser = await this.getCachedSystemUser();
+          // Event-driven audit logging - emit event instead of direct database call
+          // This breaks the circular dependency between LoggingService and DatabaseService
+          // AuditLogListener will handle the database persistence asynchronously
+          if (!this.isDatabaseLoggingDisabled) {
+            // Build event payload with conditional clinicId
+            const eventPayload: Partial<EnterpriseEventPayload> = {
+              eventId: `audit-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+              eventType: 'logging.audit.requested',
+              category: EventCategory.AUDIT,
+              priority: EventPriority.NORMAL,
+              timestamp: new Date().toISOString(),
+              source: 'LoggingService',
+              version: '1.0.0',
+              userId: (metadata['userId'] as string) || 'system',
+              metadata: {
+                action: type as string,
+                description: context,
+                ipAddress: metadata['ipAddress'],
+                device: metadata['userAgent'],
+                message,
+                level,
+              },
+            };
 
-              if (systemUser) {
-                // Use a timeout to prevent database logging from blocking
-                await Promise.race([
-                  this.databaseService.executeHealthcareWrite(
-                    async client => {
-                      // Access auditLog delegate using dot notation for consistency
-                      const auditLog = (
-                        client as unknown as {
-                          auditLog: {
-                            create: (args: { data: unknown }) => Promise<{ id: string }>;
-                          };
-                        }
-                      ).auditLog;
-                      return (await auditLog.create({
-                        data: {
-                          userId: systemUser.id,
-                          action: type as string,
-                          description: context,
-                          ipAddress: (metadata['ipAddress'] as string | null) || null,
-                          device: (metadata['userAgent'] as string | null) || null,
-                          clinicId: (metadata['clinicId'] as string | null) || null,
-                        },
-                      })) as unknown as { id: string };
-                    },
-                    {
-                      userId: systemUser.id,
-                      userRole: 'system',
-                      clinicId: (metadata['clinicId'] as string) || '',
-                      operation: `LOG_${type}`,
-                      resourceType: 'AUDIT_LOG',
-                      resourceId: 'pending',
-                      timestamp: new Date(),
-                    }
-                  ),
-                  new Promise<void>((_, reject) => {
-                    setTimeout(() => {
-                      reject(new Error('Database logging timeout'));
-                    }, 5000); // 5 second timeout for audit log writes
-                  }),
-                ]).catch(() => {
-                  // Silent fail for audit log creation - resilient logging for high scale
-                  // Audit log failures are non-critical and shouldn't break logging
-                });
-              }
-            } catch (_auditError) {
-              // If we get connection errors or timeout errors, disable database logging temporarily
-              const errorMessage =
-                _auditError instanceof Error ? _auditError.message : String(_auditError);
-              if (
-                errorMessage.includes('too many clients') ||
-                errorMessage.includes('connection') ||
-                errorMessage.includes('timeout') ||
-                errorMessage.includes('TIMEOUT') ||
-                errorMessage.includes('Query timeout')
-              ) {
-                this.isDatabaseLoggingDisabled = true;
-                // Re-enable after 5 minutes (longer to prevent rapid re-triggering)
-                setTimeout(() => {
-                  this.isDatabaseLoggingDisabled = false;
-                }, 300000); // 5 minutes
-              }
-              // Silent fail for audit log creation - resilient logging for high scale
-              // Audit log failures are non-critical and shouldn't break logging
+            // Only include clinicId if it exists
+            if (metadata['clinicId']) {
+              eventPayload['clinicId'] = metadata['clinicId'] as string;
             }
+
+            await this.eventService
+              .emitEnterprise('logging.audit.requested', eventPayload as EnterpriseEventPayload)
+              .catch(eventError => {
+                // Silent fail for event emission - audit logging shouldn't break the app
+                // Only disable if we get connection/timeout errors
+                const errorMessage =
+                  eventError instanceof Error ? eventError.message : String(eventError);
+                if (
+                  errorMessage.includes('too many clients') ||
+                  errorMessage.includes('connection') ||
+                  errorMessage.includes('timeout') ||
+                  errorMessage.includes('TIMEOUT')
+                ) {
+                  this.isDatabaseLoggingDisabled = true;
+                  // Re-enable after 5 minutes
+                  setTimeout(() => {
+                    this.isDatabaseLoggingDisabled = false;
+                  }, 300000);
+                }
+              });
           }
-        } catch (_dbError) {
-          // Silent fail for database logging - resilient for high scale
-          // Database logging failures shouldn't break the logging service
+        } catch (_eventError) {
+          // Silent fail for event emission - resilient for high scale
+          // Event emission failures shouldn't break the logging service
         }
       }
 
@@ -798,210 +622,6 @@ export class LoggingService {
         logs: paginatedLogs,
         meta,
       };
-
-      // NOTE: Database logs are NOT included in UI for these reasons:
-      // 1. Database only has audit logs (subset), not all log types
-      // 2. Cache has ALL logs (all types, all levels) - complete dataset
-      // 3. Combining would create duplicates and miss non-audit logs
-      // 4. Database is for persistence/audit trail only, not UI display
-      // Optimized database query for 1M users
-      const whereClause: unknown = {
-        timestamp: {
-          gte: finalStartTime,
-          lte: finalEndTime,
-        },
-      };
-
-      if (type) {
-        (whereClause as Record<string, unknown>)['action'] = type;
-      }
-
-      // Try to get audit logs from database and combine with cache
-      try {
-        // Check if we're in startup grace period
-        const timeSinceStart = Date.now() - this.serviceStartTime;
-        const isInStartupGracePeriod = timeSinceStart < this.STARTUP_GRACE_PERIOD;
-
-        // CRITICAL: During startup grace period, don't call Prisma methods at all
-        // Even accessing auditLog delegate triggers Prisma's internal validation that logs to stderr
-        if (isInStartupGracePeriod) {
-          // Return cache logs only during startup grace period
-          const total = parsedCacheLogs.length;
-          const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
-          const meta = new PaginationMetaDto(currentPage, take, total);
-          return {
-            logs: paginatedLogs,
-            meta,
-          };
-        }
-
-        const dbLogs =
-          this.databaseService !== undefined && this.databaseService !== null
-            ? ((await (
-                this.databaseService as NonNullable<typeof this.databaseService>
-              ).executeHealthcareRead(async client => {
-                // Access auditLog delegate using dot notation for consistency
-                const auditLog = (
-                  client as {
-                    auditLog: {
-                      findMany: (args: unknown) => Promise<
-                        Array<{
-                          id: string;
-                          action: string;
-                          description: string;
-                          timestamp: Date;
-                          userId: string;
-                          ipAddress: string | null;
-                          device: string | null;
-                          clinicId: string | null;
-                        }>
-                      >;
-                    };
-                  }
-                ).auditLog;
-                return (await auditLog.findMany({
-                  where: whereClause as PrismaDelegateArgs,
-                  orderBy: {
-                    timestamp: 'desc',
-                  },
-                  take: 1000, // Increased for 1M users
-                  select: {
-                    id: true,
-                    action: true,
-                    description: true,
-                    timestamp: true,
-                    userId: true,
-                    ipAddress: true,
-                    device: true,
-                    clinicId: true,
-                  },
-                })) as unknown as Array<{
-                  id: string;
-                  action: string;
-                  description: string | null;
-                  timestamp: Date;
-                  userId: string;
-                  ipAddress: string | null;
-                  device: string | null;
-                  clinicId: string | null;
-                }>;
-              })) as unknown as Array<{
-                id: string;
-                action: string;
-                description: string | null;
-                timestamp: Date;
-                userId: string;
-                ipAddress: string | null;
-                device: string | null;
-                clinicId: string | null;
-              }>)
-            : [];
-
-        const dbResult: LogEntry[] = (
-          dbLogs as Array<{
-            id: string;
-            action: string;
-            description: string | null;
-            timestamp: Date;
-            userId: string;
-            ipAddress: string | null;
-            device: string | null;
-            clinicId: string | null;
-          }>
-        ).map(log => {
-          return {
-            id: log.id,
-            type: log.action as LogType,
-            level: LogLevel.INFO,
-            message: `${log.action} on ${log.description || ''}`,
-            context: log.description || '',
-            metadata: {
-              userId: log.userId,
-              ipAddress: log.ipAddress || undefined,
-              device: log.device || undefined,
-              clinicId: log.clinicId || undefined,
-            },
-            timestamp: log.timestamp,
-            clinicId: log.clinicId || undefined,
-            userId: log.userId,
-          } as LogEntry;
-        });
-
-        // CRITICAL: Combine database logs with cache logs to ensure ALL logs appear in UI
-        // Cache logs contain the full log entry with all metadata, while DB logs are audit-only
-        // Use the already-parsed cache logs from above (parsedCacheLogs)
-        const logMap = new Map<string, LogEntry>();
-
-        // First add cache logs (they have complete metadata and are most up-to-date)
-        for (const log of parsedCacheLogs) {
-          if (log.id) {
-            logMap.set(log.id, log);
-          }
-        }
-
-        // Then add database logs (only if not already in cache)
-        for (const log of dbResult) {
-          if (log.id && !logMap.has(log.id)) {
-            logMap.set(log.id, log);
-          }
-        }
-
-        const combinedLogs = Array.from(logMap.values());
-
-        // Sort by timestamp descending (newest first)
-        combinedLogs.sort((a, b) => {
-          const aTime = new Date(a.timestamp).getTime();
-          const bTime = new Date(b.timestamp).getTime();
-          return bTime - aTime;
-        });
-
-        // Apply search filter if not already applied (should already be filtered, but double-check)
-        let filteredLogs = combinedLogs;
-        if (search !== undefined && search !== null) {
-          const searchStr = String(search).trim();
-          if (searchStr !== '') {
-            const searchLower = searchStr.toLowerCase();
-            filteredLogs = combinedLogs.filter(
-              log =>
-                log.message.toLowerCase().includes(searchLower) ||
-                log.context.toLowerCase().includes(searchLower)
-            );
-          }
-        }
-
-        // Calculate total before pagination
-        const total = filteredLogs.length;
-
-        // Apply pagination
-        const paginatedLogs = filteredLogs.slice(skip, skip + take);
-
-        // Create pagination metadata
-        const meta = new PaginationMetaDto(currentPage, take, total);
-
-        const result: PaginatedLogsResult = {
-          logs: paginatedLogs,
-          meta,
-        };
-
-        // Note: We don't cache the result here because logs are constantly being added
-        // The 'logs' list in cache is the source of truth and is kept up-to-date
-
-        return result;
-      } catch (dbError) {
-        // Track error for observability
-        this.trackError('getLogs_database_error', dbError);
-
-        // Database query failed, falling back to cache-only logs
-        // Cache logs are already parsed above (parsedCacheLogs)
-        const total = parsedCacheLogs.length;
-        const paginatedLogs = parsedCacheLogs.slice(skip, skip + take);
-        const meta = new PaginationMetaDto(currentPage, take, total);
-
-        return {
-          logs: paginatedLogs,
-          meta,
-        };
-      }
     } catch (error) {
       // Track error for observability
       this.trackError('getLogs_general_error', error);
@@ -1046,43 +666,6 @@ export class LoggingService {
     try {
       // Always clear cache
       await this.cacheService?.del('logs');
-
-      // Optionally clear database logs (audit trail)
-      if (clearDatabase && this.databaseService) {
-        try {
-          await this.databaseService.executeHealthcareWrite(
-            async client => {
-              const auditLog = (
-                client as {
-                  auditLog: {
-                    deleteMany: (args: unknown) => Promise<{ count: number }>;
-                  };
-                }
-              ).auditLog;
-              return await auditLog.deleteMany({
-                where: {}, // Delete all audit logs
-              });
-            },
-            {
-              userId: 'system',
-              userRole: 'system',
-              clinicId: '',
-              operation: 'CLEAR_LOGS',
-              resourceType: 'AUDIT_LOG',
-              resourceId: 'all',
-              timestamp: new Date(),
-            }
-          );
-        } catch (dbError) {
-          // Track error but don't fail - cache is cleared
-          this.trackError('clearLogs_database_error', dbError);
-          return {
-            success: true,
-            message:
-              'Cache logs cleared successfully, but database clear failed (audit trail may remain)',
-          };
-        }
-      }
 
       return {
         success: true,
