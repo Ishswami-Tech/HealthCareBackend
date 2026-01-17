@@ -243,7 +243,9 @@ jobs:
 
   # Backup Infrastructure
   # Creates backup of PostgreSQL and Dragonfly data before infrastructure changes
-  # Runs when: infrastructure changed OR infrastructure is unhealthy
+  # Runs when: infrastructure is unhealthy (needs recreation) OR infrastructure changed AND will be recreated
+  # SKIPS when: infrastructure is healthy AND unchanged (deploy.sh handles app-only backups)
+  # NOTE: If infrastructure is healthy but changed, deploy.sh will skip recreation, so backup is not needed here
   # Backup stored locally and optionally in S3 (Contabo)
   backup-infrastructure:
     name: Backup Infrastructure
@@ -251,8 +253,7 @@ jobs:
     if: |
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' && 
-      (needs.detect-changes.outputs.infra-changed == 'true' || 
-       needs.check-infrastructure.outputs.infra-healthy == 'false')
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
@@ -420,7 +421,9 @@ jobs:
 
   # Recreate Infrastructure
   # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
-  # Runs when: infrastructure changed OR infrastructure is unhealthy
+  # Runs when: infrastructure is unhealthy (needs recovery)
+  # SKIPS when: infrastructure is healthy (deploy.sh handles app-only deployment)
+  # NOTE: If infrastructure is healthy but changed, deploy.sh skips recreation, so this job should also skip
   # Preserves data volumes during recreation
   recreate-infrastructure:
     name: Recreate Infrastructure
@@ -429,8 +432,7 @@ jobs:
       always() &&
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' && 
-      (needs.detect-changes.outputs.infra-changed == 'true' || 
-       needs.check-infrastructure.outputs.infra-healthy == 'false')
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
     environment: production
     needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
