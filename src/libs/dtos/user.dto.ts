@@ -33,6 +33,51 @@ export enum Gender {
   OTHER = 'OTHER',
 }
 
+/**
+ * Data Transfer Object for Emergency Contact
+ */
+export class EmergencyContactDto {
+  @ApiProperty({
+    example: 'Jane Doe',
+    description: 'Name of the emergency contact',
+  })
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @ApiProperty({
+    example: 'Spouse',
+    description: 'Relationship with the user',
+  })
+  @IsString()
+  @IsNotEmpty()
+  relationship!: string;
+
+  @ApiProperty({
+    example: '+1234567890',
+    description: 'Phone number of the emergency contact',
+  })
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
+
+  @ApiPropertyOptional({
+    example: '+0987654321',
+    description: 'Alternate phone number',
+  })
+  @IsOptional()
+  @IsString()
+  alternatePhone?: string;
+
+  @ApiPropertyOptional({
+    example: '123 Main St',
+    description: 'Address of the emergency contact',
+  })
+  @IsOptional()
+  @IsString()
+  address?: string;
+}
+
 // Import Role type from centralized types
 import { Role } from '@core/types/enums.types';
 
@@ -332,15 +377,13 @@ export class CreateUserDto extends SimpleCreateUserDto {
   medicalConditions?: string[];
 
   @ApiPropertyOptional({
-    example: '+1987654321',
-    description: 'Emergency contact phone number',
+    type: EmergencyContactDto,
+    description: 'Emergency contact details',
   })
   @IsOptional()
-  @IsString({ message: 'Emergency contact must be a string' })
-  @Matches(/^\+?[1-9]\d{1,14}$/, {
-    message: 'Invalid emergency contact phone number format',
-  })
-  emergencyContact?: string;
+  @ValidateNested()
+  @Type(() => EmergencyContactDto)
+  emergencyContact?: EmergencyContactDto;
 
   @ApiPropertyOptional({
     example: 'google-oauth-id-123',
@@ -667,15 +710,13 @@ export class UpdateUserProfileDto {
   zipCode?: string;
 
   @ApiPropertyOptional({
-    example: '+1987654321',
-    description: 'Emergency contact phone number',
+    type: EmergencyContactDto,
+    description: 'Emergency contact details',
   })
   @IsOptional()
-  @IsString({ message: 'Emergency contact must be a string' })
-  @Matches(/^\+?[1-9]\d{1,14}$/, {
-    message: 'Invalid emergency contact phone number format',
-  })
-  emergencyContact?: string;
+  @ValidateNested()
+  @Type(() => EmergencyContactDto)
+  emergencyContact?: EmergencyContactDto;
 }
 
 /**

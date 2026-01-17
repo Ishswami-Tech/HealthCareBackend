@@ -56,15 +56,34 @@ function main() {
       auditOutput = error.stdout || '';
     }
 
-    const auditData = JSON.parse(auditOutput || '{}');
-    const vulnerabilities = auditData.vulnerabilities || {};
+    // yarn audit --json outputs multiple JSON objects (one per line)
+    // We need to parse each line separately
+    let vulnerabilities = {};
+    let hasVulnerabilities = false;
 
-    if (Object.keys(vulnerabilities).length === 0) {
+    if (auditOutput.trim()) {
+      const lines = auditOutput.trim().split('\n');
+      for (const line of lines) {
+        try {
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'auditSummary' && parsed.data) {
+            vulnerabilities = parsed.data.vulnerabilities || {};
+            hasVulnerabilities = Object.keys(vulnerabilities).length > 0;
+            break;
+          }
+        } catch (e) {
+          // Skip invalid JSON lines
+          continue;
+        }
+      }
+    }
+
+    if (!hasVulnerabilities) {
       log('✅ No vulnerabilities found', 'green');
       return;
     }
 
-    log(`Found ${Object.keys(vulnerabilities).length} vulnerable package(s)`, 'yellow');
+    log(`Found vulnerabilities in audit`, 'yellow');
 
     // Step 2: Try to fix with yarn audit (yarn doesn't have --fix, so we use resolutions)
     log('\nStep 2: Attempting automatic fixes via yarn resolutions...', 'yellow');

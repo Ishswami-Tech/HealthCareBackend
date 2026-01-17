@@ -145,8 +145,17 @@ export class RegisterDto {
     pattern: '^\\+?[1-9]\\d{1,14}$',
   })
   @IsString({ message: 'Phone number must be a string' })
-  @IsNotEmpty({ message: 'Phone number is required' })
-  phone!: string;
+  @IsOptional()
+  phone?: string;
+
+  @ApiProperty({
+    description: 'OTP for verification during registration',
+    example: '123456',
+    required: false,
+  })
+  @IsString({ message: 'OTP must be a string' })
+  @IsOptional()
+  otp?: string;
 
   @ApiProperty({
     description: 'Clinic ID for multi-tenant context (REQUIRED) - UUID or clinic code like CL0001',
