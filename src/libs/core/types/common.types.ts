@@ -121,6 +121,7 @@ export interface HealthCheckResponse {
     cache: ServiceHealth;
     queue: ServiceHealth;
     logger: ServiceHealth;
+    video: ServiceHealth;
     communication: ServiceHealth;
   };
 }
@@ -133,6 +134,7 @@ export interface DetailedHealthCheckResponse extends HealthCheckResponse {
     cache: ServiceHealth;
     queue: ServiceHealth;
     logger: ServiceHealth;
+    video: ServiceHealth;
     communication: ServiceHealth;
     prismaStudio?: ServiceHealth;
     redisCommander?: ServiceHealth;
@@ -641,7 +643,7 @@ export interface ValidationResult {
 export interface ExecutionContext extends RuleContext {
   readonly sessionId: string;
   readonly requestId: string;
-  readonly environment: 'development' | 'staging' | 'production';
+  readonly environment: 'development' | 'staging' | 'production' | 'local-prod';
   readonly additionalData?: Record<string, unknown>;
 }
 

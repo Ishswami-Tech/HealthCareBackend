@@ -1,4 +1,5 @@
 # Kubernetes Deployment Guide
+
 ## Healthcare Backend - Production Setup
 
 ## 🎯 Quick Start
@@ -19,7 +20,7 @@ kubectl get hpa -n healthcare-backend
 
 ```powershell
 # Enable Kubernetes in Docker Desktop settings
-npm run k8s:local:deploy
+yarn k8s:local:deploy
 ```
 
 ---
@@ -29,11 +30,13 @@ npm run k8s:local:deploy
 ### Current Setup: 2-3 Nodes
 
 **Specifications:**
+
 - **Per Node:** 6 vCPU, 12GB RAM
 - **2 Nodes:** 12 vCPU, 24GB RAM total
 - **3 Nodes:** 18 vCPU, 36GB RAM total
 
 **Resource Allocation:**
+
 - **Available for Pods:** 67% (33% reserved for system/kubelet)
 - **2 Nodes:** 8 vCPU, 16GB RAM available
 - **3 Nodes:** 12 vCPU, 24GB RAM available
@@ -90,12 +93,13 @@ When ready to increase node size (e.g., 8 vCPU, 16GB RAM):
 
 **Already Configured:**
 
-| Component | Min Replicas | Max Replicas | Triggers |
-|-----------|--------------|--------------|----------|
-| API | 3 | 50 | CPU > 70%, Memory > 80% |
-| Worker | 3 | 50 | CPU > 70%, Memory > 80% |
+| Component | Min Replicas | Max Replicas | Triggers                |
+| --------- | ------------ | ------------ | ----------------------- |
+| API       | 3            | 50           | CPU > 70%, Memory > 80% |
+| Worker    | 3            | 50           | CPU > 70%, Memory > 80% |
 
 **Monitor Auto-Scaling:**
+
 ```bash
 # Check HPA status
 kubectl get hpa -n healthcare-backend
@@ -108,12 +112,14 @@ kubectl get deployment healthcare-api -n healthcare-backend
 ```
 
 **Scaling Behavior:**
+
 - **Scale Up:** Aggressive (double or +5 pods every 30s)
 - **Scale Down:** Conservative (max 50% or -2 pods every 60s, wait 5 min)
 
 ### Vertical Pod Autoscaler (VPA) - Optional
 
-VPA is configured but optional. Uncomment in `base/kustomization.yaml` if VPA controller is installed.
+VPA is configured but optional. Uncomment in `base/kustomization.yaml` if VPA
+controller is installed.
 
 ---
 
@@ -121,29 +127,29 @@ VPA is configured but optional. Uncomment in `base/kustomization.yaml` if VPA co
 
 ### 2 Nodes (12 vCPU, 24GB RAM)
 
-| Component | Replicas | CPU Request | RAM Request | Total CPU | Total RAM |
-|-----------|----------|-------------|-------------|-----------|-----------|
-| Redis | 3 | 0.5 vCPU | 1GB | 1.5 vCPU | 3GB |
-| Dragonfly | 1 | 0.5 vCPU | 2GB | 0.5 vCPU | 2GB |
-| PostgreSQL | 1 | 1 vCPU | 2GB | 1 vCPU | 2GB |
-| API | 3 | 0.5 vCPU | 1GB | 1.5 vCPU | 3GB |
-| Worker | 3 | 0.25 vCPU | 512MB | 0.75 vCPU | 1.5GB |
-| PgBouncer | 1 | 0.2 vCPU | 256MB | 0.2 vCPU | 256MB |
-| **Total** | **12** | | | **5.45 vCPU** | **12GB** |
-| **Remaining** | | | | **2.55 vCPU** | **4GB** |
+| Component     | Replicas | CPU Request | RAM Request | Total CPU     | Total RAM |
+| ------------- | -------- | ----------- | ----------- | ------------- | --------- |
+| Redis         | 3        | 0.5 vCPU    | 1GB         | 1.5 vCPU      | 3GB       |
+| Dragonfly     | 1        | 0.5 vCPU    | 2GB         | 0.5 vCPU      | 2GB       |
+| PostgreSQL    | 1        | 1 vCPU      | 2GB         | 1 vCPU        | 2GB       |
+| API           | 3        | 0.5 vCPU    | 1GB         | 1.5 vCPU      | 3GB       |
+| Worker        | 3        | 0.25 vCPU   | 512MB       | 0.75 vCPU     | 1.5GB     |
+| PgBouncer     | 1        | 0.2 vCPU    | 256MB       | 0.2 vCPU      | 256MB     |
+| **Total**     | **12**   |             |             | **5.45 vCPU** | **12GB**  |
+| **Remaining** |          |             |             | **2.55 vCPU** | **4GB**   |
 
 ### 3 Nodes (18 vCPU, 36GB RAM)
 
-| Component | Replicas | CPU Request | RAM Request | Total CPU | Total RAM |
-|-----------|----------|-------------|-------------|-----------|-----------|
-| Redis | 3 | 0.5 vCPU | 1GB | 1.5 vCPU | 3GB |
-| Dragonfly | 1 | 0.5 vCPU | 2GB | 0.5 vCPU | 2GB |
-| PostgreSQL | 1 | 1 vCPU | 2GB | 1 vCPU | 2GB |
-| API | 3-6 | 0.5 vCPU | 1GB | 1.5-3 vCPU | 3-6GB |
-| Worker | 3-6 | 0.25 vCPU | 512MB | 0.75-1.5 vCPU | 1.5-3GB |
-| PgBouncer | 1 | 0.2 vCPU | 256MB | 0.2 vCPU | 256MB |
-| **Total** | **12-18** | | | **5.45-8.45 vCPU** | **12-16GB** |
-| **Remaining** | | | | **3.55-6.55 vCPU** | **8-12GB** |
+| Component     | Replicas  | CPU Request | RAM Request | Total CPU          | Total RAM   |
+| ------------- | --------- | ----------- | ----------- | ------------------ | ----------- |
+| Redis         | 3         | 0.5 vCPU    | 1GB         | 1.5 vCPU           | 3GB         |
+| Dragonfly     | 1         | 0.5 vCPU    | 2GB         | 0.5 vCPU           | 2GB         |
+| PostgreSQL    | 1         | 1 vCPU      | 2GB         | 1 vCPU             | 2GB         |
+| API           | 3-6       | 0.5 vCPU    | 1GB         | 1.5-3 vCPU         | 3-6GB       |
+| Worker        | 3-6       | 0.25 vCPU   | 512MB       | 0.75-1.5 vCPU      | 1.5-3GB     |
+| PgBouncer     | 1         | 0.2 vCPU    | 256MB       | 0.2 vCPU           | 256MB       |
+| **Total**     | **12-18** |             |             | **5.45-8.45 vCPU** | **12-16GB** |
+| **Remaining** |           |             |             | **3.55-6.55 vCPU** | **8-12GB**  |
 
 ---
 
@@ -173,16 +179,19 @@ kubernetes/
 ## 🔧 Configuration Files
 
 ### `base/resourcequota.yaml`
+
 - **Purpose:** Unified resource quota for 2/3 nodes
 - **Usage:** Uncomment the appropriate section (2-node or 3-node)
 - **Default:** 2 nodes configuration
 
 ### `base/kustomization.yaml`
+
 - **Purpose:** Main entry point for all resources
 - **Features:** Uses consolidated files, organized by category
 - **VPA:** Optional (commented out by default)
 
 ### `base/api-deployment.yaml` & `base/worker-deployment.yaml`
+
 - **Purpose:** Application deployments with HPA
 - **Features:** Auto-scaling configured, optimized for 2-3 nodes
 
@@ -220,11 +229,13 @@ kubectl describe nodes
 ### Scaling Triggers
 
 **Scale API pods when:**
+
 - CPU usage > 70% for 5 minutes
 - Memory usage > 80%
 - Request latency > 500ms
 
 **Scale Worker pods when:**
+
 - Queue backlog > 100 jobs
 - Worker CPU > 70%
 
@@ -348,7 +359,8 @@ kubectl scale deployment healthcare-api -n healthcare-backend --replicas=2
 
 ## 📝 Notes
 
-- **Resource Quota:** Default is 2 nodes. Edit `base/resourcequota.yaml` for 3 nodes.
+- **Resource Quota:** Default is 2 nodes. Edit `base/resourcequota.yaml` for 3
+  nodes.
 - **Auto-Scaling:** HPA is active. VPA is optional.
 - **High Availability:** Redis pods spread across nodes automatically.
 - **Persistent Storage:** All data survives pod restarts.

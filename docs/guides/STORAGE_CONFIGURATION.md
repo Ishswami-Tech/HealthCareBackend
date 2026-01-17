@@ -1,15 +1,20 @@
 # Storage Configuration Guide
+
 ## Contabo S3 + Local Storage Setup
 
-This guide explains how to configure the storage service to use **Contabo S3** (S3-compatible) with automatic fallback to **local storage** (Kubernetes persistent volumes).
+This guide explains how to configure the storage service to use **Contabo S3**
+(S3-compatible) with automatic fallback to **local storage** (Kubernetes
+persistent volumes).
 
 ---
 
 ## 🎯 Overview
 
 The storage service supports:
+
 - **Contabo S3** (primary) - Cost-effective S3-compatible storage
-- **Local Storage** (fallback) - Kubernetes persistent volumes (automatically backed up)
+- **Local Storage** (fallback) - Kubernetes persistent volumes (automatically
+  backed up)
 - **AWS S3** (optional) - Can be used instead of Contabo
 - **Wasabi** (optional) - Another S3-compatible provider
 
@@ -50,7 +55,11 @@ S3_FORCE_PATH_STYLE=true
 ### Optional
 
 ```bash
-# CDN URL (if using CDN in front of storage)
+# CDN URL (if using external CDN in front of storage)
+# Note: For Contabo provider, CDN URL is automatically generated from S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_BUCKET
+# Format: https://{endpoint}/{access-key-id}:{bucket}
+# Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata
+# Only set this if you want to use a different CDN (e.g., Cloudflare, AWS CloudFront)
 CDN_URL=https://cdn.yourdomain.com
 
 # Presigned URL expiration (seconds, default: 3600 = 1 hour)
@@ -81,12 +90,21 @@ S3_SECRET_ACCESS_KEY=your-contabo-secret-access-key
 S3_FORCE_PATH_STYLE=true
 ```
 
-**Note**: 
-- **Bucket URL Format**: `https://eu2.contabostorage.com/{access-key-id}:{bucket-name}/{file-key}`
-- **Example Bucket URL**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata`
-- **File URL Example**: `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata/path/to/file.pdf`
+**Note**:
+
+- **Bucket URL Format**:
+  `https://eu2.contabostorage.com/{access-key-id}:{bucket-name}/{file-key}`
+- **Example Bucket URL**:
+  `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata`
+- **File URL Example**:
+  `https://eu2.contabostorage.com/{your-access-key-id}:healthcaredata/path/to/file.pdf`
 - The `S3_BUCKET` value should be just `healthcaredata` (bucket name only)
-- The storage service automatically includes the access key ID in public URLs when `S3_PROVIDER=contabo`
+- **CDN Auto-Configuration**: When `S3_PROVIDER=contabo`, the CDN URL is
+  automatically generated from your Contabo endpoint, access key ID, and bucket
+  name. You don't need to set `CDN_URL` unless you want to use a different CDN
+  provider (e.g., Cloudflare, AWS CloudFront)
+- The storage service automatically includes the access key ID in public URLs
+  when `S3_PROVIDER=contabo`
 
 ### Example 2: AWS S3
 
@@ -128,8 +146,8 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 100Gi  # Adjust based on needs
-  storageClassName: standard  # Or your preferred storage class
+      storage: 100Gi # Adjust based on needs
+  storageClassName: standard # Or your preferred storage class
 ```
 
 ### Mount in Deployment
@@ -144,19 +162,20 @@ spec:
   template:
     spec:
       containers:
-      - name: app
-        volumeMounts:
-        - name: storage
-          mountPath: /app/storage
+        - name: app
+          volumeMounts:
+            - name: storage
+              mountPath: /app/storage
       volumes:
-      - name: storage
-        persistentVolumeClaim:
-          claimName: healthcare-storage-pvc
+        - name: storage
+          persistentVolumeClaim:
+            claimName: healthcare-storage-pvc
 ```
 
 ### Backup Strategy
 
 Kubernetes handles backups via:
+
 1. **Persistent Volume Snapshots** - Automated snapshots of PVC
 2. **Volume Backups** - Using tools like Velero
 3. **Application-Level Backups** - Your existing backup system
@@ -166,12 +185,14 @@ Kubernetes handles backups via:
 ## 📊 Storage Behavior
 
 ### Primary: Contabo S3
+
 - Files uploaded to Contabo S3 bucket
 - Public URLs generated automatically
 - Presigned URLs for private files
 - Automatic retry on failure
 
 ### Fallback: Local Storage
+
 - If S3 fails, files stored in `/storage/assets`
 - Organized by folder: `qr-codes/`, `invoices/`, `prescriptions/`, etc.
 - Served via Kubernetes ingress/nginx
@@ -205,16 +226,19 @@ const provider = staticAssetService.getStorageProvider(); // 'contabo', 'aws', '
 ## 💰 Cost Comparison
 
 ### Contabo S3 (Recommended)
+
 - **Storage:** ~€0.005/GB/month
 - **No egress fees**
 - **Total (1TB):** ~€5/month
 
 ### AWS S3
+
 - **Storage:** ~$0.023/GB/month
 - **Egress:** ~$0.09/GB
 - **Total (1TB):** ~$23-30/month
 
 ### Local Storage (Kubernetes)
+
 - **Storage:** Included in Kubernetes cluster costs
 - **Backups:** Handled by Kubernetes snapshots
 - **Total:** Part of infrastructure costs
@@ -244,16 +268,16 @@ Reference in deployment:
 
 ```yaml
 env:
-- name: S3_ACCESS_KEY_ID
-  valueFrom:
-    secretKeyRef:
-      name: s3-credentials
-      key: S3_ACCESS_KEY_ID
-- name: S3_SECRET_ACCESS_KEY
-  valueFrom:
-    secretKeyRef:
-      name: s3-credentials
-      key: S3_SECRET_ACCESS_KEY
+  - name: S3_ACCESS_KEY_ID
+    valueFrom:
+      secretKeyRef:
+        name: s3-credentials
+        key: S3_ACCESS_KEY_ID
+  - name: S3_SECRET_ACCESS_KEY
+    valueFrom:
+      secretKeyRef:
+        name: s3-credentials
+        key: S3_SECRET_ACCESS_KEY
 ```
 
 ---
@@ -272,10 +296,7 @@ console.log(`Provider: ${s3StorageService.getStorageProvider()}`);
 ### Test Upload
 
 ```typescript
-const result = await staticAssetService.uploadQRCode(
-  qrCodeBuffer,
-  locationId
-);
+const result = await staticAssetService.uploadQRCode(qrCodeBuffer, locationId);
 
 if (result.success) {
   console.log(`Uploaded to: ${result.url}`);
@@ -290,6 +311,7 @@ if (result.success) {
 ### From AWS S3 to Contabo S3
 
 1. Update environment variables:
+
    ```bash
    S3_PROVIDER=contabo
    S3_ENDPOINT=https://eu2.contabostorage.com
@@ -305,6 +327,7 @@ if (result.success) {
 ### From Local to S3
 
 1. Enable S3:
+
    ```bash
    S3_ENABLED=true
    # ... configure credentials
@@ -320,7 +343,8 @@ if (result.success) {
 
 ## 📝 Notes
 
-- **Backups:** Kubernetes persistent volumes handle local storage backups automatically
+- **Backups:** Kubernetes persistent volumes handle local storage backups
+  automatically
 - **Scalability:** Contabo S3 scales automatically (no limits)
 - **Performance:** Contabo S3 is fast enough for healthcare app needs
 - **Compliance:** Verify HIPAA/GDPR compliance with Contabo if needed
@@ -356,6 +380,12 @@ if (result.success) {
 
 ## 📚 References
 
+- **Environment Variables**:
+  [../ENVIRONMENT_VARIABLES.md](../ENVIRONMENT_VARIABLES.md) - Storage-related
+  environment variables
+- **GitHub Secrets**:
+  [../GITHUB_SECRETS_REFERENCE.md](../GITHUB_SECRETS_REFERENCE.md) - S3 storage
+  secrets for CI/CD
 - [Contabo Object Storage Documentation](https://contabo.com/en/products/object-storage/)
 - [AWS S3 SDK Documentation](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-examples.html)
 - [Kubernetes Persistent Volumes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/)

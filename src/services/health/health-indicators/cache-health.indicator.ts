@@ -1,12 +1,13 @@
 /**
  * Cache Health Indicator for Health Module
  * @class CacheHealthIndicator
- * @description Health indicator for cache service using @nestjs/terminus
+ * @description Health indicator for cache service (no Terminus dependency)
+ * Uses only LoggingService (per .ai-rules/ coding standards)
  * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthIndicatorResult } from './types';
 import { CacheService } from '@infrastructure/cache';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import type { CacheHealthMonitorStatus } from '@core/types';

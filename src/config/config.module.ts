@@ -46,7 +46,7 @@ loadEnvironmentVariables();
 
 /**
  * Get the appropriate config factory based on NODE_ENV
- * Supports: development, production, staging, test
+ * Supports: development, production, staging, test, local-prod
  *
  * @returns Config factory function
  */
@@ -57,6 +57,8 @@ function getConfigFactory() {
     case 'production':
       return productionConfig;
     case 'staging':
+    case 'local-prod':
+      // local-prod uses staging config (production-like but for local testing)
       return stagingConfig;
     case 'test':
       return testConfig;
@@ -84,8 +86,11 @@ function validateConfigEarly(): void {
         );
       }
 
-      // Only throw for production/staging (strict environments)
-      if ((nodeEnv === 'production' || nodeEnv === 'staging') && result.missing.length > 0) {
+      // Only throw for production/staging/local-prod (strict environments)
+      if (
+        (nodeEnv === 'production' || nodeEnv === 'staging' || nodeEnv === 'local-prod') &&
+        result.missing.length > 0
+      ) {
         const errorMessage = getEnvironmentValidationErrorMessage(nodeEnv, result.missing);
         throw new Error(errorMessage);
       }

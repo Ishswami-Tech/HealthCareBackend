@@ -81,24 +81,41 @@ export class VideoProviderFactory {
 
   /**
    * Get provider with health check (OpenVidu ONLY - no fallback)
+   * NOTE: This method now logs warnings instead of throwing errors
+   * to prevent crashing the entire API when video services are unavailable.
+   * Video features will be disabled but core healthcare features will work.
    */
   async getProviderWithFallback(): Promise<IVideoProvider> {
     const primary = this.getPrimaryProvider();
 
     // Check health of OpenVidu provider
     if (primary.providerName === 'openvidu') {
-      const isHealthy = await primary.isHealthy();
-      if (!isHealthy) {
+      try {
+        const isHealthy = await primary.isHealthy();
+        if (!isHealthy) {
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.WARN,
+              'OpenVidu provider is unhealthy. Video features will be unavailable. API will continue without video support.',
+              'VideoProviderFactory.getProviderWithFallback',
+              { provider: 'openvidu', healthStatus: 'unhealthy' }
+            );
+          }
+          // Return provider anyway - methods will fail gracefully when called
+          // This allows the API to start even if OpenVidu is temporarily unavailable
+        }
+      } catch (error) {
         if (this.loggingService) {
           void this.loggingService.log(
             LogType.SYSTEM,
-            LogLevel.ERROR,
-            'OpenVidu provider is unhealthy',
+            LogLevel.WARN,
+            `OpenVidu health check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Video features will be unavailable.`,
             'VideoProviderFactory.getProviderWithFallback',
-            {}
+            { provider: 'openvidu', error: error instanceof Error ? error.message : 'Unknown' }
           );
         }
-        throw new Error('OpenVidu provider is unhealthy. Please check OpenVidu server status.');
+        // Return provider anyway - graceful degradation
       }
       return primary;
     }

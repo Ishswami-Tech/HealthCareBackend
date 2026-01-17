@@ -1,6 +1,7 @@
 # Frontend Integration Guide - Realtime Health Monitoring
 
-**Purpose:** Integrate Socket.IO realtime health monitoring in frontend applications to eliminate polling and receive real-time health status updates.
+**Purpose:** Integrate Socket.IO realtime health monitoring in frontend
+applications to eliminate polling and receive real-time health status updates.
 
 **Location:** `src/services/health/realtime`
 
@@ -22,7 +23,8 @@
 
 ## 🎯 Overview
 
-The realtime health monitoring system uses Socket.IO to push health status updates to frontend clients, eliminating the need for polling. This provides:
+The realtime health monitoring system uses Socket.IO to push health status
+updates to frontend clients, eliminating the need for polling. This provides:
 
 - ✅ **Real-time Updates** - Instant notifications when health status changes
 - ✅ **No Polling** - Server pushes updates, reducing backend load
@@ -38,7 +40,7 @@ The realtime health monitoring system uses Socket.IO to push health status updat
 ### 1. Install Socket.IO Client
 
 ```bash
-npm install socket.io-client
+yarn add socket.io-client
 # or
 yarn add socket.io-client
 ```
@@ -53,7 +55,7 @@ const healthSocket = io('http://your-backend-url/health', {
   reconnection: true,
 });
 
-healthSocket.on('health:status', (data) => {
+healthSocket.on('health:status', data => {
   console.log('Health status:', data);
 });
 ```
@@ -70,24 +72,22 @@ import { io, Socket } from 'socket.io-client';
 const healthSocket = io('http://your-backend-url/health', {
   // Transport options
   transports: ['websocket', 'polling'], // Prefer websocket, fallback to polling
-  
+
   // Reconnection settings
   reconnection: true,
   reconnectionDelay: 1000,
   reconnectionDelayMax: 5000,
   reconnectionAttempts: 5,
-  
+
   // Timeout settings
   timeout: 20000,
-  
-  // Authentication (if required)
-  auth: {
-    token: 'your-auth-token'
-  },
-  
+
+  // No authentication required - health namespace is completely public
+  // Access is controlled only via CORS (configure CORS_ORIGIN environment variable)
+
   // Additional options
   forceNew: false,
-  multiplex: true
+  multiplex: true,
 });
 ```
 
@@ -117,11 +117,13 @@ healthSocket.on('health:status', (data: RealtimeHealthStatusPayload) => {
 ```
 
 **Data Format:**
+
 ```typescript
 interface RealtimeHealthStatusPayload {
-  t: string;                    // timestamp (ISO 8601)
-  o: 'healthy' | 'degraded' | 'unhealthy';  // overall status
-  s: {                          // services
+  t: string; // timestamp (ISO 8601)
+  o: 'healthy' | 'degraded' | 'unhealthy'; // overall status
+  s: {
+    // services
     [serviceName: string]: {
       status: 'healthy' | 'degraded' | 'unhealthy';
       timestamp: string;
@@ -130,7 +132,8 @@ interface RealtimeHealthStatusPayload {
       details?: Record<string, unknown>;
     };
   };
-  e?: {                         // endpoints (only if changed)
+  e?: {
+    // endpoints (only if changed)
     [endpointName: string]: {
       status: 'up' | 'down' | 'slow';
       responseTime: number;
@@ -138,18 +141,20 @@ interface RealtimeHealthStatusPayload {
       successRate: number;
     };
   };
-  sys?: {                       // system metrics (only if threshold breached)
-    cpu: number;                // CPU usage percentage
-    memory: number;              // Memory usage percentage
+  sys?: {
+    // system metrics (only if threshold breached)
+    cpu: number; // CPU usage percentage
+    memory: number; // Memory usage percentage
     activeConnections: number;
     requestRate: number;
     errorRate: number;
   };
-  u: number;                    // uptime in seconds
+  u: number; // uptime in seconds
 }
 ```
 
 **Example:**
+
 ```typescript
 {
   t: '2024-01-01T12:00:00.000Z',
@@ -204,17 +209,19 @@ healthSocket.on('health:service:update', (update: HealthUpdate) => {
 ```
 
 **Data Format:**
+
 ```typescript
 interface HealthUpdate {
-  t: string;                    // timestamp
-  ty: 'service' | 'system';     // type
-  id: string;                   // service ID (e.g., 'database', 'cache')
-  st: 'healthy' | 'degraded' | 'unhealthy';  // status
-  rt?: number;                  // response time (optional)
+  t: string; // timestamp
+  ty: 'service' | 'system'; // type
+  id: string; // service ID (e.g., 'database', 'cache')
+  st: 'healthy' | 'degraded' | 'unhealthy'; // status
+  rt?: number; // response time (optional)
 }
 ```
 
 **Example:**
+
 ```typescript
 {
   t: '2024-01-01T12:00:05.000Z',
@@ -237,14 +244,16 @@ healthSocket.on('health:heartbeat', (heartbeat: HealthHeartbeat) => {
 ```
 
 **Data Format:**
+
 ```typescript
 interface HealthHeartbeat {
-  t: string;                    // timestamp
-  o: 'healthy' | 'degraded' | 'unhealthy';  // overall status
+  t: string; // timestamp
+  o: 'healthy' | 'degraded' | 'unhealthy'; // overall status
 }
 ```
 
 **Example:**
+
 ```typescript
 {
   t: '2024-01-01T12:01:00.000Z',
@@ -262,13 +271,13 @@ healthSocket.on('connect', () => {
 });
 
 // Disconnected
-healthSocket.on('disconnect', (reason) => {
+healthSocket.on('disconnect', reason => {
   console.log('Disconnected:', reason);
   // Show offline status in UI
 });
 
 // Connection error
-healthSocket.on('connect_error', (error) => {
+healthSocket.on('connect_error', error => {
   console.error('Connection error:', error);
   // Implement fallback strategy
 });
@@ -280,10 +289,11 @@ healthSocket.on('connect_error', (error) => {
 
 ### Subscribe (Optional)
 
-Clients are automatically subscribed on connection, but you can explicitly subscribe:
+Clients are automatically subscribed on connection, but you can explicitly
+subscribe:
 
 ```typescript
-healthSocket.emit('health:subscribe', { room: 'health:all' }, (response) => {
+healthSocket.emit('health:subscribe', { room: 'health:all' }, response => {
   if (response.success) {
     console.log('Subscribed to health updates');
     if (response.status) {
@@ -295,6 +305,7 @@ healthSocket.emit('health:subscribe', { room: 'health:all' }, (response) => {
 ```
 
 **Response:**
+
 ```typescript
 interface SubscribeResponse {
   success: boolean;
@@ -306,7 +317,7 @@ interface SubscribeResponse {
 ### Unsubscribe (Optional)
 
 ```typescript
-healthSocket.emit('health:unsubscribe', (response) => {
+healthSocket.emit('health:unsubscribe', response => {
   if (response.success) {
     console.log('Unsubscribed from health updates');
   }
@@ -325,7 +336,8 @@ import { io, Socket } from 'socket.io-client';
 import type { RealtimeHealthStatusPayload } from '@core/types';
 
 export function useHealthMonitoring() {
-  const [healthStatus, setHealthStatus] = useState<RealtimeHealthStatusPayload | null>(null);
+  const [healthStatus, setHealthStatus] =
+    useState<RealtimeHealthStatusPayload | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -350,7 +362,7 @@ export function useHealthMonitoring() {
       console.log('Health monitoring disconnected');
     });
 
-    healthSocket.on('connect_error', (error) => {
+    healthSocket.on('connect_error', error => {
       console.error('Health monitoring connection error:', error);
       setIsConnected(false);
     });
@@ -361,7 +373,7 @@ export function useHealthMonitoring() {
       setLastUpdate(new Date());
     });
 
-    healthSocket.on('health:service:update', (update) => {
+    healthSocket.on('health:service:update', update => {
       setHealthStatus(prev => {
         if (!prev) return prev;
         return {
@@ -371,16 +383,16 @@ export function useHealthMonitoring() {
             [update.id]: {
               status: update.st,
               timestamp: update.t,
-              responseTime: update.rt
-            }
+              responseTime: update.rt,
+            },
           },
-          t: update.t
+          t: update.t,
         };
       });
       setLastUpdate(new Date());
     });
 
-    healthSocket.on('health:heartbeat', (heartbeat) => {
+    healthSocket.on('health:heartbeat', heartbeat => {
       console.log('Heartbeat received:', heartbeat.o);
       setLastUpdate(new Date());
     });
@@ -394,7 +406,7 @@ export function useHealthMonitoring() {
 
   const subscribe = useCallback(() => {
     if (socket) {
-      socket.emit('health:subscribe', {}, (response) => {
+      socket.emit('health:subscribe', {}, response => {
         if (response.success && response.status) {
           setHealthStatus(response.status);
         }
@@ -466,7 +478,7 @@ export function HealthDashboard() {
         {Object.entries(healthStatus.s).map(([name, service]) => (
           <div key={name} className="service-item">
             <span className="service-name">{name}</span>
-            <span 
+            <span
               className="service-status"
               style={{ color: getStatusColor(service.status) }}
             >
@@ -527,16 +539,16 @@ export function useHealthMonitoring() {
       isConnected.value = false;
     });
 
-    socket.on('health:status', (data) => {
+    socket.on('health:status', data => {
       healthStatus.value = data;
     });
 
-    socket.on('health:service:update', (update) => {
+    socket.on('health:service:update', update => {
       if (healthStatus.value) {
         healthStatus.value.s[update.id] = {
           status: update.st,
           timestamp: update.t,
-          responseTime: update.rt
+          responseTime: update.rt,
         };
       }
     });
@@ -573,23 +585,23 @@ healthSocket.on('disconnect', () => {
   updateConnectionStatus(false);
 });
 
-healthSocket.on('health:status', (data) => {
+healthSocket.on('health:status', data => {
   healthStatus = data;
   updateHealthDashboard(data);
 });
 
-healthSocket.on('health:service:update', (update) => {
+healthSocket.on('health:service:update', update => {
   if (healthStatus) {
     healthStatus.s[update.id] = {
       status: update.st,
       timestamp: update.t,
-      responseTime: update.rt
+      responseTime: update.rt,
     };
     updateServiceStatus(update.id, update.st);
   }
 });
 
-healthSocket.on('health:heartbeat', (heartbeat) => {
+healthSocket.on('health:heartbeat', heartbeat => {
   updateLastSeen(heartbeat.t);
 });
 
@@ -621,20 +633,21 @@ function updateServiceStatus(serviceId, status) {
 
 ### 2. State Management
 
-- **Store health status** in your state management solution (Redux, Zustand, etc.)
+- **Store health status** in your state management solution (Redux, Zustand,
+  etc.)
 - **Update incrementally** using `health:service:update` events
 - **Debounce rapid updates** if needed
 
 ### 3. Error Handling
 
 ```typescript
-healthSocket.on('connect_error', (error) => {
+healthSocket.on('connect_error', error => {
   console.error('Connection error:', error);
   // Implement fallback to REST polling
   startPollingFallback();
 });
 
-healthSocket.on('disconnect', (reason) => {
+healthSocket.on('disconnect', reason => {
   if (reason === 'io server disconnect') {
     // Server disconnected, reconnect manually
     healthSocket.connect();
@@ -646,7 +659,8 @@ healthSocket.on('disconnect', (reason) => {
 
 ### 4. Performance Optimization
 
-- **Use incremental updates** (`health:service:update`) instead of full status when possible
+- **Use incremental updates** (`health:service:update`) instead of full status
+  when possible
 - **Throttle UI updates** if receiving too many updates
 - **Cache previous status** to show during disconnections
 
@@ -699,6 +713,7 @@ healthSocket.on('disconnect', () => {
 **Problem:** Cannot connect to Socket.IO
 
 **Solutions:**
+
 - Check CORS configuration on backend
 - Verify the namespace path (`/health`)
 - Check authentication requirements
@@ -709,6 +724,7 @@ healthSocket.on('disconnect', () => {
 **Problem:** Not receiving health status updates
 
 **Solutions:**
+
 - Verify you're listening to the correct events
 - Check if you're in the correct room (`health:all`)
 - Ensure connection is established (`connect` event fired)
@@ -719,6 +735,7 @@ healthSocket.on('disconnect', () => {
 **Problem:** Too many updates causing UI lag
 
 **Solutions:**
+
 - Throttle or debounce UI updates
 - Use `health:service:update` for incremental updates
 - Implement virtual scrolling for large service lists
@@ -729,8 +746,10 @@ healthSocket.on('disconnect', () => {
 ## 📚 Related Documentation
 
 - [Health Service README](./README.md) - Backend health service documentation
-- [Socket.IO Documentation](https://socket.io/docs/v4/) - Official Socket.IO docs
-- [System Architecture](../../docs/architecture/SYSTEM_ARCHITECTURE.md) - Overall system architecture
+- [Socket.IO Documentation](https://socket.io/docs/v4/) - Official Socket.IO
+  docs
+- [System Architecture](../../docs/architecture/SYSTEM_ARCHITECTURE.md) -
+  Overall system architecture
 
 ---
 
@@ -738,25 +757,25 @@ healthSocket.on('disconnect', () => {
 
 ### Events Received
 
-| Event | Description | Frequency |
-|-------|-------------|-----------|
-| `health:status` | Full health status | On connect + when status changes |
-| `health:service:update` | Incremental service update | When individual service changes |
-| `health:heartbeat` | Keep-alive ping | Every 60 seconds |
+| Event                   | Description                | Frequency                        |
+| ----------------------- | -------------------------- | -------------------------------- |
+| `health:status`         | Full health status         | On connect + when status changes |
+| `health:service:update` | Incremental service update | When individual service changes  |
+| `health:heartbeat`      | Keep-alive ping            | Every 60 seconds                 |
 
 ### Events Sent
 
-| Event | Description | Payload |
-|-------|-------------|---------|
-| `health:subscribe` | Subscribe to updates (optional) | `{ room?: string }` |
-| `health:unsubscribe` | Unsubscribe from updates (optional) | None |
+| Event                | Description                         | Payload             |
+| -------------------- | ----------------------------------- | ------------------- |
+| `health:subscribe`   | Subscribe to updates (optional)     | `{ room?: string }` |
+| `health:unsubscribe` | Unsubscribe from updates (optional) | None                |
 
 ### Connection Events
 
-| Event | Description |
-|-------|-------------|
-| `connect` | Successfully connected |
-| `disconnect` | Disconnected from server |
+| Event           | Description               |
+| --------------- | ------------------------- |
+| `connect`       | Successfully connected    |
+| `disconnect`    | Disconnected from server  |
 | `connect_error` | Connection error occurred |
 
 ---
@@ -776,6 +795,4 @@ healthSocket.on('disconnect', () => {
 
 ---
 
-**Last Updated:** 2024-01-01
-**Version:** 1.0.0
-
+**Last Updated:** 2024-01-01 **Version:** 1.0.0

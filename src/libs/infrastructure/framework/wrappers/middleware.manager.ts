@@ -456,6 +456,7 @@ export class MiddlewareManager {
         const versioningConfig: VersioningConfig = {
           type: config.versioningType,
           ...(config.versioningHeader && { header: config.versioningHeader }),
+          ...(config.versioningUriPrefix && { uriPrefix: config.versioningUriPrefix }),
           ...(config.defaultVersion && { defaultVersion: config.defaultVersion }),
         };
         this.configureVersioning(app, versioningConfig);

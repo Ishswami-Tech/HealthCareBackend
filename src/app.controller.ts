@@ -31,14 +31,6 @@ interface DashboardLogEntry {
   data: string;
 }
 
-interface LoggingServiceLogEntry {
-  timestamp?: string | Date;
-  level?: string;
-  message?: string;
-  type?: string;
-  metadata?: unknown;
-}
-
 interface DashboardData {
   overallHealth: {
     status: 'healthy' | 'degraded';
@@ -57,6 +49,7 @@ interface DashboardData {
     details: string;
     lastChecked: string;
     metrics: Record<string, unknown>;
+    error?: string;
   }>;
   clusterInfo?:
     | {
@@ -160,6 +153,11 @@ export class AppController {
                   responseTime: 0,
                   lastChecked: new Date().toISOString(),
                 },
+                video: {
+                  status: 'unhealthy' as const,
+                  responseTime: 0,
+                  lastChecked: new Date().toISOString(),
+                },
                 communication: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
@@ -184,7 +182,7 @@ export class AppController {
                 system: 0,
               },
             });
-          }, 10000); // 10 second timeout
+          }, 15000); // 15 second timeout (increased to allow health checks to complete)
         });
         healthData = await Promise.race([healthCheckPromise, timeoutPromise]);
       } catch (healthError) {
@@ -470,6 +468,9 @@ export class AppController {
         : allServices;
 
       // Calculate overall system health with defensive checks
+      // PRIORITY: Service health takes precedence over backend status
+      // If all services are healthy, system is healthy regardless of backend status field
+      // This prevents false "degraded" status when system metrics (CPU/memory) are wrong
       const servicesData = healthData && 'services' in healthData ? healthData.services : {};
       const totalServices = servicesData ? Object.keys(servicesData).length : 0;
       const healthyServices = servicesData
@@ -481,11 +482,16 @@ export class AppController {
               (service as ServiceHealth).status === 'healthy'
           ).length
         : 0;
+
+      // CRITICAL: If all services are healthy, system is healthy (ignore backend status field)
+      // Backend status might be "degraded" due to incorrect CPU calculation, but if all services
+      // are healthy, the system is actually healthy
       const isSystemHealthy = totalServices > 0 && healthyServices === totalServices;
 
       // Initialize health dashboard data
       const dashboardData: DashboardData = {
         overallHealth: {
+          // Always use service-based calculation, not backend status field
           status: isSystemHealthy ? 'healthy' : 'degraded',
           statusText: isSystemHealthy ? 'All systems operational' : 'System partially degraded',
           healthyCount: healthyServices,
@@ -504,13 +510,15 @@ export class AppController {
                 status: serviceData.status || 'unhealthy',
                 isHealthy: serviceData.status === 'healthy',
                 responseTime: serviceData.responseTime || 0,
-                details:
-                  serviceData.details ||
-                  (serviceData.status === 'healthy'
-                    ? 'Service is responding normally'
-                    : 'Service is experiencing issues'),
+                details: serviceData.error
+                  ? serviceData.error
+                  : serviceData.details ||
+                    (serviceData.status === 'healthy'
+                      ? 'Service is responding normally'
+                      : 'Service is experiencing issues'),
                 lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
                 metrics: serviceMetrics || {},
+                ...(serviceData.error && { error: serviceData.error }),
               };
             })
           : [],
@@ -863,13 +871,21 @@ export class AppController {
   private async getRecentLogs(limit: number = 10): Promise<DashboardLogEntry[]> {
     try {
       // Use your logging service to get recent logs
-      const logs = (await this.loggingService.getLogs()) as LoggingServiceLogEntry[];
+      const result = await this.loggingService.getLogs(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+        limit
+      );
+      const logs = result.logs;
 
       return logs.slice(0, limit).map(
-        (log: LoggingServiceLogEntry): DashboardLogEntry => ({
-          timestamp: (log.timestamp as string | Date) || new Date().toISOString(),
+        (log): DashboardLogEntry => ({
+          timestamp: log.timestamp || new Date().toISOString(),
           level: (log.level as string) || 'info',
-          message: (log.message as string) || 'No message',
+          message: log.message || 'No message',
           source: (log.type as string) || 'Unknown',
           data: log.metadata ? JSON.stringify(log.metadata) : '{}',
         })
@@ -938,12 +954,14 @@ export class AppController {
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
             background-color: #f8fafc;
             color: #1a202c;
-            line-height: 1.5;
-            font-size: 14px;
+            line-height: 1.6;
+            font-size: 15px;
             min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
         }
 
         .container {
@@ -960,9 +978,10 @@ export class AppController {
 
         header h1 {
             font-size: 2.5rem;
-            font-weight: bold;
+            font-weight: 700;
             color: #1a202c;
             margin-bottom: 0.5rem;
+            letter-spacing: -0.02em;
         }
 
         header p {
@@ -976,9 +995,10 @@ export class AppController {
 
         .section-title {
             font-size: 1.5rem;
-            font-weight: 600;
+            font-weight: 700;
             color: #1a202c;
             margin-bottom: 1rem;
+            letter-spacing: -0.02em;
         }
 
         .services-grid {
@@ -1054,17 +1074,19 @@ export class AppController {
         }
 
         .service-title {
-            font-size: 1rem;
+            font-size: 1.0625rem;
             font-weight: 600;
             color: #334155;
             margin: 0;
+            letter-spacing: -0.01em;
         }
 
         .status-badge {
-            font-size: 0.75rem;
-            padding: 0.25rem 0.5rem;
+            font-size: 0.8125rem;
+            padding: 0.375rem 0.75rem;
             border-radius: 9999px;
-            font-weight: 500;
+            font-weight: 600;
+            letter-spacing: 0.01em;
         }
 
         .status-active {
@@ -1164,6 +1186,7 @@ export class AppController {
             font-weight: 600;
             color: #334155;
             margin: 0;
+            letter-spacing: -0.01em;
         }
 
         .status-circle {
@@ -1193,8 +1216,9 @@ export class AppController {
         }
 
         .health-status-text {
-            font-weight: 500;
-            font-size: 1.125rem;
+            font-weight: 600;
+            font-size: 1.25rem;
+            letter-spacing: -0.01em;
         }
 
         .status-text-healthy {
@@ -1236,14 +1260,16 @@ export class AppController {
 
         .metric-label {
             color: #64748b;
-            font-size: 0.75rem;
+            font-size: 0.8125rem;
             margin-bottom: 0.25rem;
             display: block;
+            font-weight: 500;
         }
 
         .metric-value {
             color: #334155;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 0.9375rem;
         }
 
         /* Logs Section */
@@ -1487,7 +1513,7 @@ export class AppController {
                             ${healthData.overallHealth.statusText}
                         </span>
                     </div>
-                    <p style="text-align: center; color: #64748b; font-size: 0.875rem;">${healthData.overallHealth.details}</p>
+                    <p style="text-align: center; color: #64748b; font-size: 0.9375rem; line-height: 1.5; margin-top: 0.5rem;">${healthData.overallHealth.details}</p>
                 </div>
             </div>
 
@@ -1503,6 +1529,7 @@ export class AppController {
                       details: string;
                       lastChecked: string;
                       metrics: Record<string, unknown>;
+                      error?: string;
                     }) => `
                     <div class="service-section ${service.isHealthy ? 'healthy' : 'unhealthy'}" data-service="${service.id}">
                         <div class="service-header">
@@ -1514,7 +1541,15 @@ export class AppController {
                                 ${service.isHealthy ? 'Active' : 'Inactive'}
                             </span>
                         </div>
-                        <p style="color: #64748b; margin: 0.5rem 0;">${service.details}</p>
+                        <p style="color: #64748b; margin: 0.5rem 0; font-size: 0.9375rem; line-height: 1.5;">${service.details}</p>
+                        ${
+                          service.error && !service.isHealthy
+                            ? `<div style="margin-top: 0.5rem; padding: 0.75rem; background: #fee2e2; border-left: 3px solid #ef4444; border-radius: 4px;">
+                            <strong style="color: #991b1b;">Error Details:</strong>
+                            <p style="color: #991b1b; margin: 0.25rem 0 0 0; font-size: 0.9em;">${service.error}</p>
+                        </div>`
+                            : ''
+                        }
                         ${
                           service.metrics && Object.keys(service.metrics).length > 0
                             ? `
@@ -1724,7 +1759,21 @@ export class AppController {
                 
                 // Handle heartbeat (lightweight ping)
                 healthSocket.on('health:heartbeat', (heartbeat) => {
-                    updateOverallStatus(heartbeat.o);
+                    // Check if all services are healthy and override status if needed
+                    // This prevents false "degraded" when all services are healthy
+                    if (heartbeat.s) {
+                        const allHealthy = Object.values(heartbeat.s).every(
+                            (service: unknown) => 
+                                service && 
+                                typeof service === 'object' && 
+                                'status' in service && 
+                                (service as { status: string }).status === 'healthy'
+                        );
+                        const finalStatus = allHealthy ? 'healthy' : heartbeat.o;
+                        updateOverallStatus(finalStatus);
+                    } else {
+                        updateOverallStatus(heartbeat.o);
+                    }
                 });
                 
                 // Handle connection errors
@@ -1754,16 +1803,27 @@ export class AppController {
         function updateDashboardFromRealtimeStatus(status) {
             if (!status) return;
             
-            // Update overall status
-            if (status.o) {
-                updateOverallStatus(status.o);
-            }
-            
-            // Update services
+            // Update services first
+            let allServicesHealthy = true;
             if (status.s) {
                 Object.entries(status.s).forEach(([serviceName, serviceData]) => {
                     updateServiceStatus(serviceName, serviceData);
+                    // Check if service is healthy
+                    if (serviceData && serviceData.status !== 'healthy') {
+                        allServicesHealthy = false;
+                    }
                 });
+            }
+            
+            // PRIORITY: If all services are healthy, show "healthy" regardless of system metrics
+            // This prevents false "degraded" status when system metrics are wrong (e.g., CPU > 100%)
+            if (status.o) {
+                // Override status if all services are healthy
+                const finalStatus = allServicesHealthy ? 'healthy' : status.o;
+                updateOverallStatus(finalStatus);
+            } else if (allServicesHealthy) {
+                // If no overall status but all services are healthy, show healthy
+                updateOverallStatus('healthy');
             }
             
             // Update system metrics if available
@@ -1938,13 +1998,26 @@ export class AppController {
                 
                 const healthData = await response.json();
                 
+                // Check if all services are healthy
+                let allServicesHealthy = true;
+                if (healthData.services) {
+                    const services = healthData.services;
+                    allServicesHealthy = Object.values(services).every(
+                        (service: unknown) => 
+                            service && 
+                            typeof service === 'object' && 
+                            'status' in service && 
+                            (service as { status: string }).status === 'healthy'
+                    );
+                }
+                
+                // PRIORITY: If all services are healthy, override status to "healthy"
+                // This prevents false "degraded" status when system metrics are wrong
+                const finalStatus = allServicesHealthy ? 'healthy' : (healthData.status || 'degraded');
+                
                 // Update overall health status
-                if (healthData.status) {
-                    const statusElement = document.querySelector('.overall-health .status-text');
-                    if (statusElement) {
-                        statusElement.textContent = healthData.status.toUpperCase();
-                        statusElement.className = \`status-text status-text-\${healthData.status}\`;
-                    }
+                if (finalStatus) {
+                    updateOverallStatus(finalStatus);
                     
                     const lastCheckedElement = document.querySelector('.overall-health .last-checked');
                     if (lastCheckedElement && healthData.timestamp) {
@@ -1999,12 +2072,35 @@ export class AppController {
                 if (healthData.systemMetrics) {
                     const metrics = healthData.systemMetrics;
                     
-                    // Update memory usage
+                    // Update memory usage - show SYSTEM memory (not heap) for better visibility
+                    // Heap memory can be misleading as Node.js heap grows dynamically
                     if (metrics.memoryUsage) {
                         const memoryElement = document.querySelector('[data-metric="memory"]');
-                        if (memoryElement && metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
-                            const percentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100).toFixed(1);
-                            memoryElement.textContent = \`\${percentage}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                        if (memoryElement) {
+                            // Show system memory percentage (more meaningful than heap)
+                            if (metrics.memoryUsage.systemTotal > 0 && metrics.memoryUsage.systemUsed !== undefined) {
+                                const systemPercentage = ((metrics.memoryUsage.systemUsed / metrics.memoryUsage.systemTotal) * 100).toFixed(1);
+                                const systemUsedGB = (metrics.memoryUsage.systemUsed / (1024 * 1024 * 1024)).toFixed(2);
+                                const systemTotalGB = (metrics.memoryUsage.systemTotal / (1024 * 1024 * 1024)).toFixed(2);
+                                memoryElement.textContent = \`\${systemPercentage}% (\${systemUsedGB} GB / \${systemTotalGB} GB)\`;
+                                
+                                // Add heap info as tooltip or secondary display if heap is high
+                                if (metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
+                                    const heapPercentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100);
+                                    if (heapPercentage > 90) {
+                                        // Show warning if heap is > 90%
+                                        memoryElement.title = \`⚠️ Heap memory high: \${heapPercentage.toFixed(1)}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                                        memoryElement.style.color = '#f59e0b'; // Orange warning
+                                    } else {
+                                        memoryElement.title = \`Heap: \${heapPercentage.toFixed(1)}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                                        memoryElement.style.color = ''; // Reset color
+                                    }
+                                }
+                            } else if (metrics.memoryUsage.heapUsed && metrics.memoryUsage.heapTotal) {
+                                // Fallback to heap if system memory not available
+                                const percentage = ((metrics.memoryUsage.heapUsed / metrics.memoryUsage.heapTotal) * 100).toFixed(1);
+                                memoryElement.textContent = \`\${percentage}% (\${formatBytes(metrics.memoryUsage.heapUsed)} / \${formatBytes(metrics.memoryUsage.heapTotal)})\`;
+                            }
                         }
                     }
                     

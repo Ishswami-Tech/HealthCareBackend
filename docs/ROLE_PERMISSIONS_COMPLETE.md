@@ -21,19 +21,25 @@
 
 ## Overview
 
-This healthcare system implements a comprehensive **Role-Based Access Control (RBAC)** system with **12 distinct roles**, each with specific permissions and capabilities. The system ensures:
+This healthcare system implements a comprehensive **Role-Based Access Control
+(RBAC)** system with **12 distinct roles**, each with specific permissions and
+capabilities. The system ensures:
 
 - **Multi-tenant isolation** - Clinic-based data separation
-- **Ownership validation** - Users can only access their own data (where applicable)
+- **Ownership validation** - Users can only access their own data (where
+  applicable)
 - **Granular permissions** - Resource:Action based permission model
 - **HIPAA compliance** - Audit trails and PHI protection
 
 ### Key Concepts
 
 - **Roles**: Define who a user is (DOCTOR, PATIENT, etc.)
-- **Permissions**: Define what actions can be performed (read, create, update, delete)
-- **Resources**: Define what entities are being accessed (appointments, patients, medical-records)
-- **Ownership**: Some permissions require ownership (e.g., patients can only update their own appointments)
+- **Permissions**: Define what actions can be performed (read, create, update,
+  delete)
+- **Resources**: Define what entities are being accessed (appointments,
+  patients, medical-records)
+- **Ownership**: Some permissions require ownership (e.g., patients can only
+  update their own appointments)
 
 ---
 
@@ -41,35 +47,35 @@ This healthcare system implements a comprehensive **Role-Based Access Control (R
 
 ### Role Summary
 
-| Role | Primary Function | Key Permissions |
-|------|------------------|-----------------|
-| **SUPER_ADMIN** | System administrator | All permissions (`*`) |
-| **CLINIC_ADMIN** | Clinic manager | Users, appointments, clinics, reports, settings |
-| **DOCTOR** | Healthcare provider | Appointments, patients, medical records, prescriptions |
-| **PATIENT** | End-user | Own appointments, own medical records, billing |
-| **RECEPTIONIST** | Front desk | Appointments, patient registration, scheduling |
-| **NURSE** | Clinical support | Appointments (read), patients, vitals, medical records (read) |
-| **PHARMACIST** | Pharmacy | Prescriptions, inventory, medications |
-| **THERAPIST** | Therapy services | Appointments, therapy records, patients |
-| **LAB_TECHNICIAN** | Laboratory | Lab reports, patients (read) |
-| **FINANCE_BILLING** | Finance | Billing, invoices, payments, reports |
-| **SUPPORT_STAFF** | General support | Appointments (read), patients (read), queue (read) |
-| **COUNSELOR** | Counseling | Appointments, counseling records, patients |
+| Role                | Primary Function     | Key Permissions                                               |
+| ------------------- | -------------------- | ------------------------------------------------------------- |
+| **SUPER_ADMIN**     | System administrator | All permissions (`*`)                                         |
+| **CLINIC_ADMIN**    | Clinic manager       | Users, appointments, clinics, reports, settings               |
+| **DOCTOR**          | Healthcare provider  | Appointments, patients, medical records, prescriptions        |
+| **PATIENT**         | End-user             | Own appointments, own medical records, billing                |
+| **RECEPTIONIST**    | Front desk           | Appointments, patient registration, scheduling                |
+| **NURSE**           | Clinical support     | Appointments (read), patients, vitals, medical records (read) |
+| **PHARMACIST**      | Pharmacy             | Prescriptions, inventory, medications                         |
+| **THERAPIST**       | Therapy services     | Appointments, therapy records, patients                       |
+| **LAB_TECHNICIAN**  | Laboratory           | Lab reports, patients (read)                                  |
+| **FINANCE_BILLING** | Finance              | Billing, invoices, payments, reports                          |
+| **SUPPORT_STAFF**   | General support      | Appointments (read), patients (read), queue (read)            |
+| **COUNSELOR**       | Counseling           | Appointments, counseling records, patients                    |
 
 ### Common Actions Quick Look
 
-| Action | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST |
-|--------|-------------|--------------|--------|---------|--------------|
-| Create Clinic | ✅ | ✅ | ❌ | ❌ | ❌ |
-| Delete Clinic | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Create Appointment | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Cancel Appointment | ✅ | ✅ | ❌ | ✅ | ✅ |
-| Create Prescription | ✅ | ✅ | ✅ | ❌ | ❌ |
-| View Medical Records | ✅ | ✅ | ✅ | ⚠️ | ❌ |
-| Create Medical Records | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Process Payment | ✅ | ✅ | ❌ | ✅ | ❌ |
-| View Analytics | ✅ | ✅ | ⚠️ | ❌ | ⚠️ |
-| Manage Users | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Action                 | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST |
+| ---------------------- | ----------- | ------------ | ------ | ------- | ------------ |
+| Create Clinic          | ✅          | ✅           | ❌     | ❌      | ❌           |
+| Delete Clinic          | ✅          | ❌           | ❌     | ❌      | ❌           |
+| Create Appointment     | ✅          | ✅           | ✅     | ✅      | ✅           |
+| Cancel Appointment     | ✅          | ✅           | ❌     | ✅      | ✅           |
+| Create Prescription    | ✅          | ✅           | ✅     | ❌      | ❌           |
+| View Medical Records   | ✅          | ✅           | ✅     | ⚠️      | ❌           |
+| Create Medical Records | ✅          | ✅           | ✅     | ❌      | ❌           |
+| Process Payment        | ✅          | ✅           | ❌     | ✅      | ❌           |
+| View Analytics         | ✅          | ✅           | ⚠️     | ❌      | ⚠️           |
+| Manage Users           | ✅          | ✅           | ❌     | ❌      | ❌           |
 
 **Legend**: ✅ = Yes, ⚠️ = Limited (ownership-restricted), ❌ = No
 
@@ -103,8 +109,10 @@ SUPER_ADMIN (System-wide access)
 
 Permissions follow the pattern: `resource:action`
 
-- **Resource**: The entity being accessed (e.g., `appointments`, `patients`, `medical-records`)
-- **Action**: The operation being performed (e.g., `read`, `create`, `update`, `delete`, `*` for all)
+- **Resource**: The entity being accessed (e.g., `appointments`, `patients`,
+  `medical-records`)
+- **Action**: The operation being performed (e.g., `read`, `create`, `update`,
+  `delete`, `*` for all)
 
 ### Wildcard Permissions
 
@@ -115,10 +123,10 @@ Permissions follow the pattern: `resource:action`
 ### Example Permissions
 
 ```typescript
-'appointments:read'     // Can read appointments
-'appointments:create'   // Can create appointments
-'appointments:*'        // Can perform all actions on appointments
-'*'                     // Can perform all actions on all resources
+'appointments:read'; // Can read appointments
+'appointments:create'; // Can create appointments
+'appointments:*'; // Can perform all actions on appointments
+'*'; // Can perform all actions on all resources
 ```
 
 ---
@@ -129,11 +137,13 @@ Permissions follow the pattern: `resource:action`
 
 **Permission Level**: `*` (All permissions)
 
-**Description**: System-wide administrator with unrestricted access to all features and data across all clinics.
+**Description**: System-wide administrator with unrestricted access to all
+features and data across all clinics.
 
 #### Capabilities
 
 ✅ **System Management**
+
 - Create, read, update, delete any clinic
 - Manage all users across all clinics
 - Assign/revoke roles for any user
@@ -142,6 +152,7 @@ Permissions follow the pattern: `resource:action`
 - Manage all appointments across all clinics
 
 ✅ **User Management**
+
 - View all users in the system
 - Update any user's profile
 - Delete users
@@ -149,6 +160,7 @@ Permissions follow the pattern: `resource:action`
 - View all user roles (patients, doctors, receptionists, clinic admins)
 
 ✅ **Clinic Management**
+
 - Create new clinics
 - View all clinics
 - Update any clinic
@@ -156,6 +168,7 @@ Permissions follow the pattern: `resource:action`
 - Assign clinic admins
 
 ✅ **Appointments**
+
 - View all appointments (all clinics)
 - Create appointments for any user
 - Update any appointment
@@ -164,6 +177,7 @@ Permissions follow the pattern: `resource:action`
 - Manage check-in locations
 
 ✅ **EHR & Medical Records**
+
 - View all medical records
 - Create/update/delete medical records
 - Access comprehensive EHR data
@@ -171,12 +185,14 @@ Permissions follow the pattern: `resource:action`
 - Manage vitals, allergies, medications, immunizations
 
 ✅ **Billing & Finance**
+
 - View all billing data
 - Manage subscriptions, invoices, payments
 - Access revenue analytics
 - View financial reports
 
 ✅ **Video Consultations**
+
 - Access all video consultation data
 - View consultation history
 - Manage video sessions
@@ -199,6 +215,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Clinic-level administrator
 
 **Permissions**:
+
 - `users:*` - Full user management within clinic
 - `appointments:*` - Full appointment management
 - `clinics:read` - Read clinic information
@@ -206,11 +223,13 @@ Permissions follow the pattern: `resource:action`
 - `reports:*` - Access all reports
 - `settings:*` - Manage clinic settings
 
-**Description**: Manages all operations within their assigned clinic(s). Has full control over clinic staff, appointments, and settings.
+**Description**: Manages all operations within their assigned clinic(s). Has
+full control over clinic staff, appointments, and settings.
 
 #### Capabilities
 
 ✅ **Clinic Management**
+
 - View clinic details
 - Update clinic information (name, address, settings)
 - View clinic doctors and patients
@@ -218,12 +237,14 @@ Permissions follow the pattern: `resource:action`
 - Validate app names
 
 ✅ **User Management (Clinic Scope)**
+
 - View all users in their clinic
 - View users by role (patients, doctors, receptionists)
 - Update user profiles (within clinic context)
 - Associate users with clinic
 
 ✅ **Appointment Management**
+
 - View all appointments in clinic
 - Create appointments for any patient
 - Update any appointment
@@ -235,6 +256,7 @@ Permissions follow the pattern: `resource:action`
 - Manage follow-up plans
 
 ✅ **Reports & Analytics**
+
 - View clinic analytics
 - Access appointment reports
 - View revenue reports
@@ -242,6 +264,7 @@ Permissions follow the pattern: `resource:action`
 - View subscription analytics
 
 ✅ **Settings**
+
 - Manage clinic settings
 - Configure clinic preferences
 - Update clinic branding
@@ -272,6 +295,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Clinical operations
 
 **Permissions**:
+
 - `appointments:read` - View appointments
 - `appointments:create` - Create appointments
 - `appointments:update` - Update appointments
@@ -280,11 +304,13 @@ Permissions follow the pattern: `resource:action`
 - `medical-records:*` - Full medical records access
 - `prescriptions:*` - Full prescription management
 
-**Description**: Healthcare providers who diagnose, treat patients, and manage medical records.
+**Description**: Healthcare providers who diagnose, treat patients, and manage
+medical records.
 
 #### Capabilities
 
 ✅ **Appointment Management**
+
 - View assigned appointments
 - View appointment details
 - Start consultations
@@ -296,12 +322,14 @@ Permissions follow the pattern: `resource:action`
 - Report technical issues
 
 ✅ **Patient Management**
+
 - View patient profiles
 - View patient medical history
 - Update patient information
 - Search patients
 
 ✅ **Medical Records (Full Access)**
+
 - Create medical history entries
 - Update medical records
 - Delete medical records
@@ -314,11 +342,13 @@ Permissions follow the pattern: `resource:action`
 - Update surgical records
 
 ✅ **Vitals Management**
+
 - Create vitals records
 - Update vitals
 - View patient vitals
 
 ✅ **Allergies & Medications**
+
 - Create allergy records
 - Update allergies
 - Delete allergies
@@ -327,17 +357,20 @@ Permissions follow the pattern: `resource:action`
 - Delete medications
 
 ✅ **Immunizations**
+
 - Create immunization records
 - Update immunizations
 - Delete immunizations
 
 ✅ **Prescriptions**
+
 - Create prescriptions
 - View prescriptions
 - Update prescriptions
 - Delete prescriptions
 
 ✅ **Video Consultations**
+
 - Start video consultations
 - End video consultations
 - View consultation status
@@ -372,6 +405,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: End-user, self-service
 
 **Permissions**:
+
 - `appointments:read` - View own appointments
 - `appointments:create` - Create appointments
 - `appointments:update` - Update own appointments
@@ -384,11 +418,13 @@ Permissions follow the pattern: `resource:action`
 - `payments:read` - View own payments
 - `payments:create` - Make payments
 
-**Description**: End-users who book appointments, view their medical records, and manage their healthcare.
+**Description**: End-users who book appointments, view their medical records,
+and manage their healthcare.
 
 #### Capabilities
 
 ✅ **Appointment Management (Own Only)**
+
 - View own appointments
 - Create new appointments
 - Update own appointments
@@ -400,6 +436,7 @@ Permissions follow the pattern: `resource:action`
 - Scan QR codes for check-in
 
 ✅ **Video Consultations**
+
 - Join video consultations
 - Start video consultations (for own appointments)
 - End video consultations
@@ -408,6 +445,7 @@ Permissions follow the pattern: `resource:action`
 - View consultation history
 
 ✅ **Medical Records (Read Only - Own)**
+
 - View own comprehensive EHR
 - View own medical history
 - View own lab reports
@@ -420,12 +458,14 @@ Permissions follow the pattern: `resource:action`
 - Access health analytics (own data)
 
 ✅ **Profile Management**
+
 - View own profile
 - Update own profile
 - Change password
 - Manage sessions
 
 ✅ **Billing & Payments**
+
 - View own subscriptions
 - View own invoices
 - View own payments
@@ -433,6 +473,7 @@ Permissions follow the pattern: `resource:action`
 - View billing history
 
 ✅ **Clinic Information**
+
 - View clinic details
 - Search clinics
 - Register with clinics
@@ -451,7 +492,8 @@ Permissions follow the pattern: `resource:action`
 - `GET /billing/subscriptions` - Get my subscriptions
 - `GET /billing/invoices` - Get my invoices
 - `POST /billing/payments` - Make payment
-- `POST /clinics/register` - Register with clinic
+- `POST /auth/register` - User registration (clinicId required, sets
+  primaryClinicId)
 
 #### Restrictions
 
@@ -470,17 +512,20 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Administrative operations
 
 **Permissions**:
+
 - `appointments:*` - Full appointment management
 - `patients:read` - View patient information
 - `patients:create` - Register new patients
 - `billing:read` - View billing information
 - `scheduling:*` - Full scheduling access
 
-**Description**: Front-desk staff who manage appointments, patient registration, and scheduling.
+**Description**: Front-desk staff who manage appointments, patient registration,
+and scheduling.
 
 #### Capabilities
 
 ✅ **Appointment Management (Full)**
+
 - View all clinic appointments
 - Create appointments for any patient
 - Update any appointment
@@ -493,18 +538,21 @@ Permissions follow the pattern: `resource:action`
 - Manage follow-up plans
 
 ✅ **Patient Management**
+
 - View patient profiles
 - Register new patients
 - Search patients
 - View patient lists
 
 ✅ **Scheduling**
+
 - Check doctor availability
 - Manage schedules
 - View scheduling conflicts
 - Create appointment slots
 
 ✅ **Check-in Management**
+
 - Process patient check-ins
 - Force check-in (override)
 - Scan QR codes
@@ -512,11 +560,13 @@ Permissions follow the pattern: `resource:action`
 - View check-in queue
 
 ✅ **Billing (Read Only)**
+
 - View billing information
 - View invoices
 - View payment history
 
 ✅ **Clinic Information**
+
 - View clinic details
 - View clinic doctors
 - View clinic patients
@@ -548,33 +598,39 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Clinical support
 
 **Permissions**:
+
 - `appointments:read` - View appointments
 - `patients:read` - View patient information
 - `patients:update` - Update patient information
 - `medical-records:read` - View medical records
 - `vitals:*` - Full vitals management
 
-**Description**: Clinical support staff who assist doctors, manage vitals, and support patient care.
+**Description**: Clinical support staff who assist doctors, manage vitals, and
+support patient care.
 
 #### Capabilities
 
 ✅ **Appointment Management (Read Only)**
+
 - View appointments
 - View appointment details
 - Check appointment status
 
 ✅ **Patient Management**
+
 - View patient profiles
 - Update patient information
 - Search patients
 
 ✅ **Vitals Management (Full)**
+
 - Create vitals records
 - Update vitals
 - Delete vitals
 - View patient vitals history
 
 ✅ **Medical Records (Read Only)**
+
 - View medical records
 - View medical history
 - View lab reports
@@ -582,6 +638,7 @@ Permissions follow the pattern: `resource:action`
 - View medications
 
 ✅ **Check-in Support**
+
 - Process check-ins
 - Assist with patient registration
 
@@ -610,6 +667,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Pharmacy operations
 
 **Permissions**:
+
 - `prescriptions:read` - View prescriptions
 - `patients:read` - View patient information
 - `inventory:*` - Full inventory management
@@ -617,28 +675,33 @@ Permissions follow the pattern: `resource:action`
 - `profile:read` - View own profile
 - `profile:update` - Update own profile
 
-**Description**: Pharmacy staff who manage prescriptions, medications, and inventory.
+**Description**: Pharmacy staff who manage prescriptions, medications, and
+inventory.
 
 #### Capabilities
 
 ✅ **Prescription Management**
+
 - View prescriptions
 - Process prescriptions
 - Update prescription status
 - View prescription history
 
 ✅ **Patient Management (Read Only)**
+
 - View patient profiles
 - View patient medication history
 - Search patients
 
 ✅ **Inventory Management (Full)**
+
 - Manage medication inventory
 - Track stock levels
 - Update inventory
 - View inventory reports
 
 ✅ **Medications Management (Full)**
+
 - View medication database
 - Add medications
 - Update medication information
@@ -667,6 +730,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Therapy services
 
 **Permissions**:
+
 - `appointments:read` - View appointments
 - `appointments:update` - Update appointments
 - `patients:read` - View patient information
@@ -675,11 +739,13 @@ Permissions follow the pattern: `resource:action`
 - `profile:read` - View own profile
 - `profile:update` - Update own profile
 
-**Description**: Therapy specialists who provide therapy services and manage therapy sessions.
+**Description**: Therapy specialists who provide therapy services and manage
+therapy sessions.
 
 #### Capabilities
 
 ✅ **Appointment Management**
+
 - View assigned appointments
 - Update appointments
 - Start therapy sessions
@@ -687,16 +753,19 @@ Permissions follow the pattern: `resource:action`
 - Create follow-up appointments
 
 ✅ **Patient Management**
+
 - View patient profiles
 - View patient therapy history
 
 ✅ **Therapy Management (Full)**
+
 - Create therapy records
 - Update therapy plans
 - Track therapy progress
 - View therapy analytics
 
 ✅ **Medical Records (Read Only)**
+
 - View relevant medical records
 - View patient history related to therapy
 
@@ -721,6 +790,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Laboratory operations
 
 **Permissions**:
+
 - `lab-reports:*` - Full lab report management
 - `patients:read` - View patient information
 - `medical-records:read` - View medical records
@@ -733,6 +803,7 @@ Permissions follow the pattern: `resource:action`
 #### Capabilities
 
 ✅ **Lab Reports Management (Full)**
+
 - Create lab reports
 - Update lab reports
 - Delete lab reports
@@ -741,14 +812,17 @@ Permissions follow the pattern: `resource:action`
 - Generate lab reports
 
 ✅ **Patient Management (Read Only)**
+
 - View patient profiles
 - Search patients by lab orders
 
 ✅ **Medical Records (Read Only)**
+
 - View relevant medical records
 - View patient history
 
 ✅ **Vitals (Read Only)**
+
 - View patient vitals (for context)
 
 #### Key Endpoints
@@ -774,6 +848,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Financial operations
 
 **Permissions**:
+
 - `billing:*` - Full billing management
 - `invoices:*` - Full invoice management
 - `payments:*` - Full payment management
@@ -782,11 +857,13 @@ Permissions follow the pattern: `resource:action`
 - `profile:read` - View own profile
 - `profile:update` - Update own profile
 
-**Description**: Finance staff who manage billing, invoices, payments, and financial reporting.
+**Description**: Finance staff who manage billing, invoices, payments, and
+financial reporting.
 
 #### Capabilities
 
 ✅ **Billing Management (Full)**
+
 - View all billing data
 - Create billing records
 - Update billing information
@@ -794,6 +871,7 @@ Permissions follow the pattern: `resource:action`
 - Manage billing disputes
 
 ✅ **Invoice Management (Full)**
+
 - Create invoices
 - Update invoices
 - Delete invoices
@@ -802,6 +880,7 @@ Permissions follow the pattern: `resource:action`
 - View invoice history
 
 ✅ **Payment Management (Full)**
+
 - Process payments
 - View payment history
 - Refund payments
@@ -809,12 +888,14 @@ Permissions follow the pattern: `resource:action`
 - View payment analytics
 
 ✅ **Financial Reports**
+
 - View revenue reports
 - Access subscription analytics
 - View payment analytics
 - Generate financial statements
 
 ✅ **Subscription Management**
+
 - View subscriptions
 - Manage subscription plans
 - Process subscription renewals
@@ -844,32 +925,38 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: General support
 
 **Permissions**:
+
 - `appointments:read` - View appointments
 - `patients:read` - View patient information
 - `queue:read` - View queue information
 - `profile:read` - View own profile
 - `profile:update` - Update own profile
 
-**Description**: General support staff who assist with basic operations and queue management.
+**Description**: General support staff who assist with basic operations and
+queue management.
 
 #### Capabilities
 
 ✅ **Appointment Management (Read Only)**
+
 - View appointments
 - View appointment status
 - Check appointment details
 
 ✅ **Patient Management (Read Only)**
+
 - View patient profiles
 - Search patients
 - View patient lists
 
 ✅ **Queue Management (Read Only)**
+
 - View appointment queue
 - Check queue status
 - View wait times
 
 ✅ **Basic Support**
+
 - Assist with check-ins
 - Provide general information
 - Support patient inquiries
@@ -897,6 +984,7 @@ Permissions follow the pattern: `resource:action`
 **Permission Level**: Counseling services
 
 **Permissions**:
+
 - `appointments:read` - View appointments
 - `appointments:update` - Update appointments
 - `patients:read` - View patient information
@@ -905,11 +993,13 @@ Permissions follow the pattern: `resource:action`
 - `profile:read` - View own profile
 - `profile:update` - Update own profile
 
-**Description**: Counseling specialists who provide counseling services and manage counseling sessions.
+**Description**: Counseling specialists who provide counseling services and
+manage counseling sessions.
 
 #### Capabilities
 
 ✅ **Appointment Management**
+
 - View assigned appointments
 - Update appointments
 - Start counseling sessions
@@ -917,10 +1007,12 @@ Permissions follow the pattern: `resource:action`
 - Create follow-up appointments
 
 ✅ **Patient Management**
+
 - View patient profiles
 - View patient counseling history
 
 ✅ **Counseling Management (Full)**
+
 - Create counseling records
 - Update counseling plans
 - Track counseling progress
@@ -928,6 +1020,7 @@ Permissions follow the pattern: `resource:action`
 - Manage counseling sessions
 
 ✅ **Medical Records (Read Only)**
+
 - View relevant medical records
 - View patient history related to counseling
 
@@ -951,19 +1044,20 @@ Permissions follow the pattern: `resource:action`
 
 ### Quick Reference Table
 
-| Resource | Action | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST | NURSE | PHARMACIST | THERAPIST | LAB_TECH | FINANCE | SUPPORT | COUNSELOR |
-|----------|--------|-------------|--------------|--------|---------|--------------|-------|------------|-----------|----------|---------|---------|-----------|
-| **Users** | * | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Appointments** | * | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ❌ | ⚠️ | ❌ | ❌ | ⚠️ | ⚠️ |
-| **Patients** | * | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| **Medical Records** | * | ✅ | ✅ | ✅ | ⚠️ | ❌ | ⚠️ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ⚠️ |
-| **Prescriptions** | * | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Clinics** | * | ✅ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Billing** | * | ✅ | ✅ | ❌ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
-| **Reports** | * | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ⚠️ | ❌ | ❌ |
-| **Settings** | * | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Resource            | Action | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST | NURSE | PHARMACIST | THERAPIST | LAB_TECH | FINANCE | SUPPORT | COUNSELOR |
+| ------------------- | ------ | ----------- | ------------ | ------ | ------- | ------------ | ----- | ---------- | --------- | -------- | ------- | ------- | --------- |
+| **Users**           | \*     | ✅          | ✅           | ❌     | ❌      | ❌           | ❌    | ❌         | ❌        | ❌       | ❌      | ❌      | ❌        |
+| **Appointments**    | \*     | ✅          | ✅           | ⚠️     | ⚠️      | ✅           | ⚠️    | ❌         | ⚠️        | ❌       | ❌      | ⚠️      | ⚠️        |
+| **Patients**        | \*     | ✅          | ✅           | ⚠️     | ⚠️      | ⚠️           | ⚠️    | ⚠️         | ⚠️        | ⚠️       | ⚠️      | ⚠️      | ⚠️        |
+| **Medical Records** | \*     | ✅          | ✅           | ✅     | ⚠️      | ❌           | ⚠️    | ❌         | ⚠️        | ⚠️       | ❌      | ❌      | ⚠️        |
+| **Prescriptions**   | \*     | ✅          | ✅           | ✅     | ❌      | ❌           | ❌    | ⚠️         | ❌        | ❌       | ❌      | ❌      | ❌        |
+| **Clinics**         | \*     | ✅          | ⚠️           | ❌     | ❌      | ❌           | ❌    | ❌         | ❌        | ❌       | ❌      | ❌      | ❌        |
+| **Billing**         | \*     | ✅          | ✅           | ❌     | ⚠️      | ⚠️           | ❌    | ❌         | ❌        | ❌       | ✅      | ❌      | ❌        |
+| **Reports**         | \*     | ✅          | ✅           | ❌     | ❌      | ❌           | ❌    | ❌         | ❌        | ❌       | ⚠️      | ❌      | ❌        |
+| **Settings**        | \*     | ✅          | ✅           | ❌     | ❌      | ❌           | ❌    | ❌         | ❌        | ❌       | ❌      | ❌      | ❌        |
 
 **Legend**:
+
 - ✅ = Full access (all actions)
 - ⚠️ = Limited access (specific actions, may be ownership-restricted)
 - ❌ = No access
@@ -972,54 +1066,54 @@ Permissions follow the pattern: `resource:action`
 
 #### Appointments
 
-| Role | Read | Create | Update | Delete | Notes |
-|------|------|--------|--------|--------|-------|
-| SUPER_ADMIN | ✅ | ✅ | ✅ | ✅ | All appointments, all clinics |
-| CLINIC_ADMIN | ✅ | ✅ | ✅ | ✅ | All appointments in clinic |
-| DOCTOR | ✅ | ✅ | ✅ | ❌ | Own appointments only (update), assigned appointments (read) |
-| PATIENT | ✅ | ✅ | ✅ | ✅ | Own appointments only |
-| RECEPTIONIST | ✅ | ✅ | ✅ | ❌ | All appointments in clinic |
-| NURSE | ✅ | ❌ | ❌ | ❌ | Read only |
-| PHARMACIST | ❌ | ❌ | ❌ | ❌ | No access |
-| THERAPIST | ✅ | ❌ | ✅ | ❌ | Assigned appointments only |
-| LAB_TECHNICIAN | ❌ | ❌ | ❌ | ❌ | No access |
-| FINANCE_BILLING | ❌ | ❌ | ❌ | ❌ | No access |
-| SUPPORT_STAFF | ✅ | ❌ | ❌ | ❌ | Read only |
-| COUNSELOR | ✅ | ❌ | ✅ | ❌ | Assigned appointments only |
+| Role            | Read | Create | Update | Delete | Notes                                                        |
+| --------------- | ---- | ------ | ------ | ------ | ------------------------------------------------------------ |
+| SUPER_ADMIN     | ✅   | ✅     | ✅     | ✅     | All appointments, all clinics                                |
+| CLINIC_ADMIN    | ✅   | ✅     | ✅     | ✅     | All appointments in clinic                                   |
+| DOCTOR          | ✅   | ✅     | ✅     | ❌     | Own appointments only (update), assigned appointments (read) |
+| PATIENT         | ✅   | ✅     | ✅     | ✅     | Own appointments only                                        |
+| RECEPTIONIST    | ✅   | ✅     | ✅     | ❌     | All appointments in clinic                                   |
+| NURSE           | ✅   | ❌     | ❌     | ❌     | Read only                                                    |
+| PHARMACIST      | ❌   | ❌     | ❌     | ❌     | No access                                                    |
+| THERAPIST       | ✅   | ❌     | ✅     | ❌     | Assigned appointments only                                   |
+| LAB_TECHNICIAN  | ❌   | ❌     | ❌     | ❌     | No access                                                    |
+| FINANCE_BILLING | ❌   | ❌     | ❌     | ❌     | No access                                                    |
+| SUPPORT_STAFF   | ✅   | ❌     | ❌     | ❌     | Read only                                                    |
+| COUNSELOR       | ✅   | ❌     | ✅     | ❌     | Assigned appointments only                                   |
 
 #### Medical Records
 
-| Role | Read | Create | Update | Delete | Notes |
-|------|------|--------|--------|--------|-------|
-| SUPER_ADMIN | ✅ | ✅ | ✅ | ✅ | All records |
-| CLINIC_ADMIN | ✅ | ✅ | ✅ | ✅ | Clinic records |
-| DOCTOR | ✅ | ✅ | ✅ | ✅ | Full access |
-| PATIENT | ✅ | ❌ | ❌ | ❌ | Own records only |
-| RECEPTIONIST | ❌ | ❌ | ❌ | ❌ | No access |
-| NURSE | ✅ | ❌ | ❌ | ❌ | Read only |
-| PHARMACIST | ❌ | ❌ | ❌ | ❌ | No access |
-| THERAPIST | ✅ | ❌ | ❌ | ❌ | Read only |
-| LAB_TECHNICIAN | ✅ | ✅ | ✅ | ✅ | Lab reports only |
-| FINANCE_BILLING | ❌ | ❌ | ❌ | ❌ | No access |
-| SUPPORT_STAFF | ❌ | ❌ | ❌ | ❌ | No access |
-| COUNSELOR | ✅ | ❌ | ❌ | ❌ | Read only |
+| Role            | Read | Create | Update | Delete | Notes            |
+| --------------- | ---- | ------ | ------ | ------ | ---------------- |
+| SUPER_ADMIN     | ✅   | ✅     | ✅     | ✅     | All records      |
+| CLINIC_ADMIN    | ✅   | ✅     | ✅     | ✅     | Clinic records   |
+| DOCTOR          | ✅   | ✅     | ✅     | ✅     | Full access      |
+| PATIENT         | ✅   | ❌     | ❌     | ❌     | Own records only |
+| RECEPTIONIST    | ❌   | ❌     | ❌     | ❌     | No access        |
+| NURSE           | ✅   | ❌     | ❌     | ❌     | Read only        |
+| PHARMACIST      | ❌   | ❌     | ❌     | ❌     | No access        |
+| THERAPIST       | ✅   | ❌     | ❌     | ❌     | Read only        |
+| LAB_TECHNICIAN  | ✅   | ✅     | ✅     | ✅     | Lab reports only |
+| FINANCE_BILLING | ❌   | ❌     | ❌     | ❌     | No access        |
+| SUPPORT_STAFF   | ❌   | ❌     | ❌     | ❌     | No access        |
+| COUNSELOR       | ✅   | ❌     | ❌     | ❌     | Read only        |
 
 #### Patients
 
-| Role | Read | Create | Update | Delete | Notes |
-|------|------|--------|--------|--------|-------|
-| SUPER_ADMIN | ✅ | ✅ | ✅ | ✅ | All patients |
-| CLINIC_ADMIN | ✅ | ✅ | ✅ | ✅ | Clinic patients |
-| DOCTOR | ✅ | ❌ | ✅ | ❌ | Can update patient info |
-| PATIENT | ✅ | ❌ | ✅ | ❌ | Own profile only |
-| RECEPTIONIST | ✅ | ✅ | ❌ | ❌ | Can register patients |
-| NURSE | ✅ | ❌ | ✅ | ❌ | Can update patient info |
-| PHARMACIST | ✅ | ❌ | ❌ | ❌ | Read only |
-| THERAPIST | ✅ | ❌ | ❌ | ❌ | Read only |
-| LAB_TECHNICIAN | ✅ | ❌ | ❌ | ❌ | Read only |
-| FINANCE_BILLING | ✅ | ❌ | ❌ | ❌ | Read only |
-| SUPPORT_STAFF | ✅ | ❌ | ❌ | ❌ | Read only |
-| COUNSELOR | ✅ | ❌ | ❌ | ❌ | Read only |
+| Role            | Read | Create | Update | Delete | Notes                   |
+| --------------- | ---- | ------ | ------ | ------ | ----------------------- |
+| SUPER_ADMIN     | ✅   | ✅     | ✅     | ✅     | All patients            |
+| CLINIC_ADMIN    | ✅   | ✅     | ✅     | ✅     | Clinic patients         |
+| DOCTOR          | ✅   | ❌     | ✅     | ❌     | Can update patient info |
+| PATIENT         | ✅   | ❌     | ✅     | ❌     | Own profile only        |
+| RECEPTIONIST    | ✅   | ✅     | ❌     | ❌     | Can register patients   |
+| NURSE           | ✅   | ❌     | ✅     | ❌     | Can update patient info |
+| PHARMACIST      | ✅   | ❌     | ❌     | ❌     | Read only               |
+| THERAPIST       | ✅   | ❌     | ❌     | ❌     | Read only               |
+| LAB_TECHNICIAN  | ✅   | ❌     | ❌     | ❌     | Read only               |
+| FINANCE_BILLING | ✅   | ❌     | ❌     | ❌     | Read only               |
+| SUPPORT_STAFF   | ✅   | ❌     | ❌     | ❌     | Read only               |
+| COUNSELOR       | ✅   | ❌     | ❌     | ❌     | Read only               |
 
 ---
 
@@ -1027,89 +1121,89 @@ Permissions follow the pattern: `resource:action`
 
 ### Authentication Endpoints (`/auth`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
-|----------|--------|-------------|--------------|--------|---------|--------|
-| `/auth/register` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/auth/login` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/auth/logout` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/auth/refresh` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/auth/change-password` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/auth/sessions` | GET | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Endpoint                | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
+| ----------------------- | ------ | ----------- | ------------ | ------ | ------- | ------ |
+| `/auth/register`        | POST   | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/auth/login`           | POST   | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/auth/logout`          | POST   | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/auth/refresh`         | POST   | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/auth/change-password` | POST   | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/auth/sessions`        | GET    | ✅          | ✅           | ✅     | ✅      | ✅     |
 
 **Note**: All authenticated users have access to auth endpoints.
 
 ### User Management (`/user`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
-|----------|--------|-------------|--------------|--------|---------|--------|
-| `/user/all` | GET | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `/user/profile` | GET | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/user/profile` | PUT | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/user/:id` | GET | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
-| `/user/:id` | PATCH | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| `/user/:id` | DELETE | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `/user/:id/role` | PUT | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `/user/role/patient` | GET | ✅ | ✅ | ✅ | ❌ | ⚠️ |
-| `/user/role/doctors` | GET | ✅ | ✅ | ✅ | ❌ | ⚠️ |
+| Endpoint             | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
+| -------------------- | ------ | ----------- | ------------ | ------ | ------- | ------ |
+| `/user/all`          | GET    | ✅          | ✅           | ❌     | ❌      | ❌     |
+| `/user/profile`      | GET    | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/user/profile`      | PUT    | ✅          | ✅           | ✅     | ✅      | ✅     |
+| `/user/:id`          | GET    | ✅          | ✅           | ✅     | ⚠️      | ⚠️     |
+| `/user/:id`          | PATCH  | ✅          | ✅           | ⚠️     | ⚠️      | ⚠️     |
+| `/user/:id`          | DELETE | ✅          | ❌           | ❌     | ❌      | ❌     |
+| `/user/:id/role`     | PUT    | ✅          | ❌           | ❌     | ❌      | ❌     |
+| `/user/role/patient` | GET    | ✅          | ✅           | ✅     | ❌      | ⚠️     |
+| `/user/role/doctors` | GET    | ✅          | ✅           | ✅     | ❌      | ⚠️     |
 
 **Note**: ⚠️ = Ownership-restricted or role-specific access
 
 ### Appointments (`/appointments`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST |
-|----------|--------|-------------|--------------|--------|---------|--------------|
-| `/appointments` | GET | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
-| `/appointments` | POST | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/appointments/:id` | GET | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
-| `/appointments/:id` | PUT | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
-| `/appointments/:id` | DELETE | ✅ | ✅ | ❌ | ✅ | ❌ |
-| `/appointments/my-appointments` | GET | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `/appointments/:id/check-in` | POST | ✅ | ✅ | ❌ | ✅ | ✅ |
-| `/appointments/:id/start` | POST | ✅ | ✅ | ✅ | ✅ | ❌ |
-| `/appointments/:id/complete` | POST | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `/appointments/analytics/*` | GET | ✅ | ✅ | ⚠️ | ❌ | ⚠️ |
+| Endpoint                        | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | RECEPTIONIST |
+| ------------------------------- | ------ | ----------- | ------------ | ------ | ------- | ------------ |
+| `/appointments`                 | GET    | ✅          | ✅           | ⚠️     | ⚠️      | ✅           |
+| `/appointments`                 | POST   | ✅          | ✅           | ✅     | ✅      | ✅           |
+| `/appointments/:id`             | GET    | ✅          | ✅           | ⚠️     | ⚠️      | ✅           |
+| `/appointments/:id`             | PUT    | ✅          | ✅           | ⚠️     | ⚠️      | ✅           |
+| `/appointments/:id`             | DELETE | ✅          | ✅           | ❌     | ✅      | ❌           |
+| `/appointments/my-appointments` | GET    | ✅          | ✅           | ✅     | ✅      | ✅           |
+| `/appointments/:id/check-in`    | POST   | ✅          | ✅           | ❌     | ✅      | ✅           |
+| `/appointments/:id/start`       | POST   | ✅          | ✅           | ✅     | ✅      | ❌           |
+| `/appointments/:id/complete`    | POST   | ✅          | ✅           | ✅     | ❌      | ❌           |
+| `/appointments/analytics/*`     | GET    | ✅          | ✅           | ⚠️     | ❌      | ⚠️           |
 
 **Note**: ⚠️ = Ownership-restricted (own/assigned appointments only)
 
 ### EHR (`/ehr`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
-|----------|--------|-------------|--------------|--------|---------|--------|
-| `/ehr/comprehensive/:userId` | GET | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
-| `/ehr/medical-history` | POST | ✅ | ✅ | ✅ | ❌ | ❌ |
-| `/ehr/medical-history/:id` | GET | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
-| `/ehr/lab-reports` | POST | ✅ | ✅ | ✅ | ❌ | ⚠️ |
-| `/ehr/prescriptions` | POST | ✅ | ✅ | ✅ | ❌ | ⚠️ |
-| `/ehr/vitals` | POST | ✅ | ✅ | ✅ | ❌ | ⚠️ |
+| Endpoint                     | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
+| ---------------------------- | ------ | ----------- | ------------ | ------ | ------- | ------ |
+| `/ehr/comprehensive/:userId` | GET    | ✅          | ✅           | ✅     | ⚠️      | ⚠️     |
+| `/ehr/medical-history`       | POST   | ✅          | ✅           | ✅     | ❌      | ❌     |
+| `/ehr/medical-history/:id`   | GET    | ✅          | ✅           | ✅     | ⚠️      | ⚠️     |
+| `/ehr/lab-reports`           | POST   | ✅          | ✅           | ✅     | ❌      | ⚠️     |
+| `/ehr/prescriptions`         | POST   | ✅          | ✅           | ✅     | ❌      | ⚠️     |
+| `/ehr/vitals`                | POST   | ✅          | ✅           | ✅     | ❌      | ⚠️     |
 
-**Note**: ⚠️ = Ownership-restricted (own records only) or role-specific (LAB_TECHNICIAN for lab reports, NURSE for vitals)
+**Note**: ⚠️ = Ownership-restricted (own records only) or role-specific
+(LAB_TECHNICIAN for lab reports, NURSE for vitals)
 
 ### Billing (`/billing`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | FINANCE |
-|----------|--------|-------------|--------------|--------|---------|---------|
-| `/billing/subscriptions` | GET | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| `/billing/invoices` | GET | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| `/billing/invoices` | POST | ✅ | ✅ | ❌ | ❌ | ✅ |
-| `/billing/payments` | GET | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| `/billing/payments` | POST | ✅ | ✅ | ❌ | ⚠️ | ✅ |
-| `/billing/analytics/*` | GET | ✅ | ✅ | ❌ | ❌ | ✅ |
+| Endpoint                 | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | FINANCE |
+| ------------------------ | ------ | ----------- | ------------ | ------ | ------- | ------- |
+| `/billing/subscriptions` | GET    | ✅          | ✅           | ❌     | ⚠️      | ✅      |
+| `/billing/invoices`      | GET    | ✅          | ✅           | ❌     | ⚠️      | ✅      |
+| `/billing/invoices`      | POST   | ✅          | ✅           | ❌     | ❌      | ✅      |
+| `/billing/payments`      | GET    | ✅          | ✅           | ❌     | ⚠️      | ✅      |
+| `/billing/payments`      | POST   | ✅          | ✅           | ❌     | ⚠️      | ✅      |
+| `/billing/analytics/*`   | GET    | ✅          | ✅           | ❌     | ❌      | ✅      |
 
 **Note**: ⚠️ = Ownership-restricted (own billing data only)
 
 ### Clinics (`/clinics`)
 
-| Endpoint | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
-|----------|--------|-------------|--------------|--------|---------|--------|
-| `/clinics` | POST | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `/clinics` | GET | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `/clinics/:id` | GET | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| `/clinics/:id` | PUT | ✅ | ✅ | ❌ | ❌ | ❌ |
-| `/clinics/:id` | DELETE | ✅ | ❌ | ❌ | ❌ | ❌ |
-| `/clinics/my-clinic` | GET | ✅ | ✅ | ✅ | ❌ | ⚠️ |
-| `/clinics/:id/doctors` | GET | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| `/clinics/:id/patients` | GET | ✅ | ✅ | ✅ | ❌ | ⚠️ |
-| `/clinics/register` | POST | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Endpoint                | Method | SUPER_ADMIN | CLINIC_ADMIN | DOCTOR | PATIENT | Others |
+| ----------------------- | ------ | ----------- | ------------ | ------ | ------- | ------ |
+| `/clinics`              | POST   | ✅          | ✅           | ❌     | ❌      | ❌     |
+| `/clinics`              | GET    | ✅          | ✅           | ❌     | ❌      | ❌     |
+| `/clinics/:id`          | GET    | ✅          | ✅           | ✅     | ✅      | ⚠️     |
+| `/clinics/:id`          | PUT    | ✅          | ✅           | ❌     | ❌      | ❌     |
+| `/clinics/:id`          | DELETE | ✅          | ❌           | ❌     | ❌      | ❌     |
+| `/clinics/my-clinic`    | GET    | ✅          | ✅           | ✅     | ❌      | ⚠️     |
+| `/clinics/:id/doctors`  | GET    | ✅          | ✅           | ✅     | ✅      | ⚠️     |
+| `/clinics/:id/patients` | GET    | ✅          | ✅           | ✅     | ❌      | ⚠️     |
 
 ---
 
@@ -1118,6 +1212,7 @@ Permissions follow the pattern: `resource:action`
 ### Patient Workflow
 
 #### 1. Registration & Setup
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. Register Account                     │
@@ -1142,13 +1237,14 @@ Permissions follow the pattern: `resource:action`
                │
                ▼
 ┌─────────────────────────────────────────┐
-│ 4. Register with Clinic                 │
-│    POST /clinics/register                │
-│    - Associate with clinic              │
+│ 4. Register New User                    │
+│    POST /auth/register                  │
+│    - clinicId required (sets primaryClinicId) │
 └─────────────────────────────────────────┘
 ```
 
 #### 2. Appointment Booking
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View Available Doctors               │
@@ -1181,6 +1277,7 @@ Permissions follow the pattern: `resource:action`
 ```
 
 #### 3. Appointment Day
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. Check In                             │
@@ -1212,6 +1309,7 @@ Permissions follow the pattern: `resource:action`
 ```
 
 #### 4. Post-Appointment
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View Medical Records                 │
@@ -1247,6 +1345,7 @@ Permissions follow the pattern: `resource:action`
 ### Doctor Workflow
 
 #### 1. Daily Setup
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. Login                                │
@@ -1270,6 +1369,7 @@ Permissions follow the pattern: `resource:action`
 ```
 
 #### 2. Consultation Process
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View Appointment Details             │
@@ -1337,12 +1437,12 @@ Permissions follow the pattern: `resource:action`
 ### Receptionist Workflow
 
 #### 1. Patient Registration
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. Register New Patient                │
-│    POST /clinics/register               │
-│    OR                                  │
-│    POST /user (if user exists)         │
+│    POST /auth/register                 │
+│    - clinicId required (sets primaryClinicId) │
 │    - Collect patient information       │
 └──────────────┬──────────────────────────┘
                │
@@ -1355,6 +1455,7 @@ Permissions follow the pattern: `resource:action`
 ```
 
 #### 2. Appointment Management
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View All Appointments               │
@@ -1391,6 +1492,7 @@ Permissions follow the pattern: `resource:action`
 ### Clinic Admin Workflow
 
 #### 1. Clinic Management
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View Clinic Details                 │
@@ -1415,6 +1517,7 @@ Permissions follow the pattern: `resource:action`
 ```
 
 #### 2. Analytics & Reports
+
 ```
 ┌─────────────────────────────────────────┐
 │ 1. View Appointment Analytics          │
@@ -1442,16 +1545,24 @@ Permissions follow the pattern: `resource:action`
 ### Other Role Workflows
 
 #### Nurse Workflow
-1. View appointments → View patient info → Record vitals → View medical records → Process check-in
+
+1. View appointments → View patient info → Record vitals → View medical records
+   → Process check-in
 
 #### Pharmacist Workflow
-1. View prescriptions → View patient info → Check medication history → Process prescription → Manage inventory
+
+1. View prescriptions → View patient info → Check medication history → Process
+   prescription → Manage inventory
 
 #### Lab Technician Workflow
-1. View lab orders → View patient info → Perform lab test → Create lab report → Update lab report
+
+1. View lab orders → View patient info → Perform lab test → Create lab report →
+   Update lab report
 
 #### Finance/Billing Workflow
-1. View invoices → Create invoice → Send invoice → Process payment → View revenue analytics
+
+1. View invoices → Create invoice → Send invoice → Process payment → View
+   revenue analytics
 
 ---
 
@@ -1460,6 +1571,7 @@ Permissions follow the pattern: `resource:action`
 ### Ownership Validation
 
 Many endpoints enforce **ownership validation**:
+
 - Patients can only access their own data
 - Doctors can only access their assigned appointments
 - Clinic admins can only access their clinic's data
@@ -1467,6 +1579,7 @@ Many endpoints enforce **ownership validation**:
 ### Multi-Tenant Isolation
 
 All data is **clinic-scoped**:
+
 - Users belong to specific clinics
 - Appointments are clinic-specific
 - Medical records are clinic-specific
@@ -1475,6 +1588,7 @@ All data is **clinic-scoped**:
 ### Permission Enforcement
 
 Permissions are enforced at **multiple layers**:
+
 1. **Route Level**: `@Roles()` decorator
 2. **Permission Level**: `@RequireResourcePermission()` decorator
 3. **Service Level**: Business logic validation
@@ -1482,15 +1596,15 @@ Permissions are enforced at **multiple layers**:
 
 ### Common Restrictions
 
-| Action | Who Can't Do It |
-|--------|----------------|
-| Delete Clinic | Everyone except SUPER_ADMIN |
-| Delete Appointment | DOCTOR, RECEPTIONIST (can only cancel) |
-| Create Prescription | Everyone except DOCTOR, SUPER_ADMIN, CLINIC_ADMIN |
-| Create Medical Records | PATIENT, RECEPTIONIST, NURSE, etc. |
-| View Other Patients' Data | PATIENT (own only), most staff (clinic-scoped) |
-| Access Analytics | PATIENT, most staff (clinic admins only) |
-| Manage Clinic Settings | Everyone except SUPER_ADMIN, CLINIC_ADMIN |
+| Action                    | Who Can't Do It                                   |
+| ------------------------- | ------------------------------------------------- |
+| Delete Clinic             | Everyone except SUPER_ADMIN                       |
+| Delete Appointment        | DOCTOR, RECEPTIONIST (can only cancel)            |
+| Create Prescription       | Everyone except DOCTOR, SUPER_ADMIN, CLINIC_ADMIN |
+| Create Medical Records    | PATIENT, RECEPTIONIST, NURSE, etc.                |
+| View Other Patients' Data | PATIENT (own only), most staff (clinic-scoped)    |
+| Access Analytics          | PATIENT, most staff (clinic admins only)          |
+| Manage Clinic Settings    | Everyone except SUPER_ADMIN, CLINIC_ADMIN         |
 
 ### Best Practices
 
@@ -1506,45 +1620,49 @@ Permissions are enforced at **multiple layers**:
 
 ## 10. API Endpoints Verification
 
-This section verifies that all API endpoints have proper role-based access control and location support.
+This section verifies that all API endpoints have proper role-based access
+control and location support.
 
 ### Appointments Controller
 
-| Endpoint | Method | Allowed Roles | RBAC Permission | Location Support | Status |
-|----------|--------|---------------|-----------------|------------------|--------|
-| `/appointments` | POST | PATIENT, RECEPTIONIST, DOCTOR | `appointments:create` | ✅ locationId in body | ✅ |
-| `/appointments/my-appointments` | GET | PATIENT | `appointments:read` | ✅ Filters by user location | ✅ |
-| `/appointments` | GET | CLINIC_ADMIN, DOCTOR, RECEPTIONIST, THERAPIST, COUNSELOR, SUPPORT_STAFF | `appointments:read` | ✅ locationId in query | ✅ |
-| `/appointments/:id` | GET | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN, THERAPIST, COUNSELOR, SUPPORT_STAFF | `appointments:read` | ✅ Returns locationId | ✅ |
-| `/appointments/:id` | PUT | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN | `appointments:update` | ✅ locationId in body | ✅ |
-| `/appointments/:id` | DELETE | PATIENT, RECEPTIONIST, CLINIC_ADMIN | `appointments:delete` | ✅ Validates location | ✅ |
-| `/appointments/:id/check-in` | POST | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN, NURSE, THERAPIST, COUNSELOR, SUPPORT_STAFF | `appointments:update` | ✅ Validates location matches | ✅ |
+| Endpoint                        | Method | Allowed Roles                                                                           | RBAC Permission       | Location Support              | Status |
+| ------------------------------- | ------ | --------------------------------------------------------------------------------------- | --------------------- | ----------------------------- | ------ |
+| `/appointments`                 | POST   | PATIENT, RECEPTIONIST, DOCTOR                                                           | `appointments:create` | ✅ locationId in body         | ✅     |
+| `/appointments/my-appointments` | GET    | PATIENT                                                                                 | `appointments:read`   | ✅ Filters by user location   | ✅     |
+| `/appointments`                 | GET    | CLINIC_ADMIN, DOCTOR, RECEPTIONIST, THERAPIST, COUNSELOR, SUPPORT_STAFF                 | `appointments:read`   | ✅ locationId in query        | ✅     |
+| `/appointments/:id`             | GET    | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN, THERAPIST, COUNSELOR, SUPPORT_STAFF        | `appointments:read`   | ✅ Returns locationId         | ✅     |
+| `/appointments/:id`             | PUT    | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN                                             | `appointments:update` | ✅ locationId in body         | ✅     |
+| `/appointments/:id`             | DELETE | PATIENT, RECEPTIONIST, CLINIC_ADMIN                                                     | `appointments:delete` | ✅ Validates location         | ✅     |
+| `/appointments/:id/check-in`    | POST   | PATIENT, RECEPTIONIST, DOCTOR, CLINIC_ADMIN, NURSE, THERAPIST, COUNSELOR, SUPPORT_STAFF | `appointments:update` | ✅ Validates location matches | ✅     |
 
 **File**: `src/services/appointments/appointments.controller.ts`
 
 ### Users Controller
 
-| Endpoint | Method | Allowed Roles | RBAC Permission | Location Support | Status |
-|----------|--------|---------------|-----------------|------------------|--------|
-| `/users` | GET | CLINIC_ADMIN, SUPER_ADMIN | `users:read` | ✅ Filters by locationId | ✅ |
-| `/users` | POST | CLINIC_ADMIN, SUPER_ADMIN | `users:create` | ✅ locationId in body | ✅ |
-| `/users/:id` | GET | CLINIC_ADMIN, SUPER_ADMIN, PATIENT (own) | `users:read` | ✅ Returns locationId | ✅ |
-| `/users/:id` | PUT | CLINIC_ADMIN, SUPER_ADMIN, PATIENT (own) | `users:update` | ✅ locationId in body | ✅ |
-| `/users/:id/change-location` | POST | CLINIC_ADMIN, SUPER_ADMIN | `users:change-location` | ✅ Changes user location | ✅ |
+| Endpoint                     | Method | Allowed Roles                            | RBAC Permission         | Location Support         | Status |
+| ---------------------------- | ------ | ---------------------------------------- | ----------------------- | ------------------------ | ------ |
+| `/users`                     | GET    | CLINIC_ADMIN, SUPER_ADMIN                | `users:read`            | ✅ Filters by locationId | ✅     |
+| `/users`                     | POST   | CLINIC_ADMIN, SUPER_ADMIN                | `users:create`          | ✅ locationId in body    | ✅     |
+| `/users/:id`                 | GET    | CLINIC_ADMIN, SUPER_ADMIN, PATIENT (own) | `users:read`            | ✅ Returns locationId    | ✅     |
+| `/users/:id`                 | PUT    | CLINIC_ADMIN, SUPER_ADMIN, PATIENT (own) | `users:update`          | ✅ locationId in body    | ✅     |
+| `/users/:id/change-location` | POST   | CLINIC_ADMIN, SUPER_ADMIN                | `users:change-location` | ✅ Changes user location | ✅     |
 
 **File**: `src/services/users/controllers/users.controller.ts`
 
 ### Guards and Middleware Verification
 
 #### ClinicGuard
+
 - ✅ Extracts `clinicId` from headers, query, JWT, route params, body
-- ✅ Extracts `locationId` from headers, query, JWT, route params, body (optional)
+- ✅ Extracts `locationId` from headers, query, JWT, route params, body
+  (optional)
 - ✅ Validates clinic access
 - ✅ Sets `request.clinicId` and `request.locationId` for downstream use
 
 **File**: `src/libs/core/guards/clinic.guard.ts`
 
 #### JwtAuthGuard
+
 - ✅ Validates JWT tokens
 - ✅ Extracts user info including `clinicId`
 - ✅ Sets `request.user` with user context
@@ -1552,6 +1670,7 @@ This section verifies that all API endpoints have proper role-based access contr
 **File**: `src/libs/core/guards/jwt-auth.guard.ts`
 
 #### RbacGuard
+
 - ✅ Validates RBAC permissions
 - ✅ Works with `@RequireResourcePermission()` decorator
 - ✅ Extracts `clinicId` from request
@@ -1561,24 +1680,29 @@ This section verifies that all API endpoints have proper role-based access contr
 ### Location Support in APIs
 
 #### Headers
+
 - ✅ `X-Clinic-ID` - Extracted by ClinicGuard (COMPULSORY)
 - ✅ `X-Location-ID` - Extracted by ClinicGuard (OPTIONAL)
 
 #### Query Parameters
+
 - ✅ `clinicId` - Extracted by ClinicGuard (COMPULSORY)
 - ✅ `locationId` - Extracted by ClinicGuard (OPTIONAL)
 
 #### Request Body
+
 - ✅ `clinicId` - Extracted by ClinicGuard (COMPULSORY)
 - ✅ `locationId` - Extracted by ClinicGuard (OPTIONAL)
 
 #### JWT Token
+
 - ✅ `clinicId` - Extracted from JWT payload
 - ✅ `locationId` - Can be extracted from JWT payload (if added)
 
 ### Verification Checklist
 
 #### Role Permissions
+
 - [x] All 12 roles have permissions defined
 - [x] SUPER_ADMIN has `*` (all permissions)
 - [x] Each role has appropriate permissions for their function
@@ -1586,13 +1710,16 @@ This section verifies that all API endpoints have proper role-based access contr
 - [x] Staff roles have permissions for clinic operations
 
 #### API Endpoints
+
 - [x] All endpoints have `@Roles()` decorator
 - [x] All endpoints have `@RequireResourcePermission()` decorator
-- [x] All endpoints use `@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)`
+- [x] All endpoints use
+      `@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)`
 - [x] Location-based endpoints support `locationId`
 - [x] Check-in endpoints validate location matches appointment
 
 #### Guards
+
 - [x] ClinicGuard extracts `clinicId` (COMPULSORY)
 - [x] ClinicGuard extracts `locationId` (OPTIONAL)
 - [x] JwtAuthGuard validates tokens
@@ -1600,6 +1727,7 @@ This section verifies that all API endpoints have proper role-based access contr
 - [x] RbacGuard validates permissions
 
 #### Location Support
+
 - [x] `locationId` extracted from headers (`X-Location-ID`)
 - [x] `locationId` extracted from query parameters
 - [x] `locationId` extracted from request body
@@ -1623,4 +1751,3 @@ This section verifies that all API endpoints have proper role-based access contr
 **Document Version**: 1.0  
 **Last Updated**: 2024  
 **Maintained By**: Healthcare Backend Team
-

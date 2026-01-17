@@ -223,7 +223,15 @@ export class EmailUnsubscribeService {
   private async findUserByEmail(email: string): Promise<{ id: string } | null> {
     try {
       const user = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.user.findUnique({
+        const userClient = client as unknown as {
+          user: {
+            findUnique: (args: {
+              where: { email: string };
+              select: { id: true };
+            }) => Promise<{ id: string } | null>;
+          };
+        };
+        return await userClient.user.findUnique({
           where: { email: email.toLowerCase() },
           select: { id: true },
         });
@@ -311,10 +319,15 @@ export class EmailUnsubscribeService {
    */
   generateUnsubscribeUrl(email: string, userId?: string): string {
     const token = this.generateUnsubscribeToken(email, userId);
+    // SECURITY: Use ConfigService instead of hardcoded localhost URL
     const baseUrl =
       this.configService.getEnv('BASE_URL') ||
       this.configService.getEnv('API_URL') ||
-      'http://localhost:8088';
+      (() => {
+        throw new Error(
+          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
+        );
+      })();
     return `${baseUrl}/api/v1/email/unsubscribe?token=${token}`;
   }
 }

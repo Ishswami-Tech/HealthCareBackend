@@ -10,6 +10,11 @@
  * @see https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/s3-examples.html - AWS S3 SDK documentation
  * @see https://contabo.com/en/products/object-storage/ - Contabo S3-compatible storage
  *
+ * CDN Configuration:
+ * - For Contabo provider: CDN URL is automatically generated from S3_ENDPOINT, S3_ACCESS_KEY_ID, and S3_BUCKET
+ * - Format: https://{endpoint}/{access-key-id}:{bucket}
+ * - Set CDN_URL environment variable only if using a different CDN provider (e.g., Cloudflare, AWS CloudFront)
+ *
  * Note: AWS SDK S3Client types are correctly resolved by TypeScript compiler.
  * ESLint's type-aware rules have limitations resolving complex external type definitions.
  * All type assertions below are safe and verified by TypeScript compilation.
@@ -88,20 +93,32 @@ export class S3StorageService implements OnModuleInit {
       provider === 'contabo' ? 'eu-central-1' : 'us-east-1'
     );
 
+    const accessKeyId =
+      this.configService.get<string>('S3_ACCESS_KEY_ID') ||
+      this.configService.get<string>('AWS_ACCESS_KEY_ID');
+    const bucket = this.configService.get<string>('S3_BUCKET', '');
+
+    // Auto-generate Contabo CDN URL if provider is Contabo and CDN_URL not explicitly set
+    let cdnUrl = this.configService.get<string>('CDN_URL');
+    if (!cdnUrl && provider === 'contabo' && endpoint && accessKeyId && bucket) {
+      // Contabo CDN URL format: https://{endpoint}/{access-key-id}:{bucket}
+      // Example: https://eu2.contabostorage.com/{access-key-id}:healthcaredata
+      const endpointUrl = endpoint.replace(/\/$/, ''); // Remove trailing slash
+      cdnUrl = `${endpointUrl}/${accessKeyId}:${bucket}`;
+    }
+
     this.config = {
       enabled: this.configService.get<boolean>('S3_ENABLED', false),
       provider,
       endpoint,
       region,
-      bucket: this.configService.get<string>('S3_BUCKET', ''),
-      accessKeyId:
-        this.configService.get<string>('S3_ACCESS_KEY_ID') ||
-        this.configService.get<string>('AWS_ACCESS_KEY_ID'),
+      bucket,
+      accessKeyId,
       secretAccessKey:
         this.configService.get<string>('S3_SECRET_ACCESS_KEY') ||
         this.configService.get<string>('AWS_SECRET_ACCESS_KEY'),
       forcePathStyle: this.configService.get<boolean>('S3_FORCE_PATH_STYLE', provider !== 'aws'),
-      cdnUrl: this.configService.get<string>('CDN_URL'),
+      cdnUrl,
       publicUrlExpiration: this.configService.get<number>('S3_PUBLIC_URL_EXPIRATION', 3600),
     };
 
@@ -340,9 +357,14 @@ export class S3StorageService implements OnModuleInit {
   /**
    * Generate public URL for S3 object
    * Supports both AWS S3 and S3-compatible providers (Contabo, Wasabi, etc.)
+   *
+   * CDN URL Priority:
+   * 1. Uses CDN_URL if explicitly configured (environment variable)
+   * 2. For Contabo provider: Auto-generates CDN URL from endpoint, access key, and bucket
+   * 3. Falls back to direct S3 URLs if CDN not available
    */
   private generatePublicUrl(key: string, isPublic: boolean): string {
-    // Use CDN URL if configured
+    // Use CDN URL if configured (includes auto-generated Contabo CDN)
     if (this.config.cdnUrl) {
       return `${this.config.cdnUrl}/${key}`;
     }

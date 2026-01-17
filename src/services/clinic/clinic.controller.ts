@@ -40,7 +40,6 @@ import {
 import {
   CreateClinicDto,
   AssignClinicAdminDto,
-  RegisterPatientDto,
   UpdateClinicDto,
   ClinicListResponseDto,
   AppNameInlineDto,
@@ -720,70 +719,6 @@ export class ClinicController {
     } catch (_error) {
       this.logger.error(
         `Failed to get clinic patients for clinic ${id}: ${(_error as Error).message}`,
-        (_error as Error).stack
-      );
-      throw _error;
-    }
-  }
-
-  @Post('register')
-  @HttpCode(HttpStatus.CREATED)
-  @RequireResourcePermission('patients', 'create')
-  @ApiOperation({
-    summary: 'Register a patient to a clinic',
-    description:
-      'Registers a patient user to a specific clinic by app name. Used by the mobile app.',
-  })
-  @ApiConsumes('application/json')
-  @ApiProduces('application/json')
-  @ApiBody({
-    type: RegisterPatientDto,
-    description: 'Patient registration data',
-  })
-  @ApiResponse({
-    status: HttpStatus.CREATED,
-    description: 'The patient has been successfully registered to the clinic.',
-  })
-  @ApiResponse({
-    status: HttpStatus.BAD_REQUEST,
-    description: 'Invalid registration data',
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'User or clinic not found.',
-  })
-  @ApiResponse({
-    status: HttpStatus.CONFLICT,
-    description: 'User is not a patient.',
-  })
-  async registerPatientToClinic(
-    @Body() data: RegisterPatientDto,
-    @Req() req: ClinicAuthenticatedRequest
-  ) {
-    try {
-      const userId = req.user?.sub;
-
-      if (!userId) {
-        throw new BadRequestException('User ID is required');
-      }
-
-      this.logger.log(`Registering patient ${userId} to clinic by app name: ${data.appName}`);
-
-      // First get the clinic by app name to get the clinicId
-      const clinic = await this.clinicService.getClinicByAppName(data.appName);
-      const clinicWithId =
-        'id' in clinic && typeof clinic.id === 'string' ? { id: clinic.id } : { id: '' };
-
-      const result = await this.clinicService.registerPatientToClinic({
-        userId,
-        clinicId: clinicWithId.id,
-      });
-
-      this.logger.log(`Patient ${userId} registered to clinic ${clinicWithId.id} successfully`);
-      return result;
-    } catch (_error) {
-      this.logger.error(
-        `Failed to register patient to clinic: ${(_error as Error).message}`,
         (_error as Error).stack
       );
       throw _error;

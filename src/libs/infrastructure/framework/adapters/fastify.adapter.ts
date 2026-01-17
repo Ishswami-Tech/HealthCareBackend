@@ -139,20 +139,37 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
         : {}),
     };
 
-    const app = await NestFactory.create(
-      appModule as Parameters<typeof NestFactory.create>[0],
-      new FastifyAdapter(
-        fastifyAdapterOptions as unknown as ConstructorParameters<typeof FastifyAdapter>[0]
+    // Add timeout wrapper to prevent hanging during module initialization
+    // Some modules (like DatabaseModule) may have blocking OnModuleInit hooks
+    const CREATE_TIMEOUT_MS = 120000; // 120 seconds - matches health check start_period
+
+    const app = await Promise.race([
+      NestFactory.create(
+        appModule as Parameters<typeof NestFactory.create>[0],
+        new FastifyAdapter(
+          fastifyAdapterOptions as unknown as ConstructorParameters<typeof FastifyAdapter>[0]
+        ),
+        {
+          logger:
+            options.environment === 'production'
+              ? (['error', 'warn'] as LogLevel[])
+              : (['error', 'warn', 'log'] as LogLevel[]),
+          bufferLogs: true,
+          cors: false, // Will be configured separately via SecurityConfigService
+        }
       ),
-      {
-        logger:
-          options.environment === 'production'
-            ? (['error', 'warn'] as LogLevel[])
-            : (['error', 'warn', 'log'] as LogLevel[]),
-        bufferLogs: true,
-        cors: false, // Will be configured separately via SecurityConfigService
-      }
-    );
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Application creation timed out after ${CREATE_TIMEOUT_MS}ms. This may indicate a blocking operation in module initialization (e.g., database connection).`
+              )
+            ),
+          CREATE_TIMEOUT_MS
+        )
+      ),
+    ]);
 
     return app;
   }

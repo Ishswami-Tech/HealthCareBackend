@@ -111,14 +111,3 @@ runReceptionistNotificationPreferenceTests().catch(error => {
   console.error('Receptionist notification preference tests failed:', error);
   process.exit(1);
 });
-
-
-
-
-
-
-
-
-
-
-

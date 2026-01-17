@@ -14,25 +14,25 @@ help:
 	@echo "$(GREEN)Available commands:$(NC)"
 	@sed -n 's/^##//p' ${MAKEFILE_LIST} | column -t -s ':' |  sed -e 's/^/ /'
 
-## install: Install dependencies with pnpm
+## install: Install dependencies with yarn
 install:
 	@echo "$(BLUE)Installing dependencies...$(NC)"
-	pnpm install
+	yarn install
 
 ## build: Build the application
 build:
 	@echo "$(BLUE)Building application...$(NC)"
-	pnpm build
+	yarn build
 
 ## dev: Start development server
 dev:
 	@echo "$(BLUE)Starting development server...$(NC)"
-	pnpm start:dev
+	yarn start:dev
 
 ## prod: Start production server
 prod:
 	@echo "$(BLUE)Starting production server...$(NC)"
-	pnpm start:prod
+	yarn start:prod
 
 ## start: Start all services with Docker Compose
 start:
@@ -71,37 +71,37 @@ logs-api:
 ## test: Run tests
 test:
 	@echo "$(BLUE)Running tests...$(NC)"
-	pnpm test
+	yarn test
 
 ## lint: Run linter
 lint:
 	@echo "$(BLUE)Running linter...$(NC)"
-	pnpm lint
+	yarn lint
 
 ## format: Format code
 format:
 	@echo "$(BLUE)Formatting code...$(NC)"
-	pnpm format
+	yarn format
 
 ## prisma-generate: Generate Prisma client
 prisma-generate:
 	@echo "$(BLUE)Generating Prisma client...$(NC)"
-	pnpm prisma:generate
+	yarn prisma:generate
 
 ## prisma-studio: Open Prisma Studio
 prisma-studio:
 	@echo "$(BLUE)Opening Prisma Studio...$(NC)"
-	pnpm prisma:studio
+	yarn prisma:studio
 
 ## prisma-migrate: Run Prisma migrations
 prisma-migrate:
 	@echo "$(BLUE)Running Prisma migrations...$(NC)"
-	pnpm prisma:migrate
+	yarn prisma:migrate
 
 ## prisma-reset: Reset Prisma database
 prisma-reset:
 	@echo "$(RED)Resetting Prisma database...$(NC)"
-	pnpm prisma:reset
+	yarn prisma:reset
 
 ## docker-up: Start Docker services (detached)
 docker-up:

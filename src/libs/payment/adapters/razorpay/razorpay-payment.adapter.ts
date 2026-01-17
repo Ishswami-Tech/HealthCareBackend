@@ -149,7 +149,7 @@ export class RazorpayPaymentAdapter extends BasePaymentAdapter {
     loadRazorpaySDK();
 
     if (!RazorpayClass) {
-      throw new Error('razorpay package is not installed. Install it with: npm install razorpay');
+      throw new Error('razorpay package is not installed. Install it with: yarn add razorpay');
     }
 
     if (!config.credentials || typeof config.credentials !== 'object') {

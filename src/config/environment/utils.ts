@@ -139,7 +139,7 @@ export function hasEnv(key: string): boolean {
 /**
  * Get environment name (mimics ConfigService.getEnvironment)
  * Use in config factories where ConfigService is not yet available
- * @returns Environment name (development, production, staging, test)
+ * @returns Environment name (development, production, staging, test, local-prod)
  */
 export function getEnvironment(): string {
   return process.env['NODE_ENV'] || 'development';

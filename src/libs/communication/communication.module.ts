@@ -2,7 +2,7 @@ import { Module, Global, forwardRef } from '@nestjs/common';
 import { COMMUNICATION_SERVICE_TOKEN } from './communication.constants';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { HttpModule } from '@infrastructure/http';
-import { TerminusModule } from '@nestjs/terminus';
+// TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { PushModule } from '@communication/channels/push/push.module';
@@ -60,7 +60,7 @@ import { CommunicationAlertingService } from './services/communication-alerting.
 @Module({
   imports: [
     HttpModule, // HTTP client for WhatsApp API calls
-    TerminusModule, // Health checks
+    // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
     EventEmitterModule, // Required for EventEmitter2 injection
     // Use forwardRef for all channel modules to break circular dependencies
     // CommunicationModule is built on top of all channel services

@@ -1,0 +1,21 @@
+#!/bin/sh
+# Post-merge hook for Prisma schema formatting
+# Prisma Client is generated during Docker build, not in git hooks
+
+echo "🔄 Post-merge: Checking Prisma schema changes..."
+
+# Check if schema or config files changed
+if git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD | grep -qE "(schema\.prisma|prisma\.config\.js)"; then
+  echo "📝 Prisma schema or config changed, formatting schema..."
+  # Only format schema, don't regenerate client (handled in Docker build)
+  yarn prisma:format || {
+    echo "❌ Failed to format Prisma schema after merge"
+    echo "💡 Run 'yarn prisma:format' manually"
+    exit 1
+  }
+  echo "✅ Prisma schema formatted successfully"
+  echo "ℹ️  Prisma Client will be generated during Docker build"
+else
+  echo "ℹ️  No Prisma schema changes detected"
+fi
+

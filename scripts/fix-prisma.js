@@ -2,16 +2,16 @@
 
 /**
  * Consolidated Prisma Fix Script
- * 
+ *
  * Handles all Prisma-related fixes:
  * 1. Creates sourcemap files for Prisma runtime JS (prevents SWC warnings)
  * 2. Fixes TypeScript type annotations in generated Prisma files
- * 3. Fixes Prisma Client path resolution for pnpm (creates symlinks)
- * 
+ * 3. Verifies Prisma Client path resolution (yarn/npm - no pnpm support needed)
+ *
  * This script consolidates:
  * - fix-prisma-sourcemaps.js
  * - fix-prisma-types.ts
- * - fix-prisma-pnpm.js
+ * - fix-prisma-pnpm.js (simplified for yarn-only)
  */
 
 const fs = require('fs');
@@ -37,7 +37,8 @@ const appRoot = path.resolve(__dirname, '..');
 // ============================================================================
 function fixPrismaSourcemaps() {
   log('\n→ Fixing Prisma sourcemaps...', 'cyan');
-  
+
+  // Prisma 7 generates to src/libs/infrastructure/database/prisma/generated/runtime
   const runtimeDir = path.join(
     appRoot,
     'src',
@@ -46,7 +47,6 @@ function fixPrismaSourcemaps() {
     'database',
     'prisma',
     'generated',
-    'client',
     'runtime'
   );
 
@@ -81,7 +81,7 @@ function fixPrismaSourcemaps() {
   const filesToFix = ['client.js', 'index-browser.js', 'wasm-compiler-edge.js'];
   let fixedCount = 0;
 
-  filesToFix.forEach((file) => {
+  filesToFix.forEach(file => {
     const mapPath = path.join(runtimeDir, `${file}.map`);
     if (!fs.existsSync(mapPath)) {
       ensureSourcemap(runtimeDir, file);
@@ -103,7 +103,7 @@ function fixPrismaSourcemaps() {
 // ============================================================================
 function fixPrismaTypes() {
   log('\n→ Fixing Prisma TypeScript type annotations...', 'cyan');
-  
+
   const generatedDir = path.join(
     appRoot,
     'src',
@@ -228,80 +228,34 @@ function fixPrismaTypes() {
 }
 
 // ============================================================================
-// 3. Fix Prisma pnpm Path Resolution
+// 3. Verify Prisma Client Path Resolution (yarn/npm compatibility)
 // ============================================================================
-function fixPrismaPnpm() {
-  log('\n→ Fixing Prisma Client path resolution for pnpm...', 'cyan');
-  
-  const prismaClientPath = path.join(appRoot, 'node_modules', '.prisma', 'client');
+function verifyPrismaPathResolution() {
+  log('\n→ Verifying Prisma Client path resolution...', 'cyan');
+
+  // Check if we're using pnpm (we don't, but check anyway)
   const pnpmPath = path.join(appRoot, 'node_modules', '.pnpm');
-  const prismaClientDirs = [];
 
   if (fs.existsSync(pnpmPath)) {
-    try {
-      const isWindows = process.platform === 'win32';
-      let findResult;
-
-      if (isWindows) {
-        const command = `powershell -Command "Get-ChildItem -Path '${pnpmPath}' -Recurse -Directory -Filter '@prisma+client*' | Where-Object { $_.FullName -like '*\\@prisma+client*\\node_modules\\@prisma\\client' } | Select-Object -ExpandProperty FullName"`;
-        findResult = execSync(command, { encoding: 'utf-8', cwd: appRoot, shell: true });
-      } else {
-        findResult = execSync(
-          `find "${pnpmPath}" -path "*/@prisma+client*/node_modules/@prisma/client" -type d`,
-          { encoding: 'utf-8', cwd: appRoot }
-        );
-      }
-
-      prismaClientDirs.push(...findResult.trim().split('\n').filter(Boolean));
-    } catch (error) {
-      log('  ⚠ Could not find Prisma client directories (this is OK if not using pnpm)', 'yellow');
-      return { success: true, skipped: true };
-    }
-  } else {
-    log('  ✓ Not using pnpm, skipping pnpm-specific fixes', 'green');
+    log(
+      '  ⚠ pnpm detected - this project uses yarn, pnpm compatibility fixes not needed',
+      'yellow'
+    );
     return { success: true, skipped: true };
   }
 
-  let symlinkCount = 0;
-  for (const clientDir of prismaClientDirs) {
-    const symlinkPath = path.join(clientDir, '.prisma');
-
-    try {
-      const targetPath = path.join(appRoot, 'node_modules', '.prisma');
-
-      if (fs.existsSync(symlinkPath)) {
-        try {
-          const realPath = fs.realpathSync(symlinkPath);
-          if (realPath === targetPath) {
-            symlinkCount++;
-            continue;
-          } else {
-            fs.unlinkSync(symlinkPath);
-          }
-        } catch (error) {
-          fs.unlinkSync(symlinkPath);
-        }
-      }
-
-      const absoluteTargetPath = path.resolve(appRoot, 'node_modules', '.prisma');
-      fs.symlinkSync(absoluteTargetPath, symlinkPath, 'dir');
-      symlinkCount++;
-    } catch (error) {
-      if (error.code !== 'EEXIST') {
-        log(`  ⚠ Failed to create symlink in ${clientDir}: ${error.message}`, 'yellow');
-      } else {
-        symlinkCount++;
-      }
-    }
+  // For yarn/npm, Prisma Client should be in node_modules/.prisma/client
+  const prismaClientPath = path.join(appRoot, 'node_modules', '.prisma', 'client');
+  if (fs.existsSync(prismaClientPath)) {
+    log('  ✓ Prisma Client found in standard location (yarn/npm)', 'green');
+    return { success: true, verified: true };
   }
 
-  if (symlinkCount > 0) {
-    log(`  ✓ Fixed Prisma Client path resolution: ${symlinkCount} symlink(s)`, 'green');
-  } else {
-    log('  ✓ No Prisma client directories found to fix', 'green');
-  }
-
-  return { success: true, symlinks: symlinkCount };
+  log(
+    '  ⚠ Prisma Client not found in node_modules/.prisma/client (may be generated during build)',
+    'yellow'
+  );
+  return { success: true, skipped: true };
 }
 
 // ============================================================================
@@ -315,21 +269,21 @@ function main() {
   const results = {
     sourcemaps: fixPrismaSourcemaps(),
     types: fixPrismaTypes(),
-    pnpm: fixPrismaPnpm(),
+    pathResolution: verifyPrismaPathResolution(),
   };
 
   log('\n' + '='.repeat(60), 'cyan');
   log('Summary:', 'cyan');
   log('='.repeat(60), 'cyan');
-  
+
   if (results.sourcemaps.success) {
     log('✓ Sourcemaps: OK', 'green');
   }
   if (results.types.success) {
     log('✓ Type annotations: OK', 'green');
   }
-  if (results.pnpm.success) {
-    log('✓ pnpm path resolution: OK', 'green');
+  if (results.pathResolution.success) {
+    log('✓ Path resolution: OK', 'green');
   }
 
   log('\n✅ All Prisma fixes completed!\n', 'green');
@@ -337,4 +291,3 @@ function main() {
 }
 
 main();
-

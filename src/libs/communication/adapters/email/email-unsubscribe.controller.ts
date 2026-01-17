@@ -17,7 +17,7 @@ class UnsubscribeDto {
   email?: string;
 }
 
-@ApiTags('email')
+@ApiTags('communication')
 @Controller('email')
 export class EmailUnsubscribeController {
   constructor(private readonly unsubscribeService: EmailUnsubscribeService) {}

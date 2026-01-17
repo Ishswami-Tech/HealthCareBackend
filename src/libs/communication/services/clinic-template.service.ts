@@ -66,7 +66,20 @@ export class ClinicTemplateService {
 
       // Fetch clinic data from database
       const clinic = await this.databaseService.executeHealthcareRead(async prisma => {
-        return await prisma.clinic.findUnique({
+        const clinicClient = prisma as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { id: true; name: true; logo: true; phone: true };
+            }) => Promise<{
+              id: string;
+              name: string;
+              logo: string | null;
+              phone: string | null;
+            } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: clinicId },
           select: {
             id: true,
@@ -147,7 +160,15 @@ export class ClinicTemplateService {
 
       // Fetch from database
       const clinic = await this.databaseService.executeHealthcareRead(async prisma => {
-        return await prisma.clinic.findUnique({
+        const clinicClient = prisma as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { name: true };
+            }) => Promise<{ name: string } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: clinicId },
           select: { name: true },
         });

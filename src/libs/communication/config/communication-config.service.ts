@@ -8,7 +8,7 @@
  * @description Multi-tenant communication configuration service
  */
 
-import { Injectable, Logger, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
+import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -102,7 +102,6 @@ export interface ClinicCommunicationConfig {
  */
 @Injectable()
 export class CommunicationConfigService implements OnModuleInit {
-  private readonly logger = new Logger(CommunicationConfigService.name);
   private readonly cacheTTL = 3600; // 1 hour
 
   private suppressionListService: SuppressionListService | undefined;
@@ -133,8 +132,14 @@ export class CommunicationConfigService implements OnModuleInit {
     return this.suppressionListService;
   }
 
-  onModuleInit(): void {
-    this.logger.log('CommunicationConfigService initialized');
+  async onModuleInit(): Promise<void> {
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'CommunicationConfigService initialized',
+      'CommunicationConfigService',
+      {}
+    );
   }
 
   /**
@@ -241,7 +246,15 @@ export class CommunicationConfigService implements OnModuleInit {
   } | null> {
     try {
       const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findUnique({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { name: true; app_name: true; subdomain: true };
+            }) => Promise<{ name: string; app_name: string; subdomain: string } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: clinicId },
           select: {
             name: true,
@@ -480,7 +493,15 @@ export class CommunicationConfigService implements OnModuleInit {
   private async fetchFromDatabase(clinicId: string): Promise<ClinicCommunicationConfig | null> {
     try {
       const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findUnique({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { settings: true };
+            }) => Promise<{ settings: unknown } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: clinicId },
           select: { settings: true },
         });
@@ -540,7 +561,15 @@ export class CommunicationConfigService implements OnModuleInit {
     try {
       // Get current clinic settings to preserve other settings
       const currentClinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findUnique({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { settings: true };
+            }) => Promise<{ settings: unknown } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: config.clinicId },
           select: { settings: true },
         });
@@ -567,7 +596,15 @@ export class CommunicationConfigService implements OnModuleInit {
       // Save to database with audit trail
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await client.clinic.update({
+          const clinicClient = client as unknown as {
+            clinic: {
+              update: (args: {
+                where: { id: string };
+                data: { settings: unknown };
+              }) => Promise<unknown>;
+            };
+          };
+          return await clinicClient.clinic.update({
             where: { id: config.clinicId },
             data: {
               settings: updatedSettings as never, // Prisma Json type

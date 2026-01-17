@@ -298,7 +298,25 @@ export class RbacGuard implements CanActivate {
         patient: { userId: string } | null;
         doctor: { userId: string } | null;
       } | null>(async client => {
-        const result = await client.appointment.findUnique({
+        const appointmentClient = client as unknown as {
+          appointment: {
+            findUnique: (args: {
+              where: { id: string };
+              select: {
+                userId: true;
+                clinicId: true;
+                patient: { select: { userId: true } };
+                doctor: { select: { userId: true } };
+              };
+            }) => Promise<{
+              userId: string;
+              clinicId: string;
+              patient: { userId: string } | null;
+              doctor: { userId: string } | null;
+            } | null>;
+          };
+        };
+        const result = await appointmentClient.appointment.findUnique({
           where: { id: appointmentId },
           select: {
             userId: true,
@@ -372,7 +390,15 @@ export class RbacGuard implements CanActivate {
         patientId: string;
         clinicId: string;
       } | null>(async client => {
-        const result = await client.healthRecord.findUnique({
+        const healthRecordClient = client as unknown as {
+          healthRecord: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { patientId: true; clinicId: true };
+            }) => Promise<{ patientId: string; clinicId: string } | null>;
+          };
+        };
+        const result = await healthRecordClient.healthRecord.findUnique({
           where: { id: recordId },
           select: {
             patientId: true,
@@ -437,7 +463,15 @@ export class RbacGuard implements CanActivate {
       const patient = await this.databaseService.executeHealthcareRead<{
         primaryClinicId: string | null;
       } | null>(async client => {
-        const result = await client.user.findUnique({
+        const userClient = client as unknown as {
+          user: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { primaryClinicId: true };
+            }) => Promise<{ primaryClinicId: string | null } | null>;
+          };
+        };
+        const result = await userClient.user.findUnique({
           where: { id: patientId },
           select: { primaryClinicId: true },
         });

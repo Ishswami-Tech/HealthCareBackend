@@ -12,6 +12,7 @@ import {
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
+import { IsClinicId } from '@core/decorators/clinic-id.validator';
 
 /**
  * Data Transfer Object for user login
@@ -53,11 +54,11 @@ export class LoginDto {
   otp?: string;
 
   @ApiProperty({
-    description: 'Clinic ID for multi-tenant context',
-    example: 'clinic-uuid-123',
+    description: 'Clinic ID for multi-tenant context (UUID or clinic code like CL0001)',
+    example: 'CL0001',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 
@@ -144,15 +145,24 @@ export class RegisterDto {
     pattern: '^\\+?[1-9]\\d{1,14}$',
   })
   @IsString({ message: 'Phone number must be a string' })
-  @IsNotEmpty({ message: 'Phone number is required' })
-  phone!: string;
+  @IsOptional()
+  phone?: string;
 
   @ApiProperty({
-    description: 'Clinic ID for multi-tenant context (REQUIRED)',
-    example: 'clinic-uuid-123',
+    description: 'OTP for verification during registration',
+    example: '123456',
+    required: false,
+  })
+  @IsString({ message: 'OTP must be a string' })
+  @IsOptional()
+  otp?: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context (REQUIRED) - UUID or clinic code like CL0001',
+    example: 'CL0001',
     required: true,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsNotEmpty({ message: 'Clinic ID is required for registration' })
   clinicId!: string;
 

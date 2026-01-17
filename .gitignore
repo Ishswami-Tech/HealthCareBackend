@@ -70,10 +70,15 @@ pids
 report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 
 # Prisma
+src/libs/infrastructure/database/prisma/generated/
 src/libs/infrastructure/database/prisma/*.db
-src/libs/infrastructure/database/prisma/generated/ 
+src/generated/
 node_modules/.prisma
-# Note: src/libs/infrastructure/database/prisma/generated/ is tracked in git
+# Note: Prisma generated client should NOT be committed
+# Generated during build/deployment via: yarn prisma:generate
+
+# Docker data directories (local development data)
+devops/docker/data/
 
 .claude
 
@@ -90,6 +95,7 @@ bin/
 # test-startup.sh
 # test-local-start.sh
 # quick-test.sh
+# Note: .env files are already ignored above (lines 14-20)
 .env.test.local
 
 # Test output and log files

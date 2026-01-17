@@ -88,7 +88,7 @@ spec:
 
           # Generate Prisma Client
           echo "📦 Generating Prisma Client..."
-          npm run prisma:generate
+          yarn prisma:generate
           if [ $? -eq 0 ]; then
             echo "✅ Prisma Client generated successfully"
           else
@@ -99,7 +99,7 @@ spec:
 
           # Run migrations
           echo "🔄 Running database migrations..."
-          npm run prisma:migrate
+          yarn prisma:migrate
           if [ $? -eq 0 ]; then
             echo "✅ Database migrations completed successfully"
           else
@@ -110,14 +110,14 @@ spec:
 
           # Optimize database
           echo "⚡ Optimizing database..."
-          npm run prisma:optimize || echo "⚠️  Database optimization skipped (optional)"
-          npm run db:analyze || echo "⚠️  Database analysis skipped (optional)"
+          yarn prisma:optimize || echo "⚠️  Database optimization skipped (optional)"
+          yarn db:analyze || echo "⚠️  Database analysis skipped (optional)"
           echo ""
 
           # Seed database (only if SEED_DATABASE=true)
           if [ "$SEED_DATABASE" = "true" ]; then
             echo "🌱 Seeding database..."
-            npm run seed:prod
+            yarn seed:prod
             if [ $? -eq 0 ]; then
               echo "✅ Database seeding completed successfully"
             else

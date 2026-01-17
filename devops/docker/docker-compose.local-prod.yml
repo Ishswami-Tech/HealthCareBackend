@@ -1,0 +1,539 @@
+services:
+  # Infrastructure Services (Profile: infrastructure)
+  postgres:
+    profiles: ["infrastructure"]
+    image: postgres:16
+    container_name: local-prod-postgres
+    hostname: postgres
+    # SECURITY: Port 5432 removed from public exposure
+    # PostgreSQL is only accessible from Docker network (172.18.0.0/16)
+    # This prevents external brute force attacks
+    # For local development access, use: docker exec -it local-prod-postgres psql -U postgres
+    # ports:
+    #   - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/pgdata
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: userdb
+      # Local-Prod: Reduced for local testing (production: 120)
+      POSTGRES_MAX_CONNECTIONS: 100
+      POSTGRES_SHARED_BUFFERS: 1GB
+      PGDATA: /var/lib/postgresql/data/pgdata
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.2
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        # Local-Prod: Reduced limits for local testing
+        limits:
+          cpus: "2.0"      # Production: 3.0
+          memory: 4G       # Production: 10GB
+        reservations:
+          cpus: "1.0"      # Production: 1.5
+          memory: 2G       # Production: 3GB
+    restart: unless-stopped
+    shm_size: 256mb
+    stop_grace_period: 1m
+    command: >
+      postgres 
+      -c max_connections=100 
+      -c shared_buffers=1GB 
+      -c effective_cache_size=4GB 
+      -c maintenance_work_mem=128MB 
+      -c checkpoint_completion_target=0.9 
+      -c wal_buffers=16MB 
+      -c default_statistics_target=100 
+      -c random_page_cost=1.1 
+      -c effective_io_concurrency=200 
+      -c work_mem=8MB 
+      -c min_wal_size=1GB 
+      -c max_wal_size=4GB 
+      -c max_worker_processes=4 
+      -c max_parallel_workers_per_gather=2 
+      -c max_parallel_workers=4 
+      -c max_parallel_maintenance_workers=2 
+      -c idle_in_transaction_session_timeout=60000 
+      -c statement_timeout=60000 
+      -c lock_timeout=60000 
+      -c listen_addresses='*' 
+      -c log_connections=on 
+      -c log_disconnections=on 
+      -c tcp_keepalives_idle=60 
+      -c tcp_keepalives_interval=10 
+      -c tcp_keepalives_count=3 
+      -c client_min_messages=warning
+    labels:
+      - "com.docker.compose.service=postgres"
+      - "app.component=database"
+      - "app.type=postgres"
+      - "app.environment=local-prod"
+      - "app.healthcheck=enabled"
+      - "app.persist=true"
+
+  dragonfly:
+    profiles: ["infrastructure"]
+    image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
+    container_name: local-prod-dragonfly
+    hostname: dragonfly
+    command: >
+      --alsologtostderr
+      --cache_mode=false
+      --maxmemory=2gb
+      --proactor_threads=4
+      --logtostderr
+      --default_lua_flags=allow-undeclared-keys
+    ports:
+      - "6380:6379"
+    volumes:
+      - dragonfly_data:/data
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.4
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        # Local-Prod: Reduced limits for local testing
+        limits:
+          cpus: "1.0"      # Production: 1.5
+          memory: 2G       # Production: 4GB
+        reservations:
+          cpus: "0.5"      # Production: 0.5
+          memory: 512M     # Production: 1GB
+    restart: unless-stopped
+    sysctls:
+      net.core.somaxconn: 1024  # Production: 2048
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 65535
+        hard: 65535
+    labels:
+      - "com.docker.compose.service=dragonfly"
+      - "app.component=cache"
+      - "app.type=dragonfly"
+      - "app.environment=local-prod"
+      - "app.healthcheck=enabled"
+
+  openvidu-server:
+    profiles: ["infrastructure"]
+    image: openvidu/openvidu-server-kms:latest
+    container_name: local-prod-openvidu-server
+    hostname: openvidu-server
+    ports:
+      - "4443:4443"
+      - "50000-50050:50000-50050/udp"
+      - "50000-50050:50000-50050/tcp"
+    environment:
+      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-http://localhost:4443}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-localhost}
+      - OPENVIDU_EDITION=ce
+      - OPENVIDU_CDR=false
+      - SERVER_PORT=4443
+      - SERVER_SSL_ENABLED=false
+      - HTTPS_PORT=4443
+      - HTTP_PORT=5443
+      - server.port=4443
+      - server.address=0.0.0.0
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
+      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
+      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
+      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
+      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
+      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
+      - OPENVIDU_RECORDING=false
+      - COTURN_IP=coturn
+      - OPENVIDU_LOGS_LEVEL=WARN
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-localhost}
+      - TZ=UTC
+    volumes:
+      - openvidu_recordings:/opt/openvidu/recordings
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      coturn:
+        condition: service_healthy
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.7
+        aliases:
+          - openvidu-server
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        # Local-Prod: Reduced limits for local testing
+        limits:
+          cpus: "1.5"      # Production: 2.0
+          memory: 2G       # Production: 4GB
+        reservations:
+          cpus: "0.5"      # Production: 1.0
+          memory: 1G       # Production: 2GB
+    labels:
+      - "app.environment=local-prod"
+
+  coturn:
+    profiles: ["infrastructure"]
+    image: coturn/coturn:latest
+    container_name: local-prod-coturn
+    hostname: coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
+    environment:
+      - TZ=UTC
+      # Domain configuration: Use same domain as API (set in .env files)
+      - COTURN_DOMAIN=${COTURN_DOMAIN:-turn.ishswami.in}
+      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
+    command:
+      - -n
+      - --log-file=stdout
+      - --listening-ip=0.0.0.0
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49200
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=openvidu:${COTURN_PASSWORD}
+      # Use dedicated subdomain for TURN server
+      - --realm=${COTURN_DOMAIN:-turn.ishswami.in}
+      - --server-name=${COTURN_DOMAIN:-turn.ishswami.in}
+      - --no-cli
+      # TLS Configuration - Not needed for local-prod environment
+      # Local development uses STUN/TURN over UDP/TCP (port 3478) only
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.8
+        aliases:
+          - coturn
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "app.environment=local-prod"
+
+  # Application Services (Profile: app)
+  api:
+    profiles: ["app"]
+    # Local-Prod: Build locally instead of using pre-built image
+    # Prisma Client is generated during Docker build (see Dockerfile line 34)
+    # NOT generated in CI or at container startup - only during build
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile
+      target: production
+      pull: false
+    container_name: local-prod-api
+    hostname: api
+    ports:
+      - "${PORT:-8088}:${PORT:-8088}"
+    env_file:
+      - ../../.env.local-prod
+      - ../../.env.local  # Optional, highest priority
+    volumes:
+      - ./logs:/app/logs
+      # Local-Prod: Mount source for easier debugging (optional, comment out for production-like behavior)
+      # - ../../src:/app/src:ro
+    environment:
+      NODE_ENV: local-prod
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      # Local-Prod: Use HTTP for local testing
+      ENABLE_HTTP2: "false"
+      # Local-Prod: Local URLs
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:8088,http://localhost:8082,https://localhost:4443}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Local-Prod: Reduced connection pool for local testing
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=40&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=40
+      # Cache Provider Configuration
+      CACHE_PROVIDER: dragonfly
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:local-prod:"
+      TRUST_PROXY: 1
+      PRISMA_SCHEMA_PATH: ${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-8088}
+      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}
+      SOCKET_HOST: ${SOCKET_HOST:-0.0.0.0}
+      SOCKET_PORT: ${SOCKET_PORT:-8088}
+      NPM_CONFIG_LOGLEVEL: error
+      # Local-Prod: Local URLs
+      API_URL: ${API_URL:-http://localhost:8088}
+      SWAGGER_URL: ${SWAGGER_URL:-/docs}
+      BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
+      SOCKET_URL: ${SOCKET_URL:-/socket.io}
+      LOGGER_URL: ${LOGGER_URL:-/logger}
+      BASE_URL: ${BASE_URL:-http://localhost:8088}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      MAIN_DOMAIN: ${MAIN_DOMAIN:-localhost}
+      API_DOMAIN: ${API_DOMAIN:-localhost}
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-localhost}
+      JWT_SECRET: ${JWT_SECRET:-local-prod-jwt-secret-change-in-production-min-32-chars}
+      JWT_EXPIRATION: 24h
+      # Session Configuration
+      SESSION_SECRET: ${SESSION_SECRET:-local-prod-session-secret-change-in-production-min-32-chars-long}
+      SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
+      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-false}
+      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-lax}
+      COOKIE_SECRET: ${COOKIE_SECRET:-local-prod-cookie-secret-change-in-production-min-32-chars}
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      SECURITY_RATE_LIMIT: "true"
+      # Local-Prod: Reduced rate limits for local testing
+      SECURITY_RATE_LIMIT_MAX: 2000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
+      CACHE_TTL: 3600
+      CACHE_PREFIX: "healthcare:local-prod:"
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 300
+      API_RATE_LIMIT: 500
+      AUTH_RATE_LIMIT: 30
+      HEAVY_RATE_LIMIT: 50
+      USER_RATE_LIMIT: 250
+      HEALTH_RATE_LIMIT: 1000
+      # Video Configuration
+      VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
+      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
+      # OPENVIDU_URL must be set in .env.local-prod or environment variables
+      # Do NOT hardcode - use environment variable to allow proper configuration
+      OPENVIDU_URL: ${OPENVIDU_URL}
+      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
+    expose:
+      - "${PORT:-8088}"
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.5
+        aliases:
+          - api.localhost
+    dns: []
+    extra_hosts:
+      - "api:172.18.0.5"
+      - "postgres:172.18.0.2"
+      - "dragonfly:172.18.0.4"
+      - "openvidu-server:172.18.0.7"
+      - "coturn:172.18.0.8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      coturn:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        # Local-Prod: Reduced limits for local testing
+        limits:
+          cpus: "2.0"      # Production: 3.0
+          memory: 4G       # Production: 6GB
+        reservations:
+          cpus: "1.0"      # Production: 1.5
+          memory: 1G       # Production: 2GB
+    # Migrations run automatically via CMD in Dockerfile before starting the app
+    labels:
+      - "com.docker.compose.service=api"
+      - "app.component=backend"
+      - "app.type=api"
+      - "app.environment=local-prod"
+
+  worker:
+    profiles: ["app"]
+    # Local-Prod: Build locally instead of using pre-built image
+    # Prisma Client is generated during Docker build (see Dockerfile line 34)
+    # NOT generated in CI or at container startup - only during build
+    build:
+      context: ../..
+      dockerfile: devops/docker/Dockerfile
+      target: production
+      pull: false
+    container_name: local-prod-worker
+    hostname: worker
+    env_file:
+      - ../../.env.local-prod
+      - ../../.env.local  # Optional, highest priority
+    environment:
+      NODE_ENV: local-prod
+      APP_MODE: worker
+      SERVICE_NAME: worker
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      # Local-Prod: Reduced connection pool for local testing
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=20&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=10&max_connections=20
+      PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
+      # Cache Provider Configuration
+      CACHE_PROVIDER: dragonfly
+      CACHE_ENABLED: "true"
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:local-prod:"
+      # JWT Configuration
+      JWT_SECRET: ${JWT_SECRET:-local-prod-jwt-secret-change-in-production-min-32-chars}
+      # BullMQ Worker Configuration - Local-Prod: Reduced concurrency
+      BULL_WORKER_CONCURRENCY: "5"
+      BULL_MAX_JOBS_PER_WORKER: "50"
+      # Logging Configuration
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      # Email Configuration (Optional)
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      # Firebase Configuration (Optional)
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.6
+        aliases:
+          - worker.localhost
+    dns: []
+    extra_hosts:
+      - "worker:172.18.0.6"
+      - "postgres:172.18.0.2"
+      - "dragonfly:172.18.0.4"
+      - "openvidu-server:172.18.0.7"
+      - "coturn:172.18.0.8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        # Local-Prod: Reduced limits for local testing
+        limits:
+          cpus: "0.5"      # Production: 1.0
+          memory: 1G       # Production: 2GB
+        reservations:
+          cpus: "0.25"     # Production: 0.5
+          memory: 256M     # Production: 512MB
+    # Worker doesn't need migrations - only API container runs them
+    # Prisma Client is generated during Docker build, entrypoint verifies it exists
+    command: ["node", "dist/worker-bootstrap.js"]
+    labels:
+      - "com.docker.compose.service=worker"
+      - "app.component=worker"
+      - "app.type=worker"
+      - "app.environment=local-prod"
+
+  # Portainer - Docker Management UI (like Vercel Dashboard)
+  # Provides comprehensive Docker management: containers, images, networks, volumes, logs, stats
+  # Access at: http://localhost:9000
+  # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
+  portainer:
+    profiles: ["infrastructure"]
+    image: portainer/portainer-ce:latest
+    container_name: local-prod-portainer
+    ports:
+      - "9000:9000"
+      - "9443:9443"  # HTTPS port (optional)
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.9
+    restart: unless-stopped
+    # Optimized command: minimal logging, no analytics
+    command: >
+      -H unix:///var/run/docker.sock
+      --no-analytics
+    environment:
+      # Minimize disk usage: reduce logging, disable telemetry
+      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+    # Strict resource limits to prevent excessive disk usage
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M  # Minimal memory allocation
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status || exit 1"]
+      interval: 30s  # Reduced frequency to save resources
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
+  dragonfly_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/dragonfly
+  openvidu_recordings:
+    name: local-prod_openvidu_recordings
+  portainer_data:
+    name: local-prod_portainer_data
+    # Portainer data is minimal: only stores user preferences and settings
+    # Expected size: < 50MB (snapshots disabled, minimal logging)
+
+networks:
+  app-network:
+    name: local-prod_app_network
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+

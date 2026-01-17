@@ -12,6 +12,8 @@ import {
   PaymentStatus,
   PaymentMethod,
 } from '@core/types/enums.types';
+import { IsOptional, IsNotEmpty } from 'class-validator';
+import { IsClinicId } from '@core/decorators/clinic-id.validator';
 
 // Billing Plan DTOs
 export class CreateBillingPlanDto {
@@ -23,6 +25,8 @@ export class CreateBillingPlanDto {
   intervalCount?: number = 1;
   trialPeriodDays?: number;
   features?: Record<string, unknown>;
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
   metadata?: Record<string, unknown>;
   appointmentsIncluded?: number;
@@ -46,6 +50,8 @@ export class UpdateBillingPlanDto {
 export class CreateSubscriptionDto {
   userId!: string;
   planId!: string;
+  @IsNotEmpty({ message: 'Clinic ID is required' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
   startDate?: string;
   endDate?: string;
@@ -64,6 +70,8 @@ export class UpdateSubscriptionDto {
 // Payment DTOs
 export class CreatePaymentDto {
   amount!: number;
+  @IsNotEmpty({ message: 'Clinic ID is required' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
   appointmentId?: string;
   userId?: string;
@@ -86,6 +94,8 @@ export class UpdatePaymentDto {
 // Invoice DTOs
 export class CreateInvoiceDto {
   userId!: string;
+  @IsNotEmpty({ message: 'Clinic ID is required' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
   subscriptionId?: string;
   amount!: number;
@@ -196,6 +206,8 @@ export class InvoiceResponseDto {
 
 // Query DTOs
 export class BillingPlanQueryDto {
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
   isActive?: boolean;
   search?: string;
@@ -203,12 +215,16 @@ export class BillingPlanQueryDto {
 
 export class SubscriptionQueryDto {
   userId?: string;
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
   status?: SubscriptionStatus;
 }
 
 export class PaymentQueryDto {
   userId?: string;
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
   status?: PaymentStatus;
   startDate?: string;
@@ -217,6 +233,8 @@ export class PaymentQueryDto {
 
 export class InvoiceQueryDto {
   userId?: string;
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
   status?: InvoiceStatus;
   startDate?: string;

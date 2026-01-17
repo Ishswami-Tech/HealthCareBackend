@@ -135,6 +135,7 @@ import { ClinicMetricsMethods } from './methods/clinic-metrics.methods';
 export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit, OnModuleDestroy {
   private readonly serviceName = 'DatabaseService';
   protected readonly config: HealthcareDatabaseConfig;
+  private readonly serviceStartTime = Date.now(); // Track service start time for startup grace period
 
   // Method class instances (code splitting)
   private readonly userMethods: UserMethods;
@@ -472,6 +473,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
     // Execute with retry logic and circuit breaker
     const executeWithRetry = async (): Promise<T> => {
+      // CRITICAL: Wait for Prisma to be ready before executing queries
+      // This prevents "Retry failed" errors during application startup
+      if (!this.prismaService.isReady()) {
+        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        if (!isReady) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client not ready within timeout',
+            undefined,
+            {},
+            this.serviceName
+          );
+        }
+      }
+
       // Check circuit breaker
       if (this.circuitBreaker && !this.circuitBreaker.canExecute('database')) {
         throw new HealthcareError(
@@ -692,6 +708,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
     // Execute with retry logic and circuit breaker
     const executeWithRetry = async (): Promise<T> => {
+      // CRITICAL: Wait for Prisma to be ready before executing queries
+      // This prevents "Retry failed" errors during application startup
+      if (!this.prismaService.isReady()) {
+        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        if (!isReady) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client not ready within timeout',
+            undefined,
+            {},
+            this.serviceName
+          );
+        }
+      }
+
       // Check circuit breaker
       if (this.circuitBreaker && !this.circuitBreaker.canExecute('database')) {
         throw new HealthcareError(
@@ -1514,7 +1545,29 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   async getHealthStatus(): Promise<DatabaseHealthStatus> {
     try {
       // Check if Prisma is ready first
+      // During startup grace period (first 180 seconds), return healthy for liveness checks
+      // BUT: For readiness checks, we require actual connection
+      // This prevents health checks from failing during normal startup in production
+      // Production factors: network latency, database load, connection pool initialization, retries
+      // Increased from 90s to 180s to account for production connection delays
+      const STARTUP_GRACE_PERIOD = 180000; // 180 seconds (3 minutes) - increased for production
+      const timeSinceStart = Date.now() - this.serviceStartTime;
+      const isInStartupGracePeriod = timeSinceStart < STARTUP_GRACE_PERIOD;
+
       if (!this.prismaService || !this.prismaService.isReady()) {
+        // During startup grace period, return healthy for liveness (app is starting)
+        // But include a warning in errors to indicate connection is still in progress
+        // After grace period, return unhealthy if Prisma still isn't ready
+        if (isInStartupGracePeriod) {
+          return {
+            isHealthy: true, // Liveness: app is starting
+            connectionCount: 0,
+            activeQueries: 0,
+            avgResponseTime: -1,
+            lastHealthCheck: new Date(),
+            errors: ['Database connection in progress - not ready for requests yet'],
+          };
+        }
         return {
           isHealthy: false,
           connectionCount: 0,

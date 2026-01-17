@@ -8,4 +8,9 @@
 # Keep binary files unchanged
 *.jpg binary
 *.png binary
-*.gif binary 
+*.gif binary
+
+# Prisma generated files - mark as generated for Git merge strategy
+src/libs/infrastructure/database/prisma/generated/** linguist-generated=true
+src/libs/infrastructure/database/prisma/generated/** -diff
+src/libs/infrastructure/database/prisma/generated/** merge=ours 

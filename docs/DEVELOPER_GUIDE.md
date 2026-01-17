@@ -33,17 +33,17 @@ git clone <repository-url>
 cd HealthCareBackend
 
 # Install dependencies
-npm install
+yarn install
 
 # Setup environment
 cp .env.example .env
 # Edit .env with your configuration
 
 # Run database migrations
-npx prisma migrate dev
+yarn prisma migrate dev
 
 # Start development server
-npm run start:dev
+yarn start:dev
 ```
 
 ---
@@ -123,6 +123,7 @@ Environment variables loaded in order (later overrides earlier):
 ### Quick Reference
 
 **Application**:
+
 ```env
 NODE_ENV=development
 PORT=8088
@@ -131,12 +132,14 @@ API_PREFIX=/api/v1
 ```
 
 **Database**:
+
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/healthcare
 DIRECT_URL=postgresql://user:password@localhost:5432/healthcare
 ```
 
 **Cache**:
+
 ```env
 CACHE_ENABLED=true
 CACHE_PROVIDER=dragonfly
@@ -145,6 +148,7 @@ DRAGONFLY_PORT=6379
 ```
 
 **Video**:
+
 ```env
 VIDEO_ENABLED=true
 VIDEO_PROVIDER=openvidu
@@ -199,6 +203,7 @@ export class SharedModule {}
 ```
 
 **Detection**:
+
 ```bash
 npx madge --circular --extensions ts src/
 ```
@@ -208,6 +213,7 @@ npx madge --circular --extensions ts src/
 **Problem**: Connection pool exhausted or timeout errors.
 
 **Solution**:
+
 ```env
 # Increase connection pool
 DB_POOL_SIZE=50
@@ -215,6 +221,7 @@ DB_CONNECTION_TIMEOUT=30000
 ```
 
 **Check Connection Pool**:
+
 ```typescript
 // Monitor pool usage
 const poolStats = await databaseService.getConnectionPoolStats();
@@ -225,6 +232,7 @@ const poolStats = await databaseService.getConnectionPoolStats();
 **Problem**: Cache not working or stale data.
 
 **Solution**:
+
 ```typescript
 // Clear cache
 await cacheService.deleteByTag('users');
@@ -238,6 +246,7 @@ const isHealthy = await cacheService.isHealthy();
 **Problem**: Video service not working.
 
 **Solution**:
+
 ```typescript
 // Check provider health
 const isHealthy = await videoService.isHealthy();
@@ -266,6 +275,7 @@ import { DatabaseService } from '../../../libs/infrastructure/database/database.
 ```
 
 **Available Aliases**:
+
 - `@services/*` → `src/services/*`
 - `@infrastructure/*` → `src/libs/infrastructure/*`
 - `@dtos/*` → `src/libs/dtos/*`
@@ -278,6 +288,7 @@ import { DatabaseService } from '../../../libs/infrastructure/database/database.
 ### TypeScript Standards
 
 **Zero Tolerance Rules**:
+
 - ❌ No `any` types
 - ❌ No relative imports
 - ❌ No `console.log` (use `LoggingService`)
@@ -285,6 +296,7 @@ import { DatabaseService } from '../../../libs/infrastructure/database/database.
 - ❌ No missing input validation
 
 **Example**:
+
 ```typescript
 // ✅ GOOD
 async findUser(id: string): Promise<User | null> {
@@ -304,6 +316,7 @@ async findUser(id: any): Promise<any> {
 ### Error Handling
 
 **Always use HealthcareError**:
+
 ```typescript
 import { HealthcareError, ErrorCode } from '@core/errors';
 
@@ -321,6 +334,7 @@ if (!user) {
 ### Logging
 
 **Always use LoggingService**:
+
 ```typescript
 import { LoggingService, LogType, LogLevel } from '@logging';
 
@@ -336,6 +350,7 @@ await this.loggingService.log(
 ### Database Queries
 
 **Always use safe methods**:
+
 ```typescript
 // ✅ GOOD - Uses safe method with pagination
 const users = await this.databaseService.findUsersSafe(
@@ -350,6 +365,7 @@ const users = await prisma.user.findMany({ where: { role: 'PATIENT' } });
 ### RBAC
 
 **Always protect endpoints**:
+
 ```typescript
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 @RequireResourcePermission('appointments', 'read')

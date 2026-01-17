@@ -7,6 +7,7 @@
  * - Standardized error handling (DRY)
  * - Service availability checking (DRY)
  * - Result formatting (DRY)
+ * - Uses centralized LoggingService (per .ai-rules/ coding standards)
  *
  * Each concrete indicator only needs to implement:
  * - getHealthStatus(): Promise<T> - Fetch health status from service
@@ -14,7 +15,7 @@
  * - getServiceName(): string - Return service name for error messages
  */
 
-import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestjs/terminus';
+import { HealthIndicatorResult, HealthCheckError } from './types';
 
 /**
  * Base class for all health indicators
@@ -22,8 +23,9 @@ import { HealthIndicator, HealthIndicatorResult, HealthCheckError } from '@nestj
  * - Single Responsibility: Each indicator only checks one service
  * - Open/Closed: Open for extension via abstract methods, closed for modification
  * - Dependency Inversion: Depends on abstractions (service interfaces)
+ * - No Terminus dependency - uses only LoggingService (per .ai-rules/ coding standards)
  */
-export abstract class BaseHealthIndicator<T = unknown> extends HealthIndicator {
+export abstract class BaseHealthIndicator<T = unknown> {
   /**
    * Get health status from the service
    * Must be implemented by concrete indicators
@@ -64,9 +66,13 @@ export abstract class BaseHealthIndicator<T = unknown> extends HealthIndicator {
    */
   async check(key: string): Promise<HealthIndicatorResult> {
     // Check service availability
-    if (!this.isServiceAvailable()) {
-      return this.getStatus(key, true, {
+    const serviceAvailable = this.isServiceAvailable();
+    if (!serviceAvailable) {
+      // Service not available - return inactive status
+      // Logging is handled by individual indicators if needed
+      return this.getStatus(key, false, {
         message: this.getUnavailableMessage(),
+        status: 'inactive',
       });
     }
 
@@ -135,5 +141,23 @@ export abstract class BaseHealthIndicator<T = unknown> extends HealthIndicator {
 
     // Throw new HealthCheckError for other errors
     throw new HealthCheckError(`${this.getServiceName()} health check failed`, result);
+  }
+
+  /**
+   * Get status result (replaces Terminus HealthIndicator.getStatus)
+   * Creates standardized health indicator result format
+   */
+  protected getStatus(
+    key: string,
+    isHealthy: boolean,
+    data?: Record<string, unknown>
+  ): HealthIndicatorResult {
+    const result: HealthIndicatorResult = {
+      [key]: {
+        status: isHealthy ? 'up' : 'down',
+        ...(data || {}),
+      },
+    };
+    return result;
   }
 }

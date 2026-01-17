@@ -13,16 +13,15 @@
       {
         "include": "views/**/*",
         "outDir": "dist/src"
+      },
+      {
+        "include": "src/libs/infrastructure/database/prisma/generated/**/*",
+        "outDir": "dist/libs/infrastructure/database/prisma/generated"
       }
     ],
     "watchAssets": true,
     "watchMode": true,
     "tsConfigPath": "tsconfig.json"
   },
-  "exclude": [
-    "node_modules",
-    "dist",
-    "**/prisma/generated/**",
-    "src/libs/infrastructure/database/prisma/generated/**"
-  ]
+  "exclude": ["node_modules", "dist"]
 }

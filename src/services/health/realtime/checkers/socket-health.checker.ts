@@ -8,6 +8,7 @@ import { Server } from 'socket.io';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { RealtimeHealthCheckResult } from '@core/types';
+import { SocketService } from '@communication/channels/socket/socket.service';
 
 @Injectable()
 export class SocketHealthChecker {
@@ -16,11 +17,16 @@ export class SocketHealthChecker {
   constructor(
     @Optional()
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService?: LoggingService
+    private readonly loggingService?: LoggingService,
+    @Optional()
+    @Inject(forwardRef(() => SocketService))
+    private readonly socketService?: SocketService
   ) {}
 
   /**
    * Check Socket.IO server health
+   * Uses SocketService to get the main Socket.IO server instance
+   * Falls back to passed server if SocketService is not available
    */
   async check(server?: Server): Promise<RealtimeHealthCheckResult> {
     const startTime = Date.now();
@@ -28,7 +34,25 @@ export class SocketHealthChecker {
     // Add minimal async operation to satisfy require-await rule
     await Promise.resolve();
 
-    if (!server) {
+    // Try to get main Socket.IO server from SocketService first
+    let mainServer: Server | undefined;
+    if (this.socketService) {
+      try {
+        const isInitialized = this.socketService.getInitializationState();
+        if (isInitialized) {
+          mainServer = this.socketService.getServer();
+        }
+      } catch (_error) {
+        // SocketService not initialized or error getting server
+        // Fall back to passed server
+        mainServer = server;
+      }
+    } else {
+      // SocketService not available, use passed server
+      mainServer = server;
+    }
+
+    if (!mainServer) {
       return {
         service: 'socket',
         status: 'unhealthy',
@@ -38,19 +62,26 @@ export class SocketHealthChecker {
     }
 
     try {
-      // Lightweight check: Verify server is initialized
-      const isInitialized = server !== null && server !== undefined;
-      const engine = server.engine;
+      // Lightweight check: Verify server is initialized and ready
+      const isInitialized = mainServer !== null && mainServer !== undefined;
+      const engine = mainServer.engine;
       const isEngineReady = engine !== null && engine !== undefined;
+
+      // Additional check: Verify server engine has transports configured (indicates server is ready)
+      // This is more robust than just checking engine existence
+      const hasTransports =
+        engine?.opts?.transports &&
+        Array.isArray(engine.opts.transports) &&
+        engine.opts.transports.length > 0;
 
       const responseTime = Date.now() - startTime;
 
-      if (!isInitialized || !isEngineReady) {
+      if (!isInitialized || !isEngineReady || !hasTransports) {
         return {
           service: 'socket',
           status: 'unhealthy',
           responseTime,
-          error: 'Socket.IO server not properly initialized',
+          error: 'Socket.IO server not properly initialized or not ready',
         };
       }
 
@@ -61,6 +92,7 @@ export class SocketHealthChecker {
         details: {
           initialized: isInitialized,
           engineReady: isEngineReady,
+          hasTransports: hasTransports,
         },
       };
     } catch (error) {

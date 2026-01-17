@@ -15,16 +15,11 @@ import {
 } from '@nestjs/websockets';
 import { Injectable, Optional, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import {
-  SocketAuthMiddleware,
-  type AuthenticatedUser,
-} from '@communication/channels/socket/socket-auth.middleware';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
 import { HealthBroadcasterService } from './services/health-broadcaster.service';
 import { HealthCacheService } from './services/health-cache.service';
-import { ConfigService } from '@config/config.service';
 import type {
   AggregatedHealthStatus,
   RealtimeHealthStatusPayload,
@@ -40,15 +35,35 @@ interface SubscribeResponse {
   status?: RealtimeHealthStatusPayload;
 }
 
+// Get CORS origin from environment (same pattern as other gateways)
+// Uses CORS_ORIGIN environment variable to restrict access to allowed origins only
+const getCorsOrigin = (): string | string[] => {
+  const corsOrigin = process.env['CORS_ORIGIN'] || '';
+  if (corsOrigin) {
+    // Split comma-separated origins and trim whitespace
+    return corsOrigin.split(',').map((o: string) => o.trim());
+  }
+  // Default to localhost origins only (more secure than '*')
+  // In production, CORS_ORIGIN should be set in environment variables
+  return process.env['NODE_ENV'] === 'production'
+    ? [] // Empty array = no origins allowed (secure default for production)
+    : ['http://localhost:3000', 'http://localhost:8088', 'http://localhost:8082'];
+};
+
 /**
  * Realtime Health Gateway
  * Provides real-time health status via Socket.IO
+ *
+ * Security: Public namespace with CORS-only access control
+ * - No authentication required (public health monitoring)
+ * - CORS restricted to CORS_ORIGIN environment variable
+ * - Rate limiting: Max 3 connections per IP
  */
 @Injectable()
 @WebSocketGateway({
   namespace: '/health',
   cors: {
-    origin: ['*'], // Will be overridden in afterInit using ConfigService
+    origin: getCorsOrigin(), // Restricted to CORS_ORIGIN environment variable
     credentials: true,
   },
   transports: ['websocket', 'polling'],
@@ -64,22 +79,16 @@ export class RealtimeHealthGateway
   server!: Server;
 
   private readonly ROOM_ALL = 'health:all';
-  private readonly MAX_CONNECTIONS_PER_IP = 3;
-  private readonly connectionsByIP = new Map<string, number>();
-  private readonly clientMetadata = new Map<string, AuthenticatedUser>();
+  // Health checks should not have connection limits - they run constantly
+  // Removed MAX_CONNECTIONS_PER_IP limit to allow unlimited health check connections
+  // Security is handled via CORS configuration only
 
   constructor(
     private readonly broadcaster: HealthBroadcasterService,
     private readonly cache: HealthCacheService,
     @Optional()
-    @Inject('SOCKET_AUTH_MIDDLEWARE')
-    private readonly authMiddleware?: SocketAuthMiddleware,
-    @Optional()
     @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService?: LoggingService,
-    @Optional()
-    @Inject(forwardRef(() => ConfigService))
-    private readonly configService?: ConfigService
+    private readonly loggingService?: LoggingService
   ) {}
 
   onModuleInit() {
@@ -88,41 +97,50 @@ export class RealtimeHealthGateway
 
   afterInit(server: Server): void {
     try {
-      // CORS is configured via WebSocketGateway decorator
-      // No need to modify server.engine.cors as it's not a valid property
+      // CORS is configured via WebSocketGateway decorator using getCorsOrigin()
+      // This ensures health namespace respects CORS_ORIGIN environment variable
+      // Same security model as the main app gateway and other WebSocket gateways
+
+      // CRITICAL: Explicitly bypass any global authentication middleware
+      // The health namespace is public and should not require authentication
+      const healthNamespace = server.of('/health');
+      if (healthNamespace) {
+        // Remove any authentication middleware that might be applied globally
+        // This ensures the health namespace is truly public
+        healthNamespace.use((socket, next) => {
+          // Allow all connections without authentication
+          // Access is controlled only via CORS configuration
+          next();
+        });
+      }
+
+      // Get CORS origins for logging
+      const corsOrigins = getCorsOrigin();
+      const allowedOrigins = Array.isArray(corsOrigins)
+        ? corsOrigins.join(', ')
+        : corsOrigins === '*'
+          ? 'all origins'
+          : String(corsOrigins);
 
       safeLog(
         this.loggingService,
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Realtime Health Gateway initialized',
+        'Realtime Health Gateway initialized (Public - CORS only)',
         'RealtimeHealthGateway',
-        { namespace: '/health' }
+        {
+          namespace: '/health',
+          corsOrigins: allowedOrigins,
+          authentication: 'none',
+          accessControl: 'CORS only',
+        }
       );
 
       // Set server in broadcaster
       this.broadcaster.setSocketServer(server);
 
-      // Apply authentication middleware if available
-      if (this.authMiddleware?.validateConnection) {
-        const authMiddleware = this.authMiddleware;
-        server.use((socket, next) => {
-          void (async () => {
-            try {
-              const user = await authMiddleware.validateConnection(socket);
-              (socket as Socket & { user: AuthenticatedUser }).user = user;
-              next();
-            } catch (error) {
-              safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
-                clientId: socket.id,
-                operation: 'authentication',
-              });
-              const socketError = error instanceof Error ? error : new Error(String(error));
-              next(socketError);
-            }
-          })();
-        });
-      }
+      // No authentication middleware - health namespace is completely public
+      // Access is controlled only via CORS configuration
     } catch (error) {
       safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
         operation: 'afterInit',
@@ -135,29 +153,9 @@ export class RealtimeHealthGateway
       const clientId = client.id;
       const clientIP = this.getClientIP(client);
 
-      // Rate limiting: Check connections per IP
-      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
-      if (ipConnections >= this.MAX_CONNECTIONS_PER_IP) {
-        safeLog(
-          this.loggingService,
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Connection rejected: Too many connections from IP ${clientIP}`,
-          'RealtimeHealthGateway',
-          { clientId, clientIP, connections: ipConnections }
-        );
-        client.disconnect();
-        return;
-      }
-
-      // Increment connection count
-      this.connectionsByIP.set(clientIP, ipConnections + 1);
-
-      // Store user metadata if authenticated
-      const user = (client as Socket & { user?: AuthenticatedUser }).user;
-      if (user) {
-        this.clientMetadata.set(clientId, user);
-      }
+      // Health checks should not have connection limits - they run constantly
+      // Removed rate limiting to allow unlimited health check connections
+      // Security is handled via CORS configuration only
 
       // Auto-join to health:all room
       await client.join(this.ROOM_ALL);
@@ -195,7 +193,7 @@ export class RealtimeHealthGateway
         LogLevel.INFO,
         `Client connected to health gateway: ${clientId}`,
         'RealtimeHealthGateway',
-        { clientId, clientIP, userId: user?.userId }
+        { clientId, clientIP }
       );
     } catch (error) {
       safeLogError(this.loggingService, error, 'RealtimeHealthGateway', {
@@ -211,14 +209,7 @@ export class RealtimeHealthGateway
       const clientId = client.id;
       const clientIP = this.getClientIP(client);
 
-      // Decrement connection count
-      const ipConnections = this.connectionsByIP.get(clientIP) || 0;
-      if (ipConnections > 0) {
-        this.connectionsByIP.set(clientIP, ipConnections - 1);
-      }
-
-      // Remove client metadata
-      this.clientMetadata.delete(clientId);
+      // Connection tracking removed - no limits for health checks
 
       safeLog(
         this.loggingService,

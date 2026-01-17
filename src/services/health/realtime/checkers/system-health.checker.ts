@@ -16,6 +16,10 @@ export class SystemHealthChecker {
   private errorCount = 0;
   private lastRequestTime = Date.now();
 
+  // Real-time CPU tracking
+  private previousCpuUsage: NodeJS.CpuUsage | null = null;
+  private previousCpuTimestamp: number = Date.now();
+
   constructor(
     @Optional()
     @Inject(forwardRef(() => LoggingService))
@@ -23,15 +27,48 @@ export class SystemHealthChecker {
   ) {}
 
   /**
-   * Get system metrics
+   * Get system metrics with real-time CPU calculation
    */
   getSystemMetrics(): RealtimeSystemMetrics {
     try {
-      // CPU usage (simplified - actual CPU usage requires more complex calculation)
       const cpuCount = cpus().length;
-      const cpuUsage = process.cpuUsage();
-      const cpuPercent =
-        ((cpuUsage.user + cpuUsage.system) / 1000000 / cpuCount / process.uptime()) * 100;
+      const now = Date.now();
+      const currentCpuUsage = process.cpuUsage();
+
+      // Calculate real-time CPU percentage using delta between measurements
+      let cpuPercent = 0;
+
+      if (this.previousCpuUsage !== null) {
+        // Calculate CPU time delta (microseconds)
+        const cpuDelta = {
+          user: currentCpuUsage.user - this.previousCpuUsage.user,
+          system: currentCpuUsage.system - this.previousCpuUsage.system,
+        };
+        const totalCpuDelta = cpuDelta.user + cpuDelta.system;
+
+        // Calculate time delta (milliseconds -> seconds)
+        const timeDelta = (now - this.previousCpuTimestamp) / 1000;
+
+        // Real-time CPU percentage: (cpu_time_delta / time_delta / cpu_count) * 100
+        // cpu_time_delta is in microseconds, convert to seconds by dividing by 1,000,000
+        if (timeDelta > 0 && cpuCount > 0) {
+          cpuPercent = (totalCpuDelta / 1000000 / timeDelta / cpuCount) * 100;
+          // Cap at 100% per core (can exceed 100% if using multiple cores, but cap for display)
+          cpuPercent = Math.min(100, Math.max(0, cpuPercent));
+        }
+      } else {
+        // First call: use average CPU since process start (fallback)
+        const uptime = process.uptime();
+        if (uptime > 0 && cpuCount > 0) {
+          cpuPercent =
+            ((currentCpuUsage.user + currentCpuUsage.system) / 1000000 / uptime / cpuCount) * 100;
+          cpuPercent = Math.min(100, Math.max(0, cpuPercent));
+        }
+      }
+
+      // Update previous values for next calculation
+      this.previousCpuUsage = currentCpuUsage;
+      this.previousCpuTimestamp = now;
 
       // Memory usage
       const totalMem = totalmem();
@@ -40,7 +77,7 @@ export class SystemHealthChecker {
       const memoryPercent = (usedMem / totalMem) * 100;
 
       // Request rate (simplified - would need actual request tracking)
-      const now = Date.now();
+      // Reuse 'now' variable from above
       const timeDiff = (now - this.lastRequestTime) / 1000; // seconds
       const requestRate = timeDiff > 0 ? this.requestCount / timeDiff : 0;
       this.requestCount = 0;

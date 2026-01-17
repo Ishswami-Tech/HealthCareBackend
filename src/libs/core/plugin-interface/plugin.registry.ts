@@ -9,11 +9,18 @@
  */
 
 // External imports
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  Injectable,
+  OnModuleInit,
+  OnModuleDestroy,
+  Inject,
+  forwardRef,
+  Optional,
+} from '@nestjs/common';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
+import { EventService } from '@infrastructure/events/event.service';
 
 // Internal imports - Core
 import { PluginError, PluginValidationError } from './plugin.interface';
@@ -47,7 +54,9 @@ export class EnterprisePluginRegistry
 
   constructor(
     private readonly loggingService: LoggingService,
-    private readonly eventEmitter: EventEmitter2
+    @Optional()
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService?: EventService
   ) {}
 
   /**
@@ -147,13 +156,15 @@ export class EnterprisePluginRegistry
         this.featureIndex.get(feature)?.add(plugin.name);
       }
 
-      // Emit registration event
-      this.eventEmitter.emit('plugin.registered', {
-        type: 'plugin.registered',
-        pluginName: plugin.name,
-        timestamp: new Date(),
-        data: { version: plugin.version, features: plugin.features },
-      });
+      // Emit registration event via EventService (centralized event hub)
+      if (this.eventService) {
+        await this.eventService.emit('plugin.registered', {
+          type: 'plugin.registered',
+          pluginName: plugin.name,
+          timestamp: new Date(),
+          data: { version: plugin.version, features: plugin.features },
+        });
+      }
 
       const duration = Date.now() - startTime;
       await this.loggingService.log(
@@ -241,12 +252,14 @@ export class EnterprisePluginRegistry
         }
       }
 
-      // Emit unregistration event
-      this.eventEmitter.emit('plugin.unregistered', {
-        type: 'plugin.unregistered',
-        pluginName,
-        timestamp: new Date(),
-      });
+      // Emit unregistration event via EventService (centralized event hub)
+      if (this.eventService) {
+        await this.eventService.emit('plugin.unregistered', {
+          type: 'plugin.unregistered',
+          pluginName,
+          timestamp: new Date(),
+        });
+      }
 
       const duration = Date.now() - startTime;
       await this.loggingService.log(

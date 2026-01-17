@@ -157,7 +157,15 @@ export class PaymentConfigService implements OnModuleInit {
   private async fetchFromDatabase(clinicId: string): Promise<ClinicPaymentConfig | null> {
     try {
       const clinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findUnique({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { settings: true };
+            }) => Promise<{ settings: unknown } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: clinicId },
           select: { settings: true },
         });
@@ -209,7 +217,15 @@ export class PaymentConfigService implements OnModuleInit {
     try {
       // Get current clinic settings to preserve other settings
       const currentClinic = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findUnique({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findUnique: (args: {
+              where: { id: string };
+              select: { settings: true };
+            }) => Promise<{ settings: unknown } | null>;
+          };
+        };
+        return await clinicClient.clinic.findUnique({
           where: { id: config.clinicId },
           select: { settings: true },
         });
@@ -236,7 +252,15 @@ export class PaymentConfigService implements OnModuleInit {
       // Save to database with audit trail
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          return await client.clinic.update({
+          const clinicClient = client as unknown as {
+            clinic: {
+              update: (args: {
+                where: { id: string };
+                data: { settings: unknown };
+              }) => Promise<unknown>;
+            };
+          };
+          return await clinicClient.clinic.update({
             where: { id: config.clinicId },
             data: {
               settings: updatedSettings as never, // Prisma Json type

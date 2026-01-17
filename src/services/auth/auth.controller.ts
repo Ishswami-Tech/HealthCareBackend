@@ -98,13 +98,14 @@ export class AuthController {
     examples: {
       patient: {
         summary: 'Patient Registration',
-        description: 'Register a new patient',
+        description: 'Register a new patient with clinic ID (REQUIRED)',
         value: {
           email: 'patient@example.com',
           password: 'SecurePassword123!',
           firstName: 'John',
           lastName: 'Doe',
           phone: '+1234567890',
+          clinicId: 'CL0001', // REQUIRED - Sets primaryClinicId automatically
           role: 'PATIENT',
           gender: 'MALE',
           dateOfBirth: '1990-01-01',
@@ -183,7 +184,10 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.register(registerDto);
+      const result = await this.authService.register(registerDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -321,7 +325,10 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.login(loginDto);
+      const result = await this.authService.login(loginDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -426,10 +433,14 @@ export class AuthController {
     },
   })
   async refreshToken(
-    @Body() refreshTokenDto: RefreshTokenDto
+    @Body() refreshTokenDto: RefreshTokenDto,
+    @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthTokens>> {
     try {
-      const tokens = await this.authService.refreshToken(refreshTokenDto);
+      const tokens = await this.authService.refreshToken(refreshTokenDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
       return new DataResponseDto(tokens, 'Token refreshed successfully');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -561,7 +572,10 @@ export class AuthController {
       // If we have a sessionId, use the logout service
       // Otherwise, we can still blacklist the token (best effort)
       if (sessionId) {
-        const result = await this.authService.logout(sessionId);
+        const result = await this.authService.logout(sessionId, {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        });
         return new SuccessResponseDto(result.message);
       } else {
         // No sessionId - try to blacklist the token directly (best effort)
@@ -571,7 +585,10 @@ export class AuthController {
           const token = authHeader.substring(7);
           try {
             // Try to blacklist the token directly
-            await this.authService.logout(token); // This will try to blacklist if sessionId is the token itself
+            await this.authService.logout(token, {
+              userAgent: (req.headers['user-agent'] as string) || 'unknown',
+              ipAddress: req.ip || '127.0.0.1',
+            }); // This will try to blacklist if sessionId is the token itself
           } catch (_blacklistError) {
             // Log but don't fail - logout is best effort
           }
@@ -654,10 +671,14 @@ export class AuthController {
     },
   })
   async requestPasswordReset(
-    @Body() requestDto: PasswordResetRequestDto
+    @Body() requestDto: PasswordResetRequestDto,
+    @Request() req: FastifyRequestWithUser
   ): Promise<SuccessResponseDto> {
     try {
-      const result = await this.authService.requestPasswordReset(requestDto);
+      const result = await this.authService.requestPasswordReset(requestDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -737,9 +758,15 @@ export class AuthController {
       },
     },
   })
-  async resetPassword(@Body() resetDto: PasswordResetDto): Promise<SuccessResponseDto> {
+  async resetPassword(
+    @Body() resetDto: PasswordResetDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<SuccessResponseDto> {
     try {
-      const result = await this.authService.resetPassword(resetDto);
+      const result = await this.authService.resetPassword(resetDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -840,7 +867,10 @@ export class AuthController {
       if (!userId) {
         throw this.errors.invalidCredentials('AuthController.changePassword');
       }
-      const result = await this.authService.changePassword(userId, changePasswordDto);
+      const result = await this.authService.changePassword(userId, changePasswordDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -913,9 +943,15 @@ export class AuthController {
       },
     },
   })
-  async requestOtp(@Body() requestDto: RequestOtpDto): Promise<SuccessResponseDto> {
+  async requestOtp(
+    @Body() requestDto: RequestOtpDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<SuccessResponseDto> {
     try {
-      const result = await this.authService.requestOtp(requestDto);
+      const result = await this.authService.requestOtp(requestDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -1028,7 +1064,10 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.verifyOtp(verifyDto);
+      const result = await this.authService.verifyOtp(verifyDto, {
+        userAgent: (req.headers['user-agent'] as string) || 'unknown',
+        ipAddress: req.ip || '127.0.0.1',
+      });
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -1183,7 +1222,11 @@ export class AuthController {
     try {
       const result = await this.authService.authenticateWithGoogle(
         googleOAuthDto.token,
-        googleOAuthDto.clinicId
+        googleOAuthDto.clinicId,
+        {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        }
       );
 
       // Sync session to Fastify session if available

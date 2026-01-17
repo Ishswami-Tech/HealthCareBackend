@@ -3,7 +3,10 @@ import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { DatabaseService } from '@infrastructure/database';
+// Import directly from database.service to avoid TDZ circular dependency with barrel (@infrastructure/database)
+// Barrel loads DatabaseModule + database-service.export; when JwtAuthGuard->SessionManagementService
+// loads the barrel, _databaseserviceexport can be uninitialized. Direct import breaks the cycle.
+import { DatabaseService } from '@infrastructure/database/database.service';
 import { JwtService } from '@nestjs/jwt';
 import * as crypto from 'crypto';
 import type {

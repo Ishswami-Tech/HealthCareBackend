@@ -29,6 +29,7 @@ import type {
   Counselor,
   Clinic,
   AuditLog,
+  EmergencyContact,
 } from './database.types';
 import type { ClinicLocation } from './clinic.types';
 
@@ -523,6 +524,21 @@ export interface QueueEntryDelegate {
   groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
 }
 
+export interface EmergencyContactDelegate extends PrismaDelegateBase<EmergencyContact> {
+  findUnique: (args: PrismaDelegateArgs) => Promise<EmergencyContact | null>;
+  findFirst: (args: PrismaDelegateArgs) => Promise<EmergencyContact | null>;
+  findMany: (args: PrismaDelegateArgs) => Promise<EmergencyContact[]>;
+  create: (args: PrismaDelegateArgs) => Promise<EmergencyContact>;
+  update: (args: PrismaDelegateArgs) => Promise<EmergencyContact>;
+  delete: (args: PrismaDelegateArgs) => Promise<EmergencyContact>;
+  createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+  count: (args?: PrismaDelegateArgs) => Promise<number>;
+  aggregate: (args: PrismaDelegateArgs) => Promise<Record<string, never>>;
+  groupBy: (args: PrismaDelegateArgs) => Promise<Array<Record<string, never>>>;
+}
+
 // ============================================================================
 // Query and Transaction Delegates
 // ============================================================================
@@ -579,6 +595,7 @@ export interface PrismaClientWithDelegates {
   payment: PaymentDelegate;
   therapyQueue: TherapyQueueDelegate;
   queueEntry: QueueEntryDelegate;
+  emergencyContact: EmergencyContactDelegate;
   $transaction: TransactionDelegate['$transaction'];
 }
 
@@ -698,6 +715,7 @@ export interface PrismaClientLike {
   subscription: Record<string, never>;
   invoice: Record<string, never>;
   payment: Record<string, never>;
+  emergencyContact: Record<string, never>;
   $queryRaw: <T = Record<string, never>>(
     query: TemplateStringsArray | string,
     ...values: Array<string | number | boolean | null>
@@ -746,6 +764,7 @@ export interface StrictPrismaClient {
   payment: PaymentDelegate;
   therapyQueue: TherapyQueueDelegate;
   queueEntry: QueueEntryDelegate;
+  emergencyContact: EmergencyContactDelegate;
   $queryRaw: QueryRawDelegate['$queryRaw'];
   $transaction: TransactionDelegate['$transaction'];
   $connect: () => Promise<void>;

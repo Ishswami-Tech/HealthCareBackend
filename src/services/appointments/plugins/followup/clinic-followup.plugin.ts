@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentFollowUpService } from './appointment-followup.service';
+import { LoggingService } from '@infrastructure/logging';
 import type { FollowUpTemplate } from '@core/types/appointment.types';
 
 interface FollowUpPluginData {
@@ -39,13 +40,18 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
     'overdue-tracking',
   ];
 
-  constructor(private readonly followUpService: AppointmentFollowUpService) {
-    super();
+  constructor(
+    private readonly followUpService: AppointmentFollowUpService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as FollowUpPluginData;
-    this.logPluginAction('Processing clinic follow-up operation', {
+    await this.logPluginAction('Processing clinic follow-up operation', {
       operation: pluginData.operation,
     });
 
@@ -200,14 +206,14 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
         return await this.createSurgeryFollowUp(data);
 
       default:
-        this.logPluginError('Unknown follow-up operation', {
+        await this.logPluginError('Unknown follow-up operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown follow-up operation: ${pluginData.operation}`);
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as FollowUpPluginData;
     const requiredFields: Record<string, string[]> = {
       createFollowUpPlan: [
@@ -236,14 +242,14 @@ export class ClinicFollowUpPlugin extends BaseAppointmentPlugin {
     const required = requiredFields[operation];
 
     if (!required) {
-      this.logPluginError('Unknown operation for validation', { operation });
+      await this.logPluginError('Unknown operation for validation', { operation });
       return Promise.resolve(false);
     }
 
     for (const field of required) {
       const fieldValue = (pluginData as unknown as Record<string, unknown>)[field];
       if (!fieldValue) {
-        this.logPluginError(`Missing required field: ${field}`, {
+        await this.logPluginError(`Missing required field: ${field}`, {
           operation,
           field,
         });

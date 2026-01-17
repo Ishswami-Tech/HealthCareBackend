@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentQueueService } from './appointment-queue.service';
+import { LoggingService } from '@infrastructure/logging';
 
 interface PluginData {
   operation: string;
@@ -23,13 +24,18 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
   readonly version = '1.0.0';
   readonly features = ['queue-management', 'priority-queues', 'emergency-handling'];
 
-  constructor(private readonly queueService: AppointmentQueueService) {
-    super();
+  constructor(
+    private readonly queueService: AppointmentQueueService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as PluginData;
-    this.logPluginAction('Processing clinic queue operation', {
+    await this.logPluginAction('Processing clinic queue operation', {
       operation: pluginData.operation,
     });
 
@@ -77,14 +83,14 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
         );
 
       default:
-        this.logPluginError('Unknown queue operation', {
+        await this.logPluginError('Unknown queue operation', {
           operation: pluginData.operation,
         });
         throw new Error(`Unknown queue operation: ${pluginData.operation}`);
     }
   }
 
-  validate(data: unknown): Promise<boolean> {
+  async validate(data: unknown): Promise<boolean> {
     const pluginData = data as PluginData;
     // Validate that required fields are present for each operation
     const requiredFields: Record<string, string[]> = {
@@ -102,7 +108,7 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
     const fields = requiredFields[operation];
 
     if (!fields) {
-      this.logPluginError('Invalid operation', { operation });
+      await this.logPluginError('Invalid operation', { operation });
       return Promise.resolve(false);
     }
 
@@ -110,7 +116,7 @@ export class ClinicQueuePlugin extends BaseAppointmentPlugin {
       (field: string) => pluginData[field as keyof PluginData] !== undefined
     );
     if (!isValid) {
-      this.logPluginError('Missing required fields', {
+      await this.logPluginError('Missing required fields', {
         operation,
         requiredFields: fields,
       });

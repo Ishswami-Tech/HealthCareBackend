@@ -31,7 +31,7 @@ import {
   ApiBearerAuth,
   ApiBody,
 } from '@nestjs/swagger';
-import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
+// Terminus removed - using only LoggingService (per .ai-rules/ coding standards)
 
 // 2. Internal imports - Infrastructure layer
 import { LoggingService } from '@infrastructure/logging';
@@ -113,12 +113,8 @@ import {
 
 // 6. Local imports (same directory)
 import { VideoService } from './video.service';
-// Central health indicators from HealthModule
-import {
-  DatabaseHealthIndicator,
-  CacheHealthIndicator,
-  VideoHealthIndicator,
-} from '@services/health/health-indicators';
+// NOTE: Health indicators removed - video health is now available via /health endpoint (HealthController)
+// This consolidates all health checks into a single endpoint for better maintainability
 
 @Controller('video')
 @ApiTags('video')
@@ -137,11 +133,8 @@ export class VideoController {
     private readonly virtualBackgroundService: VideoVirtualBackgroundService,
     private readonly loggingService: LoggingService,
     private readonly eventService: EventService,
-    private readonly errors: HealthcareErrorsService,
-    private readonly health: HealthCheckService,
-    private readonly videoHealthIndicator: VideoHealthIndicator,
-    private readonly databaseHealthIndicator: DatabaseHealthIndicator,
-    private readonly cacheHealthIndicator: CacheHealthIndicator
+    private readonly errors: HealthcareErrorsService
+    // NOTE: Health indicators removed - video health is now available via /health endpoint (HealthController)
   ) {}
 
   private isVideoTokenResponse(value: unknown): value is VideoTokenResponse {
@@ -1213,52 +1206,9 @@ export class VideoController {
     }
   }
 
-  /**
-   * Health check endpoint using @nestjs/terminus
-   */
-  @Get('health')
-  @HealthCheck()
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Video service health check',
-    description:
-      'Check the health status of the video service and providers using Terminus health checks.',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Service health status',
-    schema: {
-      type: 'object',
-      properties: {
-        status: { type: 'string', example: 'ok' },
-        info: {
-          type: 'object',
-          properties: {
-            video: {
-              type: 'object',
-              properties: {
-                status: { type: 'string', example: 'up' },
-                primaryProvider: { type: 'string', example: 'openvidu' },
-                fallbackProvider: { type: 'string', example: 'jitsi' },
-              },
-            },
-            communication: { type: 'object' },
-            database: { type: 'object' },
-            cache: { type: 'object' },
-          },
-        },
-        error: { type: 'object' },
-        details: { type: 'object' },
-      },
-    },
-  })
-  async healthCheck() {
-    return await this.health.check([
-      () => this.videoHealthIndicator.check('video'),
-      () => this.databaseHealthIndicator.check('database'),
-      () => this.cacheHealthIndicator.check('cache'),
-    ]);
-  }
+  // NOTE: Video health check is available via /health endpoint (HealthController)
+  // This consolidates all health checks into a single endpoint for better maintainability
+  // Use GET /health to check video service health along with all other services
 
   // ============================================================================
   // OPENVIDU PRO FEATURES - RECORDING

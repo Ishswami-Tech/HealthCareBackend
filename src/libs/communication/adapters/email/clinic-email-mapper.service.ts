@@ -79,12 +79,22 @@ export class ClinicEmailMapperService {
     try {
       // Get all clinics with communication settings
       const clinics = await this.databaseService.executeHealthcareRead(async client => {
-        return await client.clinic.findMany({
+        const clinicClient = client as unknown as {
+          clinic: {
+            findMany: (args: {
+              where: { isActive: boolean };
+              select: { id: true; name: true; email: true; settings: true };
+            }) => Promise<Array<{ id: string; name: string; email: string; settings: unknown }>>;
+          };
+        };
+        return await clinicClient.clinic.findMany({
           where: {
             isActive: true,
           },
           select: {
             id: true,
+            name: true,
+            email: true,
             settings: true,
           },
         });

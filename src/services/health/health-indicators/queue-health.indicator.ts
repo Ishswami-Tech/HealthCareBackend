@@ -1,12 +1,13 @@
 /**
  * Queue Health Indicator for Health Module
  * @class QueueHealthIndicator
- * @description Health indicator for queue service using @nestjs/terminus
+ * @description Health indicator for queue service (no Terminus dependency)
+ * Uses only LoggingService (per .ai-rules/ coding standards)
  * Follows SOLID, DRY, and KISS principles
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { HealthIndicatorResult } from '@nestjs/terminus';
+import { HealthIndicatorResult } from './types';
 import { QueueHealthMonitorService } from '@infrastructure/queue';
 import type { QueueHealthMonitorStatus } from '@core/types';
 import { BaseHealthIndicator } from './base-health.indicator';

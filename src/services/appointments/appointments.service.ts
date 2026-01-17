@@ -1105,7 +1105,7 @@ export class AppointmentsService {
         // For complex queries with relations, use executeHealthcareRead with client parameter
         const appointmentWithRelations = (await this.databaseService.executeHealthcareRead(
           async client => {
-            const appointment = client['appointment'] as unknown as {
+            const appointment = client['appointment'] as {
               findFirst: (args: {
                 where: { id: string; clinicId: string };
                 include: { patient: boolean; doctor: boolean; clinic: boolean; location: boolean };
@@ -1156,7 +1156,7 @@ export class AppointmentsService {
       async () => {
         // Use executeHealthcareRead with client parameter (patient doesn't have safe method yet)
         const patient = await this.databaseService.executeHealthcareRead(async client => {
-          const patientDelegate = client['patient'] as unknown as {
+          const patientDelegate = client['patient'] as {
             findFirst: (args: {
               where: { userId: string };
               include: { user: boolean };
@@ -2245,7 +2245,7 @@ export class AppointmentsService {
       // Index ensures fast lookup even with 10M+ appointments
       // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
       const appointments = await this.databaseService.executeHealthcareRead(async client => {
-        const appointmentDelegate = client['appointment'] as unknown as {
+        const appointmentDelegate = client['appointment'] as {
           findMany: (args: {
             where: { clinicId: string; seriesId: string };
             orderBy: { seriesSequence: 'asc' };
@@ -2338,7 +2338,7 @@ export class AppointmentsService {
         // Get all appointments in series first (uses indexed seriesId)
         // Note: seriesId is not in AppointmentWhereInput, so we use executeHealthcareRead directly
         const allAppointments = await this.databaseService.executeHealthcareRead(async client => {
-          const appointmentDelegate = client['appointment'] as unknown as {
+          const appointmentDelegate = client['appointment'] as {
             findMany: (args: {
               where: { clinicId: string; seriesId: string };
               orderBy: { date: 'asc' };

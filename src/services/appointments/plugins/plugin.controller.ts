@@ -14,7 +14,7 @@ import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 
 @ApiTags('appointment plugins')
-@Controller('api/appointments/plugins')
+@Controller('appointments/plugins')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)

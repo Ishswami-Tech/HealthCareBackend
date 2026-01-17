@@ -109,21 +109,63 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Initialize provider (OpenVidu ONLY - no fallback)
-    const initializedProvider: IVideoProvider =
-      await this.providerFactory.getProviderWithFallback();
-    this.provider = initializedProvider;
+    // Initialize provider with automatic health-based fallback
+    // Architecture: OpenVidu (primary) → Jitsi (fallback) if OpenVidu is unhealthy
+    // Wrapped in try-catch to prevent API crash if video services are unavailable
+    try {
+      const initializedProvider: IVideoProvider =
+        await this.providerFactory.getProviderWithFallback();
+      this.provider = initializedProvider;
 
-    await this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Video Service initialized (OpenVidu ONLY - no Jitsi fallback)',
-      'VideoService',
-      {
-        provider: initializedProvider.providerName,
-        fallbackDisabled: true,
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Video Service initialized with automatic fallback (Provider: ${initializedProvider.providerName})`,
+        'VideoService',
+        {
+          provider: initializedProvider.providerName,
+          fallbackEnabled: true,
+          note: 'OpenVidu is primary, Jitsi is fallback. Automatic switching based on health.',
+        }
+      );
+    } catch (error) {
+      // GRACEFUL DEGRADATION: Log warning but don't crash the API
+      // Video features will be unavailable but core healthcare features will work
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Video Service initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}. Attempting to get provider anyway for later availability.`,
+        'VideoService.onModuleInit',
+        {
+          error: error instanceof Error ? error.message : 'Unknown',
+          fallbackEnabled: true,
+          note: 'API will continue. Video features will be checked again when used with automatic fallback.',
+        }
+      );
+
+      // Try to get provider instance anyway (for later availability when services start)
+      // This allows video to work once services become available, even if they weren't ready at startup
+      try {
+        this.provider = await this.providerFactory.getProviderWithFallback();
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Video provider instance obtained for deferred initialization. Provider: ${this.provider.providerName}. Video will work when services become available.`,
+          'VideoService.onModuleInit',
+          { provider: this.provider.providerName }
+        );
+      } catch {
+        // Provider instance not available - video will be completely unavailable
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          'Could not obtain video provider instance. Video features will be unavailable until restart.',
+          'VideoService.onModuleInit',
+          {}
+        );
       }
-    );
+      // Don't throw - allow API to start without video capabilities
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -137,41 +179,109 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get current provider (OpenVidu only - no fallback)
-   * @returns The initialized video provider
-   * @throws HealthcareError if provider is not initialized
+   * Get current provider with automatic health-based fallback
+   *
+   * Architecture:
+   * - Primary: OpenVidu (modern, AI-ready)
+   * - Fallback: Jitsi (reliable, always available)
+   * - Automatic switching: If current provider is unhealthy, automatically switch to fallback
+   * - Transparent to frontend: Same API endpoints, same interface
+   *
+   * @returns The healthy video provider (OpenVidu if healthy, Jitsi as fallback)
+   * @throws HealthcareError if no provider is available
    */
   private async getProvider(): Promise<IVideoProvider> {
-    const currentProvider: IVideoProvider | undefined = this.provider;
-    if (!currentProvider) {
+    // If provider is already initialized, check its health
+    if (this.provider) {
+      try {
+        const isHealthy = await this.provider.isHealthy();
+        if (isHealthy) {
+          return this.provider;
+        }
+
+        // Current provider is unhealthy - switch to fallback
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Current video provider (${this.provider.providerName}) is unhealthy. Automatically switching to fallback.`,
+          'VideoService.getProvider',
+          {
+            currentProvider: this.provider.providerName,
+            healthStatus: 'unhealthy',
+            action: 'switching_to_fallback',
+          }
+        );
+      } catch (error) {
+        // Health check failed - switch to fallback
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Health check failed for current provider (${this.provider.providerName}): ${error instanceof Error ? error.message : 'Unknown error'}. Automatically switching to fallback.`,
+          'VideoService.getProvider',
+          {
+            currentProvider: this.provider.providerName,
+            error: error instanceof Error ? error.message : 'Unknown',
+            action: 'switching_to_fallback',
+          }
+        );
+      }
+    }
+
+    // Get provider with automatic fallback (will check health and switch if needed)
+    try {
+      const healthyProvider = await this.providerFactory.getProviderWithFallback();
+
+      // Update current provider if it changed
+      if (this.provider?.providerName !== healthyProvider.providerName) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Video provider switched: ${this.provider?.providerName || 'none'} → ${healthyProvider.providerName}`,
+          'VideoService.getProvider',
+          {
+            previousProvider: this.provider?.providerName || 'none',
+            currentProvider: healthyProvider.providerName,
+            reason: 'health_based_fallback',
+          }
+        );
+        this.provider = healthyProvider;
+      }
+
+      return healthyProvider;
+    } catch (error) {
+      // No provider available
       throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Video provider not initialized',
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'Video service is currently unavailable. Please try again later or contact support.',
         undefined,
-        {},
+        {
+          note: 'Both OpenVidu and Jitsi providers are unavailable. Core healthcare features remain available.',
+          error: error instanceof Error ? error.message : 'Unknown error',
+        },
         'VideoService.getProvider'
       );
     }
+  }
 
-    // Check if primary provider is healthy
-    const isHealthy: boolean = await currentProvider.isHealthy();
-    if (isHealthy) {
-      return currentProvider;
+  /**
+   * Get current provider name (for health monitoring)
+   * @returns Current provider name or null if not initialized
+   */
+  getCurrentProvider(): string | null {
+    return this.provider?.providerName || null;
+  }
+
+  /**
+   * Get fallback provider name (for health monitoring)
+   * @returns Fallback provider name (always 'jitsi' if available)
+   */
+  getFallbackProvider(): string | null {
+    try {
+      const fallback = this.providerFactory.getFallbackProvider();
+      return fallback.providerName;
+    } catch {
+      return null;
     }
-
-    // No fallback provider - OpenVidu only configuration
-    // Log warning and return primary provider anyway (let caller handle errors)
-    void this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.WARN,
-      `Video provider (${currentProvider.providerName}) health check failed, but no fallback available`,
-      'VideoService.getProvider',
-      {
-        provider: currentProvider.providerName,
-      }
-    );
-
-    return currentProvider;
   }
 
   // ============================================================================
@@ -1815,24 +1925,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   // ============================================================================
   // PROVIDER INFO METHODS
   // ============================================================================
-
-  /**
-   * Get current provider name
-   */
-  getCurrentProvider(): string {
-    if (!this.provider) {
-      return 'unknown';
-    }
-    return this.provider.providerName;
-  }
-
-  /**
-   * Get fallback provider name
-   */
-  getFallbackProvider(): string | null {
-    // No fallback provider configured (OpenVidu only)
-    return null;
-  }
+  // Note: getCurrentProvider() and getFallbackProvider() are defined above
+  // (lines 270-284) to avoid duplicate implementations
 
   /**
    * Check if video service is healthy

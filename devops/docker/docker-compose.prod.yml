@@ -1,154 +1,15 @@
 services:
-  api:
-    # Use image from GitHub Container Registry (for CI/CD deployments)
-    # DOCKER_IMAGE is set by deploy.sh script
-    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
-    # Local build section (commented out - we use pre-built images from registry)
-    # build:
-    #   context: ../..
-    #   dockerfile: devops/docker/Dockerfile
-    #   target: production
-    #   pull: false
-    container_name: latest-api
-    hostname: api
-    ports:
-      - "${PORT:-8088}:${PORT:-8088}"
-    env_file:
-      - ../../.env.production
-    volumes:
-      - ./logs:/app/logs
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    environment:
-      NODE_ENV: production
-      DEV_MODE: "false"
-      DOCKER_ENV: "true"
-      # Disable HTTP/2 for testing compatibility (enable in real production with proper HTTP/2 clients)
-      ENABLE_HTTP2: "false"
-      # Use environment variables from .env.production (set via GitHub Actions)
-      # ARCHITECTURE: Single Backend API, Multiple Frontends
-      # - ONE backend API serves ALL clinics
-      # - MULTIPLE frontends (one per clinic) connect to the SAME API
-      # - Each frontend sends X-Clinic-ID header to identify which clinic it represents
-      # - CORS_ORIGIN must include ALL clinic frontend URLs (comma-separated)
-      CORS_ORIGIN: ${CORS_ORIGIN}
-      FRONTEND_URL: ${FRONTEND_URL}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
-      # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
-      # Can run on 6 vCPU/12GB RAM initially (Docker will enforce limits)
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=60&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=30&max_connections=60
-      # Cache Provider Configuration (Dragonfly is the only cache provider in production)
-      CACHE_PROVIDER: dragonfly
-      
-      # Dragonfly Configuration (primary cache provider)
-      DRAGONFLY_ENABLED: "true"
-      DRAGONFLY_HOST: dragonfly
-      DRAGONFLY_PORT: 6379
-      DRAGONFLY_KEY_PREFIX: "healthcare:"
-      
-      TRUST_PROXY: 1
-      PRISMA_SCHEMA_PATH: ${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}
-      HOST: ${HOST:-0.0.0.0}
-      PORT: ${PORT:-8088}
-      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}
-      SOCKET_HOST: ${SOCKET_HOST:-0.0.0.0}
-      SOCKET_PORT: ${SOCKET_PORT:-8088}
-      NPM_CONFIG_LOGLEVEL: error
-      # Use environment variables from .env.production (set via GitHub Actions)
-      API_URL: ${API_URL}
-      SWAGGER_URL: ${SWAGGER_URL:-/docs}
-      BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
-      SOCKET_URL: ${SOCKET_URL:-/socket.io}
-      LOGGER_URL: ${LOGGER_URL:-/logger}
-      BASE_URL: ${BASE_URL}
-      API_PREFIX: ${API_PREFIX:-/api/v1}
-      MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
-      API_DOMAIN: ${API_DOMAIN:-api.ishswami.in}
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
-      JWT_EXPIRATION: 24h
-      
-      # Session Configuration (Fastify Session with CacheService/Dragonfly)
-      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production-min-32-chars-long}
-      SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
-      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-true}
-      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-strict}
-      COOKIE_SECRET: ${COOKIE_SECRET:-your-cookie-secret-change-in-production-min-32-chars}
-      
-      LOG_LEVEL: info
-      ENABLE_AUDIT_LOGS: "true"
-      SECURITY_RATE_LIMIT: "true"
-      # Optimized for 8 vCPU/24GB RAM: ~1200-1800 req/s peak capacity (700-900 concurrent users)
-      SECURITY_RATE_LIMIT_MAX: 4000
-      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
-      # Cache TTL and prefix (used by Dragonfly)
-      CACHE_TTL: 3600
-      CACHE_PREFIX: "healthcare:"
-      # Rate limiting: Allow 600 req/min per IP (supports 800 users * 5 req/day + bursts)
-      RATE_LIMIT_TTL: 60
-      RATE_LIMIT_MAX: 600
-      API_RATE_LIMIT: 1000
-      AUTH_RATE_LIMIT: 30
-      HEAVY_RATE_LIMIT: 50
-      USER_RATE_LIMIT: 500
-      HEALTH_RATE_LIMIT: 2000
-      # Video Configuration
-      VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
-      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
-      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: http://openvidu-server:4443
-      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
-    expose:
-      - "${PORT:-8088}"
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.5
-        aliases:
-          - api.ishswami.in
-    dns: []
-    extra_hosts:
-      - "api:172.18.0.5"
-      - "postgres:172.18.0.2"
-      - "dragonfly:172.18.0.4"
-      - "openvidu-server:172.18.0.7"
-      - "coturn:172.18.0.8"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      dragonfly:
-        condition: service_healthy
-      coturn:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    deploy:
-      resources:
-        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
-        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
-        limits:
-          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for API)
-          memory: 6G       # Target: 24GB server (6GB for API)
-        reservations:
-          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 2G       # Minimum guaranteed (works on 12GB server)
-    # Migrations run automatically via CMD in Dockerfile before starting the app
-    # No need to override command - Dockerfile CMD handles migrations + app start
-    labels:
-      - "com.docker.compose.service=api"
-      - "app.component=backend"
-      - "app.type=api"
-
+  # Infrastructure Services (Profile: infrastructure)
   postgres:
+    profiles: ["infrastructure"]
     image: postgres:16
-    container_name: latest-postgres
+    container_name: postgres
     hostname: postgres
-    ports:
-      - "5432:5432"
+    # SECURITY: Port 5432 removed from public exposure
+    # PostgreSQL is only accessible from Docker network (172.18.0.0/16)
+    # This prevents external brute force attacks
+    # ports:
+    #   - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/pgdata
     environment:
@@ -217,8 +78,9 @@ services:
       - "app.persist=true"
 
   dragonfly:
+    profiles: ["infrastructure"]
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: latest-dragonfly
+    container_name: dragonfly
     hostname: dragonfly
     command: >
       --alsologtostderr
@@ -264,9 +126,314 @@ services:
       - "app.type=dragonfly"
       - "app.healthcheck=enabled"
 
+  openvidu-server:
+    profiles: ["infrastructure"]
+    image: openvidu/openvidu-server-kms:latest
+    container_name: openvidu-server
+    hostname: openvidu-server
+    ports:
+      - "4443:4443"
+      - "50000-50050:50000-50050/udp"
+      - "50000-50050:50000-50050/tcp"
+    environment:
+      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
+      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
+      - OPENVIDU_EDITION=ce
+      - OPENVIDU_CDR=false
+      - SERVER_PORT=4443
+      - SERVER_SSL_ENABLED=false
+      - HTTPS_PORT=4443
+      - HTTP_PORT=5443
+      - server.port=4443
+      - server.address=0.0.0.0
+      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
+      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
+      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
+      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
+      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
+      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
+      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
+      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
+      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
+      - OPENVIDU_RECORDING=false
+      - COTURN_IP=172.18.0.8
+      - OPENVIDU_LOGS_LEVEL=WARN
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
+      - TZ=UTC
+    volumes:
+      - openvidu_recordings:/opt/openvidu/recordings
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      coturn:
+        condition: service_healthy
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.7
+        aliases:
+          - openvidu-server
+    restart: unless-stopped
+    healthcheck:
+      # Check if OpenVidu supervisor is running (simpler and more reliable than curl/wget)
+      # OpenVidu container doesn't have curl/wget, so we check supervisor status instead
+      # Supervisor manages both OpenVidu server and KMS, so if it's running, services are up
+      # OpenVidu can take 60-120 seconds to fully start, so we give it more time
+      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 4G
+        reservations:
+          cpus: "1.0"
+          memory: 2G
+
+  coturn:
+    profiles: ["infrastructure"]
+    image: coturn/coturn:latest
+    container_name: coturn
+    hostname: coturn
+    ports:
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
+      - "49160-49200:49160-49200/udp"
+      - "49160-49200:49160-49200/tcp"
+    environment:
+      - TZ=UTC
+      # Security: Use environment variable for password (set in .env.production)
+      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
+      # Domain configuration: Use same domain as Video service (set in .env.production)
+      - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+      # TLS is optional - set to "true" only if Let's Encrypt certificates exist
+      - COTURN_TLS_ENABLED=${COTURN_TLS_ENABLED:-false}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    # Use shell entrypoint to conditionally enable TLS based on certificate availability
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        # Check if TLS certificates exist and TLS is enabled
+        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
+        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
+        
+        # Base TURN server arguments (always used)
+        TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
+        TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
+        TURN_ARGS="$${TURN_ARGS} --fingerprint --lt-cred-mech"
+        TURN_ARGS="$${TURN_ARGS} --user=openvidu:$${COTURN_PASSWORD:-openvidu}"
+        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
+        TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
+        
+        # Conditionally add TLS configuration if certificates exist
+        if [ "$${COTURN_TLS_ENABLED}" = "true" ] && [ -f "$${CERT_PATH}" ] && [ -f "$${KEY_PATH}" ]; then
+          echo "[COTURN] TLS enabled - certificates found at $${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --tls-listening-port=5349"
+          TURN_ARGS="$${TURN_ARGS} --cert=$${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --pkey=$${KEY_PATH}"
+        else
+          echo "[COTURN] TLS disabled - certificates not found or TLS not enabled"
+          echo "[COTURN] Running in non-TLS mode (STUN/TURN on port 3478 only)"
+        fi
+        
+        echo "[COTURN] Starting turnserver with args: $${TURN_ARGS}"
+        exec turnserver $${TURN_ARGS}
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.8
+        aliases:
+          - coturn
+    restart: unless-stopped
+    healthcheck:
+      # Health check using STUN client test on port 3478 (always available)
+      test: ["CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Security: Resource limits to prevent resource exhaustion attacks
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+  # Application Services (Profile: app)
+  api:
+    profiles: ["app"]
+    # Use image from GitHub Container Registry (for CI/CD deployments)
+    # DOCKER_IMAGE is set by deploy.sh script
+    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
+    # NOT generated in CI lint job or at container startup - only during build
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
+    # Local build section (commented out - we use pre-built images from registry)
+    # build:
+    #   context: ../..
+    #   dockerfile: devops/docker/Dockerfile
+    #   target: production
+    #   pull: false
+    container_name: latest-api
+    hostname: api
+    ports:
+      - "${PORT:-8088}:${PORT:-8088}"
+    env_file:
+      - ../../.env.production
+    volumes:
+      - ./logs:/app/logs
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    environment:
+      NODE_ENV: production
+      DEV_MODE: "false"
+      DOCKER_ENV: "true"
+      # Disable HTTP/2 for testing compatibility (enable in real production with proper HTTP/2 clients)
+      ENABLE_HTTP2: "false"
+      # Use environment variables from .env.production (set via GitHub Actions)
+      # ARCHITECTURE: Single Backend API, Multiple Frontends
+      # - ONE backend API serves ALL clinics
+      # - MULTIPLE frontends (one per clinic) connect to the SAME API
+      # - Each frontend sends X-Clinic-ID header to identify which clinic it represents
+      # - CORS_ORIGIN must include ALL clinic frontend URLs (comma-separated)
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      FRONTEND_URL: ${FRONTEND_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s (104M-156M requests/day)
+      # Can run on 6 vCPU/12GB RAM initially (Docker will enforce limits)
+      # SECURITY: DATABASE_URL must be set via GitHub Actions (environment variable) or .env.production
+      # No hardcoded default for security - prevents credential exposure
+      DATABASE_URL: ${DATABASE_URL}
+      # Cache Provider Configuration (Dragonfly is the only cache provider in production)
+      CACHE_PROVIDER: dragonfly
+      
+      # Dragonfly Configuration (primary cache provider)
+      DRAGONFLY_ENABLED: "true"
+      DRAGONFLY_HOST: dragonfly
+      DRAGONFLY_PORT: 6379
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      
+      TRUST_PROXY: 1
+      PRISMA_SCHEMA_PATH: ${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}
+      HOST: ${HOST:-0.0.0.0}
+      PORT: ${PORT:-8088}
+      BIND_ADDRESS: ${BIND_ADDRESS:-0.0.0.0}
+      SOCKET_HOST: ${SOCKET_HOST:-0.0.0.0}
+      SOCKET_PORT: ${SOCKET_PORT:-8088}
+      NPM_CONFIG_LOGLEVEL: error
+      # Use environment variables from .env.production (set via GitHub Actions)
+      API_URL: ${API_URL}
+      SWAGGER_URL: ${SWAGGER_URL:-/docs}
+      BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
+      SOCKET_URL: ${SOCKET_URL:-/socket.io}
+      LOGGER_URL: ${LOGGER_URL:-/logger}
+      BASE_URL: ${BASE_URL}
+      API_PREFIX: ${API_PREFIX:-/api/v1}
+      MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
+      API_DOMAIN: ${API_DOMAIN:-backend-service-v1.ishswami.in}
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
+      JWT_EXPIRATION: 24h
+      
+      # Session Configuration (Fastify Session with CacheService/Dragonfly)
+      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production-min-32-chars-long}
+      SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
+      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-true}
+      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-strict}
+      COOKIE_SECRET: ${COOKIE_SECRET:-your-cookie-secret-change-in-production-min-32-chars}
+      
+      LOG_LEVEL: info
+      ENABLE_AUDIT_LOGS: "true"
+      SECURITY_RATE_LIMIT: "true"
+      # Optimized for 8 vCPU/24GB RAM: ~1200-1800 req/s peak capacity (700-900 concurrent users)
+      SECURITY_RATE_LIMIT_MAX: 4000
+      SECURITY_RATE_LIMIT_WINDOW_MS: 1000
+      # Cache TTL and prefix (used by Dragonfly)
+      CACHE_TTL: 3600
+      CACHE_PREFIX: "healthcare:"
+      # Rate limiting: Allow 600 req/min per IP (supports 800 users * 5 req/day + bursts)
+      RATE_LIMIT_TTL: 60
+      RATE_LIMIT_MAX: 600
+      API_RATE_LIMIT: 1000
+      AUTH_RATE_LIMIT: 30
+      HEAVY_RATE_LIMIT: 50
+      USER_RATE_LIMIT: 500
+      HEALTH_RATE_LIMIT: 2000
+      # Video Configuration
+      VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
+      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
+      # OPENVIDU_URL must be set in .env.production or environment variables
+      # Do NOT hardcode - use environment variable to allow proper configuration
+      OPENVIDU_URL: ${OPENVIDU_URL}
+      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
+    expose:
+      - "${PORT:-8088}"
+    networks:
+      app-network:
+        ipv4_address: 172.18.0.5
+        aliases:
+          - backend-service-v1.ishswami.in
+    dns: []
+    extra_hosts:
+      - "api:172.18.0.5"
+      - "postgres:172.18.0.2"
+      - "dragonfly:172.18.0.4"
+      - "openvidu-server:172.18.0.7"
+      - "coturn:172.18.0.8"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      # Coturn is optional - API can start without video services
+      # Video calling will be unavailable but core healthcare features will work
+      coturn:
+        condition: service_started
+        required: false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
+        # NOTE: Prisma migrations can be memory-intensive. If migrations fail with OOM (exit code 137),
+        # increase memory limit to 8G or higher. Current limit: 6G (may be insufficient for large databases)
+        limits:
+          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for API)
+          memory: 8G       # Increased from 6G to prevent OOM during Prisma migrations
+        reservations:
+          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 2G       # Minimum guaranteed (works on 12GB server)
+    # Migrations run automatically via CMD in Dockerfile before starting the app
+    # No need to override command - Dockerfile CMD handles migrations + app start
+    # Prisma Client is generated during Docker build, entrypoint verifies it exists
+    labels:
+      - "com.docker.compose.service=api"
+      - "app.component=backend"
+      - "app.type=api"
+
   worker:
+    profiles: ["app"]
     # Use same image as API (worker runs from same codebase)
     # DOCKER_IMAGE is set by deploy.sh script
+    # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
+    # NOT generated in CI lint job or at container startup - only during build
     image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
     # Local build section (commented out - we use pre-built images from registry)
     # build:
@@ -285,7 +452,10 @@ services:
       DOCKER_ENV: "true"
       
       # Database Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=30&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=15&max_connections=30
+      # SECURITY: DATABASE_URL must be set via GitHub Actions (environment variable) or .env.production
+      # No hardcoded default for security - prevents credential exposure
+      # Worker uses smaller connection pool (adjust connection_limit in DATABASE_URL if needed)
+      DATABASE_URL: ${DATABASE_URL}
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
       
       # Cache Provider Configuration (Dragonfly is the only cache provider in production)
@@ -361,114 +531,70 @@ services:
       - "app.component=worker"
       - "app.type=worker"
 
-  # OpenVidu Services
-  openvidu-server:
-    image: openvidu/openvidu-server-kms:latest
-    container_name: latest-openvidu-server
-    hostname: openvidu-server
+  # Portainer - Docker Management UI (like Vercel Dashboard)
+  # Provides comprehensive Docker management: containers, images, networks, volumes, logs, stats
+  # Access at: http://localhost:9000 (or https://your-domain:9000 in production)
+  # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
+  portainer:
+    profiles: ["infrastructure"]
+    image: portainer/portainer-ce:latest
+    container_name: portainer
     ports:
-      - "4443:4443"
-      - "50000-50050:50000-50050/udp"
-      - "50000-50050:50000-50050/tcp"
-    environment:
-      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://video.ishswami.in}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-video.ishswami.in}
-      - OPENVIDU_EDITION=ce
-      - OPENVIDU_CDR=false
-      - SERVER_PORT=4443
-      - SERVER_SSL_ENABLED=false
-      - HTTPS_PORT=4443
-      - HTTP_PORT=5443
-      - server.port=4443
-      - server.address=0.0.0.0
-      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
-      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
-      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
-      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
-      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
-      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
-      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
-      - OPENVIDU_RECORDING=false
-      - COTURN_IP=coturn
-      - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-video.ishswami.in}
-      - TZ=UTC
+      - "9000:9000"
+      - "9443:9443"  # HTTPS port (optional)
     volumes:
-      - openvidu_recordings:/opt/openvidu/recordings
       - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      coturn:
-        condition: service_healthy
+      - portainer_data:/data
     networks:
       app-network:
-        ipv4_address: 172.18.0.7
-        aliases:
-          - openvidu-server
+        ipv4_address: 172.18.0.9
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
+    # Optimized command: minimal logging, no analytics
+    command: >
+      -H unix:///var/run/docker.sock
+      --no-analytics
+    environment:
+      # Minimize disk usage: reduce logging, disable telemetry
+      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+    # Strict resource limits to prevent excessive disk usage
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 4G
+          cpus: "0.5"
+          memory: 256M  # Minimal memory allocation
         reservations:
-          cpus: "1.0"
-          memory: 2G
-
-  coturn:
-    image: coturn/coturn:latest
-    container_name: latest-coturn
-    hostname: coturn
-    ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
-      - "49160-49200:49160-49200/udp"
-      - "49160-49200:49160-49200/tcp"
-    environment:
-      - TZ=UTC
-    command:
-      - -n
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --lt-cred-mech
-      - --user=openvidu:openvidu
-      - --realm=openvidu
-      - --no-cli
-      - --no-tls
-      - --no-dtls
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.8
-        aliases:
-          - coturn
-    restart: unless-stopped
+          cpus: "0.1"
+          memory: 128M
     healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
-      interval: 10s
+      # Use /api/status endpoint (doesn't require auth, returns version info)
+      # NOTE: Portainer CE image is based on scratch/minimal image without /bin/sh
+      # So we use CMD format with wget directly instead of CMD-SHELL
+      test: ["CMD", "wget", "-q", "--spider", "--timeout=3", "http://localhost:9000/api/status"]
+      interval: 30s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 3
+      start_period: 30s
 
 volumes:
   postgres_data:
-    name: latest_postgres_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/healthcare-backend/data/postgres
   dragonfly_data:
-    name: latest_dragonfly_data
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /opt/healthcare-backend/data/dragonfly
   openvidu_recordings:
     name: latest_openvidu_recordings
+  portainer_data:
+    name: latest_portainer_data
+    # Portainer data is minimal: only stores user preferences and settings
+    # Expected size: < 50MB (snapshots disabled, minimal logging)
 
 networks:
   app-network:

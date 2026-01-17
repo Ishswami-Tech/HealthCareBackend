@@ -420,8 +420,8 @@ export class ConfigService {
    * @returns Current environment
    * @see https://docs.nestjs.com - For environment configuration patterns
    */
-  getEnvironment(): 'development' | 'production' | 'test' | 'staging' {
-    // The environment may include 'staging' as well, according to the config typing.
+  getEnvironment(): 'development' | 'production' | 'test' | 'staging' | 'local-prod' {
+    // The environment may include 'staging' and 'local-prod' as well, according to the config typing.
     // This ensures safe, type-correct handling for all supported environments.
     return this.getAppConfig().environment;
   }

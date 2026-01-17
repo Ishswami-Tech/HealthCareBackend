@@ -194,6 +194,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       this.config = this.loadConfig();
     }
     if (!this.advancedProvider) {
+      // Guard: Check if providerFactory is available before calling getProvider()
+      // This prevents errors during early bootstrap when dependencies aren't ready
+      if (!this.providerFactory) {
+        throw new Error(
+          'CacheService: providerFactory not initialized yet. Cache operations are not available during bootstrap.'
+        );
+      }
       this.advancedProvider = this.providerFactory.getProvider();
     }
   }
@@ -801,11 +808,31 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async rPush(key: string, value: string): Promise<number> {
-    return this.getProvider().rPush(key, value);
+    try {
+      return this.getProvider().rPush(key, value);
+    } catch (error) {
+      // Handle case where provider is not initialized yet (during bootstrap)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('not initialized') || errorMessage.includes('providerFactory')) {
+        // Silently fail during bootstrap - cache will be available after onModuleInit
+        return 0;
+      }
+      throw error;
+    }
   }
 
   async lTrim(key: string, start: number, stop: number): Promise<string> {
-    return this.getProvider().lTrim(key, start, stop);
+    try {
+      return this.getProvider().lTrim(key, start, stop);
+    } catch (error) {
+      // Handle case where provider is not initialized yet (during bootstrap)
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('not initialized') || errorMessage.includes('providerFactory')) {
+        // Silently fail during bootstrap - cache will be available after onModuleInit
+        return 'OK';
+      }
+      throw error;
+    }
   }
 
   // ===== SORTED SET OPERATIONS =====

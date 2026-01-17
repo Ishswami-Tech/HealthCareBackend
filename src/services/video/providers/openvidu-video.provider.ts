@@ -51,9 +51,59 @@ export class OpenViduVideoProvider implements IVideoProvider {
     private readonly databaseService: DatabaseService
   ) {
     const videoConfig = this.configService.get<VideoProviderConfig>('video');
-    this.apiUrl = videoConfig?.openvidu?.url || 'http://openvidu-server:4443';
-    this.secret = videoConfig?.openvidu?.secret || '';
-    this.domain = videoConfig?.openvidu?.domain || 'video.ishswami.in';
+
+    // Get URL from config or environment variable directly (NO hardcoded fallback)
+    const configUrl = videoConfig?.openvidu?.url;
+    const envUrl = this.configService.getEnv('OPENVIDU_URL');
+    this.apiUrl =
+      configUrl ||
+      envUrl ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: OPENVIDU_URL. ' +
+            'Please set OPENVIDU_URL in your environment configuration.'
+        );
+      })();
+
+    // Get secret from config or environment variable directly
+    const configSecret = videoConfig?.openvidu?.secret;
+    const envSecret = this.configService.getEnv('OPENVIDU_SECRET');
+    this.secret = configSecret || envSecret || '';
+
+    // Get domain from config or environment variable directly
+    const configDomain = videoConfig?.openvidu?.domain;
+    const envDomain = this.configService.getEnv('OPENVIDU_DOMAIN');
+    this.domain =
+      configDomain ||
+      envDomain ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: OPENVIDU_DOMAIN. ' +
+            'Please set OPENVIDU_DOMAIN in your environment configuration.'
+        );
+      })();
+
+    // Log configuration for debugging (async, don't await)
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'OpenVidu provider initialized',
+      'OpenViduVideoProvider.constructor',
+      {
+        apiUrl: this.apiUrl,
+        domain: this.domain,
+        secretConfigured: !!this.secret,
+        configSource: {
+          urlFromConfig: !!configUrl,
+          urlFromEnv: !!envUrl,
+          secretFromConfig: !!configSecret,
+          secretFromEnv: !!envSecret,
+          domainFromConfig: !!configDomain,
+          domainFromEnv: !!envDomain,
+        },
+        note: 'If URL is incorrect, check OPENVIDU_URL in .env.production or .env.local file and restart the application.',
+      }
+    );
   }
 
   /**
@@ -545,68 +595,291 @@ export class OpenViduVideoProvider implements IVideoProvider {
   /**
    * Check if provider is healthy
    * Real-time check: Verifies OpenVidu container is actually running and accessible
+   * Uses the official OpenVidu health endpoint: /openvidu/api/health
+   * See: https://docs.openvidu.io/en/stable/reference-docs/REST-API/
+   * Returns {"status": "UP"} when healthy, 503 with {"status": "DOWN"} when unhealthy
+   * Uses retry logic to handle temporary network issues during container startup
    */
   async isHealthy(): Promise<boolean> {
     // Check if OpenVidu is enabled first
     if (!this.isEnabled()) {
-      return false;
-    }
-
-    // Real-time health check: Try to verify OpenVidu API is accessible
-    // This ensures the container is actually running and responding
-    try {
-      const response = await Promise.race([
-        this.httpService.get(
-          `${this.apiUrl}/openvidu/api/config`,
-          this.getHttpConfig({ timeout: 3000 }) // 3 second timeout for real-time check
-        ),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Health check timeout')), 3000)
-        ),
-      ]);
-      // If we get a response (even if not 200), OpenVidu is running
-      // Status 200 means fully healthy, other statuses mean it's running but may have issues
-      return response.status >= 200 && response.status < 500;
-    } catch (error) {
-      // Check if error is due to container not running vs other issues
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const isConnectionError =
-        errorMessage.includes('ECONNREFUSED') ||
-        errorMessage.includes('ENOTFOUND') ||
-        errorMessage.includes('timeout') ||
-        errorMessage.includes('ETIMEDOUT');
-
-      if (isConnectionError) {
-        // Container is not accessible - mark as unhealthy
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'OpenVidu container is not accessible - health check failed',
-          'OpenViduVideoProvider.isHealthy',
-          {
-            error: errorMessage,
-            apiUrl: this.apiUrl,
-            note: 'OpenVidu container may not be running or network issue',
-          }
-        );
-        return false;
-      }
-
-      // Other errors (SSL, auth, etc.) - container is running but may have config issues
-      // Still mark as healthy since container is accessible
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
-        'OpenVidu health check returned error but container is accessible',
+        'OpenVidu is disabled in configuration',
         'OpenViduVideoProvider.isHealthy',
-        {
-          error: errorMessage,
-          apiUrl: this.apiUrl,
-          note: 'Container is running but may have configuration issues',
-        }
+        { apiUrl: this.apiUrl }
       );
-      return true; // Container is accessible, mark as healthy
+      return false;
     }
+
+    // Real-time health check with retry logic - NO AUTHENTICATION
+    // According to OpenVidu documentation (https://docs.openvidu.io):
+    // 1. Root URL should show "Welcome to OpenVidu" message (default behavior for all editions)
+    // 2. /openvidu/api/health endpoint exists but is ONLY available in PRO/ENTERPRISE editions
+    // 3. /openvidu/api/config is a public endpoint available in ALL editions (including CE)
+    //
+    // Strategy: Try root URL first, fallback to /openvidu/api/config if needed
+    // Treat 403/401 as healthy (server is responding, just blocking access)
+    // OpenVidu may take time to fully start even after container is running
+    const maxRetries = 3;
+    const retryDelayMs = 2000;
+
+    // Prepare endpoints
+    let rootEndpoint = this.apiUrl;
+    if (rootEndpoint.endsWith('/')) {
+      rootEndpoint = rootEndpoint.slice(0, -1);
+    }
+    const configEndpoint = `${rootEndpoint}/openvidu/api/config`;
+
+    // Track last error for detailed error message
+    let lastError = 'Unknown error';
+    let lastErrorCode: string | undefined;
+    let finalIsConnectionError = true;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      let response: { status: number; data?: unknown } | null = null;
+      let healthCheckError: Error | null = null;
+      let endpointUsed = rootEndpoint;
+
+      try {
+        // Try root URL first (should show "Welcome to OpenVidu")
+        // Increased timeout to 10 seconds to handle slow OpenVidu responses
+        const healthCheckTimeout = 10000; // 10 seconds
+
+        try {
+          // Use validateStatus to treat 403/401 as valid responses (not errors)
+          // This prevents HttpService from logging errors for these status codes
+          response = await Promise.race([
+            this.httpService.get(rootEndpoint, {
+              timeout: healthCheckTimeout,
+              validateStatus: (status: number) => {
+                // Treat 2xx, 3xx, 403, and 401 as valid responses
+                // 403/401 mean server is responding (healthy), just blocking access
+                return (status >= 200 && status < 400) || status === 403 || status === 401;
+              },
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+            ),
+          ]);
+
+          endpointUsed = rootEndpoint;
+        } catch (error) {
+          healthCheckError = error instanceof Error ? error : new Error(String(error));
+          // Axios errors have status in error.response.status, not error.status
+          const errorStatus = (error as { response?: { status?: number } })?.response?.status;
+
+          // If root URL returns 403/401, server is responding (healthy)
+          // Only try fallback for actual connection errors or other 4xx/5xx
+          if (errorStatus !== 403 && errorStatus !== 401) {
+            // Try fallback: /openvidu/api/config (public endpoint available in all editions)
+            try {
+              // Use validateStatus to treat 403/401 as valid responses (not errors)
+              response = await Promise.race([
+                this.httpService.get<{ version?: string; [key: string]: unknown }>(configEndpoint, {
+                  timeout: healthCheckTimeout,
+                  validateStatus: (status: number) => {
+                    // Treat 2xx, 3xx, 403, and 401 as valid responses
+                    return (status >= 200 && status < 400) || status === 403 || status === 401;
+                  },
+                }),
+                new Promise<never>((_, reject) =>
+                  setTimeout(() => reject(new Error('Health check timeout')), healthCheckTimeout)
+                ),
+              ]);
+
+              endpointUsed = configEndpoint;
+              healthCheckError = null; // Clear error since fallback succeeded
+            } catch (fallbackError) {
+              // Axios errors have status in error.response.status, not error.status
+              const fallbackErrorStatus = (fallbackError as { response?: { status?: number } })
+                ?.response?.status;
+
+              // If fallback endpoint returns 403/401, server is responding (healthy)
+              if (fallbackErrorStatus === 403 || fallbackErrorStatus === 401) {
+                response = { status: fallbackErrorStatus };
+                endpointUsed = configEndpoint;
+                healthCheckError = null;
+              } else {
+                healthCheckError =
+                  fallbackError instanceof Error ? fallbackError : new Error(String(fallbackError));
+                // Will be handled below
+              }
+            }
+          } else {
+            // 403/401 from root URL - server is responding, treat as healthy
+            response = { status: errorStatus };
+            endpointUsed = rootEndpoint;
+            healthCheckError = null;
+          }
+        }
+
+        if (!response && healthCheckError) {
+          throw healthCheckError;
+        }
+
+        // Check for successful response according to OpenVidu documentation:
+        // - 2xx/3xx: Server is up and responding (healthy) - shows "Welcome to OpenVidu" or config
+        // - 403 Forbidden: Server is up but blocking access (still healthy - server is responding)
+        //   Common with reverse proxies or security policies
+        // - 401 Unauthorized: Server is up but requires auth (still healthy - server is responding)
+        // - Other 4xx/5xx: Server error (unhealthy)
+        const isUp =
+          (response!.status >= 200 && response!.status < 400) || // Success responses (200-399)
+          response!.status === 403 || // Forbidden - server is up, just blocking (common with reverse proxies)
+          response!.status === 401; // Unauthorized - server is up, just requires auth
+
+        if (isUp) {
+          // Don't log successful health checks - reduces log noise
+          // Only log failures to keep logs focused on issues
+          return true;
+        }
+
+        // OpenVidu responded but with error status (service unavailable)
+        if (response && response.status === 503) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `OpenVidu reported service unavailable on attempt ${attempt}`,
+            'OpenViduVideoProvider.isHealthy',
+            {
+              apiUrl: this.apiUrl,
+              status: response.status,
+            }
+          );
+          // Don't retry if OpenVidu explicitly says it's unavailable
+          return false;
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorCode = (error as { code?: string })?.code;
+        const isConnectionError =
+          errorCode === 'ECONNREFUSED' ||
+          errorCode === 'ENOTFOUND' ||
+          errorCode === 'ETIMEDOUT' ||
+          errorCode === 'EHOSTUNREACH' ||
+          errorCode === 'ENETUNREACH' ||
+          errorMessage.includes('ECONNREFUSED') ||
+          errorMessage.includes('ENOTFOUND') ||
+          errorMessage.includes('timeout') ||
+          errorMessage.includes('ETIMEDOUT') ||
+          errorMessage.includes('EHOSTUNREACH') ||
+          errorMessage.includes('ENETUNREACH') ||
+          errorMessage.includes('getaddrinfo') ||
+          errorMessage.includes('connect ECONNREFUSED');
+
+        // Enhanced logging with more diagnostic information
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          attempt === maxRetries ? LogLevel.WARN : LogLevel.DEBUG,
+          `OpenVidu health check attempt ${attempt}/${maxRetries} failed: ${errorMessage}`,
+          'OpenViduVideoProvider.isHealthy',
+          {
+            attempt,
+            maxRetries,
+            error: errorMessage,
+            errorCode,
+            apiUrl: this.apiUrl,
+            endpoint: endpointUsed,
+            endpointUsed: endpointUsed === rootEndpoint ? 'root' : 'config',
+            isConnectionError,
+            diagnostic: {
+              message: finalIsConnectionError
+                ? 'Cannot connect to OpenVidu server. Check: 1) Is OpenVidu container running? 2) Is OPENVIDU_URL correct? 3) Can backend reach OpenVidu network?'
+                : 'OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.',
+              possibleCauses: finalIsConnectionError
+                ? [
+                    'OpenVidu container not running',
+                    'Incorrect OPENVIDU_URL configuration',
+                    'Network connectivity issue between backend and OpenVidu',
+                    'OpenVidu REST API not started (KMS may be running but REST API not ready)',
+                  ]
+                : ['OpenVidu REST API error', 'Authentication issue', 'OpenVidu service degraded'],
+            },
+          }
+        );
+
+        // If not a connection error (e.g., auth error, 500 error), OpenVidu is running but may have issues
+        if (!isConnectionError) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.DEBUG,
+            'OpenVidu health check returned non-connection error - container is accessible but may have issues',
+            'OpenViduVideoProvider.isHealthy',
+            { error: errorMessage, errorCode, apiUrl: this.apiUrl }
+          );
+          // Return true if we got a response (even if error) - means server is reachable
+          // This allows the API to continue even if OpenVidu has temporary issues
+          if (attempt === maxRetries) {
+            return false; // After all retries, mark as unhealthy
+          }
+        }
+
+        // Store last error for final error message
+        lastError = errorMessage;
+        lastErrorCode = errorCode;
+        finalIsConnectionError = isConnectionError;
+
+        // Retry with delay if not last attempt
+        if (attempt < maxRetries) {
+          await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        }
+      }
+    }
+
+    // All retries failed - build detailed error message using last error
+    // Build comprehensive error message with diagnostic information
+    let detailedErrorMessage = `OpenVidu health check failed after ${maxRetries} attempts. `;
+    detailedErrorMessage += `Last error: ${lastError}${lastErrorCode ? ` (code: ${lastErrorCode})` : ''}. `;
+    if (finalIsConnectionError) {
+      detailedErrorMessage += `Cannot connect to OpenVidu server at ${this.apiUrl}. `;
+      detailedErrorMessage += `Possible causes: 1) OpenVidu container not running, 2) Incorrect OPENVIDU_URL configuration (current: ${this.apiUrl}), 3) Network connectivity issue, 4) OpenVidu REST API not started (KMS may be running but REST API not ready).`;
+    } else {
+      detailedErrorMessage += `OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.`;
+    }
+
+    // Log warning with detailed information
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      `OpenVidu health check failed after ${maxRetries} attempts. Video features may be unavailable.`,
+      'OpenViduVideoProvider.isHealthy',
+      {
+        apiUrl: this.apiUrl,
+        attempts: maxRetries,
+        error: detailedErrorMessage,
+        note: 'OpenVidu container may not be running, not ready yet, or network issue. API will continue without video support.',
+      }
+    );
+
+    // Throw error with detailed message so health indicator can capture it
+    throw new HealthcareError(
+      ErrorCode.SERVICE_UNAVAILABLE,
+      detailedErrorMessage,
+      undefined,
+      {
+        apiUrl: this.apiUrl,
+        attempts: maxRetries,
+        isConnectionError: finalIsConnectionError,
+        errorCode: lastErrorCode,
+        lastError,
+        diagnostic: {
+          message: finalIsConnectionError
+            ? 'Cannot connect to OpenVidu server. Check: 1) Is OpenVidu container running? 2) Is OPENVIDU_URL correct? 3) Can backend reach OpenVidu network?'
+            : 'OpenVidu server may be running but health endpoint returned an error. Check OpenVidu logs.',
+          possibleCauses: finalIsConnectionError
+            ? [
+                'OpenVidu container not running',
+                'Incorrect OPENVIDU_URL configuration',
+                'Network connectivity issue between backend and OpenVidu',
+                'OpenVidu REST API not started (KMS may be running but REST API not ready)',
+              ]
+            : ['OpenVidu REST API error', 'Authentication issue', 'OpenVidu service degraded'],
+        },
+      },
+      'OpenViduVideoProvider.isHealthy'
+    );
   }
 
   /**

@@ -282,7 +282,15 @@ export class CommunicationService implements OnModuleInit {
 
             const userExists = await this.databaseService.executeHealthcareRead<boolean>(
               async prisma => {
-                const user = await prisma.user.findUnique({
+                const userClient = prisma as unknown as {
+                  user: {
+                    findUnique: (args: {
+                      where: { id: string };
+                      select: { id: true };
+                    }) => Promise<{ id: string } | null>;
+                  };
+                };
+                const user = await userClient.user.findUnique({
                   where: { id: userId },
                   select: { id: true },
                 });
@@ -548,7 +556,15 @@ export class CommunicationService implements OnModuleInit {
         if (recipient.userId) {
           try {
             const user = await this.databaseService.executeHealthcareRead(async prisma => {
-              return await prisma.user.findUnique({
+              const userClient = prisma as unknown as {
+                user: {
+                  findUnique: (args: {
+                    where: { id: string };
+                    select: { email: true; phone: true };
+                  }) => Promise<{ email: string; phone: string | null } | null>;
+                };
+              };
+              return await userClient.user.findUnique({
                 where: { id: recipient.userId! },
                 select: {
                   email: true,

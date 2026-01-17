@@ -1,14 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentTemplateService } from './appointment-template.service';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type { AppointmentTemplate } from '@core/types/appointment.types';
 
 @Injectable()
 export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
-  protected readonly logger = new Logger(ClinicTemplatePlugin.name);
-
-  constructor(private readonly templateService: AppointmentTemplateService) {
-    super();
+  constructor(
+    private readonly templateService: AppointmentTemplateService,
+    @Optional()
+    @Inject(forwardRef(() => LoggingService))
+    loggingService?: LoggingService
+  ) {
+    super(loggingService);
   }
 
   get name(): string {
@@ -40,10 +45,18 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
       [key: string]: unknown;
     };
 
-    this.logger.log(`Processing template operation: ${operation}`, {
-      operation,
-      clinicId: (params as Record<string, unknown>)['clinicId'] as string,
-    });
+    if (this.loggingService) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Processing template operation: ${operation}`,
+        'ClinicTemplatePlugin',
+        {
+          operation,
+          clinicId: (params as Record<string, unknown>)['clinicId'] as string,
+        }
+      );
+    }
 
     try {
       switch (operation) {
@@ -89,10 +102,19 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
           throw new Error(`Unsupported operation: ${operation}`);
       }
     } catch (_error) {
-      this.logger.error(`Template operation failed: ${operation}`, {
-        operation,
-        _error: _error instanceof Error ? _error.message : String(_error),
-      });
+      if (this.loggingService) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Template operation failed: ${operation}`,
+          'ClinicTemplatePlugin',
+          {
+            operation,
+            error: _error instanceof Error ? _error.message : String(_error),
+            stack: _error instanceof Error ? _error.stack : undefined,
+          }
+        );
+      }
       throw _error;
     }
   }

@@ -1,6 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@infrastructure/http';
-import { TerminusModule } from '@nestjs/terminus';
+// TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
 import { ConfigModule } from '@config';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
@@ -32,7 +32,7 @@ import { HealthBroadcasterService } from './realtime/services/health-broadcaster
   imports: [
     ConfigModule, // Explicitly import ConfigModule to ensure ConfigService is available
     HttpModule, // HTTP client for health checks
-    TerminusModule, // Health checks framework
+    // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
     forwardRef(() => DatabaseModule), // Use forwardRef to break circular dependency
     CacheModule,
     QueueModule,
@@ -46,7 +46,7 @@ import { HealthBroadcasterService } from './realtime/services/health-broadcaster
   controllers: [HealthController],
   providers: [
     HealthService,
-    // Health indicators for TerminusModule
+    // Health indicators (no Terminus dependency - uses only LoggingService)
     DatabaseHealthIndicator,
     CacheHealthIndicator,
     QueueHealthIndicator,
@@ -54,7 +54,7 @@ import { HealthBroadcasterService } from './realtime/services/health-broadcaster
     VideoHealthIndicator,
     // Realtime health services
     RealtimeHealthGateway,
-    // Health checkers (only System and Socket - others use HealthService/Terminus)
+    // Health checkers (only System and Socket - others use HealthService)
     SystemHealthChecker,
     SocketHealthChecker,
     // Core services

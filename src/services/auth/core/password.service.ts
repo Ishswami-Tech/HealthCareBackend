@@ -1,12 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 import type { PasswordValidationResult, PasswordStrength } from '@core/types/auth.types';
 
 @Injectable()
 export class PasswordService {
-  private readonly logger = new Logger(PasswordService.name);
   private readonly saltRounds = 12;
+
+  constructor(private readonly loggingService: LoggingService) {}
 
   /**
    * Hash password
@@ -15,9 +17,15 @@ export class PasswordService {
     try {
       return await bcrypt.hash(password, this.saltRounds);
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         'Failed to hash password',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'PasswordService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       throw _error;
     }
@@ -30,9 +38,15 @@ export class PasswordService {
     try {
       return await bcrypt.compare(password, hash);
     } catch (_error) {
-      this.logger.error(
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
         'Failed to compare password',
-        _error instanceof Error ? _error.stack : 'No stack trace available'
+        'PasswordService',
+        {
+          error: _error instanceof Error ? _error.message : String(_error),
+          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+        }
       );
       return false;
     }

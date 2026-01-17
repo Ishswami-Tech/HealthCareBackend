@@ -11,18 +11,22 @@ const nestjsTypedRules =
   nestjsTypedPlugin.configs?.flat?.recommended?.rules ||
   {};
 
-export default tseslint.config(
+export default [
   {
     ignores: [
       'eslint.config.mjs',
+      '.lintstagedrc.js',
       'dist',
       'node_modules',
       'prisma.config.js',
+      '**/prisma.config.js',
       '**/generated/**',
       'src/libs/infrastructure/database/generated/**',
       'src/libs/infrastructure/database/prisma/generated/**',
       '**/*.generated.ts',
       '**/*.generated.js',
+      '**/seed.ts',
+      '**/seed.js',
     ],
   },
   eslint.configs.recommended,
@@ -84,7 +88,7 @@ export default tseslint.config(
     },
   },
   {
-    // JavaScript files in scripts - disable type checking and use basic parser
+    // JavaScript files in scripts - disable all TypeScript rules (they require type information)
     files: ['**/scripts/**/*.js'],
     languageOptions: {
       parserOptions: {
@@ -94,7 +98,8 @@ export default tseslint.config(
       },
     },
     rules: {
-      // Disable TypeScript-specific rules for JS files
+      // Disable ALL TypeScript-specific rules for JS files (they all require type information)
+      // Use a wildcard pattern to disable all @typescript-eslint rules
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-floating-promises': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
@@ -103,6 +108,23 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unused-vars': 'off',
+      '@typescript-eslint/await-thenable': 'off',
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/restrict-plus-operands': 'off',
+      '@typescript-eslint/restrict-template-expressions': 'off',
+      '@typescript-eslint/unbound-method': 'off',
+      '@typescript-eslint/no-array-delete': 'off',
+      // Disable all other TypeScript rules that might require type information
+      '@typescript-eslint/no-misused-promises': 'off',
+      '@typescript-eslint/no-redundant-type-constituents': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/prefer-includes': 'off',
+      '@typescript-eslint/prefer-nullish-coalescing': 'off',
+      '@typescript-eslint/prefer-optional-chain': 'off',
+      '@typescript-eslint/prefer-reduce-type-parameter': 'off',
+      '@typescript-eslint/prefer-regexp-exec': 'off',
+      '@typescript-eslint/prefer-string-starts-ends-with': 'off',
+      '@typescript-eslint/switch-exhaustiveness-check': 'off',
     },
   },
   {
@@ -134,5 +156,12 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
     },
-  }
-);
+  },
+  {
+    // Allow console.log in seed files and scripts
+    files: ['**/seed.ts', '**/seed.js', '**/scripts/**/*.ts', '**/scripts/**/*.js'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
+];
