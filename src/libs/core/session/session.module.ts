@@ -3,7 +3,9 @@ import { ConfigModule } from '@config';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { FastifySessionStoreAdapter } from './fastify-session-store.adapter';
-import { DatabaseModule } from '@infrastructure/database';
+// Import directly from database.module to avoid TDZ with @infrastructure/database barrel.
+// GuardsModule->SessionModule->barrel caused "Cannot access '_databasemodule' before initialization".
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 
