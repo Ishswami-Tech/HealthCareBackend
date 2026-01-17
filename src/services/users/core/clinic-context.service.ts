@@ -103,7 +103,7 @@ export class ClinicContextService {
         plan: 'professional',
         maxUsers: 50,
         maxPatients: 10000,
-        expiresAt: new Date('2025-12-31'),
+        expiresAt: new Date('2026-12-31'), // Sample: keep in future for 2026 dev/tests
       },
       metadata: {
         createdAt: new Date('2024-01-01'),
