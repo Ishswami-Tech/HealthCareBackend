@@ -56,8 +56,8 @@ export class SessionManagementService implements OnModuleInit {
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     @Inject(ConfigService) private readonly configService: ConfigService,
-    @Optional() private readonly databaseService?: DatabaseService,
-    private readonly jwtService: JwtService
+    private readonly jwtService: JwtService,
+    @Optional() private readonly databaseService?: DatabaseService
   ) {}
 
   /**
