@@ -23,7 +23,7 @@ import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache/cache.module';
-// import { SessionModule } from '@core/session/session.module';
+import { SessionModule } from '@core/session/session.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -61,9 +61,9 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     // CacheModule - Required for caching functionality (Dragonfly/Redis)
     // Use forRoot() to conditionally include CacheWarmingService (only in API, not worker)
     CacheModule.forRoot(),
-    // SessionModule - Required for FastifySessionStoreAdapter
-    // TEMPORARILY DISABLED: SessionModule disabled for debugging
-    // SessionModule,
+    // SessionModule - @Global() module providing SessionManagementService for JwtAuthGuard
+    // Required for FastifySessionStoreAdapter and session management throughout the app
+    SessionModule,
 
     // Business modules
     AppointmentsModule,

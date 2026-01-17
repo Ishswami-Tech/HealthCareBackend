@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module, forwardRef, Global } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
@@ -16,6 +16,11 @@ import { LoggingModule } from '@infrastructure/logging';
  * @description Provides comprehensive session management for 1M+ users with
  * distributed storage, security monitoring, and automatic cleanup.
  * Uses @fastify/session and @fastify/cookie for session management.
+ *
+ * @Global() - SessionManagementService is required by JwtAuthGuard which is used
+ * throughout the application. Making this module global ensures SessionManagementService
+ * is available to all modules without explicit imports.
+ *
  * @example
  * ```typescript
  * @Module({
@@ -25,6 +30,7 @@ import { LoggingModule } from '@infrastructure/logging';
  * export class AppModule {}
  * ```
  */
+@Global()
 @Module({
   imports: [
     ConfigModule,
