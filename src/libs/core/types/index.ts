@@ -241,5 +241,3 @@ export * from './health-check.types';
 // Payment Types - Extended (payment processor interfaces)
 // Note: Basic payment types are in payment.types.ts, processor interface added
 export type { IPaymentProcessor } from './payment.types';
-
-

@@ -41,6 +41,7 @@ export { HealthcareErrorsService as Errors } from './healthcare-errors.service';
 // CacheErrorHandler depends on LoggingService, which imports HealthcareError from this barrel
 // Exporting it here creates a circular dependency chain
 
-// Database error handler
-export { DatabaseErrorHandler, DatabaseErrorType } from './database-error.handler';
-export type { ErrorContext } from './database-error.handler';
+// Database error handler - NOT exported from barrel to avoid circular dependency
+// Import directly: import { DatabaseErrorHandler, DatabaseErrorType, ErrorContext } from '@core/errors/database-error.handler';
+// DatabaseErrorHandler depends on LoggingService, which imports from this barrel
+// Exporting it here creates: errors -> database-error.handler -> logging -> events -> resilience -> framework cycle

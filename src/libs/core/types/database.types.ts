@@ -10,9 +10,8 @@
 
 // Prisma 7: Import from @prisma/client (resolved via symlink or path mapping)
 import type { PrismaClient } from '@prisma/client';
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
-import { HttpStatus } from '@nestjs/common';
+// NOTE: No @core/errors imports here - this file must remain pure types/classes only
+// to avoid circular dependencies (per .ai-rules KISS principle)
 
 // ============================================================================
 // Prisma Entity Type Imports
@@ -776,13 +775,9 @@ export class RepositoryResult<T, E = Error> {
         this._error instanceof Error ? this._error : new Error(String(this._error));
       throw errorToThrow;
     }
-    throw new HealthcareError(
-      ErrorCode.DATABASE_RECORD_NOT_FOUND,
-      'RepositoryResult contains no data',
-      HttpStatus.INTERNAL_SERVER_ERROR,
-      {},
-      'RepositoryResult.unwrap'
-    );
+    // Use simple Error to avoid circular dependency with @core/errors
+    // HealthcareError would create: types -> errors -> logging -> events -> types cycle
+    throw new Error('RepositoryResult contains no data (DATABASE_RECORD_NOT_FOUND)');
   }
 
   unwrapOr(defaultValue: T): T {
@@ -1018,13 +1013,13 @@ export interface ResultJSON<TData> {
 /**
  * Specialized result types for healthcare operations
  */
-export type HealthcareResult<T> = RepositoryResult<T, HealthcareError>;
+export type HealthcareResult<T> = RepositoryResult<T, Error>;
 
 // Note: ClinicError and PatientError are not defined in @core/errors
-// Using HealthcareError with clinicId/patientId in metadata for now
-// If needed, these can be added to @core/errors in the future
-export type ClinicResult<T> = RepositoryResult<T, HealthcareError>;
-export type PatientResult<T> = RepositoryResult<T, HealthcareError>;
+// Using Error with clinicId/patientId in metadata for now
+// specific error types can be cast at the service layer if needed
+export type ClinicResult<T> = RepositoryResult<T, Error>;
+export type PatientResult<T> = RepositoryResult<T, Error>;
 
 /**
  * Base repository interface defining common CRUD operations
