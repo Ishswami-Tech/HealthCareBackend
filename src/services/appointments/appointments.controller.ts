@@ -5003,4 +5003,32 @@ export class AppointmentsController {
       throw this.errors.internalServerError(context);
     }
   }
+
+  @Get(':id/qr')
+  @Roles(Role.PATIENT, Role.RECEPTIONIST)
+  @ApiOperation({ summary: 'Generate appointment QR code' })
+  @ApiResponse({ status: 200, description: 'QR code generated successfully' })
+  async generateQR(
+    @Param('id') appointmentId: string,
+    @Request() _req: ClinicAuthenticatedRequest
+  ) {
+    const qrCode = await this.qrService.generateAppointmentQR(appointmentId);
+    return {
+      success: true,
+      data: { qrCode },
+    };
+  }
+
+  @Post('verify-qr')
+  @Roles(Role.RECEPTIONIST, Role.DOCTOR)
+  @ApiOperation({ summary: 'Verify appointment QR code' })
+  @ApiBody({ schema: { type: 'object', properties: { qrToken: { type: 'string' } } } })
+  @ApiResponse({ status: 200, description: 'QR code verified successfully' })
+  async verifyQR(@Body() body: { qrToken: string }, @Request() _req: ClinicAuthenticatedRequest) {
+    const appointmentId = await Promise.resolve(this.qrService.verifyAppointmentQR(body.qrToken));
+    return {
+      success: true,
+      data: { appointmentId, verified: true },
+    };
+  }
 }

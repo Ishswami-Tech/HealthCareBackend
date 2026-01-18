@@ -144,7 +144,13 @@ export class ClinicGuard implements CanActivate {
     const locationId = this.extractLocationId(request);
 
     // Set clinic context in request for downstream use
-    request.clinicId = clinicId;
+    // CRITICAL: Ensure we use the RESOLVED canonical UUID from the service, not the raw input
+    // This handles cases where the input was a custom code (e.g. 'cl002') but we need the UUID
+    if (clinicResult.clinicContext?.clinicId) {
+      request.clinicId = clinicResult.clinicContext.clinicId;
+    } else {
+      request.clinicId = clinicId;
+    }
     if (locationId) {
       request.locationId = locationId;
     }

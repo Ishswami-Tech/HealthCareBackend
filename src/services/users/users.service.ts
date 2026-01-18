@@ -357,7 +357,11 @@ export class UsersService {
     return `UID${nextId.toString().padStart(6, '0')}`;
   }
 
-  async createUser(data: CreateUserDto, userId?: string, clinicId?: string): Promise<User> {
+  async createUser(
+    data: CreateUserDto,
+    userId?: string,
+    clinicId?: string
+  ): Promise<UserResponseDto> {
     // RBAC: Check permission to create users
     if (userId && clinicId) {
       const permissionCheck = await this.rbacService.checkPermission({
@@ -441,7 +445,39 @@ export class UsersService {
       });
       await this.cacheService.invalidateCacheByTag('users');
 
-      return user as unknown as User;
+      // Map to UserResponseDto
+      const userRecord = user as {
+        id: string;
+        email: string;
+        firstName?: string | null;
+        lastName?: string | null;
+        role: string;
+        isVerified: boolean;
+        createdAt: Date;
+        updatedAt: Date;
+        dateOfBirth?: Date | string | null;
+        phone?: string | null;
+        password?: string;
+      };
+
+      const userResponse: UserResponseDto = {
+        id: userRecord.id,
+        email: userRecord.email,
+        firstName: userRecord.firstName ?? '',
+        lastName: userRecord.lastName ?? '',
+        role: userRecord.role as Role,
+        isVerified: userRecord.isVerified,
+        isActive: true, // User accounts are active by default
+        createdAt: userRecord.createdAt,
+        updatedAt: userRecord.updatedAt,
+        phone: userRecord.phone ?? '',
+      };
+
+      if (userRecord.dateOfBirth) {
+        userResponse.dateOfBirth = this.formatDateToString(userRecord.dateOfBirth);
+      }
+
+      return userResponse;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       await this.loggingService.log(
@@ -452,6 +488,7 @@ export class UsersService {
         {
           error: errorMessage,
           email: data.email,
+          type: 'createUser_error',
         }
       );
       throw error;

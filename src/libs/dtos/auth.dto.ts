@@ -9,10 +9,80 @@ import {
   IsEnum,
   IsObject,
   IsDateString,
+  ValidateNested,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import { Role } from '@core/types/enums.types';
+
+/**
+ * Data Transfer Object for user profile in auth response
+ */
+export class UserProfileDto {
+  @ApiProperty({
+    description: 'User ID',
+    example: 'user-123',
+  })
+  @IsString()
+  id!: string;
+
+  @ApiProperty({
+    description: 'User Email',
+    example: 'user@example.com',
+  })
+  @IsString()
+  email!: string;
+
+  @ApiPropertyOptional({
+    description: 'First Name',
+    example: 'John',
+  })
+  @IsOptional()
+  @IsString()
+  firstName?: string | undefined;
+
+  @ApiPropertyOptional({
+    description: 'Last Name',
+    example: 'Doe',
+  })
+  @IsOptional()
+  @IsString()
+  lastName?: string | undefined;
+
+  @ApiPropertyOptional({
+    description: 'User Role',
+    enum: Role,
+    example: Role.PATIENT,
+  })
+  @IsOptional()
+  @IsEnum(Role)
+  role?: Role;
+
+  @ApiPropertyOptional({
+    description: 'Verification status',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isVerified?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Clinic ID',
+    example: 'clinic-123',
+  })
+  @IsOptional()
+  @IsString()
+  clinicId?: string | undefined;
+
+  @ApiPropertyOptional({
+    description: 'Profile Picture URL',
+    example: 'https://example.com/pic.jpg',
+  })
+  @IsOptional()
+  @IsString()
+  profilePicture?: string | undefined;
+}
 
 /**
  * Data Transfer Object for user login
@@ -483,16 +553,12 @@ export class RequestOtpDto {
  */
 export class VerifyOtpRequestDto {
   @ApiProperty({
-    description: 'User email',
+    description: 'User email or phone',
     example: 'user@example.com',
-    format: 'email',
   })
-  @IsEmail({}, { message: 'Please provide a valid email address' })
-  @IsNotEmpty({ message: 'Email is required' })
-  @Transform(({ value }): string =>
-    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
-  )
-  email!: string;
+  @IsString({ message: 'Identifier must be a string' })
+  @IsNotEmpty({ message: 'Identifier is required' })
+  identifier!: string;
 
   @ApiProperty({
     description: 'OTP code',
@@ -575,23 +641,43 @@ export class AuthResponse {
   @ApiProperty({
     description: 'Access token',
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    required: false,
   })
+  @IsOptional()
   @IsString({ message: 'Access token must be a string' })
-  accessToken!: string;
+  accessToken?: string;
 
   @ApiProperty({
     description: 'Refresh token',
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    required: false,
   })
+  @IsOptional()
   @IsString({ message: 'Refresh token must be a string' })
-  refreshToken!: string;
+  refreshToken?: string;
 
   @ApiProperty({
     description: 'User information',
     example: { id: 'user-123', email: 'user@example.com' },
   })
-  @IsObject({ message: 'User must be an object' })
-  user!: unknown;
+  @ValidateNested()
+  @Type(() => UserProfileDto)
+  user!: UserProfileDto;
+
+  @ApiPropertyOptional({
+    description: 'Indicates if OTP verification is required',
+    example: true,
+  })
+  @IsOptional()
+  requiresVerification?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Message to display to the user',
+    example: 'Please verify your account.',
+  })
+  @IsOptional()
+  @IsString()
+  message?: string;
 }
 
 /**

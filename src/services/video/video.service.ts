@@ -294,7 +294,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   async generateMeetingToken(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: {
       displayName: string;
       email: string;
@@ -344,7 +344,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   async startConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     try {
       const provider: IVideoProvider = await this.getProvider();
@@ -409,7 +409,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   async endConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     sessionNotes?: string
   ): Promise<VideoConsultationSession> {
     try {

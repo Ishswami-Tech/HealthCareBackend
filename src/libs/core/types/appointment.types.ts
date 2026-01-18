@@ -1337,6 +1337,8 @@ export interface QueueEntryData {
   actualWaitTime?: number;
   locationId?: string;
   emergencyAt?: string;
+  type?: string;
+  notes?: string;
 }
 
 // ============================================================================

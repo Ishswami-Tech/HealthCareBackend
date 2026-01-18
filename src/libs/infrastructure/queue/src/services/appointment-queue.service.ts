@@ -51,7 +51,6 @@ export class AppointmentQueueService {
     },
     domain: string
   ): Promise<OperationResponse> {
-    const startTime = Date.now();
     const { appointmentId, doctorId, patientId, clinicId, appointmentType, notes, locationId } =
       checkInData;
     const date = new Date().toISOString().split('T')[0];
@@ -116,7 +115,6 @@ export class AppointmentQueueService {
           appointmentId,
           doctorId,
           queueLength: exists ? existingEntries.length : existingEntries.length + 1,
-          responseTime: Date.now() - startTime,
         }
       );
 
@@ -228,7 +226,6 @@ export class AppointmentQueueService {
     appointmentId: string,
     domain: string
   ): Promise<PatientQueuePositionResponse> {
-    const startTime = Date.now();
     const cacheKey = `queue:position:${appointmentId}:${domain}`;
 
     try {
@@ -312,7 +309,7 @@ export class AppointmentQueueService {
         }
       }
 
-      void this.loggingService.log(
+      await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'Patient queue position retrieved successfully',
@@ -321,7 +318,6 @@ export class AppointmentQueueService {
           appointmentId,
           domain,
           position,
-          responseTime: Date.now() - startTime,
         }
       );
 

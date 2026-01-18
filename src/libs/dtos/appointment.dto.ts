@@ -304,6 +304,15 @@ export class CreateAppointmentDto {
   @IsOptional()
   @IsString({ message: 'App domain must be a string' })
   appDomain?: string;
+
+  @ApiPropertyOptional({
+    description: 'List of symptoms',
+    example: ['Fever', 'Headache'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  symptoms?: string[];
 }
 
 /**
@@ -380,6 +389,32 @@ export class UpdateAppointmentDto {
   @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
+
+  @ApiPropertyOptional({ description: 'List of symptoms' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  symptoms?: string[];
+
+  @ApiPropertyOptional({ description: 'Diagnosis' })
+  @IsOptional()
+  @IsString()
+  diagnosis?: string;
+
+  @ApiPropertyOptional({ description: 'Prescription text' })
+  @IsOptional()
+  @IsString()
+  prescription?: string;
+
+  @ApiPropertyOptional({ description: 'Treatment Plan' })
+  @IsOptional()
+  @IsString()
+  treatmentPlan?: string;
+
+  @ApiPropertyOptional({ description: 'Follow-up Date' })
+  @IsOptional()
+  @IsDateString()
+  followUpDate?: string;
 }
 
 /**
@@ -939,6 +974,11 @@ export class CompleteAppointmentDto {
   @IsOptional()
   @IsString({ message: 'Treatment plan must be a string' })
   treatmentPlan?: string;
+
+  @ApiPropertyOptional({ description: 'Prescription text', required: false })
+  @IsOptional()
+  @IsString()
+  prescription?: string;
 
   @ApiPropertyOptional({ description: 'Follow-up required', required: false })
   @IsOptional()

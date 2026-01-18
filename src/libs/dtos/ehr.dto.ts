@@ -78,6 +78,22 @@ export class CreateLabReportDto {
 
   @IsDateString()
   date!: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
+
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
 }
 
 export class UpdateLabReportDto {
@@ -100,6 +116,14 @@ export class UpdateLabReportDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 // Radiology Report DTOs
@@ -118,6 +142,22 @@ export class CreateRadiologyReportDto {
 
   @IsDateString()
   date!: string;
+
+  @IsOptional()
+  @IsString()
+  recommendations?: string;
+
+  @IsOptional()
+  @IsString({ each: true })
+  images?: string[];
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
+
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
 }
 
 export class UpdateRadiologyReportDto {
@@ -136,6 +176,14 @@ export class UpdateRadiologyReportDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+
+  @IsOptional()
+  @IsString()
+  recommendations?: string;
+
+  @IsOptional()
+  @IsString({ each: true })
+  images?: string[];
 }
 
 // Surgical Record DTOs
@@ -155,6 +203,22 @@ export class CreateSurgicalRecordDto {
 
   @IsDateString()
   date!: string;
+
+  @IsOptional()
+  @IsString()
+  anesthesia?: string;
+
+  @IsOptional()
+  @IsString()
+  complications?: string;
+
+  @IsOptional()
+  @IsString()
+  outcome?: string;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string;
 }
 
 export class UpdateSurgicalRecordDto {
@@ -173,6 +237,18 @@ export class UpdateSurgicalRecordDto {
   @IsOptional()
   @IsDateString()
   date?: string;
+
+  @IsOptional()
+  @IsString()
+  anesthesia?: string;
+
+  @IsOptional()
+  @IsString()
+  complications?: string;
+
+  @IsOptional()
+  @IsString()
+  outcome?: string;
 }
 
 // Vital DTOs
@@ -188,6 +264,18 @@ export class CreateVitalDto {
 
   @IsDateString()
   recordedAt!: string;
+
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @IsOptional()
+  @IsString()
+  recordedBy?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 export class UpdateVitalDto {
@@ -202,6 +290,14 @@ export class UpdateVitalDto {
   @IsOptional()
   @IsDateString()
   recordedAt?: string;
+
+  @IsOptional()
+  @IsString()
+  unit?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
 // Allergy DTOs
@@ -224,6 +320,10 @@ export class CreateAllergyDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 export class UpdateAllergyDto {
@@ -246,6 +346,10 @@ export class UpdateAllergyDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 // Medication DTOs
@@ -279,6 +383,14 @@ export class CreateMedicationDto {
   @IsOptional()
   @IsString()
   sideEffects?: string;
+
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 export class UpdateMedicationDto {
@@ -313,6 +425,14 @@ export class UpdateMedicationDto {
   @IsOptional()
   @IsString()
   sideEffects?: string;
+
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
 }
 
 // Immunization DTOs
@@ -345,6 +465,10 @@ export class CreateImmunizationDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @IsOptional()
+  @IsString()
+  manufacturer?: string;
 }
 
 export class UpdateImmunizationDto {

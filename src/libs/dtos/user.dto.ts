@@ -717,6 +717,56 @@ export class UpdateUserProfileDto {
   @ValidateNested()
   @Type(() => EmergencyContactDto)
   emergencyContact?: EmergencyContactDto;
+
+  @ApiPropertyOptional({
+    example: 'Cardiology',
+    description: 'Professional specialization (for doctors/nurses)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Specialization must be a string' })
+  specialization?: string;
+
+  @ApiPropertyOptional({
+    example: 5,
+    description: 'Years of professional experience',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Experience must be a number' })
+  @IsInt({ message: 'Experience must be an integer' })
+  experience?: number;
+
+  @ApiPropertyOptional({
+    example: 'Healthy Clinic',
+    description: 'Clinic name (for clinic admins)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Clinic name must be a string' })
+  clinicName?: string;
+
+  @ApiPropertyOptional({
+    example: '123 Clinic St',
+    description: 'Clinic address (for clinic admins)',
+  })
+  @IsOptional()
+  @IsString({ message: 'Clinic address must be a string' })
+  clinicAddress?: string;
+
+  @ApiPropertyOptional({
+    example: 'clinic-uuid-123',
+    description: 'Associated clinic ID',
+  })
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
+  clinicId?: string;
+
+  @ApiPropertyOptional({
+    example: 'studio-uuid-123',
+    description: 'Associated studio ID',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
+  studioId?: string;
 }
 
 /**

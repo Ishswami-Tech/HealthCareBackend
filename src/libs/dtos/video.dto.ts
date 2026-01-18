@@ -86,13 +86,13 @@ export class GenerateVideoTokenDto {
   @ApiProperty({
     example: 'patient',
     description: 'User role in the consultation',
-    enum: ['patient', 'doctor'],
+    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
   })
-  @IsEnum(['patient', 'doctor'], {
-    message: 'User role must be either "patient" or "doctor"',
+  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
+    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
   })
   @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor';
+  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
 
   @ApiProperty({
     description: 'User information for video consultation',
@@ -128,13 +128,13 @@ export class StartVideoConsultationDto {
   @ApiProperty({
     example: 'patient',
     description: 'User role in the consultation',
-    enum: ['patient', 'doctor'],
+    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
   })
-  @IsEnum(['patient', 'doctor'], {
-    message: 'User role must be either "patient" or "doctor"',
+  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
+    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
   })
   @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor';
+  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
 }
 
 /**
@@ -161,13 +161,13 @@ export class EndVideoConsultationDto {
   @ApiProperty({
     example: 'patient',
     description: 'User role in the consultation',
-    enum: ['patient', 'doctor'],
+    enum: ['patient', 'doctor', 'receptionist', 'clinic_admin'],
   })
-  @IsEnum(['patient', 'doctor'], {
-    message: 'User role must be either "patient" or "doctor"',
+  @IsEnum(['patient', 'doctor', 'receptionist', 'clinic_admin'], {
+    message: 'User role must be one of: patient, doctor, receptionist, clinic_admin',
   })
   @IsNotEmpty({ message: 'User role is required' })
-  userRole!: 'patient' | 'doctor';
+  userRole!: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
 
   @ApiPropertyOptional({
     example: 'Patient felt better after consultation',
@@ -176,6 +176,14 @@ export class EndVideoConsultationDto {
   @IsOptional()
   @IsString({ message: 'Meeting notes must be a string' })
   meetingNotes?: string;
+
+  @ApiPropertyOptional({
+    example: 'Consultation completed successfully',
+    description: 'Reason for ending the consultation',
+  })
+  @IsOptional()
+  @IsString({ message: 'End reason must be a string' })
+  endReason?: string;
 }
 
 /**

@@ -93,7 +93,7 @@ export interface IVideoProvider {
   generateMeetingToken(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: {
       displayName: string;
       email: string;
@@ -107,7 +107,7 @@ export interface IVideoProvider {
   startConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession>;
 
   /**
@@ -116,7 +116,7 @@ export interface IVideoProvider {
   endConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession>;
 
   /**
