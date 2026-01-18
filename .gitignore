@@ -16,8 +16,8 @@ package-lock.json
 .env.local
 .env.development
 .env.test
-.env*.local
 .env.production
+.env*.local
 
 # Build output
 dist/
@@ -96,7 +96,6 @@ bin/
 # test-local-start.sh
 # quick-test.sh
 # Note: .env files are already ignored above (lines 14-20)
-.env.test.local
 
 # Test output and log files
 seed-output*.txt

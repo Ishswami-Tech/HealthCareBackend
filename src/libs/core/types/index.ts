@@ -234,3 +234,12 @@ export * from './realtime-health.types';
 
 // WhatsApp Suppression Types (type-safe Prisma delegate access)
 export * from './whatsapp-suppression.types';
+
+// Health Check Types (shared interfaces for health check providers)
+export * from './health-check.types';
+
+// Payment Types - Extended (payment processor interfaces)
+// Note: Basic payment types are in payment.types.ts, processor interface added
+export type { IPaymentProcessor } from './payment.types';
+
+

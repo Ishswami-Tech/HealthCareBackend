@@ -30,13 +30,14 @@ export class AuditLogListener {
       // Type-safe metadata extraction using bracket notation
       const actionValue = metadata?.['action'];
       const action = typeof actionValue === 'string' ? actionValue : 'UNKNOWN';
-      
+
       const descriptionValue = metadata?.['description'];
-      const description = typeof descriptionValue === 'string' ? descriptionValue : 'No description';
-      
+      const description =
+        typeof descriptionValue === 'string' ? descriptionValue : 'No description';
+
       const ipAddressValue = metadata?.['ipAddress'];
       const ipAddress = typeof ipAddressValue === 'string' ? ipAddressValue : null;
-      
+
       const deviceValue = metadata?.['device'];
       const device = typeof deviceValue === 'string' ? deviceValue : null;
 

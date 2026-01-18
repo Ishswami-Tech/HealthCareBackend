@@ -192,3 +192,34 @@ export interface ClinicPaymentConfig {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/**
+ * Payment Processor Interface
+ * 
+ * SOLID Principles:
+ * - Interface Segregation: Specific interface for payment operations
+ * - Dependency Inversion: Depend on abstraction, not concrete implementation
+ * 
+ * KISS Principle: Simple interface with clear payment operations
+ * DRY Principle: Reusable interface across multiple payment processors
+ * 
+ * Purpose: Break circular dependency between billing.module and payment.module
+ * Location: @core/types per .ai-rules - all types must be in @core/types
+ * 
+ * Note: Uses existing PaymentResult interface defined above
+ */
+export interface IPaymentProcessor {
+  processPayment(
+    amount: number,
+    method: string,
+    metadata?: Record<string, unknown>
+  ): Promise<PaymentResult>;
+  
+  refundPayment(
+    transactionId: string,
+    amount?: number
+  ): Promise<RefundResult>;
+  
+  getPaymentStatus(transactionId: string): Promise<PaymentStatusResult>;
+}
+
