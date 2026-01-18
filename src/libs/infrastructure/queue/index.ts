@@ -27,6 +27,8 @@
 // Main exports - Single Source of Truth
 export { QueueService } from './src/queue.service';
 export { QueueModule } from './src/queue.module';
+export { AppointmentQueueService } from './src/services/appointment-queue.service';
+export { QueueController } from './src/controllers/queue.controller';
 
 // Re-export types from @core/types for convenience
 export type {

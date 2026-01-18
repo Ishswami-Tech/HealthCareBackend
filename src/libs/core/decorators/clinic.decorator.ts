@@ -6,6 +6,8 @@ import { createParamDecorator, ExecutionContext, BadRequestException } from '@ne
  * @interface NestJSRequest
  */
 interface NestJSRequest {
+  /** Resolved Clinic ID (from ClinicGuard) */
+  readonly clinicId?: string;
   /** Request headers */
   readonly headers: {
     /** Authorization header */
@@ -96,6 +98,12 @@ export const Clinic = (): MethodDecorator & ClassDecorator => SetMetadata(CLINIC
 export const ClinicId = createParamDecorator((data: unknown, ctx: ExecutionContext): string => {
   const request = ctx.switchToHttp().getRequest<NestJSRequest>();
 
+  // Priority 0: Check if ClinicGuard has already resolved and set the clinicId
+  // This is the most reliable source as it contains the canonical UUID
+  if (request['clinicId'] && typeof request['clinicId'] === 'string') {
+    return request['clinicId'];
+  }
+
   // Priority 1: Check Authorization header for clinic context
   const authHeader = request.headers?.authorization;
   if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
@@ -166,6 +174,12 @@ export const ClinicId = createParamDecorator((data: unknown, ctx: ExecutionConte
 export const OptionalClinicId = createParamDecorator(
   (data: unknown, ctx: ExecutionContext): string | undefined => {
     const request = ctx.switchToHttp().getRequest<NestJSRequest>();
+
+    // Priority 0: Check if ClinicGuard has already resolved and set the clinicId
+    // This is the most reliable source as it contains the canonical UUID
+    if (request['clinicId'] && typeof request['clinicId'] === 'string') {
+      return request['clinicId'];
+    }
 
     // Priority 1: Check Authorization header for clinic context
     const authHeader = request.headers?.authorization;

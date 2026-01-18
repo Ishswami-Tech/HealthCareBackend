@@ -130,6 +130,9 @@ export interface EnterpriseEventPayload extends BaseEventPayload {
     retentionPeriod: number;
     encryptionRequired: boolean;
   };
+
+  // General Payload
+  payload?: unknown;
 }
 
 // Healthcare-specific event payloads

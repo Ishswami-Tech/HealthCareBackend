@@ -22,7 +22,12 @@ import {
 } from '@nestjs/swagger';
 import { UsersService } from '@services/users/users.service';
 import { LocationManagementService } from '../services/location-management.service';
-import { UpdateUserDto, UserResponseDto, UpdateUserRoleDto } from '@dtos/user.dto';
+import {
+  UserResponseDto,
+  UpdateUserRoleDto,
+  CreateUserDto,
+  UpdateUserProfileDto,
+} from '@dtos/user.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -47,6 +52,39 @@ export class UsersController {
     private readonly rbacService: RbacService,
     private readonly locationManagementService: LocationManagementService
   ) {}
+
+  @Post()
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('users', 'create')
+  @ApiOperation({
+    summary: 'Create user',
+    description: 'Create a new user. Only accessible by Super Admin and Clinic Admin.',
+  })
+  @ApiBody({ type: CreateUserDto })
+  @ApiResponse({
+    status: 201,
+    description: 'User created successfully',
+    type: UserResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Validation failed',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Forbidden - Insufficient permissions',
+  })
+  async create(
+    @Body() createUserDto: CreateUserDto,
+    @Request() req: ClinicAuthenticatedRequest,
+    @ClinicId() clinicId: string
+  ): Promise<UserResponseDto> {
+    const userId = req.user?.sub || req.user?.id;
+    if (!userId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+    return this.usersService.createUser(createUserDto, userId, clinicId);
+  }
 
   @Get('all')
   @RateLimitAPI()
@@ -164,7 +202,7 @@ export class UsersController {
   })
   async update(
     @Param('id') id: string,
-    @Body() updateUserDto: UpdateUserDto,
+    @Body() updateUserDto: UpdateUserProfileDto,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<UserResponseDto> {
     if (!id || id === 'undefined') {

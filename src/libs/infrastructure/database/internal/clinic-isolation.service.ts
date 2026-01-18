@@ -24,6 +24,7 @@ export class ClinicIsolationService implements OnModuleInit {
   private clinicCache = new Map<string, ClinicContext>();
   private userClinicCache = new Map<string, string[]>(); // userId -> clinicIds[]
   private locationClinicCache = new Map<string, string>(); // locationId -> clinicId
+  private clinicCodeCache = new Map<string, string>(); // subdomain/code -> clinicId
   private cacheUpdateInterval!: NodeJS.Timeout;
   private maxClinics: number;
   private maxLocationsPerClinic: number;
@@ -121,6 +122,7 @@ export class ClinicIsolationService implements OnModuleInit {
       this.clinicCache.clear();
       this.userClinicCache.clear();
       this.locationClinicCache.clear();
+      this.clinicCodeCache.clear();
 
       // Load all active clinics - use safe delegate access to avoid Prisma validation errors
       // CRITICAL: Use getDelegateSafely() to access delegate without triggering validation
@@ -203,111 +205,74 @@ export class ClinicIsolationService implements OnModuleInit {
 
         this.clinicCache.set(clinic.id, clinicContext);
 
+        // Cache subdomain/code mapping
+        if (clinic.subdomain) {
+          this.clinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
+        }
+
         // Cache location to clinic mappings
         for (const location of clinic.locations) {
           this.locationClinicCache.set(location.id, clinic.id);
         }
       }
-
-      // Load user-clinic mappings
-      await this.loadUserClinicMappings();
-
-      // Only log at INFO level on first initialization, use DEBUG for refreshes
-      const isFirstInit = this.isFirstInitialization;
-      const logLevel = isFirstInit ? LogLevel.INFO : LogLevel.DEBUG;
-      const logMessage = isFirstInit
-        ? `Initialized clinic cache with ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`
-        : `Clinic cache refreshed: ${this.clinicCache.size} clinics and ${this.locationClinicCache.size} locations`;
-
-      void this.loggingService.log(LogType.DATABASE, logLevel, logMessage, this.serviceName);
-
-      // Mark that first initialization is complete
-      if (isFirstInit) {
-        this.isFirstInitialization = false;
-      }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      const errorStack = error instanceof Error ? error.stack : undefined;
-      const errorCode = (error as { code?: string })?.code;
-
-      // Check if this is a "table does not exist" error (migrations not run yet)
-      const isTableMissingError =
-        errorMessage.includes('does not exist') ||
-        errorMessage.includes('relation') ||
-        errorMessage.includes('table') ||
-        errorMessage.includes('Unknown model') ||
-        errorMessage.includes('Invalid `prisma') ||
-        errorCode === 'P2021' || // Prisma table not found
-        errorCode === '42P01' || // PostgreSQL relation does not exist
-        errorCode === 'P2001'; // Prisma model not found
-
-      // Also check for Prisma client initialization errors
-      const isPrismaInitError =
-        errorMessage.includes('did not initialize yet') ||
-        errorMessage.includes('prisma generate') ||
-        errorMessage.includes('Cannot find module') ||
-        errorMessage.includes('MODULE_NOT_FOUND') ||
-        errorMessage.includes('PrismaClient') ||
-        errorMessage.includes('Invalid `prisma.clinic.findMany');
-
-      if (isTableMissingError || isPrismaInitError) {
-        // Log as warning instead of error - this is expected if migrations haven't been run or Prisma isn't ready
+      if (!this.isShuttingDown) {
         void this.loggingService.log(
           LogType.DATABASE,
-          LogLevel.WARN,
-          `Clinic caching initialization skipped: ${isTableMissingError ? 'Database tables not found' : 'Prisma client not ready'}. Application will continue without clinic caching. Error: ${errorMessage}`,
+          LogLevel.ERROR,
+          `Failed to initialize clinic caching: ${(error as Error).message}`,
           this.serviceName,
-          {
-            error: errorMessage,
-            stack: errorStack,
-            errorCode,
-            action: isTableMissingError
-              ? 'Run database migrations: yarn prisma migrate deploy'
-              : 'Ensure Prisma client is generated: yarn prisma generate',
-          }
+          { error: (error as Error).stack }
         );
-        // Don't throw - allow application to start without clinic caching
-        // The cache will be empty, but the app can still function
-        return;
       }
-
-      // For other errors, log as warning and don't throw - allow app to start
-      // Clinic caching is not critical for app startup
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.WARN,
-        `Clinic caching initialization failed (non-critical): ${errorMessage}. Application will continue without clinic caching.`,
-        this.serviceName,
-        { error: errorMessage, stack: errorStack, errorCode }
-      );
-      // Don't throw - allow application to start without clinic caching
-      return;
     } finally {
-      // Reset initialization flag to allow retry
       this.isInitializing = false;
     }
   }
-
   /**
    * Get clinic context
    * INTERNAL: Only accessible by DatabaseService
    * @internal
    */
   // Public for DatabaseService access, but marked as internal
-  async getClinicContext(clinicId: string): Promise<ClinicIsolationResult<ClinicContext>> {
+  async getClinicContext(clinicIdOrCode: string): Promise<ClinicIsolationResult<ClinicContext>> {
     try {
-      // Check cache first
-      let clinicContext = this.clinicCache.get(clinicId);
+      // 1. Try direct UUID lookup
+      let clinicContext = this.clinicCache.get(clinicIdOrCode);
 
+      // 2. If not found, check if it's a code/subdomain
       if (!clinicContext) {
-        // If not in cache, try to load from database
+        const resolvedId = this.clinicCodeCache.get(clinicIdOrCode.toLowerCase());
+        if (resolvedId) {
+          clinicContext = this.clinicCache.get(resolvedId);
+        }
+      }
+
+      // 3. If still not found, try database lookup
+      if (!clinicContext) {
+        // Check if input looks like a UUID
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          clinicIdOrCode
+        );
+
         // Use PrismaService directly
         type ClinicDelegate = {
           findFirst: <T>(args: T) => Promise<{
             id: string;
             name: string;
             subdomain?: string | null;
+            app_name: string;
+            isActive: boolean;
             locations?: Array<{ id: string }>;
+            telemedicineEnabled?: boolean;
+            labIntegrationEnabled?: boolean;
+            pharmacyIntegrationEnabled?: boolean;
+            timezone?: string;
+            workingHours?: string;
+            appointmentDuration?: number;
+            maxAdvanceBooking?: number;
+            emergencyContact?: string;
+            dataRetention?: string;
           } | null>;
         };
         const clinicDelegate = this.prismaService.getDelegateSafely<ClinicDelegate>('clinic');
@@ -316,8 +281,8 @@ export class ClinicIsolationService implements OnModuleInit {
         }
         const rawClinic = await clinicDelegate.findFirst({
           where: {
-            id: clinicId,
             isActive: true,
+            OR: isUuid ? [{ id: clinicIdOrCode }] : [{ subdomain: clinicIdOrCode }], // Query by subdomain if not UUID
           },
           include: {
             locations: {
@@ -327,28 +292,12 @@ export class ClinicIsolationService implements OnModuleInit {
             },
           },
         });
-        const clinic = rawClinic as {
-          id: string;
-          name: string;
-          subdomain: string | null;
-          app_name: string;
-          isActive: boolean;
-          locations: Array<{ id: string }>;
-          telemedicineEnabled?: boolean;
-          labIntegrationEnabled?: boolean;
-          pharmacyIntegrationEnabled?: boolean;
-          timezone?: string;
-          workingHours?: string;
-          appointmentDuration?: number;
-          maxAdvanceBooking?: number;
-          emergencyContact?: string;
-          dataRetention?: string;
-        } | null;
+        const clinic = rawClinic;
 
         if (!clinic) {
           return {
             success: false,
-            error: `Clinic not found or inactive: ${clinicId}`,
+            error: `Clinic not found or inactive: ${clinicIdOrCode}`,
           };
         }
 
@@ -357,7 +306,7 @@ export class ClinicIsolationService implements OnModuleInit {
           clinicName: clinic.name,
           ...(clinic.subdomain && { subdomain: clinic.subdomain }),
           appName: clinic.app_name,
-          locations: clinic.locations.map(loc => loc.id),
+          locations: clinic.locations?.map(loc => loc.id) || [],
           isActive: clinic.isActive,
           features: this.getClinicFeatures({
             telemedicineEnabled: clinic.telemedicineEnabled ?? undefined,
@@ -375,13 +324,16 @@ export class ClinicIsolationService implements OnModuleInit {
         };
 
         // Cache for future use
-        this.clinicCache.set(clinicId, clinicContext);
+        this.clinicCache.set(clinic.id, clinicContext);
+        if (clinic.subdomain) {
+          this.clinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
+        }
       }
 
       if (!clinicContext) {
         return {
           success: false,
-          error: `Clinic not found: ${clinicId}`,
+          error: `Clinic not found: ${clinicIdOrCode}`,
         };
       }
 
@@ -394,7 +346,7 @@ export class ClinicIsolationService implements OnModuleInit {
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.ERROR,
-        `Failed to get clinic context for ${clinicId}: ${(error as Error).message}`,
+        `Failed to get clinic context for ${clinicIdOrCode}: ${(error as Error).message}`,
         this.serviceName,
         { error: (error as Error).stack }
       );

@@ -59,6 +59,8 @@ import { Queue, Worker, Job } from 'bullmq';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import type { JobData } from '@core/types/queue.types';
+import { AppointmentQueueService } from './services/appointment-queue.service';
+import { QueueController } from './controllers/queue.controller';
 
 @Module({})
 export class QueueModule {
@@ -79,8 +81,10 @@ export class QueueModule {
           forwardRef(() => ResilienceModule),
           QueueMonitoringModule,
         ],
+        controllers: [QueueController],
         providers: [
           QueueService,
+          AppointmentQueueService,
           QueueProcessor,
           SharedWorkerService,
           QueueHealthMonitorService,
@@ -93,7 +97,7 @@ export class QueueModule {
             useValue: [], // Empty array when cache is disabled
           },
         ],
-        exports: [QueueService, QueueProcessor, SharedWorkerService],
+        exports: [QueueService, AppointmentQueueService, QueueProcessor, SharedWorkerService],
       };
     }
 
@@ -243,9 +247,11 @@ export class QueueModule {
           })
         ),
       ],
+      controllers: [QueueController],
       providers: [
         // Core services first - QueueService must be available before QueueStatusGateway
         QueueService,
+        AppointmentQueueService,
         QueueHealthMonitorService,
         QueueProcessor,
         // Always provide SharedWorkerService (it's optional in QueueHealthMonitorService)
@@ -456,6 +462,7 @@ export class QueueModule {
       ],
       exports: [
         QueueService,
+        AppointmentQueueService,
         BullModule,
         // Export health monitor for HealthService
         QueueHealthMonitorService,

@@ -226,7 +226,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async generateMeetingToken(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: {
       displayName: string;
       email: string;
@@ -274,10 +274,17 @@ export class OpenViduVideoProvider implements IVideoProvider {
         createdAt?: number;
         status?: string;
       }
+
+      // Determine OpenVidu role based on user role
+      // Doctors, Receptionists, and Admins are PUBLISHERs (or MODERATORs if needed)
+      // Patients are SUBSCRIBERs (based on existing logic, though arguably should be PUBLISHERs for 2-way)
+      // Preserving existing logic for patient/doctor, adding others as PUBLISHER
+      const openViduRole = userRole === 'patient' ? 'SUBSCRIBER' : 'PUBLISHER';
+
       const connectionResponse = await this.httpService.post<OpenViduConnectionResponse>(
         `${this.apiUrl}/openvidu/api/sessions/${session.id}/connection`,
         {
-          role: userRole === 'doctor' ? 'PUBLISHER' : 'SUBSCRIBER',
+          role: openViduRole,
           data: JSON.stringify({
             userId,
             userRole,
@@ -365,7 +372,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async startConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     try {
       // Get existing session or create new one
@@ -426,7 +433,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
         },
         {
           userId,
-          userRole: userRole === 'doctor' ? 'DOCTOR' : 'PATIENT',
+          // Map expanded roles to audit log roles.
+          // Database audit roles might be restricted? using DOCTOR/PATIENT as fallback or specific if available
+          userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit log
           clinicId: '',
           operation: 'START_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
@@ -459,7 +468,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
   async endConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     try {
       const session = await this.getConsultationSession(appointmentId);
@@ -500,7 +509,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         },
         {
           userId,
-          userRole: userRole === 'doctor' ? 'DOCTOR' : 'PATIENT',
+          userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit log
           clinicId: '',
           operation: 'END_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',

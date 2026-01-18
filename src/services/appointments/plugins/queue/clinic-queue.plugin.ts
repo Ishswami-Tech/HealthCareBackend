@@ -1,6 +1,6 @@
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
-import { AppointmentQueueService } from './appointment-queue.service';
+import { AppointmentQueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 
 interface PluginData {

@@ -28,6 +28,7 @@ import {
 import type { AuthTokens, TokenPayload, UserProfile } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 import type { UserWhereInput, UserCreateInput, UserUpdateInput } from '@core/types/input.types';
+import { Role } from '@core/types/enums.types';
 import type { UserWithPassword, UserWithRelations } from '@core/types/user.types';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
@@ -192,7 +193,7 @@ export class AuthService {
    */
   async register(
     registerDto: RegisterDto,
-    sessionMetadata?: { userAgent?: string; ipAddress?: string }
+    _sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<AuthResponse> {
     try {
       // Validate clinicId is provided (required)
@@ -334,79 +335,41 @@ export class AuthService {
         }
       }
 
-      // Create session first (stored in Redis via SessionManagementService)
-      // Fastify session will be set in controller if request object is available
-      const session = await this.sessionService.createSession({
-        userId: user.id,
-        userAgent: sessionMetadata?.userAgent || 'Registration',
-        ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
-        metadata: { registration: true },
-        clinicId: registerDto.clinicId,
-      });
-
-      // Generate tokens with session ID - handle null phone
-      const userForTokens: UserProfile = {
-        id: user.id,
-        email: user.email,
-        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
-        role: user.role,
-        ...(user.phone && { phone: user.phone }),
-        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
-      };
-      const tokens = await this.generateTokens(
-        userForTokens,
-        session.sessionId,
-        undefined,
-        sessionMetadata?.userAgent,
-        sessionMetadata?.ipAddress
-      );
-
-      // Send welcome email
-      // Use clinicId from registration for multi-tenant email routing
-      await this.emailService.sendEmail({
-        to: user.email,
-        subject: `Welcome to ${this.configService.getEnv('APP_NAME', 'Healthcare App')}`,
-        template: EmailTemplate.WELCOME,
-        context: {
-          name: `${user.firstName} ${user.lastName}`,
-          role: user.role,
-        },
-        ...(registerDto.clinicId && { clinicId: registerDto.clinicId }),
-      });
-
-      // Invalidate clinic cache if user is associated with a clinic
-      if (registerDto.clinicId) {
-        await this.cacheService.invalidateClinicCache(registerDto.clinicId);
-      }
-
       // Emit user registration event
       await this.eventService.emit('user.registered', {
         userId: user.id,
         email: user.email,
         role: user.role,
         clinicId: registerDto.clinicId,
-        sessionId: session.sessionId,
       });
 
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `User registered successfully: ${user.email}`,
+        `User registered successfully, pending verification: ${user.email}`,
         'AuthService.register',
         { userId: user.id, email: user.email, role: user.role }
       );
 
+      // Trigger OTP generation and sending using internal method
+      const identifier = registerDto.phone || registerDto.email;
+      await this.requestOtp({
+        identifier,
+        clinicId: registerDto.clinicId,
+      });
+
       return {
-        accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
-          isVerified: user.isVerified,
+          firstName: user.firstName || undefined,
+          lastName: user.lastName || undefined,
+          role: user.role as Role,
+          isVerified: false,
         },
+        requiresVerification: true,
+        message:
+          'Registration successful. Please verify your account with the OTP sent to your registered contact.',
       };
     } catch (_error) {
       await this.logging.log(
@@ -532,11 +495,11 @@ export class AuthService {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
+          firstName: user.firstName || undefined,
+          lastName: user.lastName || undefined,
+          role: user.role as Role,
           isVerified: user.isVerified,
-          clinicId: user.primaryClinicId,
+          clinicId: user.primaryClinicId || undefined,
         },
       };
     } catch (_error) {
@@ -934,62 +897,42 @@ export class AuthService {
     sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<{ success: boolean; message: string }> {
     try {
-      const user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
+      // Determine if identifier is email or phone
+      const isEmail = requestDto.identifier.includes('@');
+      let user: UserWithRelations | null = null;
+
+      if (isEmail) {
+        user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
+      } else {
+        // Find by phone
+        const users = await this.databaseService.findUsersSafe(
+          { phone: requestDto.identifier },
+          { take: 1 }
+        );
+        user = users[0] || null;
+      }
 
       if (!user) {
         throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
       }
 
-      // Generate OTP
-      const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-      // Store OTP with healthcare cache service
-      await this.cacheService.set(
-        `otp:${user.id}`,
-        otp,
-        300 // 5 minutes
-      );
-
       // Extract clinicId from requestDto or user's primary clinic
       const clinicId = requestDto.clinicId || user.primaryClinicId || undefined;
+      const userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User';
 
-      // Send OTP via email
-      await this.emailService.sendEmail({
-        to: user.email,
-        subject: 'Your OTP Code',
-        template: EmailTemplate.OTP_LOGIN,
-        context: {
-          name: `${user.firstName} ${user.lastName}`,
-          otp,
-        },
-        ...(clinicId && { clinicId }),
-      });
-
-      // Send OTP via WhatsApp if phone number is available
-      if (user.phone) {
-        try {
-          await this.whatsAppService.sendOTP(
-            user.phone,
-            otp,
-            10, // 10 minutes expiry
-            2, // max retries
-            clinicId // Pass clinicId for multi-tenant WhatsApp routing
-          );
-        } catch (whatsappError) {
-          // Log WhatsApp failure but don't fail the entire OTP request
-          // Email OTP is the primary channel
-          await this.logging.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `Failed to send WhatsApp OTP, email OTP sent successfully`,
-            'AuthService.requestOtp',
-            {
-              userId: user.id,
-              phone: user.phone,
-              error: whatsappError instanceof Error ? whatsappError.message : String(whatsappError),
-            }
-          );
+      let result;
+      if (isEmail) {
+        result = await this.otpService.sendOtpEmail(user.email, userName, 'login', clinicId);
+      } else {
+        // For phone, we use the user's stored phone number
+        if (!user.phone) {
+          throw new Error('User does not have a phone number linked');
         }
+        result = await this.otpService.sendOtpSms(user.phone, 'login', clinicId);
+      }
+
+      if (!result.success) {
+        throw new Error(result.message || 'Failed to send OTP');
       }
 
       // Emit OTP requested event
@@ -1000,7 +943,6 @@ export class AuthService {
         ...(clinicId && { clinicId }),
       });
 
-      const isPhone = !!user.phone;
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
@@ -1008,7 +950,7 @@ export class AuthService {
         'AuthService.requestOtp',
         {
           identifier: requestDto.identifier,
-          method: isPhone ? 'SMS' : 'Email',
+          method: isEmail ? 'Email' : 'SMS',
           ipAddress: sessionMetadata?.ipAddress,
           userAgent: sessionMetadata?.userAgent,
         }
@@ -1016,7 +958,7 @@ export class AuthService {
 
       return {
         success: true,
-        message: 'OTP sent successfully',
+        message: result.message || 'OTP sent successfully',
       };
     } catch (_error) {
       await this.logging.log(
@@ -1037,33 +979,50 @@ export class AuthService {
   /**
    * Verify OTP
    */
+  /**
+   * Verify OTP
+   */
   async verifyOtp(
     verifyDto: VerifyOtpRequestDto,
     sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<AuthResponse> {
     try {
-      const user = await this.databaseService.findUserByEmailSafe(verifyDto.email);
+      // Determine if identifier is email or phone
+      // Simple check: if it contains '@', assume email
+      const isEmail = verifyDto.identifier.includes('@');
+      let user: UserWithRelations | null = null;
+
+      if (isEmail) {
+        user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
+      } else {
+        // Find by phone
+        // Uses findUsersSafe which returns an array, take the first one
+        const users = await this.databaseService.findUsersSafe(
+          { phone: verifyDto.identifier },
+          { take: 1 }
+        );
+        user = users[0] || null;
+      }
 
       if (!user) {
         // Return proper 400 error instead of 500
         throw this.errors.userNotFound(undefined, 'AuthService.verifyOtp');
       }
 
-      // Verify OTP - check both email and user.id keys (OTP might be stored with either)
-      const storedOtpByEmail = await this.cacheService.get<string>(`otp:${verifyDto.email}`);
-      const storedOtpById = await this.cacheService.get<string>(`otp:${user.id}`);
-      const storedOtp = storedOtpByEmail || storedOtpById;
+      // Verify OTP using dedicated service
+      // This handles cache lookup and deletion
+      const verificationResult = await this.otpService.verifyOtp(
+        verifyDto.identifier,
+        verifyDto.otp
+      );
 
-      if (!storedOtp || storedOtp !== verifyDto.otp) {
+      if (!verificationResult.success) {
         // Return proper 400 error instead of 500
         throw this.errors.otpInvalid('AuthService.verifyOtp');
       }
 
-      // Remove OTP - delete both possible keys
-      await Promise.all([
-        this.cacheService.del(`otp:${verifyDto.email}`).catch(() => {}),
-        this.cacheService.del(`otp:${user.id}`).catch(() => {}),
-      ]);
+      // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
+      await this.cacheService.del(`otp:${user.id}`).catch(() => {});
 
       // Create session first
       // Session is stored in Redis via SessionManagementService
@@ -1127,21 +1086,21 @@ export class AuthService {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          role: user.role,
+          firstName: user.firstName || undefined,
+          lastName: user.lastName || undefined,
+          role: user.role as Role,
           isVerified: user.isVerified,
-          clinicId: user.primaryClinicId,
+          clinicId: user.primaryClinicId || undefined,
         },
       };
     } catch (_error) {
       await this.logging.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `OTP verification failed for ${verifyDto.email}`,
+        `OTP verification failed for ${verifyDto.identifier}`,
         'AuthService.verifyOtp',
         {
-          email: verifyDto.email,
+          identifier: verifyDto.identifier,
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
@@ -1297,12 +1256,12 @@ export class AuthService {
         user: {
           id: fullUser.id,
           email: fullUser.email,
-          firstName: fullUser.firstName,
-          lastName: fullUser.lastName,
-          role: fullUser.role,
+          firstName: fullUser.firstName || undefined,
+          lastName: fullUser.lastName || undefined,
+          role: fullUser.role as Role,
           isVerified: fullUser.isVerified,
-          clinicId: finalClinicId,
-          profilePicture: fullUser.profilePicture,
+          clinicId: finalClinicId || undefined,
+          profilePicture: fullUser.profilePicture || undefined,
         },
       };
     } catch (_error) {

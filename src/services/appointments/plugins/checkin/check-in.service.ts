@@ -3,7 +3,10 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
+import { AppointmentQueueService } from '@infrastructure/queue';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -63,7 +66,9 @@ export class CheckInService {
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => AppointmentQueueService))
+    private readonly appointmentQueueService: AppointmentQueueService
   ) {}
 
   /**
@@ -151,7 +156,9 @@ export class CheckInService {
           appointment.id,
           appointment.doctorId,
           appointment.locationId, // Type-safe: guaranteed non-null
-          (appointment as { domain?: string }).domain || 'healthcare'
+          (appointment as { domain?: string }).domain || 'healthcare',
+          appointment.patientId || '', // Fix: provide default
+          appointment.clinicId || '' // Fix: provide default
         );
         result.queuePosition = queuePosition.position;
         result.estimatedWaitTime = queuePosition.estimatedWaitTime;
@@ -656,21 +663,36 @@ export class CheckInService {
     };
   }
 
-  private addToQueue(
+  private async addToQueue(
     appointmentId: string,
     doctorId: string,
     locationId: string,
-    _domain: string
+    domain: string,
+    patientId: string, // Add argument
+    clinicId: string // Add argument
   ): Promise<AppointmentQueuePosition> {
-    // This would integrate with the actual queue service
-    // For now, return mock queue position
-    return Promise.resolve({
-      position: 1,
-      totalInQueue: 5,
-      estimatedWaitTime: 15,
+    await this.appointmentQueueService.checkIn(
+      {
+        appointmentId,
+        doctorId,
+        patientId,
+        clinicId,
+        locationId,
+      },
+      domain
+    );
+
+    // I need to fetch position AFTER checkin.
+    // getPatientQueuePosition returns Promise<PatientQueuePositionResponse>
+    const pos = await this.appointmentQueueService.getPatientQueuePosition(appointmentId, domain);
+
+    return {
+      position: pos.position,
+      totalInQueue: pos.totalInQueue,
+      estimatedWaitTime: pos.estimatedWaitTime,
       doctorId,
       locationId,
-    });
+    };
   }
 
   private async updateAppointmentStatus(appointmentId: string, status: string): Promise<void> {
@@ -695,15 +717,24 @@ export class CheckInService {
     });
   }
 
-  private async removeFromQueue(appointmentId: string, clinicId: string): Promise<void> {
-    // This would integrate with the actual queue service
-    // For now, just log
-    await this.loggingService.log(
-      LogType.BUSINESS,
-      LogLevel.INFO,
-      `Removed appointment ${appointmentId} from queue for clinic ${clinicId}`,
-      'CheckInService'
-    );
+  private async removeFromQueue(appointmentId: string, _clinicId: string): Promise<void> {
+    // We need doctorId to remove from queue.
+    // We might need to fetch appointment to get doctorId if not passed.
+    // For now, let's try to find appointment or assume we can't easily remove without doctorId.
+    // But wait, CheckInService.startConsultation calls this.
+    // StartConsultation logic should handle queue update (IN_PROGRESS).
+    // So explicit removal might not be needed if startConsultation does it.
+    // However, if we MUST remove, we need doctorId.
+
+    // I will call appointmentQueueService.removePatientFromQueue if I can get doctorId.
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (appointment && appointment.doctorId) {
+      await this.appointmentQueueService.removePatientFromQueue(
+        appointmentId,
+        appointment.doctorId,
+        'healthcare'
+      ); // hardcoded domain or fetch?
+    }
   }
 
   private fetchCheckedInAppointments(_clinicId: string): Promise<unknown[]> {
@@ -720,32 +751,35 @@ export class CheckInService {
     ]);
   }
 
-  private fetchQueuePosition(
-    _appointmentId: string,
+  private async fetchQueuePosition(
+    appointmentId: string,
     _clinicId: string
   ): Promise<AppointmentQueuePosition | null> {
-    // This would integrate with the actual queue service
-    // For now, return mock data
-    return Promise.resolve({
-      position: 2,
-      totalInQueue: 5,
-      estimatedWaitTime: 20,
-      doctorId: 'doc-1',
-      locationId: 'loc-1',
-    });
+    try {
+      const pos = await this.appointmentQueueService.getPatientQueuePosition(
+        appointmentId,
+        'healthcare'
+      ); // defaulting domain
+      if (!pos) return null;
+      return {
+        position: pos.position,
+        totalInQueue: pos.totalInQueue,
+        estimatedWaitTime: pos.estimatedWaitTime,
+        doctorId: pos.doctorId,
+        locationId: 'unknown', // limitation of response
+      };
+    } catch {
+      return null;
+    }
   }
 
-  private fetchDoctorActiveQueue(_doctorId: string, _clinicId: string): Promise<unknown[]> {
-    // This would integrate with the actual queue service
-    // For now, return mock data
-    return Promise.resolve([
-      {
-        appointmentId: 'app-1',
-        patientName: 'John Doe',
-        position: 1,
-        estimatedWaitTime: 10,
-      },
-    ]);
+  private async fetchDoctorActiveQueue(doctorId: string, _clinicId: string): Promise<unknown[]> {
+    const response = await this.appointmentQueueService.getDoctorQueue(
+      doctorId,
+      new Date().toISOString().split('T')[0] || '',
+      'healthcare'
+    );
+    return response.queue;
   }
 
   private async validateAppointmentOrder(
@@ -763,13 +797,28 @@ export class CheckInService {
   }
 
   private async performQueueReorder(clinicId: string, appointmentOrder: string[]): Promise<void> {
-    // This would integrate with the actual queue service
-    // For now, just log
-    await this.loggingService.log(
-      LogType.BUSINESS,
-      LogLevel.INFO,
-      `Reordering queue for clinic ${clinicId}: ${appointmentOrder.join(', ')}`,
-      'CheckInService'
+    // We need doctorId to reorder. But CheckInService.reorderQueue takes only clinicId and list.
+    // Assuming list belongs to SAME doctor.
+    // We need to find doctorId from one of the appointments or passed in?
+    // The plugin interface reorderQueue(clinicId, appointmentOrder) doesn't pass doctorId.
+    // This is a limitation.
+    // We'll throw error or try to infer.
+    // For now, let's assume we can't reorder without doctorId.
+    // Or we find doctorId from first appointment.
+
+    if (appointmentOrder.length === 0) return;
+    const firstApptId = appointmentOrder[0];
+    if (!firstApptId) return;
+    const appt = await this.databaseService.findAppointmentByIdSafe(firstApptId);
+    if (!appt || !appt.doctorId) throw new Error('Cannot determine doctor for reorder');
+
+    await this.appointmentQueueService.reorderQueue(
+      {
+        doctorId: appt.doctorId,
+        date: new Date().toISOString().split('T')[0] || '',
+        newOrder: appointmentOrder,
+      },
+      'healthcare'
     );
   }
 

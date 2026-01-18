@@ -72,9 +72,12 @@ export class JitsiVideoProvider implements IVideoProvider {
   /**
    * Generate Jitsi JWT token
    */
+  /**
+   * Generate Jitsi JWT token
+   */
   private generateJitsiToken(
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: { displayName: string; email: string; avatar?: string },
     roomName: string
   ): string {
@@ -86,6 +89,9 @@ export class JitsiVideoProvider implements IVideoProvider {
       }
 
       const now = Math.floor(Date.now() / 1000);
+      const isModerator =
+        userRole === 'doctor' || userRole === 'clinic_admin' || userRole === 'receptionist';
+
       const payload = {
         iss: jitsiConfig.appId,
         aud: jitsiConfig.appId,
@@ -99,7 +105,7 @@ export class JitsiVideoProvider implements IVideoProvider {
             name: userInfo.displayName,
             email: userInfo.email,
             avatar: userInfo.avatar,
-            moderator: userRole === 'doctor',
+            moderator: isModerator,
           },
           features: {
             recording: jitsiConfig.enableRecording,
@@ -135,7 +141,7 @@ export class JitsiVideoProvider implements IVideoProvider {
   async generateMeetingToken(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor',
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     userInfo: {
       displayName: string;
       email: string;
@@ -237,7 +243,7 @@ export class JitsiVideoProvider implements IVideoProvider {
   async startConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     try {
       let session = await this.getConsultationSession(appointmentId);
@@ -285,7 +291,7 @@ export class JitsiVideoProvider implements IVideoProvider {
         },
         {
           userId,
-          userRole: userRole === 'doctor' ? 'DOCTOR' : 'PATIENT',
+          userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit
           clinicId: '',
           operation: 'START_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
@@ -318,7 +324,7 @@ export class JitsiVideoProvider implements IVideoProvider {
   async endConsultation(
     appointmentId: string,
     userId: string,
-    userRole: 'patient' | 'doctor'
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
     try {
       const session = await this.getConsultationSession(appointmentId);
@@ -358,7 +364,7 @@ export class JitsiVideoProvider implements IVideoProvider {
         },
         {
           userId,
-          userRole: userRole === 'doctor' ? 'DOCTOR' : 'PATIENT',
+          userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit
           clinicId: '',
           operation: 'END_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',

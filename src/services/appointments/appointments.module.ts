@@ -31,6 +31,7 @@ import { AppointmentPluginInitializer } from './plugins/plugin-initializer.servi
 
 // Clinic-Specific Plugins - Updated with new libs structure
 import { ClinicQueuePlugin } from './plugins/queue/clinic-queue.plugin';
+
 import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notification.plugin';
 import { ClinicReminderPlugin } from './plugins/reminders/clinic-reminder.plugin';
 import { ClinicAnalyticsPlugin } from './plugins/analytics/clinic-analytics.plugin';
@@ -49,7 +50,7 @@ import { ClinicResourcePlugin } from './plugins/resources/clinic-resource.plugin
 import { ClinicEligibilityPlugin } from './plugins/eligibility/clinic-eligibility.plugin';
 
 // Service Dependencies - Updated with new libs structure
-import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+
 import { AppointmentNotificationService } from './plugins/notifications/appointment-notification.service';
 import { AppointmentReminderService } from './plugins/reminders/appointment-reminder.service';
 import { AppointmentAnalyticsService } from './plugins/analytics/appointment-analytics.service';
@@ -162,7 +163,7 @@ import { CommunicationModule } from '@communication/communication.module';
     ClinicEligibilityPlugin,
 
     // Service Dependencies - All implemented services
-    AppointmentQueueService,
+
     AppointmentNotificationService,
     AppointmentReminderService,
     AppointmentAnalyticsService,

@@ -21,6 +21,7 @@ import { VideoModule } from './services/video/video.module';
 import { ResilienceModule } from '@core/resilience';
 import { ErrorsModule } from '@core/errors';
 import { SecurityModule } from '@security/security.module';
+import { PharmacyModule } from './services/pharmacy/pharmacy.module';
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { SessionModule } from '@core/session/session.module';
@@ -70,6 +71,7 @@ import { SessionModule } from '@core/session/session.module';
     ClinicModule,
     BillingModule,
     EHRModule,
+    PharmacyModule,
     // Video consultation module (OpenVidu/Jitsi integration)
     VideoModule,
     // Unified Communication Module (includes all channels: socket, push, email, WhatsApp, SMS, listeners)

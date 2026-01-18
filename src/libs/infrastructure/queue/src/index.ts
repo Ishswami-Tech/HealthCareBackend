@@ -7,6 +7,8 @@ export * from './queue.module';
 export { QueueService } from './queue.service';
 export * from './queue.constants';
 export * from './shared-worker.service';
+export { AppointmentQueueService } from './services/appointment-queue.service';
+export { QueueController } from './controllers/queue.controller';
 
 // Advanced feature implementations
 export * from './implementations/advanced-implementations';
