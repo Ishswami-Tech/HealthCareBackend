@@ -1,31 +1,23 @@
 /**
- * Logging Infrastructure - Single Unified Service
+ * Logging Infrastructure - Unified Service
  *
- * SINGLE ENTRY POINT: Only LoggingService and LoggingModule are public interfaces.
- * All other components are internal and should be imported directly if needed.
- *
- * SOLID Principles:
- * - Single Responsibility: Each export has one clear purpose
- * - Dependency Inversion: Depend on abstractions (LoggingService interface)
- *
- * KISS Principle: Simple, explicit exports - no hidden circular dependencies
- * DRY Principle: Reuse existing service, don't duplicate functionality
+ * Main public interfaces for logging functionality.
+ * Following SOLID/KISS/DRY principles while maintaining backward compatibility.
  *
  * Usage:
  * ```typescript
- * // ✅ CORRECT: Use LoggingService (main public interface)
- * import { LoggingService } from "@infrastructure/logging";
- *
- * // ✅ CORRECT: Import other components directly if needed
- * import { LoggingInterceptor } from "@infrastructure/logging/logging.interceptor";
- * import { LoggingHelper } from "@infrastructure/logging/logging.helper";
+ * // Main services and utilities
+ * import { LoggingService, safeLog, safeLogError } from "@infrastructure/logging";
  * ```
  */
 
-// ONLY PUBLIC EXPORTS: Main service and module
+// MAIN EXPORTS: Service and Module
 export { LoggingModule } from './logging.module';
 export { LoggingService } from './logging.service';
 
-// NOTE: Other components (interceptor, helper, controller, health monitor) are INTERNAL
-// Import them directly from their files if needed to avoid circular dependencies
+// UTILITY EXPORTS: Helper functions for safe logging (commonly used)
+export { safeLog, safeLogError } from './logging.helper';
 
+// NOTE: Other components (interceptor, controller, health monitor) can be imported directly:
+// import { LoggingInterceptor } from "@infrastructure/logging/logging.interceptor";
+// import { LoggingHealthMonitorService } from "@infrastructure/logging/logging-health-monitor.service";
