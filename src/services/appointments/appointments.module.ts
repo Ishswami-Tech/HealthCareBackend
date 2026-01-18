@@ -8,7 +8,7 @@ import { DatabaseModule } from '@infrastructure/database';
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache';
 import { RbacModule } from '@core/rbac/rbac.module';
-import { QueueModule } from '@infrastructure/queue';
+// import { QueueModule } from '@infrastructure/queue';
 import { AuthModule } from '@services/auth/auth.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { ClinicModule } from '@services/clinic/clinic.module';
@@ -110,7 +110,7 @@ import { CommunicationModule } from '@communication/communication.module';
     EventsModule,
     CacheModule, // Provides LocationCacheService
     RbacModule,
-    QueueModule.forRoot(), // BullMQ queue system - provides QueueService with standard queues
+    // QueueModule.forRoot() is already imported in AppModule and is global
     AuthModule, // AuthModule already provides JwtModule with proper configuration
     // RateLimitModule,
     GuardsModule,
