@@ -73,6 +73,8 @@ import { BusinessRulesDatabaseService } from './core/business-rules-database.ser
 import { QrService } from '@utils/QR';
 import { QrModule } from '@utils/QR/qr.module';
 
+import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+
 // Video Module - Standalone service
 import { VideoModule } from '@services/video/video.module';
 
@@ -181,6 +183,7 @@ import { CommunicationModule } from '@communication/communication.module';
     AppointmentEligibilityService,
     BusinessRulesDatabaseService,
     QrService,
+    AppointmentQueueService,
   ],
   exports: [
     // Core Services
@@ -212,6 +215,7 @@ import { CommunicationModule } from '@communication/communication.module';
     ClinicWaitlistPlugin,
     ClinicResourcePlugin,
     ClinicEligibilityPlugin,
+    AppointmentQueueService,
   ],
 })
 export class AppointmentsModule {}
