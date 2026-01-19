@@ -7,21 +7,21 @@ on:
   push:
     branches: [develop, main]
     paths-ignore:
-      - 'README.md'
-      - '**/*.md'
-      - '**/*.svg'
+      - "README.md"
+      - "**/*.md"
+      - "**/*.svg"
 
 permissions:
   contents: read
   pull-requests: write
   checks: write
   packages: write
-  security-events: write  # Required for CodeQL SARIF upload
-  actions: read  # Required for CodeQL to access workflow run information
+  security-events: write # Required for CodeQL SARIF upload
+  actions: read # Required for CodeQL to access workflow run information
 
 env:
-  NODE_VERSION: '20'
-  YARN_VERSION: '1.22.22'
+  NODE_VERSION: "20"
+  YARN_VERSION: "1.22.22"
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
   IMAGE_NAME: healthcare-api
@@ -41,16 +41,16 @@ jobs:
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
-          scan-ref: '.'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-results.sarif"
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v4
-        continue-on-error: true  # Don't fail if Advanced Security is not enabled
+        continue-on-error: true # Don't fail if Advanced Security is not enabled
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: "trivy-results.sarif"
 
       - name: Dependency Check
         run: |
@@ -208,7 +208,7 @@ jobs:
           # Copy to temp files first, then move to final location (prevents "Text file busy" error)
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh.tmp
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
-          
+
           # Move temp files to final location atomically
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             mv /tmp/health-check.sh.tmp /tmp/health-check.sh
@@ -232,10 +232,10 @@ jobs:
             /tmp/health-check.sh > /tmp/health-status.json 2>&1
             echo "EXIT_CODE=$?" > /tmp/health-exit.txt
           ENDSSH
-          
+
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-exit.txt /tmp/health-exit.txt || true
-          
+
           if [[ -f /tmp/health-exit.txt ]]; then
             EXIT_CODE=$(cat /tmp/health-exit.txt | grep EXIT_CODE | cut -d= -f2)
             if [[ "$EXIT_CODE" == "0" ]]; then
@@ -434,7 +434,7 @@ jobs:
             echo "✅ Backup created successfully (ID: \${BACKUP_ID})"
             echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
           ENDSSH
-          
+
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
           BACKUP_ID=\$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
           echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
@@ -735,7 +735,13 @@ jobs:
          needs.backup-infrastructure.result == 'success')
       )
     environment: production
-    needs: [check-infrastructure, backup-infrastructure, recreate-infrastructure, restore-backup]
+    needs:
+      [
+        check-infrastructure,
+        backup-infrastructure,
+        recreate-infrastructure,
+        restore-backup,
+      ]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -793,8 +799,16 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.docker-build.result == 'success'
     runs-on: ubuntu-latest
-    environment: production  # Use production environment secrets
-    needs: [docker-build, check-infrastructure, backup-infrastructure, verify-infrastructure-readiness, recreate-infrastructure, restore-backup]
+    environment: production # Use production environment secrets
+    needs:
+      [
+        docker-build,
+        check-infrastructure,
+        backup-infrastructure,
+        verify-infrastructure-readiness,
+        recreate-infrastructure,
+        restore-backup,
+      ]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -892,7 +906,7 @@ jobs:
           ZEPTOMAIL_FROM_NAME=${{ vars.ZEPTOMAIL_FROM_NAME }}
           ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.ZEPTOMAIL_BOUNCE_ADDRESS }}
           ZEPTOMAIL_API_BASE_URL=${{ vars.ZEPTOMAIL_API_BASE_URL }}
-          
+
           # Clinic-Specific Email Configuration (Multi-Tenant)
           # ===================================================
           # ARCHITECTURE: Single Backend API, Multiple Frontends
@@ -918,7 +932,7 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_FROM_NAME }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_ZEPTOMAIL_BOUNCE_ADDRESS }}
-          
+
           # CORS Configuration - Single API, Multiple Frontends
           # =====================================================
           # IMPORTANT: Include ALL clinic frontend URLs in CORS_ORIGIN
@@ -941,7 +955,7 @@ jobs:
           WHATSAPP_OTP_TEMPLATE_ID=${{ vars.WHATSAPP_OTP_TEMPLATE_ID }}
           WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ vars.WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
           WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ vars.WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
-          
+
           # Clinic-Specific WhatsApp Configuration (Multi-Tenant)
           # =======================================================
           # Each clinic can have separate WhatsApp credentials
@@ -954,7 +968,7 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
-          
+
           # Clinic-Specific Frontend URLs (Multi-Tenant)
           # ============================================
           # ARCHITECTURE: Single Backend API, Multiple Frontends
@@ -976,7 +990,7 @@ jobs:
           #
           # Vishwamurti Ayurvedelay (CL0001)
           CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL }}
-          
+
           VIDEO_ENABLED=${{ vars.VIDEO_ENABLED }}
           VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}
           OPENVIDU_URL=${{ vars.OPENVIDU_URL }}
@@ -986,7 +1000,7 @@ jobs:
           OPENVIDU_WEBHOOK_ENABLED=${{ vars.OPENVIDU_WEBHOOK_ENABLED }}
           OPENVIDU_WEBHOOK_ENDPOINT=${{ vars.OPENVIDU_WEBHOOK_ENDPOINT }}
           OPENVIDU_WEBHOOK_EVENTS=${{ vars.OPENVIDU_WEBHOOK_EVENTS }}
-          
+
           # Coturn Configuration (for infrastructure services)
           # These are used by docker-compose.prod.yml for coturn container
           COTURN_PASSWORD=${{ secrets.COTURN_PASSWORD }}
@@ -1004,7 +1018,7 @@ jobs:
           FIREBASE_CLIENT_EMAIL=${{ vars.FIREBASE_CLIENT_EMAIL }}
           FIREBASE_DATABASE_URL=${{ vars.FIREBASE_DATABASE_URL }}
           FIREBASE_VAPID_KEY=${{ secrets.FIREBASE_VAPID_KEY }}
-          
+
           # Clinic-Specific Firebase Configuration (Multi-Tenant)
           # ======================================================
           # Each clinic can have separate Firebase credentials for push notifications
@@ -1016,7 +1030,7 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_CLIENT_EMAIL }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_DATABASE_URL }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_FIREBASE_VAPID_KEY }}
-          
+
           # Clinic-Specific SMS Configuration (Multi-Tenant)
           # ================================================
           # Each clinic can have separate SMS provider credentials
@@ -1026,7 +1040,7 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER }}
-          
+
           # Clinic-Specific OpenVidu Configuration (Multi-Tenant)
           # ====================================================
           # Each clinic can have separate OpenVidu video server configuration
@@ -1034,7 +1048,7 @@ jobs:
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN }}
-          
+
           # Clinic-Specific S3 Storage Configuration (Multi-Tenant)
           # =======================================================
           # Each clinic can have separate S3 storage bucket and credentials
@@ -1042,7 +1056,7 @@ jobs:
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_BUCKET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_BUCKET }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_ACCESS_KEY_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_ACCESS_KEY_ID }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_S3_SECRET_ACCESS_KEY=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_S3_SECRET_ACCESS_KEY }}
-          
+
           # Clinic-Specific Social Auth Configuration (Multi-Tenant)
           # ========================================================
           # Each clinic can have separate OAuth credentials (Google, Facebook, Apple)
@@ -1053,7 +1067,7 @@ jobs:
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_SECRET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FACEBOOK_APP_SECRET }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_ID }}
           # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_SECRET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_APPLE_CLIENT_SECRET }}
-          
+
           FACEBOOK_APP_ID=${{ vars.FACEBOOK_APP_ID }}
           FACEBOOK_APP_SECRET=${{ vars.FACEBOOK_APP_SECRET }}
           APPLE_CLIENT_ID=${{ vars.APPLE_CLIENT_ID }}
@@ -1070,10 +1084,10 @@ jobs:
           CDN_URL=${{ vars.CDN_URL }}
           DOCKER_ENV=${{ vars.DOCKER_ENV }}
           DOCKER_NETWORK=${{ vars.DOCKER_NETWORK }}
-          
+
           # Optional Service URLs
           REDIS_COMMANDER_URL=${{ vars.REDIS_COMMANDER_URL }}
-          
+
           # Jitsi Configuration (Fallback Video Provider - Optional)
           JITSI_DOMAIN=${{ vars.JITSI_DOMAIN }}
           JITSI_BASE_DOMAIN=${{ vars.JITSI_BASE_DOMAIN }}
@@ -1084,7 +1098,7 @@ jobs:
           JITSI_WS_URL=${{ vars.JITSI_WS_URL }}
           JITSI_ENABLE_RECORDING=${{ vars.JITSI_ENABLE_RECORDING }}
           JITSI_ENABLE_WAITING_ROOM=${{ vars.JITSI_ENABLE_WAITING_ROOM }}
-          
+
           # Social Auth Redirect URIs
           FACEBOOK_REDIRECT_URI=${{ vars.FACEBOOK_REDIRECT_URI }}
           APPLE_REDIRECT_URI=${{ vars.APPLE_REDIRECT_URI }}
@@ -1105,16 +1119,16 @@ jobs:
           IMAGE_FULL="ghcr.io/${REPO_LOWER}/${{ env.IMAGE_NAME }}"
           echo "image=${IMAGE_FULL}" >> $GITHUB_OUTPUT
           echo "Image: ${IMAGE_FULL}"
-      
+
       - name: Validate app image (non-blocking)
         continue-on-error: true
         run: |
           echo "🔍 Validating app image in registry..."
-          
+
           # Try to validate latest tag first (most reliable for main branch)
           APP_IMAGE_LATEST="${{ steps.deploy-image.outputs.image }}:latest"
           APP_IMAGE_SHA="${{ steps.deploy-image.outputs.image }}:main-${{ github.sha }}"
-          
+
           # Check latest tag first
           if docker manifest inspect "${APP_IMAGE_LATEST}" > /dev/null 2>&1; then
             echo "✅ App image validated (latest tag): ${APP_IMAGE_LATEST}"
@@ -1128,7 +1142,7 @@ jobs:
             echo "     - ${APP_IMAGE_LATEST}"
             echo "     - ${APP_IMAGE_SHA}"
           fi
-          
+
           # Note: Infrastructure images are pulled from docker-compose during deployment
           # They are validated when docker-compose pulls them
           echo "ℹ️  Infrastructure images will be validated during deployment"
@@ -1496,7 +1510,7 @@ jobs:
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh.tmp
           # Copy docker-compose.prod.yml file (infrastructure containers don't need .env.production)
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml.tmp
-          
+
           # Move temp files to final location atomically
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             mv /tmp/health-check.sh.tmp /tmp/health-check.sh
@@ -1755,12 +1769,12 @@ jobs:
               exit 1
             fi
           ENDSSH
-          
+
           # Download results
           # Note: The SSH command above exits with 0 if health check passed, 1 if failed
           # We need to capture the SSH exit code, but since it's in a heredoc, we check the result file
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-result.txt /tmp/health-result.txt 2>&1 || SCP_FAILED=true
-          
+
           if [[ -f /tmp/health-result.txt ]]; then
             HEALTHY=$(grep "^HEALTHY=" /tmp/health-result.txt | cut -d= -f2 || echo "false")
             STATUS=$(grep "^STATUS=" /tmp/health-result.txt | cut -d= -f2 || echo "unknown")
@@ -1799,7 +1813,7 @@ jobs:
           echo "Status: ${{ steps.ensure-health.outputs.infra-status }}"
           echo "Healthy: ${{ steps.ensure-health.outputs.infra-healthy }}"
           echo ""
-          
+
           if [[ "${{ steps.ensure-health.outputs.infra-healthy }}" != "true" ]]; then
             echo "❌ Infrastructure recovery failed!"
             echo "⚠️  Manual intervention may be required"
@@ -1807,4 +1821,3 @@ jobs:
           else
             echo "✅ Infrastructure is healthy!"
           fi
-

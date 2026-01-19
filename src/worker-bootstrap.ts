@@ -20,6 +20,8 @@ import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
 import type { LoggingService } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience';
+import { GuardsModule } from '@core/guards/guards.module';
+import { SessionModule } from '@core/session/session.module';
 import { EventsModule } from '@infrastructure/events';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
@@ -60,6 +62,11 @@ import type { ApplicationConfig } from '@core/types/framework.types';
     ResilienceModule, // Provides GracefulShutdownService and ProcessErrorHandlersService
     EventsModule, // Central event system - required for queue event emissions
     QueueModule.forRoot(),
+    // GuardsModule provides JwtAuthGuard and configures JwtModule (JwtService) globally
+    // Required for worker queue processors/controllers that use JwtAuthGuard
+    forwardRef(() => GuardsModule),
+    // SessionModule provides SessionManagementService required by JwtAuthGuard
+    forwardRef(() => SessionModule),
   ],
   providers: [],
   exports: [],
