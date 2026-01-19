@@ -57,6 +57,10 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private cacheMissTimes: number[] = [];
   private readonly maxCacheTimeHistory = 1000; // Keep last 1000 cache operation times
 
+  // Alert throttling to prevent log spam
+  private readonly alertCooldowns = new Map<string, number>(); // Map of alert key -> last log timestamp
+  private readonly alertCooldownMs = 60000; // 1 minute cooldown between same alert type logs
+
   // Current metrics
   private currentMetrics: DatabaseMetrics = {
     timestamp: new Date(),
@@ -1047,16 +1051,44 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Update alerts
     this.currentMetrics.alerts = alerts;
 
-    // Log critical alerts
+    // Log critical alerts with throttling to prevent spam
     const criticalAlerts = alerts.filter(alert => alert.severity === 'critical');
     if (criticalAlerts.length > 0) {
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.WARN,
-        `Critical database alerts: ${criticalAlerts.length} alerts`,
-        this.serviceName,
-        { alerts: criticalAlerts }
-      );
+      const alertKey = `critical-${criticalAlerts.map(a => a.type).join('-')}`;
+      const now = Date.now();
+      const lastLogTime = this.alertCooldowns.get(alertKey) || 0;
+
+      // Only log if cooldown period has passed
+      if (now - lastLogTime >= this.alertCooldownMs) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Critical database alerts: ${criticalAlerts.length} alerts`,
+          this.serviceName,
+          { alerts: criticalAlerts }
+        );
+        this.alertCooldowns.set(alertKey, now);
+      }
+    }
+
+    // Also throttle warning alerts
+    const warningAlerts = alerts.filter(alert => alert.severity === 'warning');
+    if (warningAlerts.length > 0) {
+      const alertKey = `warning-${warningAlerts.map(a => a.type).join('-')}`;
+      const now = Date.now();
+      const lastLogTime = this.alertCooldowns.get(alertKey) || 0;
+
+      // Only log if cooldown period has passed (longer cooldown for warnings)
+      if (now - lastLogTime >= this.alertCooldownMs * 2) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Database warning alerts: ${warningAlerts.length} alerts`,
+          this.serviceName,
+          { alerts: warningAlerts }
+        );
+        this.alertCooldowns.set(alertKey, now);
+      }
     }
   }
 

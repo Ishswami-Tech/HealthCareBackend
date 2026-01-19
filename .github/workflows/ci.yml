@@ -70,6 +70,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Yarn
+        run: npm install -g yarn@${{ env.YARN_VERSION }} --force
+
+      - name: Validate Prisma configuration
+        run: |
+          echo "🔍 Validating Prisma schema and config files..."
+          test -f src/libs/infrastructure/database/prisma/schema.prisma || (echo "❌ Schema file not found!" && exit 1)
+          test -f src/libs/infrastructure/database/prisma/prisma.config.js || (echo "❌ Config file not found!" && exit 1)
+          echo "✅ Prisma schema and config files found"
+          echo ""
+          echo "🔍 Validating Prisma schema syntax..."
+          yarn install --frozen-lockfile --ignore-scripts --silent
+          export DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+          yarn prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "❌ Prisma schema validation failed!" && exit 1)
+          echo "✅ Prisma schema is valid"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

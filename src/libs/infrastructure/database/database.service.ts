@@ -480,9 +480,30 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         if (!isReady) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
-            'Prisma client not ready within timeout',
+            'Prisma client not ready within timeout. Please check database connection and ensure DATABASE_URL is correctly configured.',
             undefined,
-            {},
+            {
+              prismaReady: this.prismaService.isReady(),
+              prismaConnected: this.prismaService.isConnected(),
+            },
+            this.serviceName
+          );
+        }
+      }
+
+      // Additional check: Ensure Prisma is actually connected (not just initialized)
+      if (!this.prismaService.isConnected()) {
+        // Try to wait a bit more for connection
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!this.prismaService.isConnected()) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client is initialized but not connected to database. Please check DATABASE_URL and database server status.',
+            undefined,
+            {
+              prismaReady: this.prismaService.isReady(),
+              prismaConnected: this.prismaService.isConnected(),
+            },
             this.serviceName
           );
         }
@@ -524,11 +545,55 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           maxDelay: 5000,
         });
 
-        if (!retryResult.success || !retryResult.result) {
-          throw retryResult.error || new Error('Retry failed');
+        if (!retryResult.success) {
+          // Preserve original error with detailed context
+          const originalError = retryResult.error;
+          if (originalError) {
+            // If it's already a HealthcareError, preserve it
+            if (originalError instanceof HealthcareError) {
+              throw originalError;
+            }
+            // Otherwise, wrap it in a HealthcareError with full context
+            throw new HealthcareError(
+              ErrorCode.DATABASE_QUERY_FAILED,
+              `Read operation failed after ${retryResult.attempts} attempts: ${originalError.message}`,
+              undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
+              {
+                attempts: retryResult.attempts,
+                originalErrorName: originalError.name,
+                originalErrorMessage: originalError.message,
+                originalErrorStack: originalError.stack,
+                executionTime: Date.now() - startTime,
+              },
+              this.serviceName
+            );
+          }
+          // Fallback if error is missing (shouldn't happen, but handle gracefully)
+          throw new HealthcareError(
+            ErrorCode.DATABASE_QUERY_FAILED,
+            `Read operation failed after ${retryResult.attempts} attempts: Unknown error`,
+            undefined,
+            {
+              attempts: retryResult.attempts,
+              executionTime: Date.now() - startTime,
+            },
+            this.serviceName
+          );
         }
 
-        const result = retryResult.result;
+        // Success - use the result (can be null/undefined for read operations)
+        // TypeScript assertion: if success is true, result should be defined
+        if (retryResult.result === undefined && retryResult.success) {
+          // This shouldn't happen, but handle gracefully
+          throw new HealthcareError(
+            ErrorCode.DATABASE_QUERY_FAILED,
+            'Read operation succeeded but returned undefined result',
+            undefined,
+            { attempts: retryResult.attempts },
+            this.serviceName
+          );
+        }
+        const result = retryResult.result as T;
         const executionTime = performance.now() - startTime;
 
         // Cache result asynchronously (non-blocking for 2-7ms target)
@@ -715,9 +780,30 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         if (!isReady) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
-            'Prisma client not ready within timeout',
+            'Prisma client not ready within timeout. Please check database connection and ensure DATABASE_URL is correctly configured.',
             undefined,
-            {},
+            {
+              prismaReady: this.prismaService.isReady(),
+              prismaConnected: this.prismaService.isConnected(),
+            },
+            this.serviceName
+          );
+        }
+      }
+
+      // Additional check: Ensure Prisma is actually connected (not just initialized)
+      if (!this.prismaService.isConnected()) {
+        // Try to wait a bit more for connection
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        if (!this.prismaService.isConnected()) {
+          throw new HealthcareError(
+            ErrorCode.DATABASE_CONNECTION_FAILED,
+            'Prisma client is initialized but not connected to database. Please check DATABASE_URL and database server status.',
+            undefined,
+            {
+              prismaReady: this.prismaService.isReady(),
+              prismaConnected: this.prismaService.isConnected(),
+            },
             this.serviceName
           );
         }
@@ -775,15 +861,50 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         });
 
         if (!retryResult.success || !retryResult.result) {
+          // Preserve original error with detailed context
+          const originalError = retryResult.error;
+          const errorMessage = originalError
+            ? `Write operation failed after ${retryResult.attempts} attempts: ${originalError.message}`
+            : `Write operation failed after ${retryResult.attempts} attempts: Unknown error`;
+
           // Create audit trail for failed operation
           if (this.config.enableAuditLogging) {
-            this.createAuditTrail(
-              auditInfo,
-              'FAILURE',
-              retryResult.error?.message || 'Retry failed'
+            this.createAuditTrail(auditInfo, 'FAILURE', errorMessage);
+          }
+
+          if (originalError) {
+            // If it's already a HealthcareError, preserve it
+            if (originalError instanceof HealthcareError) {
+              throw originalError;
+            }
+            // Otherwise, wrap it in a HealthcareError with full context
+            throw new HealthcareError(
+              ErrorCode.DATABASE_QUERY_FAILED,
+              errorMessage,
+              undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
+              {
+                attempts: retryResult.attempts,
+                originalErrorName: originalError.name,
+                originalErrorMessage: originalError.message,
+                originalErrorStack: originalError.stack,
+                executionTime: Date.now() - startTime,
+                auditInfo,
+              },
+              this.serviceName
             );
           }
-          throw retryResult.error || new Error('Retry failed');
+          // Fallback if error is missing (shouldn't happen, but handle gracefully)
+          throw new HealthcareError(
+            ErrorCode.DATABASE_QUERY_FAILED,
+            errorMessage,
+            undefined, // statusCode - defaults to INTERNAL_SERVER_ERROR
+            {
+              attempts: retryResult.attempts,
+              executionTime: Date.now() - startTime,
+              auditInfo,
+            },
+            this.serviceName
+          );
         }
 
         const result = retryResult.result;

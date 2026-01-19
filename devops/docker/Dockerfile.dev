@@ -31,14 +31,27 @@ COPY . .
 # Verify config files and generate Prisma client
 # Prisma Client is generated to src/libs/infrastructure/database/prisma/generated (app-local directory)
 RUN test -f .swcrc && test -f nest-cli.json || (echo "[ERROR] SWC config files missing!" && exit 1) && \
-    yarn prisma:generate && \
+    echo "[INFO] Verifying Prisma schema and config files..." && \
+    test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo "[ERROR] Schema file not found!" && exit 1) && \
+    test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "[ERROR] Config file not found!" && exit 1) && \
+    echo "[INFO] Generating Prisma Client..." && \
+    (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
+     yarn prisma:generate || (echo "[ERROR] Prisma generate failed! Exit code: $?" && exit 1)) && \
     if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
-    echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && exit 1; \
+    echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && \
+    echo "[ERROR] Check that schema and config files are correct" && \
+    exit 1; \
+    fi && \
+    if [ ! -f "/app/src/libs/infrastructure/database/prisma/generated/index.js" ] && \
+       [ ! -f "/app/src/libs/infrastructure/database/prisma/generated/index.mjs" ] && \
+       [ ! -f "/app/src/libs/infrastructure/database/prisma/generated/index.d.ts" ]; then \
+    echo "[ERROR] Prisma Client entry point files not found!" && exit 1; \
     fi && \
     echo "[OK] Prisma Client generated successfully to src/libs/infrastructure/database/prisma/generated" && \
     # Create symlink for TypeScript resolution
     mkdir -p /app/node_modules/@prisma && \
-    ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client
+    ln -sf /app/src/libs/infrastructure/database/prisma/generated /app/node_modules/@prisma/client && \
+    echo "[OK] @prisma/client symlink created"
 
 ENV NODE_ENV=development \
     PRISMA_SCHEMA_PATH=/app/src/libs/infrastructure/database/prisma/schema.prisma

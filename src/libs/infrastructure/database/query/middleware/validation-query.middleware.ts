@@ -94,16 +94,22 @@ export class ValidationQueryMiddleware extends BaseQueryMiddleware {
   }
 
   protected processError(context: QueryMiddlewareContext, error: Error): Error {
-    void this.loggingService.log(
-      LogType.DATABASE,
-      LogLevel.ERROR,
-      `Query validation error: ${error.message}`,
-      'ValidationQueryMiddleware',
-      {
-        operation: context.operation,
-        error: error.stack,
-      }
-    );
+    // Only log at DEBUG level to reduce log spam - main error is logged at DatabaseService level
+    // Check if error is already marked as logged to prevent duplicate logging
+    const errorAny = error as Error & { _loggedByMiddleware?: boolean };
+    if (!errorAny._loggedByMiddleware) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.DEBUG,
+        `Query validation error: ${error.message}`,
+        'ValidationQueryMiddleware',
+        {
+          operation: context.operation,
+          error: error.stack,
+        }
+      );
+      errorAny._loggedByMiddleware = true;
+    }
     return error;
   }
 }
