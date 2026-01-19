@@ -134,9 +134,90 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64
 
+      - name: Ensure expected tag exists
+        run: |
+          echo "Ensuring expected deployment tag exists..."
+          IMAGE_BASE="${{ steps.image.outputs.image }}"
+          EXPECTED_TAG="main-${{ github.sha }}"
+          EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
+          
+          # Get the first tag from metadata (should be one of the pushed tags)
+          # Metadata action outputs tags separated by newlines
+          FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -v '^$' | head -n 1 | tr -d ' ')
+          
+          if [[ -z "$FIRST_TAG" ]]; then
+            echo "❌ Error: No tags found from metadata action"
+            echo "Metadata tags output: ${{ steps.meta.outputs.tags }}"
+            exit 1
+          fi
+          
+          echo "First tag from metadata: ${FIRST_TAG}"
+          echo "Expected deployment tag: ${EXPECTED_TAG}"
+          echo "All metadata tags:"
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            [[ -n "$tag" ]] && echo "  - ${tag}"
+          done
+          
+          # Check if expected tag already exists in the tags list
+          if echo "${{ steps.meta.outputs.tags }}" | grep -q "${EXPECTED_TAG}"; then
+            echo "✅ Expected tag ${EXPECTED_TAG} was already created by metadata action"
+          else
+            echo "⚠️  Expected tag ${EXPECTED_TAG} not in metadata tags, creating it..."
+            # Ensure we're still logged in to GHCR
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login "${{ env.REGISTRY }}" -u "${{ github.actor }}" --password-stdin || {
+              echo "❌ Failed to authenticate with GHCR"
+              exit 1
+            }
+            # Pull the image with one of the existing tags
+            docker pull "${FIRST_TAG}" || {
+              echo "❌ Failed to pull image with tag ${FIRST_TAG}"
+              exit 1
+            }
+            # Tag it with the expected tag
+            docker tag "${FIRST_TAG}" "${EXPECTED_IMAGE}" || {
+              echo "❌ Failed to tag image"
+              exit 1
+            }
+            # Push the expected tag
+            docker push "${EXPECTED_IMAGE}" || {
+              echo "❌ Failed to push expected tag"
+              exit 1
+            }
+            echo "✅ Created and pushed expected tag: ${EXPECTED_IMAGE}"
+          fi
+
+      - name: Verify image was pushed
+        run: |
+          echo "Verifying pushed image tags..."
+          IMAGE_BASE="${{ steps.image.outputs.image }}"
+          EXPECTED_TAG="main-${{ github.sha }}"
+          EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
+          
+          echo "Expected image: ${EXPECTED_IMAGE}"
+          echo "All tags from metadata: ${{ steps.meta.outputs.tags }}"
+          
+          # Wait a moment for registry propagation
+          sleep 5
+          
+          # Verify the SHA-based tag exists
+          if docker manifest inspect "${EXPECTED_IMAGE}" > /dev/null 2>&1; then
+            echo "✅ Verified: ${EXPECTED_IMAGE} exists in registry"
+          else
+            echo "⚠️  Warning: ${EXPECTED_IMAGE} not found in registry yet (may need propagation time)"
+            echo "Checking :latest tag as fallback..."
+            if docker manifest inspect "${IMAGE_BASE}:latest" > /dev/null 2>&1; then
+              echo "✅ Verified: ${IMAGE_BASE}:latest exists in registry (will be used as fallback)"
+            else
+              echo "❌ Error: Neither ${EXPECTED_IMAGE} nor ${IMAGE_BASE}:latest found in registry"
+              echo "This indicates the build/push may have failed"
+              exit 1
+            fi
+          fi
+
       - name: Output image digest
         run: |
           echo "Image pushed: ${{ steps.meta.outputs.tags }}"
+          echo "Expected deployment tag: main-${{ github.sha }}"
 
   # Change Detection
   # Detects whether infrastructure or application code has changed
