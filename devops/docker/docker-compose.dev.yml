@@ -183,9 +183,12 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
+        (test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo '[ERROR] Schema file not found!' && exit 1)) &&
+        (test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo '[ERROR] Config file not found!' && exit 1)) &&
+        (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
+         yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || (echo '[ERROR] Prisma generate failed!' && exit 1)) &&
         echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
-        (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
+        (node scripts/fix-prisma.js || echo '[WARN] Prisma fixes completed with warnings') &&
         echo 'Running Prisma Database Sync (Development Mode)...' &&
         echo 'Using db push for development (no migration history required)...' &&
         echo 'Note: In production, migrations run automatically via entrypoint.sh' &&
@@ -428,9 +431,12 @@ services:
         done &&
         echo 'Database is ready!' &&
         echo 'Generating Prisma Client...' &&
-        (yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || echo 'Prisma generate completed') &&
+        (test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo '[ERROR] Schema file not found!' && exit 1)) &&
+        (test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo '[ERROR] Config file not found!' && exit 1)) &&
+        (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
+         yarn prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || (echo '[ERROR] Prisma generate failed!' && exit 1)) &&
         echo 'Fixing Prisma issues (sourcemaps, types, yarn)...' &&
-        (node scripts/fix-prisma.js || echo 'Prisma fixes completed') &&
+        (node scripts/fix-prisma.js || echo '[WARN] Prisma fixes completed with warnings') &&
         echo 'Starting worker process...' &&
         yarn exec ts-node -r tsconfig-paths/register src/worker-bootstrap.ts
       "

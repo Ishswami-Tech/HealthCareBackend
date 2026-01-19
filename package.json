@@ -37,7 +37,7 @@
     "start:dev:nodemon": "cross-env NODE_ENV=development nodemon",
     "start:prod": "cross-env NODE_ENV=production node dist/main",
     "start:prod:cluster": "cross-env NODE_ENV=production ENABLE_CLUSTERING=true node dist/main.js",
-    "prisma:generate": "prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js && node scripts/fix-prisma.js && (yarn prettier --write \"src/libs/infrastructure/database/prisma/generated/**/*.ts\" || echo \"[WARN] Prettier: No Prisma generated files found or already formatted\")",
+    "prisma:generate": "prisma generate --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js && node scripts/fix-prisma.js && (yarn prettier --write \"src/libs/infrastructure/database/prisma/generated/**/*.ts\" 2>/dev/null || echo \"[WARN] Prettier: No Prisma generated files found or already formatted\") || (echo \"[ERROR] Prisma generate failed!\" && exit 1)",
     "prisma:regenerate": "yarn prisma:generate && node scripts/validate-prisma-generated.js --regenerate",
     "prisma:validate-generated": "node scripts/validate-prisma-generated.js",
     "postinstall": "yarn prisma:generate || true",
