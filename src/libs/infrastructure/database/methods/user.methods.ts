@@ -85,6 +85,36 @@ export class UserMethods extends DatabaseMethodsBase {
   }
 
   /**
+   * Find user by phone with selective relation loading
+   *
+   * OPTIMIZED FOR 10M+ USERS: Only loads relations that are explicitly requested
+   *
+   * @param phone - User phone number
+   * @param includeRelations - Optional relations to include (default: { doctor: true, patient: true })
+   * @returns User with requested relations or null if not found
+   */
+  async findUserByPhoneSafe(
+    phone: string,
+    includeRelations?: Partial<typeof this.userInclude>
+  ): Promise<UserWithRelations | null> {
+    // Default to only loading doctor and patient (most common use case)
+    const defaultInclude = {
+      doctor: true,
+      patient: true,
+    } as const;
+
+    // Use provided relations or default
+    const include = includeRelations || defaultInclude;
+
+    return await this.executeRead<UserWithRelations | null>(async prisma => {
+      return await prisma.user.findFirst({
+        where: { phone },
+        include,
+      });
+    }, this.queryOptionsBuilder.where({ phone }).include(include).useCache(true).cacheStrategy('long').priority('high').hipaaCompliant(true).rowLevelSecurity(true).build());
+  }
+
+  /**
    * Find user by email for authentication - explicitly includes password field
    *
    * OPTIMIZED FOR AUTH: Uses optimized Prisma query with all database optimizations

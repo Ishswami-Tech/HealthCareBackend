@@ -184,10 +184,22 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.register(registerDto, {
-        userAgent: (req.headers['user-agent'] as string) || 'unknown',
-        ipAddress: req.ip || '127.0.0.1',
-      });
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      const clinicId =
+        (req as unknown as { clinicId?: string }).clinicId ||
+        (Array.isArray(req.headers['x-clinic-id'])
+          ? req.headers['x-clinic-id'][0]
+          : (req.headers['x-clinic-id'] as string));
+
+      const result = await this.authService.register(
+        registerDto,
+        {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        },
+        clinicId
+      );
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -325,10 +337,22 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.login(loginDto, {
-        userAgent: (req.headers['user-agent'] as string) || 'unknown',
-        ipAddress: req.ip || '127.0.0.1',
-      });
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      const clinicId =
+        (req as unknown as { clinicId?: string }).clinicId ||
+        (Array.isArray(req.headers['x-clinic-id'])
+          ? req.headers['x-clinic-id'][0]
+          : (req.headers['x-clinic-id'] as string));
+
+      const result = await this.authService.login(
+        loginDto,
+        {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        },
+        clinicId
+      );
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {
@@ -948,10 +972,22 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<SuccessResponseDto> {
     try {
-      const result = await this.authService.requestOtp(requestDto, {
-        userAgent: (req.headers['user-agent'] as string) || 'unknown',
-        ipAddress: req.ip || '127.0.0.1',
-      });
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      const clinicId =
+        (req as unknown as { clinicId?: string }).clinicId ||
+        (Array.isArray(req.headers['x-clinic-id'])
+          ? req.headers['x-clinic-id'][0]
+          : (req.headers['x-clinic-id'] as string));
+
+      const result = await this.authService.requestOtp(
+        requestDto,
+        {
+          userAgent: (req.headers['user-agent'] as string) || 'unknown',
+          ipAddress: req.ip || '127.0.0.1',
+        },
+        clinicId
+      );
       return new SuccessResponseDto(result.message);
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -1064,10 +1100,57 @@ export class AuthController {
     @Request() req: FastifyRequestWithUser
   ): Promise<DataResponseDto<AuthResponse>> {
     try {
-      const result = await this.authService.verifyOtp(verifyDto, {
-        userAgent: (req.headers['user-agent'] as string) || 'unknown',
-        ipAddress: req.ip || '127.0.0.1',
-      });
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      // Extract clinic ID from request (set by ClinicGuard from headers)
+      const clinicId =
+        (req as unknown as { clinicId?: string }).clinicId ||
+        (Array.isArray(req.headers['x-clinic-id'])
+          ? req.headers['x-clinic-id'][0]
+          : (req.headers['x-clinic-id'] as string));
+
+      let result: AuthResponse;
+
+      if (verifyDto.isRegistration) {
+        // Handle registration flow
+        const isEmail = verifyDto.identifier.includes('@');
+
+        if (isEmail) {
+          result = await this.authService.registerWithEmailOtp(
+            verifyDto.identifier,
+            verifyDto.otp,
+            verifyDto.firstName || '',
+            verifyDto.lastName || '',
+            clinicId,
+            {
+              userAgent: (req.headers['user-agent'] as string) || 'unknown',
+              ipAddress: req.ip || '127.0.0.1',
+            }
+          );
+        } else {
+          result = await this.authService.registerWithPhoneOtp(
+            verifyDto.identifier,
+            verifyDto.otp,
+            verifyDto.firstName || '',
+            verifyDto.lastName || '',
+            undefined, // Email optional for phone registration
+            clinicId,
+            {
+              userAgent: (req.headers['user-agent'] as string) || 'unknown',
+              ipAddress: req.ip || '127.0.0.1',
+            }
+          );
+        }
+      } else {
+        // Handle login flow (existing)
+        result = await this.authService.verifyOtp(
+          verifyDto,
+          {
+            userAgent: (req.headers['user-agent'] as string) || 'unknown',
+            ipAddress: req.ip || '127.0.0.1',
+          },
+          clinicId
+        );
+      }
 
       // Sync session to Fastify session if available
       if (req.session && result.user) {

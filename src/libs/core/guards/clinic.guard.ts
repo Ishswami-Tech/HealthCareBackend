@@ -13,7 +13,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ClinicIsolationService } from '@infrastructure/database/internal/clinic-isolation.service';
-import type { ClinicRequest, ClinicValidationResult } from '@core/types/guard.types';
+import type { ClinicRequest } from '@core/types/guard.types';
 
 /**
  * Clinic Guard for Healthcare Applications
@@ -64,7 +64,7 @@ export class ClinicGuard implements CanActivate {
    */
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<ClinicRequest>();
-    const user = request.user;
+    const user = request.user; // From JWT (set by AuthGuard if authenticated)
 
     // Log the request details for debugging
     void this.loggingService.log(
@@ -77,106 +77,243 @@ export class ClinicGuard implements CanActivate {
         method: request.method,
         userId: user?.id,
         userRole: user?.role,
+        hasUser: !!user,
       }
     );
 
-    // Check if this is a public endpoint (no clinicId required)
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
-      context.getHandler(),
-      context.getClass(),
-    ]);
+    // Skip clinic validation for specific public modules
+    // These modules don't require clinic context
+    const publicModules = [
+      '/health',
+      '/dashboard',
+      '/logger',
+      '/queue',
+      '/socket-test',
+      '/docs',
+      '/api-docs',
+    ];
+    const isPublicModule = publicModules.some(module => request.url.startsWith(module));
 
-    // Public endpoints don't require clinicId
-    if (isPublic) {
+    if (isPublicModule) {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.DEBUG,
-        `Public endpoint, skipping clinic validation`,
+        `Public module, skipping clinic validation`,
         'ClinicGuard',
         { path: request.url }
       );
       return true;
     }
 
-    // For ALL authenticated requests (non-public), clinicId is COMPULSORY
-    const clinicId = this.extractClinicId(request);
+    // Check if this is a public endpoint
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
 
-    if (!clinicId) {
+    // Extract clinic ID from header
+    const headerClinicId = this.extractClinicId(request);
+
+    // For public endpoints WITHOUT clinic ID, skip validation entirely
+    // This allows other public endpoints to work without clinic context
+    if (isPublic && !headerClinicId && !user) {
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        `Public endpoint without clinic ID, skipping validation`,
+        'ClinicGuard',
+        { path: request.url }
+      );
+      return true;
+    }
+
+    // For all other cases, clinic ID is required
+    if (!headerClinicId) {
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.WARN,
-        `Clinic ID is required for all authenticated requests`,
+        `Clinic ID is required for this request`,
         'ClinicGuard',
-        { path: request.url, method: request.method }
+        { path: request.url, method: request.method, isPublic, hasUser: !!user }
       );
-      throw new ForbiddenException(
-        'Clinic ID is COMPULSORY for all requests. Please provide clinic ID via:\n' +
-          '  - X-Clinic-ID header (recommended)\n' +
-          '  - clinicId query parameter\n' +
-          '  - clinicId in request body\n' +
-          '  - clinicId in JWT token payload'
-      );
+      throw new ForbiddenException('Clinic ID is required. Please provide via X-Clinic-ID header.');
     }
 
-    // Validate clinic access using ClinicIsolationService
-    const clinicResult: ClinicValidationResult =
-      await this.clinicIsolationService.validateClinicAccess(
-        user?.sub || user?.id || 'anonymous',
-        clinicId
-      );
-
-    if (!clinicResult.success) {
-      void this.loggingService.log(
-        LogType.AUTH,
-        LogLevel.WARN,
-        `Invalid clinic access`,
-        'ClinicGuard',
-        {
-          path: request.url,
-          clinicId,
-          error: clinicResult.error,
-        }
-      );
-      throw new ForbiddenException(`Clinic access denied: ${clinicResult.error}`);
+    // STRATEGY 1: Public endpoints WITH clinic ID (register, login, OTP) - validate clinic exists
+    if (isPublic || !user) {
+      return await this.validatePublicEndpoint(request, headerClinicId);
     }
 
-    // Extract locationId if provided
-    const locationId = this.extractLocationId(request);
-
-    // Set clinic context in request for downstream use
-    // CRITICAL: Ensure we use the RESOLVED canonical UUID from the service, not the raw input
-    // This handles cases where the input was a custom code (e.g. 'cl002') but we need the UUID
-    if (clinicResult.clinicContext?.clinicId) {
-      request.clinicId = clinicResult.clinicContext.clinicId;
-    } else {
-      request.clinicId = clinicId;
-    }
-    if (locationId) {
-      request.locationId = locationId;
-    }
-    request.clinicContext = clinicResult.clinicContext as unknown as {
-      [key: string]: unknown;
-      clinicName?: string;
-    };
-
-    void this.loggingService.log(
-      LogType.AUTH,
-      LogLevel.DEBUG,
-      `Clinic access validated`,
-      'ClinicGuard',
-      {
-        userId: user?.sub || user?.id,
-        userRole: user?.role,
-        clinicId,
-        clinicName: clinicResult.clinicContext?.clinicName,
-      }
-    );
-
-    return true;
+    // STRATEGY 2: Protected endpoints - validate header matches JWT
+    return await this.validateProtectedEndpoint(request, user, headerClinicId);
   }
 
-  // Note: isClinicRoute method removed - ALL authenticated requests now require clinicId
-  // Only public endpoints (marked with @Public()) are exempt
+  /**
+   * Validate public endpoints (register, login, OTP)
+   * Only checks if clinic exists and is active
+   */
+  private async validatePublicEndpoint(
+    request: ClinicRequest,
+    headerClinicId: string
+  ): Promise<boolean> {
+    try {
+      // Resolve clinic ID to UUID and validate it exists
+      const { resolveClinicUUID } = await import('@utils/clinic.utils');
+      const clinicUUID = await resolveClinicUUID(this.databaseService, headerClinicId);
+
+      // Store in request for use by controllers
+      request.clinicId = clinicUUID;
+      request.clinicContext = { clinicId: clinicUUID } as unknown as {
+        [key: string]: unknown;
+        clinicName?: string;
+      };
+
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        `Public endpoint clinic validated: ${headerClinicId}`,
+        'ClinicGuard',
+        { clinicId: headerClinicId, clinicUUID, path: request.url }
+      );
+
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        `Invalid clinic for public endpoint: ${headerClinicId}`,
+        'ClinicGuard',
+        {
+          clinicId: headerClinicId,
+          path: request.url,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+      throw new ForbiddenException(`Invalid or inactive clinic: ${headerClinicId}`);
+    }
+  }
+
+  /**
+   * Validate protected endpoints
+   * Ensures header matches JWT payload (prevents spoofing)
+   */
+  private async validateProtectedEndpoint(
+    request: ClinicRequest,
+    user: { id?: string; sub?: string; clinicId?: string; primaryClinicId?: string; role?: string },
+    headerClinicId: string
+  ): Promise<boolean> {
+    // Extract clinic ID from JWT payload
+    const jwtClinicId = user.clinicId || user.primaryClinicId;
+
+    if (!jwtClinicId) {
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        'User JWT missing clinic ID',
+        'ClinicGuard',
+        { userId: user.id || user.sub, path: request.url }
+      );
+      throw new ForbiddenException('User account missing clinic association. Please re-login.');
+    }
+
+    try {
+      // Resolve both to UUIDs for comparison
+      const { resolveClinicUUID } = await import('@utils/clinic.utils');
+      const headerUUID = await resolveClinicUUID(this.databaseService, headerClinicId);
+      const jwtUUID = await resolveClinicUUID(this.databaseService, jwtClinicId);
+
+      // Validate they match (prevents clinic ID spoofing)
+      if (headerUUID !== jwtUUID) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.ERROR,
+          'Clinic ID mismatch: header does not match JWT',
+          'ClinicGuard',
+          {
+            headerClinicId,
+            jwtClinicId,
+            headerUUID,
+            jwtUUID,
+            userId: user.id || user.sub,
+            path: request.url,
+          }
+        );
+        throw new ForbiddenException('Clinic authentication mismatch. Please re-login.');
+      }
+
+      // Validate user has access to this clinic
+      const userId = user.id || user.sub;
+      if (!userId) {
+        throw new ForbiddenException('User ID missing from token');
+      }
+
+      const accessResult = await this.clinicIsolationService.validateClinicAccess(
+        userId,
+        headerUUID
+      );
+
+      if (!accessResult.success) {
+        void this.loggingService.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `User does not have access to clinic: ${headerClinicId}`,
+          'ClinicGuard',
+          {
+            userId: user.id || user.sub,
+            clinicId: headerUUID,
+            error: accessResult.error,
+            path: request.url,
+          }
+        );
+        throw new ForbiddenException(`Clinic access denied: ${accessResult.error}`);
+      }
+
+      // Extract locationId if provided
+      const locationId = this.extractLocationId(request);
+
+      // Store validated clinic info in request
+      request.clinicId = headerUUID;
+      if (locationId) {
+        request.locationId = locationId;
+      }
+      request.clinicContext = accessResult.clinicContext as unknown as {
+        [key: string]: unknown;
+        clinicName?: string;
+      };
+
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        `Protected endpoint clinic validated: ${headerClinicId}`,
+        'ClinicGuard',
+        {
+          clinicId: headerClinicId,
+          clinicUUID: headerUUID,
+          userId: user.id || user.sub,
+          clinicName: accessResult.clinicContext?.clinicName,
+        }
+      );
+
+      return true;
+    } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        `Clinic validation error: ${error instanceof Error ? error.message : String(error)}`,
+        'ClinicGuard',
+        {
+          headerClinicId,
+          jwtClinicId,
+          userId: user.id || user.sub,
+          path: request.url,
+        }
+      );
+      throw new ForbiddenException('Clinic validation failed');
+    }
+  }
 
   /**
    * Extracts clinic ID from various sources in the request
