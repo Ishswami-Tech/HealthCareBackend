@@ -2027,6 +2027,27 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     return this.userMethods.findUserByEmailSafe(email, includeRelations);
   }
 
+  async findUserByPhoneSafe(
+    phone: string,
+    includeRelations?: Partial<{
+      doctor: true;
+      patient: true;
+      receptionists: true;
+      clinicAdmins: true;
+      superAdmin: true;
+      pharmacist: true;
+      therapist: true;
+      labTechnician: true;
+      financeBilling: true;
+      supportStaff: true;
+      nurse: true;
+      counselor: true;
+      clinics: true;
+    }>
+  ): Promise<UserWithRelations | null> {
+    return this.userMethods.findUserByPhoneSafe(phone, includeRelations);
+  }
+
   async findUserByEmailForAuth(
     email: string
   ): Promise<(UserWithRelations & { password: string }) | null> {

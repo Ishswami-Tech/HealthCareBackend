@@ -82,6 +82,22 @@ export class UserProfileDto {
   @IsOptional()
   @IsString()
   profilePicture?: string | undefined;
+
+  @ApiPropertyOptional({
+    description: 'User Phone',
+    example: '+1234567890',
+  })
+  @IsOptional()
+  @IsString()
+  phone?: string | undefined;
+
+  @ApiPropertyOptional({
+    description: 'Is profile complete',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  profileComplete?: boolean;
 }
 
 /**
@@ -228,13 +244,13 @@ export class RegisterDto {
   otp?: string;
 
   @ApiProperty({
-    description: 'Clinic ID for multi-tenant context (REQUIRED) - UUID or clinic code like CL0001',
+    description: 'Clinic ID for multi-tenant context (OPTIONAL - provided via X-Clinic-ID header)',
     example: 'CL0001',
-    required: true,
+    required: false,
   })
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
-  @IsNotEmpty({ message: 'Clinic ID is required for registration' })
-  clinicId!: string;
+  @IsOptional()
+  clinicId?: string;
 
   @ApiProperty({
     description: 'Studio ID for multi-tenant context',
@@ -538,6 +554,15 @@ export class RequestOtpDto {
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
+
+  @ApiProperty({
+    description: 'Is this for new user registration?',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isRegistration?: boolean;
 }
 
 /**
@@ -576,6 +601,38 @@ export class VerifyOtpRequestDto {
   @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
   @IsOptional()
   clinicId?: string;
+
+  @ApiProperty({
+    description: 'Is this for new user registration?',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isRegistration?: boolean;
+
+  @ApiProperty({
+    description: 'First Name (required for registration)',
+    example: 'John',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @ApiProperty({
+    description: 'Last Name (required for registration)',
+    example: 'Doe',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  lastName?: string;
+
+  // Compatibility getters
+  get email(): string {
+    return this.identifier;
+  }
 }
 
 /**

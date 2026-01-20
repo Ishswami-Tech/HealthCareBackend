@@ -28,7 +28,8 @@ import { HttpStatus } from '@nestjs/common';
  */
 
 // Re-export UserWithRelations type from user.types.ts for use in this file
-export type { UserWithRelations } from './user.types';
+import type { UserWithRelations } from './user.types';
+export type { UserWithRelations };
 
 // Use explicit interface definitions to avoid 'any' in union types from Prisma
 // These types match Prisma entities but avoid using Prisma's generated types directly in union types
@@ -1690,6 +1691,50 @@ export interface IDatabaseClient {
  * Healthcare-specific database client interface
  */
 export interface IHealthcareDatabaseClient extends IDatabaseClient {
+  /**
+   * Find user by email with selective relation loading
+   */
+  findUserByEmailSafe(
+    email: string,
+    includeRelations?: Partial<{
+      doctor: true;
+      patient: true;
+      receptionists: true;
+      clinicAdmins: true;
+      superAdmin: true;
+      pharmacist: true;
+      therapist: true;
+      labTechnician: true;
+      financeBilling: true;
+      supportStaff: true;
+      nurse: true;
+      counselor: true;
+      clinics: true;
+    }>
+  ): Promise<UserWithRelations | null>;
+
+  /**
+   * Find user by phone with selective relation loading
+   */
+  findUserByPhoneSafe(
+    phone: string,
+    includeRelations?: Partial<{
+      doctor: true;
+      patient: true;
+      receptionists: true;
+      clinicAdmins: true;
+      superAdmin: true;
+      pharmacist: true;
+      therapist: true;
+      labTechnician: true;
+      financeBilling: true;
+      supportStaff: true;
+      nurse: true;
+      counselor: true;
+      clinics: true;
+    }>
+  ): Promise<UserWithRelations | null>;
+
   /**
    * Execute healthcare-specific read operations with HIPAA compliance
    */
