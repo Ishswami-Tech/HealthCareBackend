@@ -42,6 +42,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private readonly maxHistorySize = 1000; // Keep last 1000 snapshots
   private readonly serviceStartTime = Date.now(); // Track when service started
   private readonly STARTUP_GRACE_PERIOD = 30000; // 30 seconds grace period during startup
+  private lastCriticalQueryReset = Date.now(); // Track when critical queries counter was last reset
 
   // Performance thresholds
   private readonly slowQueryThreshold = 1000; // 1 second
@@ -59,7 +60,8 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
 
   // Alert throttling to prevent log spam
   private readonly alertCooldowns = new Map<string, number>(); // Map of alert key -> last log timestamp
-  private readonly alertCooldownMs = 60000; // 1 minute cooldown between same alert type logs
+  private readonly alertCooldownMs = 300000; // 5 minutes cooldown for critical alerts (prevents spam)
+  private readonly lastAlertHash = new Map<string, string>(); // Map of alert key -> hash of alert details (to detect changes)
 
   // Current metrics
   private currentMetrics: DatabaseMetrics = {
@@ -753,6 +755,43 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // For now, keep existing values or set defaults
     this.currentMetrics.performance.indexUsageRate = 0.95; // Placeholder - would need actual index usage tracking
 
+    // Reset critical queries counter periodically (every 5 minutes)
+    // This prevents stale critical query alerts from persisting indefinitely
+    // Only resets after startup grace period to avoid resetting during initial startup issues
+    const now = Date.now();
+    const RESET_INTERVAL = 300000; // 5 minutes
+
+    // Check if we should reset: 5 minutes passed AND critical queries exist
+    const timeSinceLastReset = now - this.lastCriticalQueryReset;
+    const shouldReset =
+      timeSinceLastReset >= RESET_INTERVAL && this.currentMetrics.performance.criticalQueries > 0;
+
+    if (shouldReset) {
+      // Check if any critical queries happened recently (within last 2 minutes)
+      // by checking if the counter increased since last check
+      // If counter is still > 0 after 5 minutes, it means queries are ongoing
+      // Only reset if we're confident the issue has stopped
+      const timeSinceServiceStart = now - this.serviceStartTime;
+      const isPastStartupGracePeriod = timeSinceServiceStart > this.STARTUP_GRACE_PERIOD;
+
+      if (isPastStartupGracePeriod) {
+        // Log that we're resetting the counter (for debugging)
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.DEBUG,
+          `Resetting critical queries counter (was ${this.currentMetrics.performance.criticalQueries}) after ${Math.round(timeSinceLastReset / 1000)}s`,
+          this.serviceName,
+          {
+            previousCount: this.currentMetrics.performance.criticalQueries,
+            resetInterval: RESET_INTERVAL,
+            timeSinceLastReset: Math.round(timeSinceLastReset / 1000),
+          }
+        );
+        this.currentMetrics.performance.criticalQueries = 0;
+        this.lastCriticalQueryReset = now;
+      }
+    }
+
     // Update timestamp
     this.currentMetrics.timestamp = new Date();
   }
@@ -1054,32 +1093,110 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
     // Log critical alerts with throttling to prevent spam
     const criticalAlerts = alerts.filter(alert => alert.severity === 'critical');
     if (criticalAlerts.length > 0) {
-      const alertKey = `critical-${criticalAlerts.map(a => a.type).join('-')}`;
+      // Create a stable alert key based on alert types
+      const alertKey = `critical-${criticalAlerts
+        .map(a => a.type)
+        .sort()
+        .join('-')}`;
+      // Create a hash of alert details to detect if alerts have changed
+      const alertHash = JSON.stringify(
+        criticalAlerts.map(a => ({
+          type: a.type,
+          message: a.message,
+          value: a.value,
+        }))
+      );
       const now = Date.now();
       const lastLogTime = this.alertCooldowns.get(alertKey) || 0;
+      const lastHash = this.lastAlertHash.get(alertKey) || '';
 
-      // Only log if cooldown period has passed
-      if (now - lastLogTime >= this.alertCooldownMs) {
+      // Only log if:
+      // 1. Cooldown period has passed (5 minutes), OR
+      // 2. Alert details have changed (new alert or different values)
+      const cooldownPassed = now - lastLogTime >= this.alertCooldownMs;
+      const alertChanged = alertHash !== lastHash;
+
+      if (cooldownPassed || alertChanged) {
+        // Log detailed information about what's causing the critical alert
+        const alertDetails = criticalAlerts.map(alert => {
+          if (alert.type === 'PERFORMANCE' && alert.metric === 'criticalQueries') {
+            return {
+              type: alert.type,
+              metric: alert.metric,
+              message: alert.message,
+              value: alert.value,
+              explanation: `Queries taking longer than ${this.criticalQueryThreshold}ms (10 seconds) detected. This indicates database performance issues that need immediate attention.`,
+            };
+          } else if (alert.type === 'SECURITY' && alert.metric === 'unauthorizedAccessAttempts') {
+            return {
+              type: alert.type,
+              metric: alert.metric,
+              message: alert.message,
+              value: alert.value,
+              explanation:
+                'Unauthorized database access attempts detected. This is a security concern and should be investigated immediately.',
+            };
+          }
+          return alert;
+        });
+
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.WARN,
-          `Critical database alerts: ${criticalAlerts.length} alerts`,
+          `Critical database alerts: ${criticalAlerts.length} alert(s)`,
           this.serviceName,
-          { alerts: criticalAlerts }
+          {
+            alertCount: criticalAlerts.length,
+            alerts: alertDetails,
+            metrics: {
+              criticalQueries: metrics.performance.criticalQueries,
+              unauthorizedAccessAttempts: metrics.healthcare.unauthorizedAccessAttempts,
+              averageQueryTime: metrics.performance.averageQueryTime,
+              slowQueries: metrics.performance.slowQueries,
+            },
+            thresholds: {
+              criticalQueryThreshold: this.criticalQueryThreshold,
+              slowQueryThreshold: this.slowQueryThreshold,
+            },
+            recommendation: criticalAlerts.some(a => a.type === 'PERFORMANCE')
+              ? 'Investigate slow queries in database logs. Consider adding indexes or optimizing query patterns.'
+              : criticalAlerts.some(a => a.type === 'SECURITY')
+                ? 'Review security logs and access control policies. Check for unauthorized access patterns.'
+                : 'Review database metrics and logs for details.',
+          }
         );
         this.alertCooldowns.set(alertKey, now);
+        this.lastAlertHash.set(alertKey, alertHash);
       }
     }
 
     // Also throttle warning alerts
     const warningAlerts = alerts.filter(alert => alert.severity === 'warning');
     if (warningAlerts.length > 0) {
-      const alertKey = `warning-${warningAlerts.map(a => a.type).join('-')}`;
+      // Create a stable alert key based on alert types
+      const alertKey = `warning-${warningAlerts
+        .map(a => a.type)
+        .sort()
+        .join('-')}`;
+      // Create a hash of alert details to detect if alerts have changed
+      const alertHash = JSON.stringify(
+        warningAlerts.map(a => ({
+          type: a.type,
+          message: a.message,
+          value: a.value,
+        }))
+      );
       const now = Date.now();
       const lastLogTime = this.alertCooldowns.get(alertKey) || 0;
+      const lastHash = this.lastAlertHash.get(alertKey) || '';
 
-      // Only log if cooldown period has passed (longer cooldown for warnings)
-      if (now - lastLogTime >= this.alertCooldownMs * 2) {
+      // Only log if:
+      // 1. Cooldown period has passed (10 minutes for warnings), OR
+      // 2. Alert details have changed (new alert or different values)
+      const cooldownPassed = now - lastLogTime >= this.alertCooldownMs * 2; // 10 minutes for warnings
+      const alertChanged = alertHash !== lastHash;
+
+      if (cooldownPassed || alertChanged) {
         void this.loggingService.log(
           LogType.DATABASE,
           LogLevel.DEBUG,
@@ -1088,6 +1205,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
           { alerts: warningAlerts }
         );
         this.alertCooldowns.set(alertKey, now);
+        this.lastAlertHash.set(alertKey, alertHash);
       }
     }
   }

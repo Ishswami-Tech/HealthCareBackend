@@ -140,24 +140,24 @@ jobs:
           IMAGE_BASE="${{ steps.image.outputs.image }}"
           EXPECTED_TAG="main-${{ github.sha }}"
           EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
-          
+
           # Get the first tag from metadata (should be one of the pushed tags)
           # Metadata action outputs tags separated by newlines
           FIRST_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -v '^$' | head -n 1 | tr -d ' ')
-          
+
           if [[ -z "$FIRST_TAG" ]]; then
             echo "❌ Error: No tags found from metadata action"
             echo "Metadata tags output: ${{ steps.meta.outputs.tags }}"
             exit 1
           fi
-          
+
           echo "First tag from metadata: ${FIRST_TAG}"
           echo "Expected deployment tag: ${EXPECTED_TAG}"
           echo "All metadata tags:"
           echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
             [[ -n "$tag" ]] && echo "  - ${tag}"
           done
-          
+
           # Check if expected tag already exists in the tags list
           if echo "${{ steps.meta.outputs.tags }}" | grep -q "${EXPECTED_TAG}"; then
             echo "✅ Expected tag ${EXPECTED_TAG} was already created by metadata action"
@@ -192,13 +192,13 @@ jobs:
           IMAGE_BASE="${{ steps.image.outputs.image }}"
           EXPECTED_TAG="main-${{ github.sha }}"
           EXPECTED_IMAGE="${IMAGE_BASE}:${EXPECTED_TAG}"
-          
+
           echo "Expected image: ${EXPECTED_IMAGE}"
           echo "All tags from metadata: ${{ steps.meta.outputs.tags }}"
-          
+
           # Wait a moment for registry propagation
           sleep 5
-          
+
           # Verify the SHA-based tag exists
           if docker manifest inspect "${EXPECTED_IMAGE}" > /dev/null 2>&1; then
             echo "✅ Verified: ${EXPECTED_IMAGE} exists in registry"
