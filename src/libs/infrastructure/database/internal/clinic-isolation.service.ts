@@ -136,6 +136,7 @@ export class ClinicIsolationService implements OnModuleInit {
         }) => Promise<
           Array<{
             id: string;
+            clinicId: string;
             name: string;
             subdomain: string | null;
             app_name: string;
@@ -168,6 +169,7 @@ export class ClinicIsolationService implements OnModuleInit {
       });
       const clinics = rawClinics as Array<{
         id: string;
+        clinicId: string;
         name: string;
         subdomain: string | null;
         app_name: string;
@@ -208,6 +210,10 @@ export class ClinicIsolationService implements OnModuleInit {
         // Cache subdomain/code mapping
         if (clinic.subdomain) {
           this.clinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
+        }
+        // Also cache clinicId (e.g., "CL0002") to UUID mapping
+        if (clinic.clinicId) {
+          this.clinicCodeCache.set(clinic.clinicId.toLowerCase(), clinic.id);
         }
 
         // Cache location to clinic mappings
@@ -259,6 +265,7 @@ export class ClinicIsolationService implements OnModuleInit {
         type ClinicDelegate = {
           findFirst: <T>(args: T) => Promise<{
             id: string;
+            clinicId: string;
             name: string;
             subdomain?: string | null;
             app_name: string;
@@ -282,7 +289,12 @@ export class ClinicIsolationService implements OnModuleInit {
         const rawClinic = await clinicDelegate.findFirst({
           where: {
             isActive: true,
-            OR: isUuid ? [{ id: clinicIdOrCode }] : [{ subdomain: clinicIdOrCode }], // Query by subdomain if not UUID
+            OR: isUuid
+              ? [{ id: clinicIdOrCode }]
+              : [
+                  { subdomain: clinicIdOrCode }, // Query by subdomain if not UUID
+                  { clinicId: clinicIdOrCode }, // Also try clinicId field (e.g., "CL0002")
+                ],
           },
           include: {
             locations: {
@@ -327,6 +339,10 @@ export class ClinicIsolationService implements OnModuleInit {
         this.clinicCache.set(clinic.id, clinicContext);
         if (clinic.subdomain) {
           this.clinicCodeCache.set(clinic.subdomain.toLowerCase(), clinic.id);
+        }
+        // Also cache clinicId (e.g., "CL0002") to UUID mapping
+        if (clinic.clinicId) {
+          this.clinicCodeCache.set(clinic.clinicId.toLowerCase(), clinic.id);
         }
       }
 
