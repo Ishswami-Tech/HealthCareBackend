@@ -212,7 +212,7 @@ export class SocialAuthService {
           email: socialUser.email,
           name:
             `${socialUser.firstName || ''} ${socialUser.lastName || ''}`.trim() || socialUser.email,
-          age: 18, // Default age
+          age: 12, // Temporary default - MUST be updated with actual DOB during profile completion
           firstName: socialUser.firstName || '',
           lastName: socialUser.lastName || '',
           profilePicture: socialUser.profilePicture,

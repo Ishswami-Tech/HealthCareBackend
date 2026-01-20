@@ -36,15 +36,27 @@ const patientAuthTests = {
 
   async testLogout(ctx) {
     // Logout requires Content-Type header for POST requests (JWT guard validation)
-    const result = await ctx.makeRequest('POST', '/auth/logout', {}, {
-      'Content-Type': 'application/json',
-    });
+    const result = await ctx.makeRequest(
+      'POST',
+      '/auth/logout',
+      {},
+      {
+        'Content-Type': 'application/json',
+      }
+    );
     const passed = result.ok || result.status === 401; // 401 = already logged out or invalid session
     ctx.recordTest('Logout', passed);
     return passed;
   },
 
   async testChangePassword(ctx) {
+    // IMPORTANT: This endpoint mutates shared test credentials.
+    // In production-like environments, repeated runs can break subsequent logins (rate limits, failed revert).
+    if (process.env.RUN_MUTATING_AUTH_TESTS !== 'true') {
+      ctx.recordTest('Change Password', true, true);
+      return true;
+    }
+
     const originalPassword = ctx.credentials.password;
     const tempPassword = 'NewPassword123!';
 
@@ -113,6 +125,12 @@ const patientAuthTests = {
   },
 
   async testRegisterWithClinicId(ctx) {
+    // IMPORTANT: This endpoint mutates the database (creates a new user).
+    if (process.env.RUN_MUTATING_AUTH_TESTS !== 'true') {
+      ctx.recordTest('Register With ClinicId', true, true);
+      return true;
+    }
+
     // Test registration with clinicId (now required)
     const testEmail = `test-patient-${Date.now()}@example.com`;
     if (!ctx.clinicId) {
@@ -128,13 +146,18 @@ const patientAuthTests = {
       clinicId: ctx.clinicId, // REQUIRED
       role: 'PATIENT',
     });
-    const passed =
-      result.ok || result.status === 400 || result.status === 409; // 400 = validation error, 409 = user exists
+    const passed = result.ok || result.status === 400 || result.status === 409; // 400 = validation error, 409 = user exists
     ctx.recordTest('Register With ClinicId', passed);
     return passed;
   },
 
   async testRegisterWithoutClinicId(ctx) {
+    // IMPORTANT: This endpoint mutates the database (attempts to create a new user).
+    if (process.env.RUN_MUTATING_AUTH_TESTS !== 'true') {
+      ctx.recordTest('Register Without ClinicId (Should Fail)', true, true);
+      return true;
+    }
+
     // Test that registration fails without clinicId
     const testEmail = `test-patient-no-clinic-${Date.now()}@example.com`;
     const result = await ctx.makeRequest('POST', '/auth/register', {

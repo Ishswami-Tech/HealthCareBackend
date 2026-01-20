@@ -191,12 +191,16 @@ export class AuthService {
   /**
    * User registration
    */
+  /**
+   * Single registration endpoint for all users (primarily PATIENT)
+   * Simplified for production - handles clinic validation, user creation, and patient record
+   */
   async register(
     registerDto: RegisterDto,
     _sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<AuthResponse> {
     try {
-      // Validate clinicId is provided (required)
+      // 1. Validate clinicId (required)
       if (!registerDto.clinicId) {
         throw this.errors.validationError(
           'clinicId',
@@ -205,35 +209,16 @@ export class AuthService {
         );
       }
 
-      // Resolve clinic UUID from clinicId (handles both UUID and clinic code like "CL0001")
-      let clinicUUID = registerDto.clinicId;
-      try {
-        // Import resolveClinicUUID utility
-        const { resolveClinicUUID } = await import('@utils/clinic.utils');
-        clinicUUID = await resolveClinicUUID(this.databaseService, registerDto.clinicId);
-      } catch (_resolveError) {
-        // If resolveClinicUUID fails, the clinic doesn't exist or is invalid
-        throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
-      }
-
-      // Validate clinic exists and is active using resolved UUID
+      // 2. Resolve and validate clinic
+      const { resolveClinicUUID } = await import('@utils/clinic.utils');
+      const clinicUUID = await resolveClinicUUID(this.databaseService, registerDto.clinicId);
       const clinic = await this.databaseService.findClinicByIdSafe(clinicUUID);
-      if (!clinic) {
+
+      if (!clinic || !clinic.isActive) {
         throw this.errors.clinicNotFound(registerDto.clinicId, 'AuthService.register');
       }
-      if (!('isActive' in clinic) || !clinic.isActive) {
-        throw this.errors.validationError(
-          'clinicId',
-          `Clinic with ID ${registerDto.clinicId} is not active`,
-          'AuthService.register'
-        );
-      }
 
-      // Update registerDto with resolved UUID for consistency
-      registerDto.clinicId = clinicUUID;
-
-      // Verify OTP if provided
-      // Verify OTP if provided
+      // 3. Verify OTP if provided
       if (registerDto.otp) {
         const identifier = registerDto.phone || registerDto.email;
         if (!identifier) {
@@ -253,53 +238,56 @@ export class AuthService {
         }
       }
 
-      // Check if user already exists
+      // 4. Check if user already exists
       const existingUser = await this.databaseService.findUserByEmailSafe(registerDto.email);
-
       if (existingUser) {
         throw this.errors.emailAlreadyExists(registerDto.email, 'AuthService.register');
       }
 
-      // Hash password
+      // 5. Create user
       const hashedPassword = await bcrypt.hash(registerDto.password, 12);
-
-      // Create user data with proper typing using UserCreateInput
-      // Calculate age if DOB provided
+      // Age handling for registration (profile completion happens after login)
+      // - If DOB is provided during registration, calculate age and validate
+      // - If DOB is not provided, use safe default (will be updated during profile completion)
       const age = registerDto.dateOfBirth
-        ? Math.floor(
-            (Date.now() - new Date(registerDto.dateOfBirth).getTime()) /
-              (365.25 * 24 * 60 * 60 * 1000)
-          )
-        : undefined;
+        ? (() => {
+            const calculatedAge = Math.floor(
+              (Date.now() - new Date(registerDto.dateOfBirth).getTime()) /
+                (365.25 * 24 * 60 * 60 * 1000)
+            );
+            // Validate minimum age if DOB is provided
+            if (calculatedAge < 12) {
+              throw this.errors.validationError(
+                'dateOfBirth',
+                'User must be at least 12 years old to register',
+                'AuthService.register'
+              );
+            }
+            return calculatedAge;
+          })()
+        : 12; // Safe default - will be updated during profile completion with actual DOB
 
-      // Create user data with proper typing using UserCreateInput
-      const userCreateInput: UserCreateInput = {
+      const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
         userid: uuidv4(),
         name: `${registerDto.firstName} ${registerDto.lastName}`,
-        ...(age !== undefined ? { age } : {}),
+        age,
         firstName: registerDto.firstName,
         lastName: registerDto.lastName,
-        ...(registerDto.phone ? { phone: registerDto.phone } : {}),
-        ...(registerDto.dateOfBirth && {
-          dateOfBirth: new Date(registerDto.dateOfBirth),
-        }),
+        ...(registerDto.phone && { phone: registerDto.phone }),
+        ...(registerDto.dateOfBirth && { dateOfBirth: new Date(registerDto.dateOfBirth) }),
         ...(registerDto.gender && { gender: registerDto.gender }),
         ...(registerDto.address && { address: registerDto.address }),
-        ...(registerDto.role && { role: registerDto.role }),
-        primaryClinicId: registerDto.clinicId, // Always set primaryClinicId (required)
+        role: (registerDto.role || 'PATIENT') as Role,
+        primaryClinicId: clinicUUID,
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
-        isVerified: !!registerDto.otp || !!registerDto.googleId, // Set verified if OTP or Social
-      };
+        isVerified: !!registerDto.otp || !!registerDto.googleId,
+      });
 
-      // Use createUserSafe from DatabaseService
-      const user = await this.databaseService.createUserSafe(userCreateInput);
-
-      // For PATIENT role, create Patient record linked to clinic
+      // 6. Create Patient record if role is PATIENT
       if ((registerDto.role || 'PATIENT') === 'PATIENT') {
         try {
-          // Create patient record directly (Patient model only has userId, not clinicId)
           await this.databaseService.executeHealthcareWrite(
             async client => {
               const typedClient = client as unknown as {
@@ -307,56 +295,46 @@ export class AuthService {
                   create: (args: { data: { userId: string } }) => Promise<{ id: string }>;
                 };
               };
-              await typedClient.patient.create({
-                data: {
-                  userId: user.id,
-                },
-              });
+              await typedClient.patient.create({ data: { userId: user.id } });
             },
             {
               userId: user.id,
-              clinicId: registerDto.clinicId,
+              clinicId: clinicUUID,
               resourceType: 'PATIENT',
               operation: 'CREATE',
               resourceId: user.id,
-              userRole: registerDto.role || 'PATIENT',
+              userRole: 'PATIENT',
               details: { registration: true },
             }
           );
         } catch (patientError) {
-          // Log error but don't fail registration
           await this.logging.log(
             LogType.ERROR,
             LogLevel.WARN,
-            `Failed to create patient record during registration: ${(patientError as Error).message}`,
+            `Failed to create patient record: ${(patientError as Error).message}`,
             'AuthService.register',
-            { userId: user.id, clinicId: registerDto.clinicId }
+            { userId: user.id }
           );
         }
       }
 
-      // Emit user registration event
+      // 7. Send OTP and return response
       await this.eventService.emit('user.registered', {
         userId: user.id,
         email: user.email,
         role: user.role,
-        clinicId: registerDto.clinicId,
+        clinicId: clinicUUID,
       });
-
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `User registered successfully, pending verification: ${user.email}`,
+        `User registered: ${user.email}`,
         'AuthService.register',
         { userId: user.id, email: user.email, role: user.role }
       );
 
-      // Trigger OTP generation and sending using internal method
       const identifier = registerDto.phone || registerDto.email;
-      await this.requestOtp({
-        identifier,
-        clinicId: registerDto.clinicId,
-      });
+      await this.requestOtp({ identifier, clinicId: clinicUUID });
 
       return {
         user: {
@@ -371,7 +349,7 @@ export class AuthService {
         message:
           'Registration successful. Please verify your account with the OTP sent to your registered contact.',
       };
-    } catch (_error) {
+    } catch (error) {
       await this.logging.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
@@ -379,11 +357,10 @@ export class AuthService {
         'AuthService.register',
         {
           email: registerDto.email,
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : undefined,
+          error: error instanceof Error ? error.message : String(error),
         }
       );
-      throw _error;
+      throw error;
     }
   }
 

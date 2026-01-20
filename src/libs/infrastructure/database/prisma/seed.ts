@@ -926,7 +926,7 @@ async function main() {
                 email: faker.internet.email(),
                 password: faker.internet.password(),
                 name: faker.person.fullName(),
-                age: faker.number.int({ min: 18, max: 80 }),
+                age: faker.number.int({ min: 12, max: 80 }),
                 firstName: faker.person.firstName(),
                 lastName: faker.person.lastName(),
                 phone: faker.phone.number(),
