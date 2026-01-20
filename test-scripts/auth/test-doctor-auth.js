@@ -36,15 +36,27 @@ const doctorAuthTests = {
 
   async testLogout(ctx) {
     // Logout requires Content-Type header for POST requests (JWT guard validation)
-    const result = await ctx.makeRequest('POST', '/auth/logout', {}, {
-      'Content-Type': 'application/json',
-    });
+    const result = await ctx.makeRequest(
+      'POST',
+      '/auth/logout',
+      {},
+      {
+        'Content-Type': 'application/json',
+      }
+    );
     const passed = result.ok || result.status === 401; // 401 = already logged out or invalid session
     ctx.recordTest('Logout', passed);
     return passed;
   },
 
   async testChangePassword(ctx) {
+    // IMPORTANT: This endpoint mutates shared test credentials.
+    // In production-like environments, repeated runs can break subsequent logins (rate limits, failed revert).
+    if (process.env.RUN_MUTATING_AUTH_TESTS !== 'true') {
+      ctx.recordTest('Change Password', true, true);
+      return true;
+    }
+
     const originalPassword = ctx.credentials.password;
     const tempPassword = 'NewPassword123!';
 

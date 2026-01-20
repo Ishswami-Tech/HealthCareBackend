@@ -963,11 +963,23 @@ Migrations run automatically on API container startup. To run manually:
 # Production
 docker exec -it latest-api sh
 yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --config=/app/src/libs/infrastructure/database/prisma/prisma.config.js
-
-# Local-Prod
-docker exec -it local-prod-api sh
-yarn prisma migrate deploy --schema=/app/src/libs/infrastructure/database/prisma/schema.prisma --config=/app/src/libs/infrastructure/database/prisma/prisma.config.js
 ```
+
+### Database Seeding
+
+Seed the database with test users and sample data:
+
+```bash
+# Production - Install faker (required for seed script) then run seed
+docker exec -it latest-api sh -c "yarn add @faker-js/faker && NODE_ENV=production node dist/libs/infrastructure/database/prisma/seed.js"
+
+# Local-Prod - Install faker then run seed
+docker exec -it local-prod-api sh -c "yarn add @faker-js/faker && NODE_ENV=production node dist/libs/infrastructure/database/prisma/seed.js"
+```
+
+**Note**: Creates test users: `patient1@example.com`, `doctor1@example.com`,
+`receptionist1@example.com`, `clinicadmin1@example.com` (all with password
+`test1234`), and `superadmin@example.com` (password `admin123`).
 
 ### Backup Database
 
