@@ -591,6 +591,10 @@ export class UsersService {
 
           // Add age to payload using type-safe extension
           (cleanedData as UpdateUserDto & { age: number }).age = age;
+
+          // Fix: Convert string to Date object for Prisma
+          // Prisma requires Date objects for DateTime fields, passing string causes 500 error
+          Object.assign(cleanedData, { dateOfBirth: birthDate });
         } catch (_error: unknown) {
           void this.loggingService.log(
             LogType.ERROR,
