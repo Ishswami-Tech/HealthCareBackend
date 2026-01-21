@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PharmacyService } from '../services/pharmacy.service';
 import {
@@ -29,8 +29,13 @@ export class PharmacyController {
   @Post('inventory')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Add new medicine to inventory' })
-  async addMedicine(@Body() dto: CreateMedicineDto) {
-    return this.pharmacyService.addMedicine(dto);
+  async addMedicine(
+    @Body() dto: CreateMedicineDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    return this.pharmacyService.addMedicine(dto, clinicId);
   }
 
   @Patch('inventory/:id')
@@ -43,15 +48,20 @@ export class PharmacyController {
   @Get('prescriptions')
   @Roles(Role.PHARMACIST)
   @ApiOperation({ summary: 'Get all prescriptions' })
-  async getPrescriptions() {
-    return this.pharmacyService.findAllPrescriptions();
+  async getPrescriptions(@Request() req: Request & { user?: { clinicId?: string } }) {
+    const clinicId = req.user?.clinicId;
+    return this.pharmacyService.findAllPrescriptions(clinicId);
   }
 
   @Post('prescriptions')
   @Roles(Role.DOCTOR)
   @ApiOperation({ summary: 'Create a new prescription' })
-  async createPrescription(@Body() dto: CreatePrescriptionDto) {
-    return this.pharmacyService.createPrescription(dto);
+  async createPrescription(
+    @Body() dto: CreatePrescriptionDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const clinicId = req.user?.clinicId;
+    return this.pharmacyService.createPrescription(dto, clinicId);
   }
 
   @Get('dashboard/stats')

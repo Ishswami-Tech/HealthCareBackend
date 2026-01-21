@@ -25,6 +25,9 @@ import { PharmacyModule } from './services/pharmacy/pharmacy.module';
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { SessionModule } from '@core/session/session.module';
+import { PatientsModule } from './services/patients/patients.module';
+import { DoctorsModule } from './services/doctors/doctors.module';
+import { StaffModule } from './services/staff/staff.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -78,6 +81,9 @@ import { SessionModule } from '@core/session/session.module';
     CommunicationModule,
     // Support modules
     HealthModule,
+    PatientsModule,
+    DoctorsModule,
+    StaffModule,
   ],
   controllers: [AppController],
   providers: [AppService],
