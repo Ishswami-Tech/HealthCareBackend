@@ -99,6 +99,23 @@ export class PharmacyService {
     });
   }
 
+  async findPrescriptionsByPatient(userId: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        prescription: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+
+      return await typedClient.prescription.findMany({
+        where: { patientId: userId } as PrismaDelegateArgs,
+        include: {
+          items: true,
+          doctor: { select: { name: true, specialization: true } },
+        } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
   async createPrescription(dto: CreatePrescriptionDto, clinicId?: string) {
     if (!clinicId) throw new BadRequestException('Clinic ID is required');
 
