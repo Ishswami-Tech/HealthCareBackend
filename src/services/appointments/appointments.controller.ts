@@ -268,7 +268,7 @@ export class AppointmentsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT)
   @ClinicRoute()
-  @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
+  @RequireResourcePermission('appointments', 'read')
   @PatientCache({
     keyTemplate: 'appointments:my:{userId}:{clinicId}',
     ttl: 300,

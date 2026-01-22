@@ -70,4 +70,18 @@ export class PharmacyController {
   async getStats(): Promise<PharmacyStatsDto> {
     return this.pharmacyService.getStats();
   }
+
+  @Get('prescriptions/patient/:userId')
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Get prescriptions for a specific patient' })
+  async getPatientPrescriptions(
+    @Param('userId') userId: string,
+    @Request() req: Request & { user?: { sub?: string; role?: string } }
+  ) {
+    // Patients can only view their own prescriptions
+    if (req.user?.role === 'PATIENT' && req.user?.sub !== userId) {
+      throw new Error('Patients can only view their own prescriptions');
+    }
+    return this.pharmacyService.findPrescriptionsByPatient(userId);
+  }
 }

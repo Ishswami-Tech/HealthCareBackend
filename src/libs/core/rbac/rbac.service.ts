@@ -537,6 +537,14 @@ export class RbacService {
         'profile:read',
         'profile:update',
         'medical-records:read',
+        // EHR permissions - patients can view their own health records
+        'ehr:read',
+        'vitals:read',
+        'lab-reports:read',
+        'medications:read',
+        'prescriptions:read',
+        // Communication permissions
+        'notifications:read',
         // Billing permissions - patients can view and manage their own billing data
         'billing:read',
         'subscriptions:read',
