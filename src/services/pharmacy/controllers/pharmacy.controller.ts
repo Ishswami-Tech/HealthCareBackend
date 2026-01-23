@@ -1,4 +1,14 @@
-import { Controller, Get, Post, Body, Patch, Param, UseGuards, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  UseGuards,
+  Request,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PharmacyService } from '../services/pharmacy.service';
 import {
@@ -80,7 +90,7 @@ export class PharmacyController {
   ) {
     // Patients can only view their own prescriptions
     if (req.user?.role === 'PATIENT' && req.user?.sub !== userId) {
-      throw new Error('Patients can only view their own prescriptions');
+      throw new ForbiddenException('Patients can only view their own prescriptions');
     }
     return this.pharmacyService.findPrescriptionsByPatient(userId);
   }
