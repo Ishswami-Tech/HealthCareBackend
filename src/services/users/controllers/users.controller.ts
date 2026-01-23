@@ -41,8 +41,8 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 
-@ApiTags('user')
-@Controller('user')
+@ApiTags('users')
+@Controller('users')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
