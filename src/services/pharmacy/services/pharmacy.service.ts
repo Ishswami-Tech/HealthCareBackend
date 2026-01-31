@@ -109,9 +109,14 @@ export class PharmacyService {
         where: { patientId: userId } as PrismaDelegateArgs,
         include: {
           items: true,
-          doctor: { select: { name: true, specialization: true } },
+          doctor: {
+            select: {
+              specialization: true,
+              user: { select: { name: true } },
+            },
+          },
         } as PrismaDelegateArgs,
-        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+        orderBy: { date: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
   }
