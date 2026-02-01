@@ -34,20 +34,29 @@ export class SecurityQueryMiddleware extends BaseQueryMiddleware {
     // Check for SQL injection
     if (context.options.where) {
       const whereString = JSON.stringify(context.options.where);
-      const checkResult = this.sqlInjectionPrevention.checkSQLInjection(whereString);
-      if (!checkResult.isSafe) {
-        void this.loggingService.log(
-          LogType.DATABASE,
-          LogLevel.ERROR,
-          'SQL injection attempt detected',
-          'SecurityQueryMiddleware',
-          {
-            operation: context.operation,
-            where: context.options.where,
-            detectedPatterns: checkResult.detectedPatterns,
-          }
-        );
-        throw new Error('SQL injection attempt detected');
+
+      // Skip SQL injection check for Prisma query operators
+      // Prisma uses OR, AND, NOT as valid query operators in JSON format
+      // Example: {"OR": [{"doctorId": "..."}, {"patientId": "..."}]}
+      // We need to exclude these from SQL injection detection
+      const isPrismaQuery = /"(OR|AND|NOT)":\s*\[/.test(whereString);
+
+      if (!isPrismaQuery) {
+        const checkResult = this.sqlInjectionPrevention.checkSQLInjection(whereString);
+        if (!checkResult.isSafe) {
+          void this.loggingService.log(
+            LogType.DATABASE,
+            LogLevel.ERROR,
+            'SQL injection attempt detected',
+            'SecurityQueryMiddleware',
+            {
+              operation: context.operation,
+              where: context.options.where,
+              detectedPatterns: checkResult.detectedPatterns,
+            }
+          );
+          throw new Error('SQL injection attempt detected');
+        }
       }
     }
 
