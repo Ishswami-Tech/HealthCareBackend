@@ -17,6 +17,7 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
+import type { UserUpdateInput } from '@core/types/input.types';
 import type {
   Doctor,
   Patient,
@@ -753,7 +754,22 @@ export class UsersService {
       }
 
       // Update the user record using updateUserSafe or executeHealthcareWrite
-      await this.databaseService.updateUserSafe(id, cleanedData as never);
+      // Map UpdateUserProfileDto to UserUpdateInput, converting Gender enum to string and filtering undefined
+      const userUpdateData = Object.fromEntries(
+        Object.entries({
+          firstName: cleanedData.firstName,
+          lastName: cleanedData.lastName,
+          phone: cleanedData.phone,
+          dateOfBirth: cleanedData.dateOfBirth,
+          gender: cleanedData.gender ? String(cleanedData.gender) : undefined,
+          address: cleanedData.address,
+          city: cleanedData.city,
+          state: cleanedData.state,
+          country: cleanedData.country,
+          profilePicture: cleanedData.profilePicture,
+        }).filter(([_, v]) => v !== undefined)
+      ) as UserUpdateInput;
+      await this.databaseService.updateUserSafe(id, userUpdateData);
       // Fetch updated user with relations
       const user = (await this.databaseService.executeHealthcareRead<{
         id: string;
