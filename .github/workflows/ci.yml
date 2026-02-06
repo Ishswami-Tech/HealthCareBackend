@@ -919,6 +919,7 @@ jobs:
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      # .env.production: Multi-line secrets are supported; load_env on server merges continuation lines.
       - name: Create .env.production file
         run: |
           cat > /tmp/.env.production << EOF

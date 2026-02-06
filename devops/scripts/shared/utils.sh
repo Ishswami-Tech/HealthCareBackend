@@ -265,6 +265,7 @@ validate_and_fix_env_file() {
 }
 
 # Load environment variables
+# Supports standard KEY=VALUE and continuation lines (multi-line values from secrets)
 load_env() {
     local validate="${1:-false}"
     local auto_fix="${2:-false}"
@@ -278,22 +279,48 @@ load_env() {
         fi
         
         set -a
-        # Use a safer method to load env file that skips invalid lines
-        # This prevents errors when sourcing files with malformed lines
+        # Load env file: support KEY=VALUE and continuation lines (e.g. multi-line secrets in CI)
+        local current_key=""
+        local current_value=""
         while IFS= read -r line || [[ -n "$line" ]]; do
-            # Skip empty lines
-            [[ -z "$line" ]] && continue
+            # Empty line: treat as continuation (newline in multi-line secret → space)
+            if [[ -z "$line" ]]; then
+                if [[ -n "$current_key" ]]; then
+                    current_value="${current_value} "
+                fi
+                continue
+            fi
             # Skip comment lines
-            [[ "$line" =~ ^[[:space:]]*# ]] && continue
-            # Only process lines that look like valid variable assignments (KEY=VALUE)
-            if [[ "$line" =~ ^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*= ]]; then
-                # Export the variable safely
-                export "$line" 2>/dev/null || log_warning "Failed to set environment variable: ${line%%=*}"
+            if [[ "$line" =~ ^[[:space:]]*# ]]; then
+                # Flush previous key before comment
+                if [[ -n "$current_key" ]]; then
+                    export "${current_key}=${current_value}" 2>/dev/null || log_warning "Failed to set: ${current_key}"
+                    current_key=""
+                    current_value=""
+                fi
+                continue
+            fi
+            # Valid variable assignment KEY=VALUE
+            if [[ "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+                # Flush previous key
+                if [[ -n "$current_key" ]]; then
+                    export "${current_key}=${current_value}" 2>/dev/null || log_warning "Failed to set: ${current_key}"
+                fi
+                current_key="${BASH_REMATCH[1]}"
+                current_value="${BASH_REMATCH[2]}"
             else
-                # Log warning for lines that don't match expected format but don't fail
-                log_warning "Skipping invalid line in ${ENV_FILE}: ${line:0:50}..."
+                # Continuation line (e.g. second line of a multi-line secret) — append to current value
+                if [[ -n "$current_key" ]]; then
+                    current_value="${current_value} ${line}"
+                else
+                    log_warning "Skipping invalid line in ${ENV_FILE}: ${line:0:50}..."
+                fi
             fi
         done < "${ENV_FILE}"
+        # Flush last variable
+        if [[ -n "$current_key" ]]; then
+            export "${current_key}=${current_value}" 2>/dev/null || log_warning "Failed to set: ${current_key}"
+        fi
         set +a
     else
         log_warning "Environment file not found: ${ENV_FILE}"
