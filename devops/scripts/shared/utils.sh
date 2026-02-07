@@ -654,7 +654,8 @@ EOF
     if rclone copy "$local_file" "${remote_name}:${S3_BUCKET}/${s3_path}" \
         --s3-no-head \
         --s3-no-head-object \
-        --quiet; then
+        --stats 30s \
+        --verbose; then
         log_success "Uploaded to S3 using rclone: ${s3_path}"
         return 0
     else
