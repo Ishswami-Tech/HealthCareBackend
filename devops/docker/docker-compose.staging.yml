@@ -1,8 +1,8 @@
 services:
   # Infrastructure Services (Profile: infrastructure)
   postgres:
-    profiles: ["infrastructure"]
-    image: postgres:16
+    profiles: [ "infrastructure" ]
+    image: postgres:18
     container_name: local-prod-postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure
@@ -24,7 +24,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.2
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d userdb" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,42 +33,16 @@ services:
       resources:
         # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "2.0"      # Production: 3.0
-          memory: 4G       # Production: 10GB
+          cpus: "2.0" # Production: 3.0
+          memory: 4G # Production: 10GB
         reservations:
-          cpus: "1.0"      # Production: 1.5
-          memory: 2G       # Production: 3GB
+          cpus: "1.0" # Production: 1.5
+          memory: 2G # Production: 3GB
     restart: unless-stopped
     shm_size: 256mb
     stop_grace_period: 1m
     command: >
-      postgres 
-      -c max_connections=100 
-      -c shared_buffers=1GB 
-      -c effective_cache_size=4GB 
-      -c maintenance_work_mem=128MB 
-      -c checkpoint_completion_target=0.9 
-      -c wal_buffers=16MB 
-      -c default_statistics_target=100 
-      -c random_page_cost=1.1 
-      -c effective_io_concurrency=200 
-      -c work_mem=8MB 
-      -c min_wal_size=1GB 
-      -c max_wal_size=4GB 
-      -c max_worker_processes=4 
-      -c max_parallel_workers_per_gather=2 
-      -c max_parallel_workers=4 
-      -c max_parallel_maintenance_workers=2 
-      -c idle_in_transaction_session_timeout=60000 
-      -c statement_timeout=60000 
-      -c lock_timeout=60000 
-      -c listen_addresses='*' 
-      -c log_connections=on 
-      -c log_disconnections=on 
-      -c tcp_keepalives_idle=60 
-      -c tcp_keepalives_interval=10 
-      -c tcp_keepalives_count=3 
-      -c client_min_messages=warning
+      postgres  -c max_connections=100  -c shared_buffers=1GB  -c effective_cache_size=4GB  -c maintenance_work_mem=128MB  -c checkpoint_completion_target=0.9  -c wal_buffers=16MB  -c default_statistics_target=100  -c random_page_cost=1.1  -c effective_io_concurrency=200  -c work_mem=8MB  -c min_wal_size=1GB  -c max_wal_size=4GB  -c max_worker_processes=4  -c max_parallel_workers_per_gather=2  -c max_parallel_workers=4  -c max_parallel_maintenance_workers=2  -c idle_in_transaction_session_timeout=60000  -c statement_timeout=60000  -c lock_timeout=60000  -c listen_addresses='*'  -c log_connections=on  -c log_disconnections=on  -c tcp_keepalives_idle=60  -c tcp_keepalives_interval=10  -c tcp_keepalives_count=3  -c client_min_messages=warning
     labels:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
@@ -78,17 +52,12 @@ services:
       - "app.persist=true"
 
   dragonfly:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: local-prod-dragonfly
     hostname: dragonfly
     command: >
-      --alsologtostderr
-      --cache_mode=false
-      --maxmemory=2gb
-      --proactor_threads=4
-      --logtostderr
-      --default_lua_flags=allow-undeclared-keys
+      --alsologtostderr --cache_mode=false --maxmemory=2gb --proactor_threads=4 --logtostderr --default_lua_flags=allow-undeclared-keys
     ports:
       - "6380:6379"
     volumes:
@@ -97,7 +66,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.4
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      test: [ "CMD-SHELL", "redis-cli -p 6379 ping || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -106,14 +75,14 @@ services:
       resources:
         # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "1.0"      # Production: 1.5
-          memory: 2G       # Production: 4GB
+          cpus: "1.0" # Production: 1.5
+          memory: 2G # Production: 4GB
         reservations:
-          cpus: "0.5"      # Production: 0.5
-          memory: 512M     # Production: 1GB
+          cpus: "0.5" # Production: 0.5
+          memory: 512M # Production: 1GB
     restart: unless-stopped
     sysctls:
-      net.core.somaxconn: 1024  # Production: 2048
+      net.core.somaxconn: 1024 # Production: 2048
     ulimits:
       nproc: 65535
       nofile:
@@ -127,7 +96,7 @@ services:
       - "app.healthcheck=enabled"
 
   openvidu-server:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: openvidu/openvidu-server-kms:latest
     container_name: local-prod-openvidu-server
     hostname: openvidu-server
@@ -175,7 +144,7 @@ services:
           - openvidu-server
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      test: [ "CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -184,16 +153,16 @@ services:
       resources:
         # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "1.5"      # Production: 2.0
-          memory: 2G       # Production: 4GB
+          cpus: "1.5" # Production: 2.0
+          memory: 2G # Production: 4GB
         reservations:
-          cpus: "0.5"      # Production: 1.0
-          memory: 1G       # Production: 2GB
+          cpus: "0.5" # Production: 1.0
+          memory: 1G # Production: 2GB
     labels:
       - "app.environment=local-prod"
 
   coturn:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: coturn/coturn:latest
     container_name: local-prod-coturn
     hostname: coturn
@@ -230,7 +199,7 @@ services:
           - coturn
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      test: [ "CMD", "turnutils_stunclient", "-p", "3478", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -240,7 +209,7 @@ services:
 
   # Application Services (Profile: app)
   api:
-    profiles: ["app"]
+    profiles: [ "app" ]
     # Local-Prod: Build locally instead of using pre-built image
     build:
       context: ../..
@@ -253,7 +222,7 @@ services:
       - "${PORT:-8088}:${PORT:-8088}"
     env_file:
       - ../../.env.local-prod
-      - ../../.env.local  # Optional, highest priority
+      - ../../.env.local # Optional, highest priority
     volumes:
       - ./logs:/app/logs
       # Local-Prod: Mount source for easier debugging (optional, comment out for production-like behavior)
@@ -350,7 +319,7 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -359,11 +328,11 @@ services:
       resources:
         # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "2.0"      # Production: 3.0
-          memory: 4G       # Production: 6GB
+          cpus: "2.0" # Production: 3.0
+          memory: 4G # Production: 6GB
         reservations:
-          cpus: "1.0"      # Production: 1.5
-          memory: 1G       # Production: 2GB
+          cpus: "1.0" # Production: 1.5
+          memory: 1G # Production: 2GB
     # Migrations run automatically via CMD in Dockerfile before starting the app
     labels:
       - "com.docker.compose.service=api"
@@ -372,7 +341,7 @@ services:
       - "app.environment=local-prod"
 
   worker:
-    profiles: ["app"]
+    profiles: [ "app" ]
     # Local-Prod: Build locally instead of using pre-built image
     build:
       context: ../..
@@ -383,7 +352,7 @@ services:
     hostname: worker
     env_file:
       - ../../.env.local-prod
-      - ../../.env.local  # Optional, highest priority
+      - ../../.env.local # Optional, highest priority
     environment:
       NODE_ENV: local-prod
       APP_MODE: worker
@@ -439,7 +408,7 @@ services:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(0)"]
+      test: [ "CMD", "node", "-e", "process.exit(0)" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -448,13 +417,13 @@ services:
       resources:
         # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "0.5"      # Production: 1.0
-          memory: 1G       # Production: 2GB
+          cpus: "0.5" # Production: 1.0
+          memory: 1G # Production: 2GB
         reservations:
-          cpus: "0.25"     # Production: 0.5
-          memory: 256M     # Production: 512MB
+          cpus: "0.25" # Production: 0.5
+          memory: 256M # Production: 512MB
     # Worker doesn't need migrations - only API container runs them
-    command: ["node", "dist/worker-bootstrap.js"]
+    command: [ "node", "dist/worker-bootstrap.js" ]
     labels:
       - "com.docker.compose.service=worker"
       - "app.component=worker"
@@ -483,4 +452,3 @@ networks:
     ipam:
       config:
         - subnet: 172.18.0.0/16
-

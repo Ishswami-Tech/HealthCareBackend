@@ -18,7 +18,7 @@ services:
     env_file:
       - ../../.env
       - ../../.env.development
-      - ../../.env.local  # Highest priority, optional
+      - ../../.env.local # Highest priority, optional
     ports:
       - "8088:8088"
       - "5555:5555"
@@ -30,7 +30,7 @@ services:
       BIND_ADDRESS: 0.0.0.0
       DOCKER_ENV: "true"
       SERVICE_NAME: api
-      
+
       # Database Configuration
       # Connection pool parameters: connection_limit=50, pool_timeout=20
       # Increased for 10M+ users scalability and to prevent connection pool exhaustion
@@ -39,11 +39,11 @@ services:
       # Prisma Studio needs this to connect properly without "unrecognized configuration parameter" errors
       DIRECT_URL: postgresql://postgres:postgres@postgres:5432/userdb
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
-      
+
       # Cache Provider Configuration (Dragonfly is default)
       CACHE_ENABLED: "true"
       CACHE_PROVIDER: dragonfly
-      
+
       # Redis Configuration (for Redis provider) - Commented out, using Dragonfly
       # REDIS_HOST: redis
       # REDIS_PORT: 6379
@@ -51,46 +51,46 @@ services:
       # REDIS_TTL: 3600
       # REDIS_PREFIX: "healthcare:"
       # REDIS_ENABLED: "true"
-      
+
       # Dragonfly Configuration (Primary Cache Provider - default provider - using instead of Redis)
       DRAGONFLY_ENABLED: "true"
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       DRAGONFLY_KEY_PREFIX: "healthcare:"
-      
+
       # JWT Configuration
       JWT_SECRET: dev-jwt-secret-key-change-in-production
       JWT_EXPIRATION: 24h
       JWT_ACCESS_EXPIRES_IN: 24h
       JWT_REFRESH_EXPIRES_IN: 7d
-      
+
       # Session Configuration (Fastify Session with CacheService/Dragonfly)
       SESSION_SECRET: dev-session-secret-change-in-production-min-32-chars-long
       SESSION_TIMEOUT: 86400
       SESSION_SECURE_COOKIES: "false"
       SESSION_SAME_SITE: "lax"
       COOKIE_SECRET: dev-cookie-secret-change-in-production-min-32-chars
-      
+
       # Base URLs
       BASE_URL: http://localhost:8088
       API_URL: http://localhost:8088
       FRONTEND_URL: http://localhost:3000
-      
+
       # CORS Configuration
       CORS_ORIGIN: http://localhost:3000,http://localhost:8088,http://localhost:8082,https://localhost:4443,https://localhost:8443
       CORS_CREDENTIALS: "true"
-      
+
       # Service URLs
       SWAGGER_URL: /docs
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket.io
       REDIS_COMMANDER_URL: http://localhost:8082
       PRISMA_STUDIO_URL: http://localhost:5555
-      
+
       # Video Configuration (Dual Provider: OpenVidu primary, Jitsi fallback)
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
-      
+
       # OpenVidu Configuration (Primary Video Provider - from .env files)
       # Values are loaded from .env.development via env_file directive above
       # IMPORTANT: Inside Docker, use container name (openvidu-server) not localhost
@@ -105,7 +105,7 @@ services:
       OPENVIDU_WEBHOOK_ENABLED: ${OPENVIDU_WEBHOOK_ENABLED:-false}
       OPENVIDU_WEBHOOK_ENDPOINT: ${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
       OPENVIDU_WEBHOOK_EVENTS: ${OPENVIDU_WEBHOOK_EVENTS:-sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped}
-      
+
       # Jitsi Configuration (Fallback - like Redis in cache pattern)
       JITSI_DOMAIN: ${JITSI_DOMAIN:-localhost:8443}
       JITSI_BASE_DOMAIN: ${JITSI_BASE_DOMAIN:-localhost}
@@ -116,35 +116,35 @@ services:
       JITSI_WS_URL: ${JITSI_WS_URL:-wss://localhost:8443/xmpp-websocket}
       JITSI_ENABLE_RECORDING: ${JITSI_ENABLE_RECORDING:-true}
       JITSI_ENABLE_WAITING_ROOM: ${JITSI_ENABLE_WAITING_ROOM:-true}
-      
+
       # Google OAuth Configuration
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: http://localhost:8088/auth/google/callback
-      
+
       # API Configuration
       API_PREFIX: /api/v1
-      
+
       # Logging Configuration
       LOG_LEVEL: debug
       ENABLE_AUDIT_LOGS: "true"
-      
+
       # Security Configuration
       SECURITY_RATE_LIMIT: "true"
       SECURITY_RATE_LIMIT_MAX: 1000
       SECURITY_RATE_LIMIT_WINDOW_MS: 15000
       TRUST_PROXY: 1
-      
+
       # Rate Limiting
       RATE_LIMIT_TTL: 60
       RATE_LIMIT_MAX: 100
-      
+
       # Email Configuration (Optional - using defaults)
       EMAIL_HOST: sandbox.smtp.mailtrap.io
       EMAIL_PORT: 2525
       EMAIL_SECURE: "false"
       EMAIL_FROM: noreply@healthcare.com
-      
+
       # Development Tools
       ENABLE_SWAGGER: "true"
       ENABLE_PRISMA_STUDIO: "true"
@@ -162,7 +162,7 @@ services:
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8088/health || exit 1"]
+      test: [ "CMD-SHELL", "curl -f http://localhost:8088/health || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -198,7 +198,7 @@ services:
       "
 
   postgres:
-    image: postgres:16
+    image: postgres:18
     platform: linux/amd64
     container_name: healthcare-postgres
     # NOTE: Port 5432 exposed for local development convenience
@@ -211,35 +211,13 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
     command: >
-      postgres
-      -c max_connections=100
-      -c shared_buffers=256MB
-      -c effective_cache_size=1GB
-      -c maintenance_work_mem=64MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c work_mem=4MB
-      -c min_wal_size=1GB
-      -c max_wal_size=4GB
-      -c max_worker_processes=4
-      -c max_parallel_workers_per_gather=2
-      -c max_parallel_workers=4
-      -c max_parallel_maintenance_workers=2
-      -c idle_in_transaction_session_timeout=30000
-      -c statement_timeout=30000
-      -c lock_timeout=10000
-      -c listen_addresses='*'
-      -c log_connections=on
-      -c log_disconnections=on
+      postgres -c max_connections=100 -c shared_buffers=256MB -c effective_cache_size=1GB -c maintenance_work_mem=64MB -c checkpoint_completion_target=0.9 -c wal_buffers=16MB -c default_statistics_target=100 -c random_page_cost=1.1 -c effective_io_concurrency=200 -c work_mem=4MB -c min_wal_size=1GB -c max_wal_size=4GB -c max_worker_processes=4 -c max_parallel_workers_per_gather=2 -c max_parallel_workers=4 -c max_parallel_maintenance_workers=2 -c idle_in_transaction_session_timeout=30000 -c statement_timeout=30000 -c lock_timeout=10000 -c listen_addresses='*' -c log_connections=on -c log_disconnections=on
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d userdb" ]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -255,17 +233,13 @@ services:
     ports:
       - "6380:6379"
     command: >
-      --alsologtostderr
-      --cache_mode=false
-      --maxmemory=2gb
-      --proactor_threads=4
-      --default_lua_flags=allow-undeclared-keys
+      --alsologtostderr --cache_mode=false --maxmemory=2gb --proactor_threads=4 --default_lua_flags=allow-undeclared-keys
     volumes:
       - dragonfly_data:/data
     networks:
       - healthcare-network
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      test: [ "CMD-SHELL", "redis-cli -p 6379 ping || exit 1" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -317,7 +291,7 @@ services:
       - healthcare-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:8081 || exit 1"]
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:8081 || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -332,7 +306,7 @@ services:
     container_name: healthcare-portainer
     ports:
       - "9000:9000"
-      - "9443:9443"  # HTTPS port (optional)
+      - "9443:9443" # HTTPS port (optional)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
@@ -341,24 +315,23 @@ services:
     restart: unless-stopped
     # Optimized command: minimal logging, no analytics
     command: >
-      -H unix:///var/run/docker.sock
-      --no-analytics
+      -H unix:///var/run/docker.sock --no-analytics
     environment:
       # Minimize disk usage: reduce logging, disable telemetry
-      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
-      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+      - PORTAINER_LOG_LEVEL=WARN # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false # Disable telemetry data collection
     # Strict resource limits to prevent excessive disk usage
     deploy:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M  # Minimal memory allocation
+          memory: 256M # Minimal memory allocation
         reservations:
           cpus: "0.1"
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1"]
-      interval: 30s  # Reduced frequency to save resources
+      test: [ "CMD-SHELL", "wget -q --spider http://localhost:9000/api/system/status || exit 1" ]
+      interval: 30s # Reduced frequency to save resources
       timeout: 5s
       retries: 3
       start_period: 30s
@@ -372,18 +345,18 @@ services:
     env_file:
       - ../../.env
       - ../../.env.development
-      - ../../.env.local  # Highest priority, optional
+      - ../../.env.local # Highest priority, optional
     environment:
       # Application Environment
       NODE_ENV: development
       APP_MODE: worker
       SERVICE_NAME: worker
       DOCKER_ENV: "true"
-      
+
       # Database Configuration
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=50&pool_timeout=20
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
-      
+
       # Cache Provider Configuration (Dragonfly is default)
       CACHE_ENABLED: "true"
       CACHE_PROVIDER: dragonfly
@@ -391,14 +364,14 @@ services:
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       DRAGONFLY_KEY_PREFIX: "healthcare:"
-      
+
       # JWT Configuration (for queue operations)
       JWT_SECRET: dev-jwt-secret-key-change-in-production
-      
+
       # BullMQ Worker Configuration
       BULL_WORKER_CONCURRENCY: "5"
       BULL_MAX_JOBS_PER_WORKER: "100"
-      
+
       # Logging Configuration
       LOG_LEVEL: debug
       ENABLE_AUDIT_LOGS: "true"
@@ -449,7 +422,7 @@ services:
     env_file:
       - ../../.env
       - ../../.env.development
-      - ../../.env.local  # Highest priority, optional
+      - ../../.env.local # Highest priority, optional
     ports:
       - "4443:4443"
       # NOTE: Port 3478 is NOT needed here - OpenVidu uses coturn service for TURN/STUN
@@ -518,7 +491,7 @@ services:
     healthcheck:
       # Simplified healthcheck - just check if supervisor is running
       # OpenVidu can take 60-120 seconds to fully start, so we give it more time
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      test: [ "CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -555,12 +528,11 @@ services:
       - healthcare-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      test: [ "CMD", "turnutils_stunclient", "-p", "3478", "localhost" ]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-
   # Jitsi Meet Services (Fallback Provider - like Redis in cache pattern)
   # COMMENTED OUT BY DEFAULT: OpenVidu is the primary video provider
   # Uncomment only if you need Jitsi as a fallback video provider
@@ -757,4 +729,3 @@ networks:
   healthcare-network:
     name: healthcare_network
     driver: bridge
-
