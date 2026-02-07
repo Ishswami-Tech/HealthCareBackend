@@ -94,22 +94,11 @@ async function _setupWebSocketAdapter(
 ): Promise<IoAdapter | null> {
   try {
     // Check if cache is enabled using single source of truth
-    if (!isCacheEnabled()) {
-      logger.log('[WebSocket] Cache is disabled - skipping WebSocket adapter setup');
-      if (loggingService) {
-        await loggingService
-          .log(
-            LogType.SYSTEM,
-            AppLogLevel.INFO,
-            'WebSocket adapter skipped - cache is disabled',
-            'WebSocketAdapter',
-            {}
-          )
-          .catch(() => {
-            // Ignore logging errors
-          });
-      }
-      return null;
+    const cacheEnabled = isCacheEnabled();
+    if (!cacheEnabled) {
+      logger.log(
+        '[WebSocket] Cache is disabled - skipping Redis adapter setup, using basic IoAdapter'
+      );
     }
 
     const { createAdapter } = await import('@socket.io/redis-adapter');
@@ -117,365 +106,357 @@ async function _setupWebSocketAdapter(
 
     // Use ConfigService for all cache configuration (single source of truth)
     if (!configService) {
-      logger.warn('[WebSocket] ConfigService not available - skipping WebSocket adapter setup');
-      return null;
+      logger.warn('[WebSocket] ConfigService not available - using default WebSocket settings');
     }
 
-    const cacheProvider: 'redis' | 'dragonfly' | 'memory' = configService.getCacheProvider();
-    const useDragonfly = cacheProvider === 'dragonfly';
-    const cacheHost: string = configService.getCacheHost();
-    const cachePort: number = configService.getCachePort();
-    const cachePassword: string | undefined = configService.getCachePassword();
+    if (configService && cacheEnabled) {
+      const cacheProvider: 'redis' | 'dragonfly' | 'memory' = configService.getCacheProvider();
+      const useDragonfly = cacheProvider === 'dragonfly';
+      const cacheHost: string = configService.getCacheHost();
+      const cachePort: number = configService.getCachePort();
+      const cachePassword: string | undefined = configService.getCachePassword();
 
-    // Debug logging
-    logger.log(
-      `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`
-    );
+      // Debug logging
+      logger.log(
+        `[WebSocket] Using ${useDragonfly ? 'Dragonfly' : 'Redis'} for pub/sub: ${cacheHost}:${cachePort} (CACHE_PROVIDER=${cacheProvider})`
+      );
 
-    const redisConfig: {
-      url: string;
-      password?: string;
-      retryStrategy: (times: number) => number | null;
-    } = {
-      url: `redis://${cacheHost.trim()}:${cachePort}`,
-      ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
-      retryStrategy: (times: number) => {
-        const maxRetries = 5;
-        if (times > maxRetries) {
-          logger.error(
-            `${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed after ${maxRetries} retries`
+      const redisConfig: {
+        url: string;
+        password?: string;
+        retryStrategy: (times: number) => number | null;
+      } = {
+        url: `redis://${cacheHost.trim()}:${cachePort}`,
+        ...(cachePassword && cachePassword.trim() && { password: cachePassword }),
+        retryStrategy: (times: number) => {
+          const maxRetries = 5;
+          if (times > maxRetries) {
+            logger.error(
+              `${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed after ${maxRetries} retries`
+            );
+            return null;
+          }
+          const maxDelay = 3000;
+          const delay = Math.min(times * 100, maxDelay);
+          logger.log(
+            `${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`
           );
-          return null;
-        }
-        const maxDelay = 3000;
-        const delay = Math.min(times * 100, maxDelay);
-        logger.log(
-          `${useDragonfly ? 'Dragonfly' : 'Redis'} reconnection attempt ${times}, delay: ${delay}ms`
-        );
-        return delay;
-      },
-    };
-
-    try {
-      // Type guard to check if object matches RedisClient interface
-      // Uses bracket notation to access index signature properties
-      const isRedisClient = (client: unknown): client is RedisClient => {
-        if (!client || typeof client !== 'object') {
-          return false;
-        }
-        const c = client as Record<string, unknown>;
-        return (
-          typeof c['quit'] === 'function' &&
-          typeof c['disconnect'] === 'function' &&
-          typeof c['connect'] === 'function' &&
-          typeof c['on'] === 'function'
-        );
+          return delay;
+        },
       };
 
-      const client = createClient(redisConfig);
-
-      // Verify client has required methods before assignment
-      if (isRedisClient(client)) {
-        pubClient = client;
-
-        // Verify duplicate method exists and returns valid client
-        const clientWithDuplicate = client as RedisClient & {
-          duplicate?: () => unknown;
+      try {
+        // Type guard to check if object matches RedisClient interface
+        // Uses bracket notation to access index signature properties
+        const isRedisClient = (client: unknown): client is RedisClient => {
+          if (!client || typeof client !== 'object') {
+            return false;
+          }
+          const c = client as Record<string, unknown>;
+          return (
+            typeof c['quit'] === 'function' &&
+            typeof c['disconnect'] === 'function' &&
+            typeof c['connect'] === 'function' &&
+            typeof c['on'] === 'function'
+          );
         };
 
-        if (typeof clientWithDuplicate.duplicate === 'function') {
-          const duplicated = clientWithDuplicate.duplicate();
-          if (isRedisClient(duplicated)) {
-            subClient = duplicated;
-          } else {
-            throw new Error('SubClient duplicate() did not return a valid RedisClient');
-          }
-        } else {
-          throw new Error('Redis client does not have duplicate() method');
-        }
-      } else {
-        throw new Error(
-          'Redis client does not have required methods (quit, disconnect, connect, on)'
-        );
-      }
+        const client = createClient(redisConfig);
 
-      const cacheProviderName = useDragonfly ? 'Dragonfly' : 'Redis';
+        // Verify client has required methods before assignment
+        if (isRedisClient(client)) {
+          pubClient = client;
 
-      const handleRedisError = async (client: string, err: Error) => {
-        try {
-          await loggingService?.log(
-            LogType.ERROR,
-            AppLogLevel.ERROR,
-            `${cacheProviderName} ${client} Client Error: ${err.message}`,
-            cacheProviderName,
-            { client, _error: err.message, stack: err.stack }
-          );
-        } catch {
-          originalConsole.error(`${cacheProviderName} ${client} Client Error:`, err);
-        }
-      };
-
-      const handleRedisConnect = async (client: string) => {
-        try {
-          await loggingService?.log(
-            LogType.SYSTEM,
-            AppLogLevel.INFO,
-            `${cacheProviderName} ${client} Client Connected`,
-            cacheProviderName,
-            { client }
-          );
-        } catch {
-          originalConsole.warn(`${cacheProviderName} ${client} Client Connected`);
-        }
-      };
-
-      if (pubClient) {
-        pubClient.on('error', (err: unknown) => {
-          void handleRedisError('Pub', err as Error);
-        });
-        pubClient.on('connect', () => {
-          void handleRedisConnect('Pub');
-        });
-      }
-      if (subClient) {
-        subClient.on('error', (err: unknown) => {
-          void handleRedisError('Sub', err as Error);
-        });
-        subClient.on('connect', () => {
-          void handleRedisConnect('Sub');
-        });
-      }
-
-      const connectWithTimeout = async (client: RedisClient, name: string) => {
-        return Promise.race([
-          client.connect(),
-          new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error(`${name} client connection timeout`)), 10000)
-          ),
-        ]);
-      };
-
-      // Try to connect, but don't fail if cache is not available
-      // Since cache is disabled, WebSocket adapter is optional
-      if (pubClient && subClient) {
-        try {
-          await Promise.all([
-            connectWithTimeout(pubClient, 'Pub'),
-            connectWithTimeout(subClient, 'Sub'),
-          ]);
-          // If connect() resolves successfully, clients are connected and ready
-          // The connect() promise only resolves when connection is established
-          logger.log('[WebSocket] Pub/Sub clients connected successfully');
-        } catch (connectionError) {
-          // Cache is disabled - WebSocket adapter is optional
-          // Log warning but continue without Redis adapter
-          logger.warn(
-            `Failed to initialize ${useDragonfly ? 'Dragonfly' : 'Redis'} adapter: ${
-              connectionError instanceof Error ? connectionError.message : String(connectionError)
-            }`
-          );
-          if (loggingService) {
-            await loggingService
-              .log(
-                LogType.SYSTEM,
-                AppLogLevel.WARN,
-                `WebSocket adapter skipped - ${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed (cache disabled)`,
-                'WebSocketAdapter',
-                {
-                  error:
-                    connectionError instanceof Error
-                      ? connectionError.message
-                      : String(connectionError),
-                }
-              )
-              .catch(() => {
-                // Ignore logging errors
-              });
-          }
-          // Clear clients to prevent using uninitialized clients
-          pubClient = null;
-          subClient = null;
-          // Return null to indicate adapter setup failed - app will continue without it
-          return null;
-        }
-      } else {
-        // Clients not created - return null
-        return null;
-      }
-
-      class CustomIoAdapter extends IoAdapter {
-        private adapterConstructor: ReturnType<typeof createAdapter> | null = null;
-
-        constructor(app: INestApplication) {
-          super(app);
-          // Only create adapter if clients are properly initialized and connected
-          if (pubClient && subClient) {
-            try {
-              // Validate clients have required methods before creating adapter
-              if (
-                typeof (pubClient as { set?: unknown }).set === 'function' &&
-                typeof (subClient as { set?: unknown }).set === 'function'
-              ) {
-                this.adapterConstructor = createAdapter(pubClient, subClient);
-              } else {
-                logger.warn(
-                  'Redis clients do not have required methods - skipping adapter creation'
-                );
-              }
-            } catch (adapterError) {
-              logger.warn(
-                `Failed to create Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
-              );
-              this.adapterConstructor = null;
-            }
-          } else {
-            logger.warn('Redis clients not initialized - skipping adapter creation');
-          }
-        }
-
-        createIOServer(port: number, options?: Record<string, unknown>): unknown {
-          // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
-          // Use ConfigService (which uses dotenv) for environment variable access
-          const corsConfig = configService?.getCorsConfig();
-          const corsOrigin = corsConfig?.origin || '*';
-          const corsOrigins =
-            corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
-
-          const serverRaw: unknown = super.createIOServer(port, {
-            ...(options || {}),
-            cors: {
-              origin: corsOrigins,
-              methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-              credentials: true,
-              allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-            },
-            path: '/socket.io',
-            serveClient: true,
-            transports: ['websocket', 'polling'],
-            allowEIO3: true,
-            pingTimeout: 60000,
-            pingInterval: 25000,
-            connectTimeout: 45000,
-            maxHttpBufferSize: 1e6,
-            allowUpgrades: true,
-            cookie: false,
-          });
-          const server = serverRaw as {
-            adapter?: (adapter: unknown) => void;
-            of?: (path: string) => {
-              on?: (event: string, handler: (socket: SocketConnection) => void) => void;
-            } | null;
+          // Verify duplicate method exists and returns valid client
+          const clientWithDuplicate = client as RedisClient & {
+            duplicate?: () => unknown;
           };
 
-          const serverWithAdapter = server;
-          if (
-            serverWithAdapter &&
-            typeof serverWithAdapter.adapter === 'function' &&
-            this.adapterConstructor !== null
-          ) {
-            try {
-              serverWithAdapter.adapter(this.adapterConstructor);
-            } catch (adapterError) {
-              logger.warn(
-                `Failed to set Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
-              );
-              // Continue without adapter - app will work but without pub/sub scaling
+          if (typeof clientWithDuplicate.duplicate === 'function') {
+            const duplicated = clientWithDuplicate.duplicate();
+            if (isRedisClient(duplicated)) {
+              subClient = duplicated;
+            } else {
+              throw new Error('SubClient duplicate() did not return a valid RedisClient');
             }
-          } else if (!this.adapterConstructor) {
-            logger.warn('Socket.IO adapter not available - continuing without pub/sub scaling');
+          } else {
+            throw new Error('Redis client does not have duplicate() method');
           }
+        } else {
+          throw new Error(
+            'Redis client does not have required methods (quit, disconnect, connect, on)'
+          );
+        }
 
-          const healthNamespace = server.of?.('/health');
-          if (healthNamespace && typeof healthNamespace.on === 'function') {
-            healthNamespace.on('connection', (socket: SocketConnection) => {
-              // Use ConfigService (which uses dotenv) for environment variable access
-              socket.emit('health', {
-                status: 'healthy',
-                timestamp: new Date(),
-                environment: configService?.getEnvironment() || 'development',
-              });
-            });
+        const cacheProviderName = useDragonfly ? 'Dragonfly' : 'Redis';
+
+        const handleRedisError = async (client: string, err: Error) => {
+          try {
+            await loggingService?.log(
+              LogType.ERROR,
+              AppLogLevel.ERROR,
+              `${cacheProviderName} ${client} Client Error: ${err.message}`,
+              cacheProviderName,
+              { client, _error: err.message, stack: err.stack }
+            );
+          } catch {
+            originalConsole.error(`${cacheProviderName} ${client} Client Error:`, err);
           }
+        };
 
-          const testNamespace = server.of?.('/test');
-          if (testNamespace && typeof testNamespace.on === 'function') {
-            testNamespace.on('connection', (socket: SocketConnection) => {
-              logger.log('Client connected to test namespace');
+        const handleRedisConnect = async (client: string) => {
+          try {
+            await loggingService?.log(
+              LogType.SYSTEM,
+              AppLogLevel.INFO,
+              `${cacheProviderName} ${client} Client Connected`,
+              cacheProviderName,
+              { client }
+            );
+          } catch {
+            originalConsole.warn(`${cacheProviderName} ${client} Client Connected`);
+          }
+        };
 
-              let heartbeat: NodeJS.Timeout;
+        if (pubClient) {
+          pubClient.on('error', (err: unknown) => {
+            void handleRedisError('Pub', err as Error);
+          });
+          pubClient.on('connect', () => {
+            void handleRedisConnect('Pub');
+          });
+        }
+        if (subClient) {
+          subClient.on('error', (err: unknown) => {
+            void handleRedisError('Sub', err as Error);
+          });
+          subClient.on('connect', () => {
+            void handleRedisConnect('Sub');
+          });
+        }
 
-              const startHeartbeat = () => {
-                // Use ConfigService (which uses dotenv) for environment variable access
-                socket.emit('welcome', {
-                  message: 'Connected to WebSocket server',
-                  timestamp: new Date().toISOString(),
-                  environment: configService?.getEnvironment() || 'development',
+        const connectWithTimeout = async (client: RedisClient, name: string) => {
+          return Promise.race([
+            client.connect(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`${name} client connection timeout`)), 10000)
+            ),
+          ]);
+        };
+
+        // Try to connect, but don't fail if cache is not available
+        // Since cache is disabled, WebSocket adapter is optional
+        if (pubClient && subClient) {
+          try {
+            await Promise.all([
+              connectWithTimeout(pubClient, 'Pub'),
+              connectWithTimeout(subClient, 'Sub'),
+            ]);
+            // If connect() resolves successfully, clients are connected and ready
+            // The connect() promise only resolves when connection is established
+            logger.log('[WebSocket] Pub/Sub clients connected successfully');
+          } catch (connectionError) {
+            // Cache is disabled - WebSocket adapter is optional
+            // Log warning but continue without Redis adapter
+            logger.warn(
+              `Failed to initialize ${useDragonfly ? 'Dragonfly' : 'Redis'} adapter: ${
+                connectionError instanceof Error ? connectionError.message : String(connectionError)
+              }`
+            );
+            if (loggingService) {
+              await loggingService
+                .log(
+                  LogType.SYSTEM,
+                  AppLogLevel.WARN,
+                  `WebSocket adapter skipped - ${useDragonfly ? 'Dragonfly' : 'Redis'} connection failed (cache disabled)`,
+                  'WebSocketAdapter',
+                  {
+                    error:
+                      connectionError instanceof Error
+                        ? connectionError.message
+                        : String(connectionError),
+                  }
+                )
+                .catch(() => {
+                  // Ignore logging errors
                 });
-
-                heartbeat = setInterval(() => {
-                  socket.emit('heartbeat', {
-                    timestamp: new Date().toISOString(),
-                  });
-                }, 30000);
-              };
-
-              startHeartbeat();
-
-              socket.on('disconnect', () => {
-                clearInterval(heartbeat);
-                logger.log('Client disconnected from test namespace');
-              });
-
-              socket.on('message', (data: unknown) => {
-                try {
-                  socket.emit('echo', {
-                    original: data,
-                    timestamp: new Date().toISOString(),
-                    processed: true,
-                  });
-                } catch (_error) {
-                  logger.error('Error processing socket message:', _error);
-                  socket.emit('_error', {
-                    message: 'Failed to process message',
-                    timestamp: new Date().toISOString(),
-                  });
-                }
-              });
-
-              socket.on('error', (_error: unknown) => {
-                logger.error('Socket _error:', _error);
-                clearInterval(heartbeat);
-              });
-            });
+            }
+            // Clear clients to prevent using uninitialized clients
+            pubClient = null;
+            subClient = null;
+            // Redis setup failed, but we continue to return basic adapter
           }
+        }
+      } catch (err) {
+        logger.warn(
+          `Error during Redis setup: ${err instanceof Error ? err.message : String(err)}`
+        );
+        pubClient = null;
+        subClient = null;
+      }
+    }
 
-          return server;
+    class CustomIoAdapter extends IoAdapter {
+      private adapterConstructor: ReturnType<typeof createAdapter> | null = null;
+
+      constructor(app: INestApplication) {
+        super(app);
+        // Only create adapter if clients are properly initialized and connected
+        if (pubClient && subClient) {
+          try {
+            // Validate clients have required methods before creating adapter
+            if (
+              typeof (pubClient as { set?: unknown }).set === 'function' &&
+              typeof (subClient as { set?: unknown }).set === 'function'
+            ) {
+              this.adapterConstructor = createAdapter(pubClient, subClient);
+            } else {
+              logger.warn('Redis clients do not have required methods - skipping adapter creation');
+            }
+          } catch (adapterError) {
+            logger.warn(
+              `Failed to create Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
+            );
+            this.adapterConstructor = null;
+          }
+        } else {
+          logger.warn('Redis clients not initialized - skipping adapter creation');
         }
       }
 
-      const adapter = new CustomIoAdapter(app);
-      app.useWebSocketAdapter(adapter);
+      createIOServer(port: number, options?: Record<string, unknown>): unknown {
+        // Use same CORS configuration as SecurityConfigService for consistency (DRY principle)
+        // Use ConfigService (which uses dotenv) for environment variable access
+        const corsConfig = configService?.getCorsConfig();
+        const corsOrigin = corsConfig?.origin || '*';
+        const corsOrigins =
+          corsOrigin === '*' ? '*' : corsOrigin.split(',').map((o: string) => o.trim());
 
-      logger.log('WebSocket adapter configured successfully');
+        const serverRaw: unknown = super.createIOServer(port, {
+          ...(options || {}),
+          cors: {
+            origin: corsOrigins,
+            methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+            credentials: true,
+            allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+          },
+          path: '/socket.io',
+          serveClient: true,
+          transports: ['websocket', 'polling'],
+          allowEIO3: true,
+          pingTimeout: 60000,
+          pingInterval: 25000,
+          connectTimeout: 45000,
+          maxHttpBufferSize: 1e6,
+          allowUpgrades: true,
+          cookie: false,
+        });
+        const server = serverRaw as {
+          adapter?: (adapter: unknown) => void;
+          of?: (path: string) => {
+            on?: (event: string, handler: (socket: SocketConnection) => void) => void;
+          } | null;
+        };
 
-      await loggingService?.log(
-        LogType.SYSTEM,
-        AppLogLevel.INFO,
-        'WebSocket adapter configured successfully',
-        'WebSocket'
-      );
+        const serverWithAdapter = server;
+        if (
+          serverWithAdapter &&
+          typeof serverWithAdapter.adapter === 'function' &&
+          this.adapterConstructor !== null
+        ) {
+          try {
+            serverWithAdapter.adapter(this.adapterConstructor);
+          } catch (adapterError) {
+            logger.warn(
+              `Failed to set Socket.IO adapter: ${adapterError instanceof Error ? adapterError.message : String(adapterError)}`
+            );
+            // Continue without adapter - app will work but without pub/sub scaling
+          }
+        } else if (!this.adapterConstructor) {
+          logger.warn('Socket.IO adapter not available - continuing without pub/sub scaling');
+        }
 
-      return adapter;
-    } catch (redisError) {
-      logger.warn('Failed to initialize Redis adapter:', redisError);
-      await loggingService?.log(
-        LogType.ERROR,
-        AppLogLevel.WARN,
-        'Continuing without Redis adapter',
-        'WebSocket'
-      );
-      return null;
+        const healthNamespace = server.of?.('/health');
+        if (healthNamespace && typeof healthNamespace.on === 'function') {
+          healthNamespace.on('connection', (socket: SocketConnection) => {
+            // Use ConfigService (which uses dotenv) for environment variable access
+            socket.emit('health', {
+              status: 'healthy',
+              timestamp: new Date(),
+              environment: configService?.getEnvironment() || 'development',
+            });
+          });
+        }
+
+        const testNamespace = server.of?.('/test');
+        if (testNamespace && typeof testNamespace.on === 'function') {
+          testNamespace.on('connection', (socket: SocketConnection) => {
+            logger.log('Client connected to test namespace');
+
+            let heartbeat: NodeJS.Timeout;
+
+            const startHeartbeat = () => {
+              // Use ConfigService (which uses dotenv) for environment variable access
+              socket.emit('welcome', {
+                message: 'Connected to WebSocket server',
+                timestamp: new Date().toISOString(),
+                environment: configService?.getEnvironment() || 'development',
+              });
+
+              heartbeat = setInterval(() => {
+                socket.emit('heartbeat', {
+                  timestamp: new Date().toISOString(),
+                });
+              }, 30000);
+            };
+
+            startHeartbeat();
+
+            socket.on('disconnect', () => {
+              clearInterval(heartbeat);
+              logger.log('Client disconnected from test namespace');
+            });
+
+            socket.on('message', (data: unknown) => {
+              try {
+                socket.emit('echo', {
+                  original: data,
+                  timestamp: new Date().toISOString(),
+                  processed: true,
+                });
+              } catch (_error) {
+                logger.error('Error processing socket message:', _error);
+                socket.emit('_error', {
+                  message: 'Failed to process message',
+                  timestamp: new Date().toISOString(),
+                });
+              }
+            });
+
+            socket.on('error', (_error: unknown) => {
+              logger.error('Socket _error:', _error);
+              clearInterval(heartbeat);
+            });
+          });
+        }
+
+        return server;
+      }
     }
+
+    const adapter = new CustomIoAdapter(app);
+    app.useWebSocketAdapter(adapter);
+
+    logger.log('WebSocket adapter configured successfully');
+
+    await loggingService?.log(
+      LogType.SYSTEM,
+      AppLogLevel.INFO,
+      'WebSocket adapter configured successfully',
+      'WebSocket'
+    );
+
+    return adapter;
   } catch (_error) {
     await loggingService?.log(
       LogType.ERROR,
