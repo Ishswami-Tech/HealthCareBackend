@@ -1116,7 +1116,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Get the underlying raw PrismaClient for accessing models not exposed as delegates
    * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
    */
-  getRawPrismaClient(): PrismaClient {
+  async getRawPrismaClient(): Promise<PrismaClient> {
     // First check if shared instance exists (created in onModuleInit)
     // This is the preferred path - use the shared singleton instance
     if (PrismaService.sharedPrismaClient) {
@@ -1152,12 +1152,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
               'PrismaService.getRawPrismaClient'
             );
           }
-          // Busy wait - this ensures we wait before retrying
-          const startWait = Date.now();
-          while (Date.now() - startWait < retryDelay) {
-            // Busy wait - this ensures we wait before retrying
-            // In practice, this should only happen during startup
-          }
+          // Non-blocking wait - yield to event loop
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
           continue; // Retry
         } else {
           throw new HealthcareError(
@@ -1187,20 +1183,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             'PrismaService.getRawPrismaClient'
           );
         }
-        // Busy wait for onModuleInit to complete
-        const startWait = Date.now();
-        while (Date.now() - startWait < retryDelay) {
-          // Check if shared instance was created during wait
-          if (PrismaService.sharedPrismaClient) {
-            this.prismaClient = PrismaService.sharedPrismaClient;
-            return this.prismaClient;
-          }
-          // Also check if delegates are initialized
-          if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
-            this.prismaClient = PrismaService.sharedPrismaClient;
-            return this.prismaClient;
-          }
+        // Non-blocking wait - yield to event loop to allow onModuleInit to progress
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+        // Check if shared instance was created during wait
+        if (PrismaService.sharedPrismaClient) {
+          this.prismaClient = PrismaService.sharedPrismaClient;
+          return this.prismaClient;
         }
+        // Also check if delegates are initialized
+        if (PrismaService.isFullyInitialized && PrismaService.sharedPrismaClient) {
+          this.prismaClient = PrismaService.sharedPrismaClient;
+          return this.prismaClient;
+        }
+
         continue; // Retry
       }
     }
@@ -1445,7 +1441,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // First ensure client is initialized
     if (!this.prismaClient) {
       try {
-        this.getRawPrismaClient();
+        void this.getRawPrismaClient().catch(() => {});
       } catch {
         return false;
       }

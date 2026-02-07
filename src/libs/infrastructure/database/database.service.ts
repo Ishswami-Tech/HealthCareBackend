@@ -1419,7 +1419,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeRead(async prisma => {
-      return operation(this.toTransactionClient(prisma));
+      return operation(await this.toTransactionClient(prisma));
     });
   }
 
@@ -1464,7 +1464,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     auditInfo: AuditInfo
   ): Promise<T> {
     return this.executeWrite(async prisma => {
-      return operation(this.toTransactionClient(prisma));
+      return operation(await this.toTransactionClient(prisma));
     }, auditInfo);
   }
 
@@ -1477,7 +1477,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     priority: CriticalPriority
   ): Promise<T> {
     return this.executeCritical(async prisma => {
-      return operation(this.toTransactionClient(prisma));
+      return operation(await this.toTransactionClient(prisma));
     }, priority);
   }
 
@@ -1490,7 +1490,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeWithClinicContextInternal(clinicId, async prisma => {
-      return operation(this.toTransactionClient(prisma));
+      return operation(await this.toTransactionClient(prisma));
     });
   }
 
@@ -1535,7 +1535,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
           // OPTIMIZATION: Use Prisma's groupBy to count distinct doctors
           // Note: Prisma doesn't support distinct in count, so we use groupBy and count groups
           // Use toTransactionClient to get the raw Prisma client with all models
-          const client = this.toTransactionClient(prisma);
+          const client = await this.toTransactionClient(prisma);
           const doctorGroups = await (
             client as unknown as {
               doctorClinic: {
@@ -1579,7 +1579,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         async prisma => {
           // OPTIMIZATION: Use Prisma's count() instead of raw SQL for better optimization
           // Use toTransactionClient to get the raw Prisma client with all models
-          const client = this.toTransactionClient(prisma);
+          const client = await this.toTransactionClient(prisma);
           return await (
             client as unknown as {
               clinicLocation: {
@@ -1890,7 +1890,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     operation: (client: PrismaTransactionClient) => Promise<T>
   ): Promise<T> {
     return this.executeTransaction(async prisma => {
-      return operation(this.toTransactionClient(prisma));
+      return operation(await this.toTransactionClient(prisma));
     });
   }
 
@@ -1927,8 +1927,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
    * Centralized conversion to avoid repeated casting (DRY principle)
    * Optimized for 10M+ users - single conversion point
    */
-  private toTransactionClient(prisma: PrismaService): PrismaTransactionClient {
-    return prisma.getRawPrismaClient() as unknown as PrismaTransactionClient;
+  private async toTransactionClient(prisma: PrismaService): Promise<PrismaTransactionClient> {
+    return (await prisma.getRawPrismaClient()) as unknown as PrismaTransactionClient;
   }
 
   /**
@@ -2137,7 +2137,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
   async findNotificationPreferenceByUserIdSafe(userId: string) {
     return this.executeRead(async prisma => {
-      const client = this.toTransactionClient(prisma);
+      const client = await this.toTransactionClient(prisma);
       const notificationPreferenceClient = client as unknown as {
         notificationPreference: {
           findUnique: (args: { where: { userId: string } }) => Promise<unknown>;
@@ -2185,7 +2185,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   }) {
     return this.executeWrite(
       async prisma => {
-        const client = this.toTransactionClient(prisma);
+        const client = await this.toTransactionClient(prisma);
         const notificationPreferenceClient = client as unknown as {
           notificationPreference: {
             create: (args: {
@@ -2284,7 +2284,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   ) {
     return this.executeWrite(
       async prisma => {
-        const client = this.toTransactionClient(prisma);
+        const client = await this.toTransactionClient(prisma);
         const notificationPreferenceClient = client as unknown as {
           notificationPreference: {
             update: (args: {
@@ -2373,7 +2373,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   async deleteNotificationPreferenceSafe(id: string) {
     return this.executeWrite(
       async prisma => {
-        const client = this.toTransactionClient(prisma);
+        const client = await this.toTransactionClient(prisma);
         const notificationPreferenceClient = client as unknown as {
           notificationPreference: {
             delete: (args: { where: { id: string } }) => Promise<unknown>;
@@ -2929,5 +2929,29 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
     // Construct clinic-specific database connection string
     return `postgresql://${dbUser}:${dbPassword}@${dbHost}:${dbPort}/${databaseName}`;
+  }
+
+  /**
+   * Check if the database service is ready (Prisma initialized)
+   * This allows other services to check readiness before attempting operations
+   * preventing race conditions during startup (e.g., logging during initialization)
+   */
+  isReady(): boolean {
+    // If prismaService is not yet injected/defined, it's definitely not ready
+    if (!this.prismaService) {
+      return false;
+    }
+    return this.prismaService.isReady();
+  }
+
+  /**
+   * Check if the database is actually connected
+   * This is useful for health checks that need to know if the connection is established
+   */
+  isConnected(): boolean {
+    if (!this.prismaService) {
+      return false;
+    }
+    return this.prismaService.isConnected();
   }
 }

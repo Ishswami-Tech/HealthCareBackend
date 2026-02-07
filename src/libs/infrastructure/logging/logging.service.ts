@@ -505,7 +505,12 @@ export class LoggingService {
           // Enhanced database logging with better error handling
           // CRITICAL: Skip database logging if we're in a recursive loop or connection pool is exhausted
           // This prevents connection pool exhaustion from logging operations
-          if (this.databaseService && !this.isDatabaseLoggingDisabled) {
+          // Also skip if DatabaseService (Prisma) is not ready yet (avoid startup hangs)
+          if (
+            this.databaseService &&
+            !this.isDatabaseLoggingDisabled &&
+            this.databaseService.isReady()
+          ) {
             // Use cached system user to avoid querying database on every log
             // This prevents connection pool exhaustion from logging operations
             try {

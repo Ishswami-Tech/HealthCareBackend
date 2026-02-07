@@ -4,7 +4,7 @@ import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
-import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
 
 @ApiTags('health')
 @Controller('health')
@@ -12,8 +12,9 @@ export class HealthController {
   constructor(
     private readonly healthService: HealthService,
     @Optional()
-    @Inject(forwardRef(() => PrismaService))
-    private readonly prismaService?: PrismaService
+    @Optional()
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService?: DatabaseService
   ) {}
 
   /**
@@ -105,11 +106,11 @@ export class HealthController {
   })
   async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
     try {
-      // CRITICAL: Check Prisma connection directly - requires actual database connection
-      // isReady() now returns true when delegates are ready (connection can be in progress)
-      // So we need to check isConnected() separately to ensure actual connection
-      const isPrismaReady = this.prismaService?.isReady() ?? false;
-      const isDatabaseConnected = this.prismaService?.isConnected() ?? false;
+      // CRITICAL: Check Database connection directly - requires actual database connection
+      // isReady() returns true when delegates are ready
+      // we also check isConnected() for actual connection status
+      const isDatabaseReady = this.databaseService?.isReady() ?? false;
+      const isDatabaseConnected = this.databaseService?.isConnected() ?? false;
 
       const isDetailed = detailed === 'true' || detailed === '1';
       const healthResult = isDetailed
@@ -124,7 +125,7 @@ export class HealthController {
       // 3. Health check shows database as healthy
       // 4. Overall health status is healthy
       if (
-        isPrismaReady &&
+        isDatabaseReady &&
         isDatabaseConnected &&
         databaseStatus?.status === 'healthy' &&
         healthResult.status === 'healthy'
