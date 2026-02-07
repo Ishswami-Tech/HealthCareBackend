@@ -28,12 +28,53 @@ env:
   # Note: IMAGE will be set in docker-build job with lowercase conversion
 
 jobs:
+  # Change Detection
+  # Detects whether infrastructure or application code has changed
+  # Outputs: infra-changed, app-changed
+  # Used by other jobs to determine if infrastructure/app deployment is needed
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      infra-changed: ${{ steps.filter.outputs.infra }}
+      app-changed: ${{ steps.filter.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect infrastructure and application changes
+        uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            infra:
+              - 'devops/docker/Dockerfile.postgres'
+              - 'devops/docker/Dockerfile.dragonfly'
+              - 'devops/docker/Dockerfile.openvidu'
+              - 'devops/docker/docker-compose.prod.yml'
+              - 'src/libs/infrastructure/database/prisma/migrations/**'
+            app:
+              - 'src/**'
+              - 'package.json'
+              - 'yarn.lock'
+              - 'tsconfig.json'
+              - 'devops/docker/Dockerfile'
+
+      - name: Output changes
+        run: |
+          echo "Infrastructure changed: ${{ steps.filter.outputs.infra }}"
+          echo "Application changed: ${{ steps.filter.outputs.app }}"
+
   # Security Scanning
   # Runs Trivy vulnerability scanner and dependency audit (audit-ci)
   # Uploads SARIF results to GitHub Security
+  # Runs after detect-changes to ensure we only scan when needed
   security:
     name: Security Scan
     runs-on: ubuntu-latest
+    needs: [detect-changes]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -58,14 +99,13 @@ jobs:
 
   # Docker Build & Push
   # Builds and pushes Docker image to GitHub Container Registry
+  # Runs in parallel with Ensure Infrastructure Health (both after security scan)
   # Note: Build happens inside Docker, no separate build job needed
   # Prisma client generation happens during Docker build (see Dockerfile line 34)
-  # Linting and formatting are done in git hooks (pre-commit + pre-push) and Docker build
-  # Pre-push hook runs full yarn build, ensuring only buildable code reaches CI
   docker-build:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: [security]
+    needs: [detect-changes, security]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -219,56 +259,22 @@ jobs:
           echo "Image pushed: ${{ steps.meta.outputs.tags }}"
           echo "Expected deployment tag: main-${{ github.sha }}"
 
-  # Change Detection
-  # Detects whether infrastructure or application code has changed
-  # Outputs: infra-changed, app-changed
-  # Used by other jobs to determine if infrastructure/app deployment is needed
-  detect-changes:
-    name: Detect Changes
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-    outputs:
-      infra-changed: ${{ steps.filter.outputs.infra }}
-      app-changed: ${{ steps.filter.outputs.app }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
 
-      - name: Detect infrastructure and application changes
-        uses: dorny/paths-filter@v2
-        id: filter
-        with:
-          filters: |
-            infra:
-              - 'devops/docker/Dockerfile.postgres'
-              - 'devops/docker/Dockerfile.dragonfly'
-              - 'devops/docker/Dockerfile.openvidu'
-              - 'devops/docker/docker-compose.prod.yml'
-              - 'src/libs/infrastructure/database/prisma/migrations/**'
-            app:
-              - 'src/**'
-              - 'package.json'
-              - 'yarn.lock'
-              - 'tsconfig.json'
-              - 'devops/docker/Dockerfile'
-
-      - name: Output changes
-        run: |
-          echo "Infrastructure changed: ${{ steps.filter.outputs.infra }}"
-          echo "Application changed: ${{ steps.filter.outputs.app }}"
 
   # Infrastructure Health Check
-  # Initial passive health check of infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
-  # Sets outputs: infra-healthy, infra-status
-  # Used to determine if infrastructure recovery is needed
+  # Runs ONLY after both Docker Build and Ensure Infrastructure Health have completed successfully.
+  # Only runs if BOTH jobs succeed - if either fails, this job is skipped.
+  # Sets outputs: infra-healthy, infra-status. Recovery (backup → recreate → restore) runs when infra-healthy == 'false'.
   check-infrastructure:
     name: Check Infrastructure Health
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
-    needs: [detect-changes, docker-build]
+    needs: [docker-build, ensure-infrastructure-health]
     timeout-minutes: 10
+    outputs:
+      infra-healthy: ${{ steps.health-check.outputs.infra-healthy }}
+      infra-status: ${{ steps.health-check.outputs.infra-status }}
     steps:
       - uses: actions/checkout@v4
 
@@ -300,13 +306,13 @@ jobs:
       - name: Run health check
         id: health-check
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          # Run health check on server; do NOT fail this step so we always set outputs (recovery path needs infra-healthy when unhealthy)
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH' || true
             chmod +x /tmp/health-check.sh /tmp/utils.sh
             export SCRIPT_DIR="/tmp"
             export AUTO_RECREATE_MISSING="true"
             source /tmp/utils.sh
             
-            # Ensure files are fully written before execution (fix "Text file busy" error)
             sync
             sleep 1
             
@@ -359,6 +365,8 @@ jobs:
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 60
+    outputs:
+      backup-id: ${{ steps.backup.outputs.backup-id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -800,7 +808,7 @@ jobs:
   # Verify Infrastructure Readiness
   # Verifies that infrastructure is healthy and ready before deploying application
   # Verifies: infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
-  # Runs after: restore-backup or when infrastructure is healthy
+  # Runs ONLY after recovery path (recreate → restore) - SKIPPED if check-infrastructure is healthy
   # Purpose: Ensure newly recreated infrastructure is healthy before deploying application
   verify-infrastructure-readiness:
     name: Verify Infrastructure Readiness
@@ -808,13 +816,10 @@ jobs:
     if: |
       always() &&
       github.event_name == 'push' && 
-      github.ref == 'refs/heads/main' && 
-      (
-        (needs.recreate-infrastructure.result == 'success' && 
-         (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped')) ||
-        (needs.check-infrastructure.outputs.infra-healthy == 'true' && 
-         needs.backup-infrastructure.result == 'success')
-      )
+      github.ref == 'refs/heads/main' &&
+      needs.check-infrastructure.outputs.infra-healthy == 'false' &&
+      (needs.recreate-infrastructure.result == 'success' && 
+       (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'skipped'))
     environment: production
     needs:
       [
@@ -859,37 +864,26 @@ jobs:
               echo \"✅ Infrastructure is healthy and ready for deployment\"
               exit 0
             else
-              EXIT_CODE=\$?
-              echo \"❌ Infrastructure health check failed (exit code: \$EXIT_CODE)\"
-              cat /tmp/infra-readiness.json 2>/dev/null || true
-              exit 1
             fi
           "'
 
   # Deploy to Production
-  # Deploys application containers (API + Worker) to production server
-  # Runs when:
-  # 1. Docker build succeeds AND infrastructure is healthy (normal flow)
-  # 2. Infrastructure was recreated/verified successfully (recovery flow)
-  # Handles: database migrations, container startup, health checks
+  # Deploys application containers (api, worker) to production server
+  # Runs when: check-infrastructure is healthy (skips verify) OR verify-infrastructure-readiness succeeded (after recovery)
+  # Blocked if: docker-build fails OR (check-infra unhealthy AND recovery fails)
   deploy:
     name: Deploy to Production
     if: |
-      always() &&
       github.event_name == 'push' && 
       github.ref == 'refs/heads/main' &&
-      needs.docker-build.result == 'success'
+      needs.docker-build.result == 'success' &&
+      (
+        needs.check-infrastructure.outputs.infra-healthy == 'true' ||
+        needs.verify-infrastructure-readiness.result == 'success'
+      )
     runs-on: ubuntu-latest
     environment: production # Use production environment secrets
-    needs:
-      [
-        docker-build,
-        check-infrastructure,
-        backup-infrastructure,
-        verify-infrastructure-readiness,
-        recreate-infrastructure,
-        restore-backup,
-      ]
+    needs: [docker-build, check-infrastructure, verify-infrastructure-readiness]
     concurrency:
       group: deploy-production
       cancel-in-progress: false
@@ -1544,19 +1538,19 @@ jobs:
           echo "═══════════════════════════════════════════════════════════"
 
   # Ensure Infrastructure Health
-  # Aggressive recovery job that makes infrastructure healthy at any cost
-  # Runs independently with retry logic (5 attempts) and auto-recovery
-  # Uses: health-check.sh (with auto-recovery) + diagnose.sh
-  # Runs: Always on main branch push
+  # Runs in parallel with Docker Build & Push (ensure needs detect-changes, docker-build needs security).
+  # Aggressive recovery job that makes infrastructure healthy at any cost (retry logic, auto-recovery).
+  # Check Infrastructure Health runs only after this and Docker Build complete; if this fails, Check still runs (always()) and triggers recovery path.
   ensure-infrastructure-health:
     name: Ensure Infrastructure Health
     runs-on: ubuntu-latest
-    if: |
-      always() &&
-      github.event_name == 'push' && 
-      github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment: production
+    needs: [detect-changes]
     timeout-minutes: 30
+    outputs:
+      infra-healthy: ${{ steps.ensure-health.outputs.infra-healthy }}
+      infra-status: ${{ steps.ensure-health.outputs.infra-status }}
     env:
       # SECURITY: Pass secrets/variables as environment variables
       # These are encrypted and automatically masked in logs by GitHub Actions
@@ -1844,8 +1838,8 @@ jobs:
               echo ""
               echo "📋 Container Logs (last 20 lines):"
               for container in postgres dragonfly coturn portainer openvidu-server; do
-                echo "--- $container ---"
-                docker logs --tail 20 $container 2>&1 || true
+                echo "--- \$container ---"
+                docker logs --tail 20 \$container 2>&1 || true
               done
               
               exit 1
