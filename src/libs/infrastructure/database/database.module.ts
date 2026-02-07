@@ -151,6 +151,7 @@ import { QueryKeyFactory } from './query/factories/query-key.factory';
     DatabaseService,
     'DATABASE_SERVICE',
     ClinicIsolationService, // Export for GuardsModule to resolve circular dependency
+    UserRepository, // Export for UsersService refactoring
   ],
 })
 export class DatabaseModule implements OnModuleInit {

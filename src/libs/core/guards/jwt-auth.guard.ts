@@ -563,27 +563,47 @@ export class JwtAuthGuard implements CanActivate {
       sessionId,
     });
 
-    // Skip device fingerprint check in DEV_MODE
+    // Check device fingerprint in non-dev environments
     // Use ConfigService (which uses dotenv) for environment variable access
     const isDev =
       this.configService.isDevelopment() || this.configService.getEnvBoolean('DEV_MODE', false);
     if (!isDev) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       if (sessionData.deviceFingerprint !== currentFingerprint) {
-        void logger.log(
-          LogType.AUTH,
-          LogLevel.WARN,
-          'Session validation failed: Device fingerprint mismatch',
-          'JwtAuthGuard',
-          {
-            userId,
-            sessionId,
-            storedFingerprint: sessionData.deviceFingerprint,
-            currentFingerprint: currentFingerprint,
-          }
-        );
-        // Depending on security policy, you might want to invalidate the session here.
-        // For now, we'll just log it.
+        const storedUA = sessionData.deviceInfo?.userAgent || '';
+        const currentUA = (request.headers['user-agent'] as string) || '';
+
+        // Check if it's just a minor version change or same browser family
+        if (this.isSimilarUserAgent(storedUA, currentUA)) {
+          void logger.log(
+            LogType.AUTH,
+            LogLevel.INFO, // Downgrade to INFO
+            'Session validation: Device fingerprint mismatch but User-Agent is similar (allowing)',
+            'JwtAuthGuard',
+            {
+              userId,
+              sessionId,
+              storedUA,
+              currentUA,
+            }
+          );
+        } else {
+          void logger.log(
+            LogType.AUTH,
+            LogLevel.WARN,
+            'Session validation failed: Device fingerprint mismatch',
+            'JwtAuthGuard',
+            {
+              userId,
+              sessionId,
+              storedFingerprint: sessionData.deviceFingerprint,
+              currentFingerprint: currentFingerprint,
+              storedUA,
+              currentUA, // Log UAs to help debug
+            }
+          );
+          // Only invalidate strict mismatches if desired (currently just logging)
+        }
       }
     }
 

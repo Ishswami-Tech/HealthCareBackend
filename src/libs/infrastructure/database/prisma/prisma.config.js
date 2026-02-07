@@ -10,6 +10,41 @@
  * @see https://www.prisma.io/docs/orm/reference/prisma-schema-reference#prisma-config-file
  */
 
+const path = require('path');
+const fs = require('fs');
+
+// Load .env files into process.env BEFORE reading DATABASE_URL (Prisma CLI does not load dotenv)
+// Order: .env (base), then .env.development / .env.production based on NODE_ENV
+function loadEnvFiles() {
+  const cwd = process.cwd();
+  const env = process.env.NODE_ENV || 'development';
+  const files = [
+    path.join(cwd, '.env'),
+    path.join(cwd, '.env.local'),
+    env === 'production' ? path.join(cwd, '.env.production') : path.join(cwd, '.env.development'),
+    path.join(cwd, `.env.${env}.local`),
+  ].filter(Boolean);
+
+  for (const file of files) {
+    if (fs.existsSync(file)) {
+      try {
+        const content = fs.readFileSync(file, 'utf8');
+        content.split('\n').forEach(line => {
+          const match = line.match(/^\s*([^#=]+)=(.*)$/);
+          if (match) {
+            const key = match[1].trim();
+            const value = match[2].trim().replace(/^["']|["']$/g, '');
+            if (!process.env[key]) process.env[key] = value;
+          }
+        });
+      } catch (_e) {
+        // Ignore read errors
+      }
+    }
+  }
+}
+loadEnvFiles();
+
 // Simple function to get DATABASE_URL from environment
 // CRITICAL: This function is called at module load time, so process.env must be set BEFORE requiring this file
 function getCleanDatabaseUrl() {

@@ -117,6 +117,9 @@ export async function registerManualRoutes(
 
     // Register email routes
     await registerEmailRoutes(app, fastifyInstance, loggingService);
+
+    // Register RFC 9116 security.txt (vulnerability disclosure)
+    await registerSecurityTxtRoute(fastifyInstance, loggingService);
   } catch (error) {
     await loggingService.log(
       LogType.SYSTEM,
@@ -333,6 +336,54 @@ async function registerEmailRoutes(
       LogType.SYSTEM,
       LogLevel.WARN,
       `Failed to register email routes: ${error instanceof Error ? error.message : String(error)}`,
+      'ManualRoutesManager',
+      { error: error instanceof Error ? error.stack : String(error) }
+    );
+  }
+}
+
+/**
+ * RFC 9116 security.txt - vulnerability disclosure
+ * @see https://www.rfc-editor.org/rfc/rfc9116
+ */
+const SECURITY_TXT_CONTENT = `Contact: mailto:security@example.com
+Expires: 2027-12-31T23:59:59.000Z
+Preferred-Languages: en
+Canonical: https://example.com/.well-known/security.txt
+`;
+
+/**
+ * Register /.well-known/security.txt (RFC 9116)
+ *
+ * @param fastifyInstance - Fastify instance for route registration
+ * @param loggingService - LoggingService instance for structured logging
+ * @returns Promise<void>
+ */
+async function registerSecurityTxtRoute(
+  fastifyInstance: FastifyInstance,
+  loggingService: LoggingService
+): Promise<void> {
+  try {
+    fastifyInstance.get?.(
+      '/.well-known/security.txt',
+      async (_request: unknown, reply: FastifyReply) => {
+        return reply
+          .code(200)
+          .header('Content-Type', 'text/plain; charset=utf-8')
+          .send(SECURITY_TXT_CONTENT.trim());
+      }
+    );
+    await loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Security.txt route /.well-known/security.txt registered (RFC 9116)',
+      'ManualRoutesManager'
+    );
+  } catch (error) {
+    await loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.WARN,
+      `Failed to register security.txt route: ${error instanceof Error ? error.message : String(error)}`,
       'ManualRoutesManager',
       { error: error instanceof Error ? error.stack : String(error) }
     );

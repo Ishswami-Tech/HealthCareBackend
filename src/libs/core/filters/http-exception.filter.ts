@@ -90,6 +90,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     /\/stacks$/i,
     /\/api\/v\d+\/health(\/|$)/i, // Ignore /api/v1/health, /api/v2/health, etc. (common monitoring endpoints)
     /\/health(\/|$)/i, // Ignore /health endpoint variations
+    /\/\.well-known\/security\.txt$/i, // RFC 9116 - served by manual route
     // Security scanner probes (reduce log noise)
     /\/ws\/v\d+\/cluster/i, // Kubernetes API endpoints (scanner probes)
     /\/\.\./i, // Path traversal attempts

@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService, UserRepository } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
@@ -17,7 +17,6 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
-import type { UserUpdateInput } from '@core/types/input.types';
 import type {
   Doctor,
   Patient,
@@ -65,6 +64,11 @@ type UserWithRelations = User & {
 export class UsersService {
   private readonly eventService: IEventService;
 
+  /** Ensures a thrown value is an Error (required by @typescript-eslint/only-throw-error). */
+  private ensureError(value: unknown): Error {
+    return value instanceof Error ? value : new Error(String(value));
+  }
+
   private formatDateToString(date: Date | string | null | undefined): string {
     if (date instanceof Date) {
       return date.toISOString().split('T')[0] || '';
@@ -77,6 +81,7 @@ export class UsersService {
 
   constructor(
     private readonly databaseService: DatabaseService,
+    private readonly userRepository: UserRepository,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
@@ -99,65 +104,46 @@ export class UsersService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        // Use executeHealthcareRead for optimized query with caching
-        const users = await this.databaseService.executeHealthcareRead<
-          Array<{
-            id: string;
-            email: string;
-            name: string | null;
-            role: string;
-            [key: string]: unknown;
-          }>
-        >(async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          const result = await typedClient.user.findMany({
-            ...(role ? { where: { role } } : {}),
-            include: {
-              doctor: role === Role.DOCTOR,
-              patient: role === Role.PATIENT,
-              receptionists: role === Role.RECEPTIONIST,
-              clinicAdmins: role === Role.CLINIC_ADMIN,
-              superAdmin: role === Role.SUPER_ADMIN,
-              pharmacist: role === Role.PHARMACIST,
-              therapist: role === Role.THERAPIST,
-              labTechnician: role === Role.LAB_TECHNICIAN,
-              financeBilling: role === Role.FINANCE_BILLING,
-              supportStaff: role === Role.SUPPORT_STAFF,
-              nurse: role === Role.NURSE,
-              counselor: role === Role.COUNSELOR,
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-          return result as unknown as Array<{
-            id: string;
-            email: string;
-            name: string | null;
-            role: string;
-            [key: string]: unknown;
-          }>;
-        });
-
-        const result = (users as unknown as UserWithRelations[]).map(
-          (userData: UserWithRelations): UserResponseDto => {
-            const { password: _password, ...user } = userData;
-            const userResponse: UserResponseDto = {
-              id: user.id,
-              email: user.email,
-              firstName: user.firstName ?? '',
-              lastName: user.lastName ?? '',
-              role: user.role as Role,
-              isVerified: user.isVerified,
-              isActive: true, // User accounts are active by default
-              createdAt: user.createdAt,
-              updatedAt: user.updatedAt,
-              phone: user.phone ?? '',
-            };
-
-            if (user.dateOfBirth) {
-              userResponse.dateOfBirth = this.formatDateToString(user.dateOfBirth);
-            }
-            return userResponse;
+        let users: UserWithRelations[] = [];
+        if (role) {
+          const result = await this.userRepository.findByRole(role);
+          // Check result success
+          if (result.isSuccess && result.data) {
+            users = result.data as unknown as UserWithRelations[];
+          } else if (result.isFailure) {
+            throw this.ensureError(result.error);
           }
-        );
+        } else {
+          // Use searchUsers with no filters to get all
+          const result = await this.userRepository.searchUsers({});
+          if (result.isSuccess && result.data) {
+            users = result.data as unknown as UserWithRelations[];
+          } else if (result.isFailure) {
+            throw this.ensureError(result.error);
+          }
+        }
+
+        // Map to DTO
+        const result = users.map((userData: UserWithRelations): UserResponseDto => {
+          const { password: _password, ...user } = userData;
+          const userResponse: UserResponseDto = {
+            id: user.id,
+            email: user.email,
+            firstName: user.firstName ?? '',
+            lastName: user.lastName ?? '',
+            role: user.role as Role,
+            isVerified: user.isVerified, // Ensure boolean type
+            isActive: true, // User accounts are active by default
+            createdAt: user.createdAt,
+            updatedAt: user.updatedAt,
+            phone: user.phone ?? '',
+          };
+
+          if (user.dateOfBirth) {
+            userResponse.dateOfBirth = this.formatDateToString(user.dateOfBirth);
+          }
+          return userResponse;
+        });
 
         return result;
       },
@@ -178,30 +164,36 @@ export class UsersService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        // Use findUserByIdSafe for optimized query with caching
-        const userRaw = await this.databaseService.findUserByIdSafe(id);
-        const user = userRaw as UserWithRelations | null;
+        // Use UserRepository.findById
+        const result = await this.userRepository.findById(id);
+        if (result.isFailure) {
+          // check if error is not found or other
+          // For now, if failed, throw error
+          throw this.ensureError(result.error);
+        }
+
+        const user = result.data as UserWithRelations | null;
 
         if (!user) {
           throw this.errors.userNotFound(id, 'UsersService.findOne');
         }
 
-        const { password: _password, ...result } = user;
+        const { password: _password, ...userData } = user;
         const userResponse: UserResponseDto = {
-          id: result.id,
-          email: result.email,
-          firstName: result.firstName ?? '',
-          lastName: result.lastName ?? '',
-          role: result.role as Role,
-          isVerified: result.isVerified,
+          id: userData.id,
+          email: userData.email,
+          firstName: userData.firstName ?? '',
+          lastName: userData.lastName ?? '',
+          role: userData.role as Role,
+          isVerified: userData.isVerified,
           isActive: true, // User accounts are active by default
-          createdAt: result.createdAt,
-          updatedAt: result.updatedAt,
-          phone: result.phone ?? '',
+          createdAt: userData.createdAt,
+          updatedAt: userData.updatedAt,
+          phone: userData.phone ?? '',
         };
 
-        if (result.dateOfBirth) {
-          userResponse.dateOfBirth = this.formatDateToString(result.dateOfBirth);
+        if (userData.dateOfBirth) {
+          userResponse.dateOfBirth = this.formatDateToString(userData.dateOfBirth);
         }
 
         return userResponse;
@@ -265,89 +257,55 @@ export class UsersService {
   }
 
   async findByEmail(email: string): Promise<UserResponseDto | null> {
-    // Use findUserByEmailSafe for optimized query
-    const userRaw = await this.databaseService.findUserByEmailSafe(email);
-    if (!userRaw) {
-      return null;
+    // Use UserRepository.findByEmail
+    const result = await this.userRepository.findByEmail(email);
+    if (result.isFailure) {
+      // Log error but return null? Or throw?
+      // Original code just returned null if not found.
+      // If error is genuine DB error, maybe throw.
+      // But findByEmail failure often means not found or DB error.
+      // Let's assume failure with error means exception, but null data means not found.
+      // However, BaseRepository wraps exceptions in RepositoryResult.failure.
+      // So we should check.
+      throw this.ensureError(result.error);
     }
 
-    // Get with relations if needed
-    const user = await this.databaseService.executeHealthcareRead<{
-      id: string;
-      email: string;
-      [key: string]: unknown;
-    } | null>(async client => {
-      const result = await (
-        client as {
-          user: {
-            findFirst: (args: unknown) => Promise<{
-              id: string;
-              email: string;
-              [key: string]: unknown;
-            } | null>;
-          };
-        }
-      )['user'].findFirst({
-        where: {
-          email: {
-            mode: 'insensitive',
-            equals: email,
-          },
-        },
-        include: {
-          doctor: true,
-          patient: true,
-          receptionists: true,
-          clinicAdmins: true,
-          superAdmin: true,
-        },
-      });
-      return result;
-    });
+    const user = result.data as UserWithRelations | null;
 
     if (!user) {
       return null;
     }
 
-    // Type-safe password removal with explicit type
-    const userRecord = user as {
-      id: string;
-      email: string;
-      firstName?: string | null;
-      lastName?: string | null;
-      role: string;
-      isVerified: boolean;
-      createdAt: Date;
-      updatedAt: Date;
-      dateOfBirth?: Date | string | null;
-      phone?: string | null;
-      password?: string;
-    };
-    const { password: _password, ...result } = userRecord;
+    // Type-safe password removal
+    const { password: _password, ...userData } = user;
+
     const userResponse: UserResponseDto = {
-      id: result.id,
-      email: result.email,
-      firstName: result.firstName ?? '',
-      lastName: result.lastName ?? '',
-      role: result.role as Role,
-      isVerified: result.isVerified,
+      id: userData.id,
+      email: userData.email,
+      firstName: userData.firstName ?? '',
+      lastName: userData.lastName ?? '',
+      role: userData.role as Role,
+      isVerified: userData.isVerified,
       isActive: true, // User accounts are active by default
-      createdAt: result.createdAt,
-      updatedAt: result.updatedAt,
-      ...(result.dateOfBirth && {
-        dateOfBirth: this.formatDateToString(result.dateOfBirth),
-      }),
-      phone: result.phone ?? '',
+      createdAt: userData.createdAt,
+      updatedAt: userData.updatedAt,
+      phone: userData.phone ?? '',
     };
+
+    if (userData.dateOfBirth) {
+      userResponse.dateOfBirth = this.formatDateToString(userData.dateOfBirth);
+    }
+
     return userResponse;
   }
 
   async count(): Promise<number> {
-    // Use executeHealthcareRead for count query
-    return await this.databaseService.executeHealthcareRead<number>(async client => {
-      const result = await (client as { user: { count: () => Promise<number> } })['user'].count();
-      return result;
-    });
+    // Use UserRepository.count
+    const result = await this.userRepository.count();
+    if (result.isFailure) {
+      throw this.ensureError(result.error);
+    }
+    return result.data ?? 0;
   }
 
   private async getNextNumericId(): Promise<string> {
@@ -393,33 +351,12 @@ export class UsersService {
         phone: data.phone,
       });
 
-      // Get the created user from database using findUserByEmailSafe
-      const userRaw = await this.databaseService.findUserByEmailSafe(data.email);
-      // If we need relations, use executeHealthcareRead
-      const user = userRaw
-        ? await this.databaseService.executeHealthcareRead<{
-            id: string;
-            email: string;
-            [key: string]: unknown;
-          } | null>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            const result = await typedClient.user.findUnique({
-              where: { id: userRaw.id } as PrismaDelegateArgs,
-              include: {
-                doctor: data.role === Role.DOCTOR,
-                patient: data.role === Role.PATIENT,
-                receptionists: data.role === Role.RECEPTIONIST,
-                clinicAdmins: data.role === Role.CLINIC_ADMIN,
-                superAdmin: data.role === Role.SUPER_ADMIN,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-            return result as {
-              id: string;
-              email: string;
-              [key: string]: unknown;
-            } | null;
-          })
-        : null;
+      // Get the created user from database using UserRepository
+      const result = await this.userRepository.findByEmail(data.email);
+      if (result.isFailure) {
+        throw this.ensureError(result.error);
+      }
+      const user = result.data;
 
       if (!user) {
         throw this.errors.userNotFound(undefined, 'UsersService.createUser');
@@ -447,19 +384,7 @@ export class UsersService {
       await this.cacheService.invalidateCacheByTag('users');
 
       // Map to UserResponseDto
-      const userRecord = user as {
-        id: string;
-        email: string;
-        firstName?: string | null;
-        lastName?: string | null;
-        role: string;
-        isVerified: boolean;
-        createdAt: Date;
-        updatedAt: Date;
-        dateOfBirth?: Date | string | null;
-        phone?: string | null;
-        password?: string;
-      };
+      const { password: _password, ...userRecord } = user;
 
       const userResponse: UserResponseDto = {
         id: userRecord.id,
@@ -520,8 +445,13 @@ export class UsersService {
       }
     }
     try {
-      // Check if user exists first using findUserByIdSafe
-      const existingUserRaw = await this.databaseService.findUserByIdSafe(id);
+      // Check if user exists first using UserRepository
+      const userCheckResult = await this.userRepository.findById(id);
+      if (userCheckResult.isFailure) {
+        throw this.ensureError(userCheckResult.error);
+      }
+      const existingUserRaw = userCheckResult.data;
+
       // Get with relations if needed
       const existingUser = existingUserRaw
         ? await this.databaseService.executeHealthcareRead<{
@@ -753,24 +683,15 @@ export class UsersService {
         delete cleanedData['emergencyContact'];
       }
 
-      // Update the user record using updateUserSafe or executeHealthcareWrite
-      // Map UpdateUserProfileDto to UserUpdateInput, converting Gender enum to string and filtering undefined
-      const userUpdateData = Object.fromEntries(
-        Object.entries({
-          firstName: cleanedData.firstName,
-          lastName: cleanedData.lastName,
-          phone: cleanedData.phone,
-          dateOfBirth: cleanedData.dateOfBirth,
-          gender: cleanedData.gender ? String(cleanedData.gender) : undefined,
-          address: cleanedData.address,
-          city: cleanedData.city,
-          state: cleanedData.state,
-          country: cleanedData.country,
-          profilePicture: cleanedData.profilePicture,
-        }).filter(([_, v]) => v !== undefined)
-      ) as UserUpdateInput;
-      await this.databaseService.updateUserSafe(id, userUpdateData);
+      // Update the user record using UserRepository
+      // Use cleanedData directly, cast to UpdateUserDto
+      const updateResult = await this.userRepository.update(id, cleanedData as UpdateUserDto);
+      if (updateResult.isFailure) {
+        throw this.ensureError(updateResult.error);
+      }
+
       // Fetch updated user with relations
+      // Use executeHealthcareRead again for the complex include
       const user = (await this.databaseService.executeHealthcareRead<{
         id: string;
         email: string;

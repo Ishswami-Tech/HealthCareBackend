@@ -11,10 +11,6 @@
     },
     "assets": [
       {
-        "include": "views/**/*",
-        "outDir": "dist/src"
-      },
-      {
         "include": "src/libs/infrastructure/database/prisma/generated/**/*",
         "outDir": "dist/libs/infrastructure/database/prisma/generated"
       }

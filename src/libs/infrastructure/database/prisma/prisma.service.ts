@@ -1439,10 +1439,11 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    */
   isReady(): boolean {
     // First ensure client is initialized
+    // First ensure client is initialized
     if (!this.prismaClient) {
-      try {
-        void this.getRawPrismaClient().catch(() => {});
-      } catch {
+      if (PrismaService.sharedPrismaClient) {
+        this.prismaClient = PrismaService.sharedPrismaClient;
+      } else {
         return false;
       }
     }

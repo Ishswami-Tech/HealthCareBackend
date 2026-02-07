@@ -80,3 +80,4 @@ export type { PermissionEntity } from '@core/types/rbac.types';
 // NOTE: Repositories (UserRepository, SimplePatientRepository) are INTERNAL infrastructure components
 // They are NOT exported. Use DatabaseService directly for all database operations.
 // Repositories are only used internally by DatabaseService for optimization layers.
+export { UserRepository } from './query/repositories/user.repository';
