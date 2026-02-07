@@ -30,18 +30,18 @@ RUN test -f .swcrc && test -f nest-cli.json && echo "[OK] SWC configuration file
 # Generate Prisma Client during Docker build (ONLY time it's generated)
 # This ensures TypeScript can resolve @prisma/client types
 # Prisma client is NOT generated in CI or at container startup - only here during build
-# Build script (yarn build) expects Prisma Client to already be generated
 #
 # CRITICAL: Prisma generate requires DATABASE_URL to be set (even if not connecting)
-# Use a dummy URL for generation - actual connection happens at runtime
-# Also ensure schema and config paths are absolute or correctly relative
+# Use a generic placeholder URL for build-time generation (NOT used at runtime)
+# Actual DATABASE_URL is read from environment at runtime via prisma.config.js
+# This avoids hardcoding production credentials in the Docker image
 RUN echo "[INFO] Generating Prisma Client..." && \
   echo "[INFO] Schema path: ./src/libs/infrastructure/database/prisma/schema.prisma" && \
   echo "[INFO] Config path: ./src/libs/infrastructure/database/prisma/prisma.config.js" && \
   test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo "[ERROR] Schema file not found!" && exit 1) && \
   test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "[ERROR] Config file not found!" && exit 1) && \
-  (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
-   yarn prisma:generate || (echo "[ERROR] Prisma generate failed! Exit code: $?" && exit 1)) && \
+  (export DATABASE_URL="${DATABASE_URL:-postgresql://buildtime:buildtime@placeholder:5432/placeholder}" && \
+  yarn prisma:generate || (echo "[ERROR] Prisma generate failed! Exit code: $?" && exit 1)) && \
   echo "[OK] Prisma generate command completed"
 
 # Verify Prisma Client was generated correctly
@@ -51,11 +51,11 @@ RUN if [ -d "src/libs/infrastructure/database/prisma/generated" ]; then \
   echo "Client directory contents:" && \
   ls -la src/libs/infrastructure/database/prisma/generated/ | head -15 || true && \
   if [ ! -f "src/libs/infrastructure/database/prisma/generated/index.js" ] && \
-     [ ! -f "src/libs/infrastructure/database/prisma/generated/index.mjs" ] && \
-     [ ! -f "src/libs/infrastructure/database/prisma/generated/index.d.ts" ]; then \
-    echo "[ERROR] Prisma Client entry point files not found!" && \
-    echo "[ERROR] Expected: index.js, index.mjs, or index.d.ts in generated directory" && \
-    exit 1; \
+  [ ! -f "src/libs/infrastructure/database/prisma/generated/index.mjs" ] && \
+  [ ! -f "src/libs/infrastructure/database/prisma/generated/index.d.ts" ]; then \
+  echo "[ERROR] Prisma Client entry point files not found!" && \
+  echo "[ERROR] Expected: index.js, index.mjs, or index.d.ts in generated directory" && \
+  exit 1; \
   fi; \
   else \
   echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && \

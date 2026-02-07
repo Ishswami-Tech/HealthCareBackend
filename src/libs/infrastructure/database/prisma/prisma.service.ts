@@ -21,6 +21,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
+import { ConfigService } from '@config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -652,17 +653,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Initializes PrismaClient with optimizations and delegate properties
    *
    * @param loggingService - Optional logging service for HIPAA-compliant logging
+   * @param configService - Optional config service for centralized configuration
    */
   constructor(
-    @Optional() @Inject(forwardRef(() => LoggingService)) loggingService?: LoggingService
+    @Optional() @Inject(forwardRef(() => LoggingService)) loggingService?: LoggingService,
+    @Optional() @Inject(ConfigService) private readonly configService?: ConfigService
   ) {
     // Store logging service if provided
     if (loggingService) {
       this.loggingService = loggingService;
     }
 
-    // Initialize pool size using helper function
-    this.poolSize = getEnvNumber('DB_POOL_SIZE', 20);
+    // Initialize pool size using ConfigService (with fallback to getEnv for safety)
+    this.poolSize =
+      this.configService?.getEnvNumber('DB_POOL_SIZE', 20) ?? getEnvNumber('DB_POOL_SIZE', 20);
 
     // With REQUEST scope, NestJS creates a new instance per request
     // We still need to initialize prismaClient on each instance
@@ -670,8 +674,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Continue with initialization below
 
     // Create PrismaClient instance using composition
-    // Use helper functions (which use dotenv) for environment variable access
-    const dbUrlValue = getEnv('DATABASE_URL');
+    // Use ConfigService for centralized configuration (with fallback to getEnv)
+    const dbUrlValue = this.configService?.getEnv('DATABASE_URL') ?? getEnv('DATABASE_URL');
     const isProductionEnv = isProduction();
 
     // Build log configuration array based on environment
@@ -692,7 +696,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
 
     // Prisma 7: Use adapter pattern for library engine type
     // Create PostgreSQL adapter with connection string
-    let connectionString = dbUrlValue || getEnv('DATABASE_URL') || '';
+    let connectionString =
+      dbUrlValue || this.configService?.getEnv('DATABASE_URL') || getEnv('DATABASE_URL') || '';
     if (!connectionString) {
       throw new HealthcareError(
         ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -716,8 +721,10 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Handle self-signed certificates in development
     // Get connection timeout from env or use defaults (longer for dev, shorter for prod)
     const connectionTimeout = isProductionEnv
-      ? getEnvNumber('DB_CONNECTION_TIMEOUT', 10000)
-      : getEnvNumber('DB_CONNECTION_TIMEOUT', 30000); // 30 seconds for dev
+      ? (this.configService?.getEnvNumber('DB_CONNECTION_TIMEOUT', 10000) ??
+        getEnvNumber('DB_CONNECTION_TIMEOUT', 10000))
+      : (this.configService?.getEnvNumber('DB_CONNECTION_TIMEOUT', 30000) ??
+        getEnvNumber('DB_CONNECTION_TIMEOUT', 30000)); // 30 seconds for dev
 
     const poolConfig: {
       connectionString: string;

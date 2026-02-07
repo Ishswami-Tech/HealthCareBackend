@@ -35,6 +35,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv } from '@config/environment/utils';
+import { ConfigService } from '@config';
 
 // Internal services
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
@@ -196,7 +197,10 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     protected readonly retryService?: RetryService,
     @Optional()
     @Inject('HealthcareDatabaseConfig')
-    config?: HealthcareDatabaseConfig
+    config?: HealthcareDatabaseConfig,
+    @Optional()
+    @Inject(ConfigService)
+    protected readonly configService?: ConfigService
   ) {
     // Support both DI (via @Inject) and manual instantiation
     if (config) {
@@ -410,8 +414,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
             this.metricsService.recordCacheHit(cacheTime);
           });
           // Only log in debug mode for performance (10M+ users)
-          // Use helper function (which uses dotenv) for environment variable access
-          if (getEnv('LOG_LEVEL') === 'DEBUG') {
+          // Use ConfigService for centralized configuration (with fallback to getEnv)
+          if ((this.configService?.getEnv('LOG_LEVEL') ?? getEnv('LOG_LEVEL')) === 'DEBUG') {
             void this.loggingService.log(
               LogType.DATABASE,
               LogLevel.DEBUG,
@@ -2887,7 +2891,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     }
 
     // Get database URL from environment variables (no hardcoded defaults for security)
-    const dbUrl = getEnv('DATABASE_URL');
+    // Use ConfigService for centralized configuration (with fallback to getEnv)
+    const dbUrl = this.configService?.getEnv('DATABASE_URL') ?? getEnv('DATABASE_URL');
 
     if (dbUrl) {
       // Parse DATABASE_URL: postgresql://user:password@host:port/database
@@ -2904,10 +2909,12 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     }
 
     // Fallback to individual environment variables (all required, no defaults)
-    const dbHost = getEnv('DATABASE_HOST');
-    const dbPort = getEnv('DATABASE_PORT');
-    const dbUser = getEnv('DATABASE_USER');
-    const dbPassword = getEnv('DATABASE_PASSWORD');
+    // Use ConfigService for centralized configuration (with fallback to getEnv)
+    const dbHost = this.configService?.getEnv('DATABASE_HOST') ?? getEnv('DATABASE_HOST');
+    const dbPort = this.configService?.getEnv('DATABASE_PORT') ?? getEnv('DATABASE_PORT');
+    const dbUser = this.configService?.getEnv('DATABASE_USER') ?? getEnv('DATABASE_USER');
+    const dbPassword =
+      this.configService?.getEnv('DATABASE_PASSWORD') ?? getEnv('DATABASE_PASSWORD');
 
     // Validate all required credentials are present
     if (!dbHost || !dbPort || !dbUser || !dbPassword) {

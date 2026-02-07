@@ -4,6 +4,24 @@
  * Prisma 7 requires a prisma.config.js file for configuration.
  * The datasource URL is configured here instead of in schema.prisma.
  *
+ * IMPORTANT: Alignment with Central Config Service
+ * ================================================
+ * This file reads from the same environment variables as the central config service:
+ * - DATABASE_URL (ENV_VARS.DATABASE_URL from @config/constants)
+ * - DIRECT_URL (ENV_VARS.DIRECT_URL from @config/constants)
+ *
+ * WHY NOT USE ConfigService DIRECTLY?
+ * - This file runs in Prisma CLI context (prisma generate, prisma migrate, etc.)
+ * - Prisma CLI executes BEFORE NestJS application starts
+ * - ConfigService requires NestJS dependency injection (not available in CLI context)
+ * - Therefore, we read environment variables directly using process.env
+ *
+ * CONSISTENCY GUARANTEE:
+ * - Both this file and central config read from the same environment variable names
+ * - Central config: src/config/environment/production.config.ts (line 98)
+ * - This file: process.env.DATABASE_URL and process.env.DIRECT_URL
+ * - See: src/config/constants.ts (ENV_VARS.DATABASE_URL, ENV_VARS.DIRECT_URL)
+ *
  * This JavaScript file is used in both local development and production/Docker
  * environments since the Prisma CLI can load JavaScript files everywhere.
  *
