@@ -21,7 +21,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
@@ -657,7 +657,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    */
   constructor(
     @Optional() @Inject(forwardRef(() => LoggingService)) loggingService?: LoggingService,
-    @Optional() @Inject(ConfigService) private readonly configService?: ConfigService
+    @Optional()
+    @Inject(forwardRef(() => ConfigService))
+    private readonly configService?: ConfigService
   ) {
     // Store logging service if provided
     if (loggingService) {

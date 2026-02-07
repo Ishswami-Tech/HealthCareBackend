@@ -35,7 +35,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv } from '@config/environment/utils';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 // Internal services
 import { HealthcareQueryOptimizerService } from './internal/query-optimizer.service';
@@ -199,7 +199,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     @Inject('HealthcareDatabaseConfig')
     config?: HealthcareDatabaseConfig,
     @Optional()
-    @Inject(ConfigService)
+    @Inject(forwardRef(() => ConfigService))
     protected readonly configService?: ConfigService
   ) {
     // Support both DI (via @Inject) and manual instantiation

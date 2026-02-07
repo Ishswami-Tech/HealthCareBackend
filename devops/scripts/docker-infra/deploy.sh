@@ -1935,7 +1935,8 @@ run_migrations_safely() {
         # Start container with increased memory limit for migrations
         # Use docker compose with memory override via environment variable
         # Note: This requires docker-compose to support memory limits via environment
-        docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api || {
+        # CRITICAL: Explicitly pass DATABASE_URL to ensure container starts
+        DATABASE_URL="${DATABASE_URL}" docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --no-deps api || {
             log_error "Failed to start API container for migrations"
             return 1
         }
