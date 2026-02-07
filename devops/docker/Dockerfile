@@ -1,4 +1,5 @@
 # Build stage
+# Optimized for Linux (Ubuntu/Debian). node:20-slim is Debian-based; Prisma "native" binary target matches.
 FROM node:20-slim AS builder
 
 LABEL stage=builder
@@ -52,9 +53,10 @@ RUN if [ -d "src/libs/infrastructure/database/prisma/generated" ]; then \
   ls -la src/libs/infrastructure/database/prisma/generated/ | head -15 || true && \
   if [ ! -f "src/libs/infrastructure/database/prisma/generated/index.js" ] && \
   [ ! -f "src/libs/infrastructure/database/prisma/generated/index.mjs" ] && \
-  [ ! -f "src/libs/infrastructure/database/prisma/generated/index.d.ts" ]; then \
+  [ ! -f "src/libs/infrastructure/database/prisma/generated/index.d.ts" ] && \
+  [ ! -f "src/libs/infrastructure/database/prisma/generated/client.js" ]; then \
   echo "[ERROR] Prisma Client entry point files not found!" && \
-  echo "[ERROR] Expected: index.js, index.mjs, or index.d.ts in generated directory" && \
+  echo "[ERROR] Expected: index.js, index.mjs, index.d.ts, or client.js in generated directory" && \
   exit 1; \
   fi; \
   else \
@@ -138,7 +140,7 @@ RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
 RUN mkdir -p /app/dist/libs/infrastructure/database/prisma && \
   cp -r /app/src/libs/infrastructure/database/prisma/generated /app/dist/libs/infrastructure/database/prisma/
 
-# Production stage
+# Production stage (Linux/Ubuntu; same base as builder for binary compatibility)
 FROM node:20-slim AS production
 
 LABEL app.component=backend
@@ -147,7 +149,8 @@ LABEL com.docker.compose.service=api
 
 RUN npm install -g yarn@1.22.22 --force
 
-RUN apt-get update && apt-get install -y \
+# Required for Prisma (OpenSSL), healthcheck (wget), and migrations (postgresql-client)
+RUN apt-get update && apt-get install -y --no-install-recommends \
   openssl \
   ca-certificates \
   wget \
@@ -206,18 +209,19 @@ COPY --from=builder /app/src/libs/infrastructure/database/prisma/generated ./src
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/generated ./dist/libs/infrastructure/database/prisma/generated
 COPY --from=builder /app/dist/libs/infrastructure/database/prisma/schema.prisma ./dist/libs/infrastructure/database/prisma/schema.prisma
 
-# Verify Prisma Client was copied correctly from builder stage
+# Verify Prisma Client was copied correctly from builder stage (Linux paths)
 RUN if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
   echo "[ERROR] Prisma Client not found in copied files!" && exit 1; \
   elif [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.js ] && \
   [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.mjs ] && \
-  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ]; then \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/index.d.ts ] && \
+  [ ! -f /app/src/libs/infrastructure/database/prisma/generated/client.js ]; then \
   echo "[WARN] Prisma Client entry point not found in src, checking dist..." && \
   if [ ! -d /app/dist/libs/infrastructure/database/prisma/generated ]; then \
   echo "[ERROR] Prisma Client not found in dist either!" && exit 1; \
   fi; \
   else \
-  echo "[OK] Prisma Client verified - generated during build, copied to production stage"; \
+  echo "[OK] Prisma Client verified - generated during build, copied to production stage (Linux)"; \
   fi
 
 # Create entrypoint script - simplified for app-local Prisma Client location

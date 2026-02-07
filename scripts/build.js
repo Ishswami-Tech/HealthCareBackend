@@ -237,10 +237,23 @@ function main() {
     log('\nBuilding Application', 'blue');
     log('-'.repeat(60), 'blue');
 
+    // Prisma: generate client before nest build so dist gets the client via nest-cli assets
+    // Production/staging: always generate; use placeholder DATABASE_URL if unset (generate does not connect)
+    // Development: optional (postinstall usually ran); run with continueOnError if .env missing
+    if (environment === 'production' || environment === 'staging') {
+      const placeholder = 'postgresql://buildtime:buildtime@placeholder:5432/placeholder';
+      const dbUrl = process.env.DATABASE_URL || process.env.DIRECT_URL || placeholder;
+      runCommand(
+        `cross-env DATABASE_URL="${dbUrl}" yarn prisma:generate`,
+        'Prisma Client generation (required for production build)'
+      );
+    } else {
+      runCommand('yarn prisma:generate', 'Prisma Client generation (development)', true);
+    }
+
     // Set environment variable and run nest build
     // Note: nest build uses SWC compiler (configured in nest-cli.json)
-    // SWC provides 20x faster compilation than TypeScript compiler
-    // Type checking runs in parallel with SWC compilation
+    // nest-cli.json assets copy src/.../prisma/generated to dist/.../prisma/generated
     const envPrefix =
       environment === 'production'
         ? 'cross-env NODE_ENV=production'
@@ -260,6 +273,31 @@ function main() {
     log('-'.repeat(60), 'blue');
 
     verifyBuildArtifacts();
+
+    // Production/staging: ensure Prisma client was copied to dist (nest-cli assets)
+    if (environment === 'production' || environment === 'staging') {
+      const prismaGeneratedInDist = path.join(
+        process.cwd(),
+        'dist',
+        'libs',
+        'infrastructure',
+        'database',
+        'prisma',
+        'generated'
+      );
+      const hasIndex =
+        fs.existsSync(path.join(prismaGeneratedInDist, 'index.js')) ||
+        fs.existsSync(path.join(prismaGeneratedInDist, 'index.mjs')) ||
+        fs.existsSync(path.join(prismaGeneratedInDist, 'client.js'));
+      if (!hasIndex) {
+        throw new Error(
+          `Prisma Client not found in dist at ${prismaGeneratedInDist}. ` +
+            'Ensure prisma generate ran before nest build and nest-cli.json assets include the generated folder.'
+        );
+      }
+      logSuccess('Prisma Client present in dist (production runtime)');
+    }
+
     const buildSize = getBuildSize();
     stepTimes['Artifact Verification'] = 0.1; // Minimal time
 

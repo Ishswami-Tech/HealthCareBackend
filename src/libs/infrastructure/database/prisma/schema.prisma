@@ -2,6 +2,7 @@ generator client {
   provider      = "prisma-client-js"
   output        = "./generated"
   moduleFormat  = "cjs"
+  // native = Linux glibc (Docker node:20-slim / Ubuntu); linux-musl = Alpine
   binaryTargets = ["native", "linux-musl"]
 }
 
