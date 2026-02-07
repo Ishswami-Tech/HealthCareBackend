@@ -2138,19 +2138,51 @@ run_migrations_safely() {
     fi
     
     # Verify database connection before running migrations
+    # Verify database connection before running migrations
     log_info "Verifying database connection..."
-    # Extract password from DATABASE_URL for testing (handle URL encoding)
-    local db_password=$(echo "$database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
-    # URL decode the password in case it's encoded
-    db_password=$(printf '%b' "${db_password//%/\\x}" 2>/dev/null || echo "$db_password")
+    
+    # Extract components from DATABASE_URL for testing
+    # Format: postgresql://user:password@host:port/dbname?schema=...
+    
+    # Extract user
+    local db_user=$(echo "$database_url" | sed -n 's|.*://\([^:]*\):.*|\1|p' || echo "postgres")
+    
+    # Extract password (handle URL encoding)
+    local db_password_encoded=$(echo "$database_url" | sed -n 's|.*://[^:]*:\([^@]*\)@.*|\1|p' || echo "postgres")
+    local db_password=$(printf '%b' "${db_password_encoded//%/\\x}" 2>/dev/null || echo "$db_password_encoded")
+    
+    # Extract host
+    local db_host=$(echo "$database_url" | sed -n 's|.*@\([^:/]*\).*|\1|p' || echo "postgres")
+    
+    # Extract port
+    local db_port=$(echo "$database_url" | sed -n 's|.*@.*:\([0-9]*\)/.*|\1|p' || echo "5432")
+    
+    # Extract database name (remove query params)
+    local db_name=$(echo "$database_url" | sed -n 's|.*:[0-9]*/\([^?]*\).*|\1|p' || echo "userdb")
+    
+    log_info "Connection details extracted from DATABASE_URL:"
+    log_info "  Host: $db_host"
+    log_info "  Port: $db_port"
+    log_info "  User: $db_user"
+    log_info "  DB:   $db_name"
     
     # First, verify the connection works with the password from DATABASE_URL
-    log_info "Testing connection with password from DATABASE_URL..."
-    if ! docker exec -e PGPASSWORD="$db_password" postgres psql -U postgres -d userdb -c "SELECT 1;" >/dev/null 2>&1; then
+    log_info "Testing connection with credentials from DATABASE_URL..."
+    
+    # Use the extracted host for the container name if possible, or fallback to 'postgres' service name from docker-compose
+    # In docker-compose.prod.yml, the service name is 'postgres', so we use that for docker exec
+    local postgres_container_name="postgres"
+    
+    if ! container_running "$postgres_container_name"; then
+        log_warning "PostgreSQL container '$postgres_container_name' not running - attempting to use host '$db_host' as container name"
+        postgres_container_name="$db_host"
+    fi
+
+    if ! docker exec -e PGPASSWORD="$db_password" "$postgres_container_name" psql -U "$db_user" -d "$db_name" -h "$db_host" -p "$db_port" -c "SELECT 1;" >/dev/null 2>&1; then
         log_error "Database connection test failed!"
         log_error "Expected DATABASE_URL: ${database_url:0:50}***"
         log_error "Please verify:"
-        log_error "  1. PostgreSQL container is running and healthy"
+        log_error "  1. PostgreSQL container '$postgres_container_name' is running and healthy"
         log_error "  2. Password in DATABASE_URL matches POSTGRES_PASSWORD in docker-compose"
         log_error "  3. .env.production file doesn't override DATABASE_URL with wrong password"
         log_error ""
@@ -2158,7 +2190,7 @@ run_migrations_safely() {
         log_error "This indicates a serious configuration issue"
         return 1
     else
-        log_success "Database connection verified with password from DATABASE_URL"
+        log_success "Database connection verified with credentials from DATABASE_URL"
     fi
     
     # Run migrations with DATABASE_URL explicitly set
@@ -2717,6 +2749,16 @@ validate_deployment_state() {
 # Main deployment logic
 main() {
     log_info "Starting deployment orchestrator..."
+    
+    # CRITICAL: Sanitize DATABASE_URL for Docker environment
+    # If DATABASE_URL contains localhost or 127.0.0.1, it refers to the container itself inside Docker
+    # This causes connection failures. We unset it to force fallback to internal Docker URL from .env files
+    if [[ "${DATABASE_URL:-}" == *"localhost"* ]] || [[ "${DATABASE_URL:-}" == *"127.0.0.1"* ]]; then
+        log_warning "Detected localhost/127.0.0.1 in DATABASE_URL: ${DATABASE_URL}"
+        log_warning "This will fail inside Docker containers (refers to container itself)"
+        log_warning "Unsetting DATABASE_URL to allow fallback to internal Docker URL from .env files"
+        unset DATABASE_URL
+    fi
     log_info "Infra Changed: ${INFRA_CHANGED}, App Changed: ${APP_CHANGED}"
     log_info "Infra Healthy: ${INFRA_HEALTHY}, Infra Status: ${INFRA_STATUS}"
     log_info "Infra Already Handled: ${INFRA_ALREADY_HANDLED}"
