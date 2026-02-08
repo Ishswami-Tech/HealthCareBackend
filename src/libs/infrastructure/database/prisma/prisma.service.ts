@@ -20,7 +20,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
-import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
+import { getEnv, getEnvNumber, isProduction, getDatabaseUrlHost } from '@config/environment/utils';
 import { ConfigService } from '@config/config.service';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -707,6 +707,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         undefined,
         {},
         'PrismaService.constructor'
+      );
+    }
+
+    // Diagnostic: log DATABASE_URL host at startup (for Docker: must be "postgres", not localhost/127.0.0.1)
+    const dbHost = getDatabaseUrlHost(connectionString);
+    if (dbHost && this.loggingService) {
+      void this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `DATABASE_URL host: ${dbHost} (Docker expects "postgres")`,
+        'PrismaService',
+        { dbHost }
       );
     }
 

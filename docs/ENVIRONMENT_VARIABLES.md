@@ -22,6 +22,8 @@ codebase no longer contains hardcoded URLs, domains, or secrets.
 
 ```env
 # Database
+# For Docker deploy: use DB service hostname (e.g. postgres), NOT localhost/127.0.0.1.
+# Example: postgresql://postgres:PASSWORD@postgres:5432/userdb?schema=public
 DATABASE_URL=postgresql://user:password@host:5432/database
 
 # Security

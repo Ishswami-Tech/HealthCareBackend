@@ -8,6 +8,7 @@ import {
   getEnvBoolean,
   getEnvironment,
   isProduction,
+  isDockerEnvironment,
 } from '@config/environment/utils';
 
 /**
@@ -38,7 +39,17 @@ export const healthcareConfig = registerAs('healthcare', () => ({
 
   // Enterprise Database configuration for 1M+ users
   database: {
-    url: getEnvWithDefault('DATABASE_URL', 'postgresql://localhost:5432/healthcare'),
+    // In Docker/production, DATABASE_URL must be set with DB service hostname (e.g. postgres), not localhost
+    url: (() => {
+      const url = getEnv('DATABASE_URL');
+      if (url) return url;
+      if (isDockerEnvironment() || isProduction()) {
+        throw new Error(
+          'DATABASE_URL must be set in Docker/production. Use database service hostname (e.g. postgres), not localhost.'
+        );
+      }
+      return 'postgresql://localhost:5432/healthcare';
+    })(),
     schema: 'healthcare',
     ssl: getEnvBoolean('DATABASE_SSL', false),
     connectionPool: {

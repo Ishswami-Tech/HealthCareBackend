@@ -915,6 +915,8 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       # .env.production: Multi-line secrets are supported; load_env on server merges continuation lines.
+      # DATABASE_URL for Docker deploy: use DB service hostname (e.g. postgres), NOT localhost/127.0.0.1.
+      # Example: postgresql://postgres:PASSWORD@postgres:5432/userdb?schema=public
       - name: Create .env.production file
         run: |
           cat > /tmp/.env.production << EOF

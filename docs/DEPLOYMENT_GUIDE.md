@@ -298,6 +298,12 @@ cat ~/.ssh/github_actions_deploy
 
 **Database Configuration:**
 
+> **Docker deploy:** `DATABASE_URL` and `DIRECT_URL` must use the database
+> **service hostname** (`postgres`), not `localhost` or `127.0.0.1`. Inside the
+> API container, localhost is the container itself, so the app cannot reach
+> PostgreSQL. Use e.g.
+> `postgresql://postgres:PASSWORD@postgres:5432/userdb?schema=public`.
+
 | Secret Name                                 | Value                                                               |
 | ------------------------------------------- | ------------------------------------------------------------------- |
 | `DATABASE_URL`                              | `postgresql://postgres:postgres@postgres:5432/userdb?schema=public` |

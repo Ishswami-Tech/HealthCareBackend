@@ -162,3 +162,45 @@ export function isProduction(): boolean {
 export function isDevelopment(): boolean {
   return process.env['NODE_ENV'] === 'development';
 }
+
+/** Hosts that are invalid for DB in Docker/production (container cannot reach host DB) */
+const INVALID_DATABASE_HOSTS = ['localhost', '127.0.0.1', '::1'];
+
+/**
+ * Parses the host from a PostgreSQL connection URL.
+ * @param url - postgresql:// or postgres:// URL
+ * @returns Host or null if unparseable
+ */
+export function getDatabaseUrlHost(url: string): string | null {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url.replace(/^postgres:\/\//, 'postgresql://'));
+    return parsed.hostname || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validates DATABASE_URL for Docker or production: host must not be localhost/127.0.0.1.
+ * In containers, DB runs in another service (e.g. hostname "postgres"); localhost points to the container itself.
+ * @param url - DATABASE_URL value
+ * @throws Error if in Docker or production and host is localhost/127.0.0.1
+ */
+export function validateDatabaseUrlForDockerOrProduction(url: string): void {
+  const inDocker = isDockerEnvironment();
+  const inProd = isProduction();
+  if (!inDocker && !inProd) return;
+
+  const host = getDatabaseUrlHost(url);
+  if (!host) return;
+
+  const lower = host.toLowerCase();
+  if (INVALID_DATABASE_HOSTS.some(h => lower === h)) {
+    throw new Error(
+      `DATABASE_URL must not use localhost/127.0.0.1 when running in Docker or production. ` +
+        `Inside the API container, use the database service hostname (e.g. postgres). ` +
+        `Update GitHub secret DATABASE_URL to e.g. postgresql://user:password@postgres:5432/userdb?schema=public`
+    );
+  }
+}

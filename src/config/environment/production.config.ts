@@ -6,6 +6,7 @@ import {
   getEnvWithDefault,
   getEnvBoolean,
   getEnv,
+  validateDatabaseUrlForDockerOrProduction,
 } from './utils';
 import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './validation';
 import createJitsiConfig from '../jitsi.config';
@@ -94,15 +95,19 @@ export default function createProductionConfig(): ProductionConfig {
     database: {
       // Use helper functions (which use dotenv) for environment variable access
       // SECURITY: No hardcoded database URLs with passwords in production
-      url:
-        getEnv(ENV_VARS.DATABASE_URL) ||
-        getEnv('DATABASE_URL_PROD') ||
-        (() => {
-          throw new Error(
-            `Missing required environment variable: ${ENV_VARS.DATABASE_URL}. ` +
-              `Please set DATABASE_URL in .env.production`
-          );
-        })(),
+      url: (() => {
+        const dbUrl =
+          getEnv(ENV_VARS.DATABASE_URL) ||
+          getEnv('DATABASE_URL_PROD') ||
+          (() => {
+            throw new Error(
+              `Missing required environment variable: ${ENV_VARS.DATABASE_URL}. ` +
+                `Please set DATABASE_URL in .env.production`
+            );
+          })();
+        validateDatabaseUrlForDockerOrProduction(dbUrl);
+        return dbUrl;
+      })(),
       sqlInjectionPrevention: {
         enabled: getEnvBoolean('DB_SQL_INJECTION_PREVENTION', true),
       },
