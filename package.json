@@ -106,7 +106,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.3",
     "dotenv": "^17.2.3",
-    "fastify": "^5.6.2",
+    "fastify": "^5.7.2",
     "firebase-admin": "^13.6.0",
     "google-auth-library": "^10.5.0",
     "ioredis": "^5.5.0",
@@ -177,6 +177,8 @@
     "hono": ">=4.11.7",
     "fast-xml-parser": ">=5.3.4",
     "lodash": ">=4.17.23",
-    "lodash-es": ">=4.17.23"
+    "lodash-es": ">=4.17.23",
+    "fastify": ">=5.7.2",
+    "@isaacs/brace-expansion": ">=5.0.1"
   }
 }
