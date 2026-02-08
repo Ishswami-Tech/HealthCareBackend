@@ -3,7 +3,7 @@ import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
 import { EventService } from '@infrastructure/events';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import {
   LogType,
   LogLevel,
