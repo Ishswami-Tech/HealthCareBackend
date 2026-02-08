@@ -1387,19 +1387,7 @@ jobs:
             else
               export INFRA_ALREADY_HANDLED="false"
             fi
-            
-            # CRITICAL FIX: Move .env.production to deployment directory
-            # docker-compose.prod.yml expects .env.production at /opt/healthcare-backend/.env.production
-            # but CI copies it to /tmp/.env.production (line 1188)
-            echo "📋 Moving .env.production to deployment directory..."
-            if [[ -f /tmp/.env.production ]]; then
-              mv /tmp/.env.production /opt/healthcare-backend/.env.production
-              chmod 600 /opt/healthcare-backend/.env.production
-              echo "✅ .env.production moved to /opt/healthcare-backend/"
-            else
-              echo "❌ ERROR: /tmp/.env.production not found!"
-              exit 1
-            fi
+          
             
             # Run smart deployment orchestrator
             # Note: deploy.sh will skip infrastructure operations if INFRA_ALREADY_HANDLED=true
