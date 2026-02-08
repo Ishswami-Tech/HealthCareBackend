@@ -198,7 +198,7 @@ services:
       "
 
   postgres:
-    image: postgres:16
+    image: postgres:18
     platform: linux/amd64
     container_name: healthcare-postgres
     # NOTE: Port 5432 exposed for local development convenience

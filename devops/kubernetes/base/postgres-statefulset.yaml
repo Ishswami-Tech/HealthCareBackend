@@ -29,7 +29,7 @@ spec:
                 values: [stateful]
       containers:
       - name: postgres
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
         - name: WALG_S3_PREFIX
           valueFrom:

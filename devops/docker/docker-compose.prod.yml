@@ -1,8 +1,9 @@
+# Production stack — optimized for Ubuntu server (24.04): Bookworm-based images, pinned versions
 services:
   # Infrastructure Services (Profile: infrastructure)
   postgres:
     profiles: ["infrastructure"]
-    image: postgres:16
+    image: postgres:18
     container_name: postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure

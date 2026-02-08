@@ -25,7 +25,7 @@ spec:
       initContainers:
       # Wait for PostgreSQL to be ready
       - name: wait-for-postgres
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         command:
         - sh
         - -c
@@ -186,7 +186,7 @@ spec:
           restartPolicy: Never
           containers:
           - name: optimize
-            image: postgres:16-alpine
+            image: postgres:18-alpine
             command:
             - sh
             - -c
