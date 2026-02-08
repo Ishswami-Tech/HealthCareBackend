@@ -313,14 +313,15 @@ jobs:
             chmod +x /tmp/health-check.sh /tmp/utils.sh
             export SCRIPT_DIR="/tmp"
             export AUTO_RECREATE_MISSING="true"
-            source /tmp/utils.sh
-            
-            # Ensure files are fully written before execution (fix "Text file busy" error)
+            # Do not source utils.sh here: it sets "set -e", so when health-check.sh exits 2
+            # (EXIT_CRITICAL) the shell would exit before writing EXIT_CODE. health-check.sh
+            # sources /tmp/utils.sh itself when it runs.
             sync
             sleep 1
-            
             /tmp/health-check.sh > /tmp/health-status.json 2>&1
-            echo "EXIT_CODE=$?" > /tmp/health-exit.txt
+            HC_EXIT=$?
+            echo "EXIT_CODE=${HC_EXIT}" > /tmp/health-exit.txt
+            exit 0
           ENDSSH
 
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-status.json /tmp/health-status.json || true
