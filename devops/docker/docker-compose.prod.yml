@@ -258,13 +258,13 @@ services:
     ports:
       - "${PORT:-8088}:${PORT:-8088}"
     env_file:
-      - ../../.env.production
+      - /opt/healthcare-backend/.env.production
     volumes:
       - ./logs:/app/logs
       - /etc/letsencrypt:/etc/letsencrypt:ro
       # Mount .env.production into container so prisma.config.js can read DATABASE_URL
       # prisma.config.js loads env files from process.cwd() which is /app
-      - ../../.env.production:/app/.env.production:ro
+      - /opt/healthcare-backend/.env.production:/app/.env.production:ro
     environment:
       NODE_ENV: production
       DEV_MODE: "false"
@@ -415,7 +415,7 @@ services:
     container_name: latest-worker
     hostname: worker
     env_file:
-      - ../../.env.production
+      - /opt/healthcare-backend/.env.production
     environment:
       NODE_ENV: production
       APP_MODE: worker
@@ -461,7 +461,7 @@ services:
     volumes:
       - ./logs:/app/logs
       # Mount .env.production into container so prisma.config.js can read DATABASE_URL
-      - ../../.env.production:/app/.env.production:ro
+      - /opt/healthcare-backend/.env.production:/app/.env.production:ro
     networks:
       app-network:
         ipv4_address: 172.18.0.6
