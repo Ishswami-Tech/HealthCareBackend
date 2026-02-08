@@ -1,14 +1,15 @@
+# Local-Prod: same stack as production. Only difference: local machine (volumes: ./data/*, env: .env.local-prod) vs server (volumes: /opt/healthcare-backend/data/*, env: .env.production).
 services:
   # Infrastructure Services (Profile: infrastructure)
   postgres:
     profiles: ["infrastructure"]
-    image: postgres:16
-    container_name: local-prod-postgres
+    image: postgres:18
+    container_name: postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure
     # PostgreSQL is only accessible from Docker network (172.18.0.0/16)
     # This prevents external brute force attacks
-    # For local development access, use: docker exec -it local-prod-postgres psql -U postgres
+    # For local access: docker exec -it postgres psql -U postgres
     # ports:
     #   - "5432:5432"
     volumes:
@@ -17,9 +18,9 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: userdb
-      # Local-Prod: Reduced for local testing (production: 120)
-      POSTGRES_MAX_CONNECTIONS: 100
-      POSTGRES_SHARED_BUFFERS: 1GB
+      # Optimized for 8 vCPU/24GB RAM: API (60) + Worker (30) + overhead = 120
+      POSTGRES_MAX_CONNECTIONS: 120
+      POSTGRES_SHARED_BUFFERS: 2GB
       PGDATA: /var/lib/postgresql/data/pgdata
     networks:
       app-network:
@@ -32,34 +33,35 @@ services:
       start_period: 60s
     deploy:
       resources:
-        # Local-Prod: Reduced limits for local testing
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "2.0"      # Production: 3.0
-          memory: 4G       # Production: 10GB
+          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for PostgreSQL)
+          memory: 10G      # Target: 24GB server (10GB for PostgreSQL)
         reservations:
-          cpus: "1.0"      # Production: 1.5
-          memory: 2G       # Production: 3GB
+          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 3G       # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
-    shm_size: 256mb
+    shm_size: 256mb  # Shared memory for PostgreSQL
     stop_grace_period: 1m
     command: >
       postgres 
-      -c max_connections=100 
-      -c shared_buffers=1GB 
-      -c effective_cache_size=4GB 
-      -c maintenance_work_mem=128MB 
+      -c max_connections=120 
+      -c shared_buffers=2GB 
+      -c effective_cache_size=12GB 
+      -c maintenance_work_mem=256MB 
       -c checkpoint_completion_target=0.9 
-      -c wal_buffers=16MB 
+      -c wal_buffers=32MB 
       -c default_statistics_target=100 
       -c random_page_cost=1.1 
       -c effective_io_concurrency=200 
-      -c work_mem=8MB 
-      -c min_wal_size=1GB 
-      -c max_wal_size=4GB 
-      -c max_worker_processes=4 
-      -c max_parallel_workers_per_gather=2 
-      -c max_parallel_workers=4 
-      -c max_parallel_maintenance_workers=2 
+      -c work_mem=16MB 
+      -c min_wal_size=2GB 
+      -c max_wal_size=8GB 
+      -c max_worker_processes=8 
+      -c max_parallel_workers_per_gather=4 
+      -c max_parallel_workers=8 
+      -c max_parallel_maintenance_workers=4 
       -c idle_in_transaction_session_timeout=60000 
       -c statement_timeout=60000 
       -c lock_timeout=60000 
@@ -74,20 +76,19 @@ services:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
       - "app.type=postgres"
-      - "app.environment=local-prod"
       - "app.healthcheck=enabled"
       - "app.persist=true"
 
   dragonfly:
     profiles: ["infrastructure"]
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
-    container_name: local-prod-dragonfly
+    container_name: dragonfly
     hostname: dragonfly
     command: >
       --alsologtostderr
       --cache_mode=false
-      --maxmemory=2gb
-      --proactor_threads=4
+      --maxmemory=4gb
+      --proactor_threads=6
       --logtostderr
       --default_lua_flags=allow-undeclared-keys
     ports:
@@ -105,16 +106,17 @@ services:
       start_period: 30s
     deploy:
       resources:
-        # Local-Prod: Reduced limits for local testing
+        # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
+        # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "1.0"      # Production: 1.5
-          memory: 2G       # Production: 4GB
+          cpus: "1.5"      # Target: 8 vCPU server (1.5 CPU for Dragonfly)
+          memory: 4G       # Target: 24GB server (4GB for Dragonfly cache)
         reservations:
-          cpus: "0.5"      # Production: 0.5
-          memory: 512M     # Production: 1GB
+          cpus: "0.5"      # Minimum guaranteed (works on 6 vCPU server)
+          memory: 1G       # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
     sysctls:
-      net.core.somaxconn: 1024  # Production: 2048
+      net.core.somaxconn: 2048  # Increased from 1024 for more connections
     ulimits:
       nproc: 65535
       nofile:
@@ -124,13 +126,12 @@ services:
       - "com.docker.compose.service=dragonfly"
       - "app.component=cache"
       - "app.type=dragonfly"
-      - "app.environment=local-prod"
       - "app.healthcheck=enabled"
 
   openvidu-server:
     profiles: ["infrastructure"]
     image: openvidu/openvidu-server-kms:latest
-    container_name: local-prod-openvidu-server
+    container_name: openvidu-server
     hostname: openvidu-server
     ports:
       - "4443:4443"
@@ -139,8 +140,8 @@ services:
     environment:
       - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
       - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-http://localhost:4443}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-localhost}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
+      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - OPENVIDU_EDITION=ce
       - OPENVIDU_CDR=false
       - SERVER_PORT=4443
@@ -160,9 +161,9 @@ services:
       - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
       - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
       - OPENVIDU_RECORDING=false
-      - COTURN_IP=coturn
+      - COTURN_IP=172.18.0.8
       - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-localhost}
+      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - TZ=UTC
     volumes:
       - openvidu_recordings:/opt/openvidu/recordings
@@ -177,54 +178,77 @@ services:
           - openvidu-server
     restart: unless-stopped
     healthcheck:
+      # Check if OpenVidu supervisor is running (simpler and more reliable than curl/wget)
+      # OpenVidu container doesn't have curl/wget, so we check supervisor status instead
+      # Supervisor manages both OpenVidu server and KMS, so if it's running, services are up
+      # OpenVidu can take 60-120 seconds to fully start, so we give it more time
       test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 15s
+      interval: 30s
       timeout: 10s
-      retries: 10
+      retries: 5
       start_period: 120s
     deploy:
       resources:
-        # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "1.5"      # Production: 2.0
-          memory: 2G       # Production: 4GB
+          cpus: "2.0"
+          memory: 4G
         reservations:
-          cpus: "0.5"      # Production: 1.0
-          memory: 1G       # Production: 2GB
-    labels:
-      - "app.environment=local-prod"
+          cpus: "1.0"
+          memory: 2G
 
   coturn:
     profiles: ["infrastructure"]
     image: coturn/coturn:latest
-    container_name: local-prod-coturn
+    container_name: coturn
     hostname: coturn
     ports:
       - "3478:3478/udp"
       - "3478:3478/tcp"
+      - "5349:5349/udp"
+      - "5349:5349/tcp"
       - "49160-49200:49160-49200/udp"
       - "49160-49200:49160-49200/tcp"
     environment:
       - TZ=UTC
-      # Domain configuration: Use same domain as API (set in .env files)
-      - COTURN_DOMAIN=${COTURN_DOMAIN:-turn.ishswami.in}
+      # Security: Use environment variable for password (set in .env.local-prod)
       - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
+      # Domain configuration: Use same domain as Video service (set in .env.local-prod)
+      - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+      # TLS is optional - set to "true" only if Let's Encrypt certificates exist
+      - COTURN_TLS_ENABLED=${COTURN_TLS_ENABLED:-false}
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    # Use shell entrypoint to conditionally enable TLS based on certificate availability
+    entrypoint: ["/bin/sh", "-c"]
     command:
-      - -n
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --lt-cred-mech
-      - --user=openvidu:${COTURN_PASSWORD}
-      # Use dedicated subdomain for TURN server
-      - --realm=${COTURN_DOMAIN:-turn.ishswami.in}
-      - --server-name=${COTURN_DOMAIN:-turn.ishswami.in}
-      - --no-cli
-      # TLS Configuration - Not needed for local-prod environment
-      # Local development uses STUN/TURN over UDP/TCP (port 3478) only
+      - |
+        # Check if TLS certificates exist and TLS is enabled
+        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
+        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
+        
+        # Base TURN server arguments (always used)
+        TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
+        TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
+        TURN_ARGS="$${TURN_ARGS} --fingerprint --lt-cred-mech"
+        TURN_ARGS="$${TURN_ARGS} --user=openvidu:$${COTURN_PASSWORD:-openvidu}"
+        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
+        TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
+        
+        # Conditionally add TLS configuration if certificates exist
+        if [ "$${COTURN_TLS_ENABLED}" = "true" ] && [ -f "$${CERT_PATH}" ] && [ -f "$${KEY_PATH}" ]; then
+          echo "[COTURN] TLS enabled - certificates found at $${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --tls-listening-port=5349"
+          TURN_ARGS="$${TURN_ARGS} --cert=$${CERT_PATH}"
+          TURN_ARGS="$${TURN_ARGS} --pkey=$${KEY_PATH}"
+        else
+          echo "[COTURN] TLS disabled - certificates not found or TLS not enabled"
+          echo "[COTURN] Running in non-TLS mode (STUN/TURN on port 3478 only)"
+        fi
+        
+        echo "[COTURN] Starting turnserver with args: $${TURN_ARGS}"
+        exec turnserver $${TURN_ARGS}
     networks:
       app-network:
         ipv4_address: 172.18.0.8
@@ -232,55 +256,55 @@ services:
           - coturn
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
+      # Health check using STUN client test on port 3478 (always available)
+      test: ["CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s
-    labels:
-      - "app.environment=local-prod"
+      start_period: 30s
+    # Security: Resource limits to prevent resource exhaustion attacks
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
   # Application Services (Profile: app)
   api:
     profiles: ["app"]
-    # Local-Prod: Build locally instead of using pre-built image
-    # Prisma Client is generated during Docker build (see Dockerfile line 34)
-    # NOT generated in CI or at container startup - only during build
-    build:
-      context: ../..
-      dockerfile: devops/docker/Dockerfile
-      target: production
-      pull: false
-    container_name: local-prod-api
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
+    # build:
+    #   context: ../..
+    #   dockerfile: devops/docker/Dockerfile
+    #   target: production
+    #   pull: false
+    container_name: latest-api
     hostname: api
     ports:
       - "${PORT:-8088}:${PORT:-8088}"
     env_file:
       - ../../.env.local-prod
-      - ../../.env.local  # Optional, highest priority
     volumes:
       - ./logs:/app/logs
-      # Local-Prod: Mount source for easier debugging (optional, comment out for production-like behavior)
-      # - ../../src:/app/src:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     environment:
-      NODE_ENV: local-prod
+      NODE_ENV: production
       DEV_MODE: "false"
       DOCKER_ENV: "true"
-      # Local-Prod: Use HTTP for local testing
       ENABLE_HTTP2: "false"
-      # Local-Prod: Local URLs
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:8088,http://localhost:8082,https://localhost:4443}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
-      # Local-Prod: Reduced connection pool for local testing
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=40&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=20&max_connections=40
-      # Cache Provider Configuration
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      FRONTEND_URL: ${FRONTEND_URL}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      DATABASE_URL: ${DATABASE_URL}
       CACHE_PROVIDER: dragonfly
       DRAGONFLY_ENABLED: "true"
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
-      DRAGONFLY_KEY_PREFIX: "healthcare:local-prod:"
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: ${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}
       HOST: ${HOST:-0.0.0.0}
@@ -289,46 +313,40 @@ services:
       SOCKET_HOST: ${SOCKET_HOST:-0.0.0.0}
       SOCKET_PORT: ${SOCKET_PORT:-8088}
       NPM_CONFIG_LOGLEVEL: error
-      # Local-Prod: Local URLs
-      API_URL: ${API_URL:-http://localhost:8088}
+      API_URL: ${API_URL}
       SWAGGER_URL: ${SWAGGER_URL:-/docs}
       BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
       SOCKET_URL: ${SOCKET_URL:-/socket.io}
       LOGGER_URL: ${LOGGER_URL:-/logger}
-      BASE_URL: ${BASE_URL:-http://localhost:8088}
+      BASE_URL: ${BASE_URL}
       API_PREFIX: ${API_PREFIX:-/api/v1}
-      MAIN_DOMAIN: ${MAIN_DOMAIN:-localhost}
-      API_DOMAIN: ${API_DOMAIN:-localhost}
-      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-localhost}
-      JWT_SECRET: ${JWT_SECRET:-local-prod-jwt-secret-change-in-production-min-32-chars}
+      MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
+      API_DOMAIN: ${API_DOMAIN:-backend-service-v1.ishswami.in}
+      FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
       JWT_EXPIRATION: 24h
-      # Session Configuration
-      SESSION_SECRET: ${SESSION_SECRET:-local-prod-session-secret-change-in-production-min-32-chars-long}
+      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production-min-32-chars-long}
       SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
-      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-false}
-      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-lax}
-      COOKIE_SECRET: ${COOKIE_SECRET:-local-prod-cookie-secret-change-in-production-min-32-chars}
+      SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-true}
+      SESSION_SAME_SITE: ${SESSION_SAME_SITE:-strict}
+      COOKIE_SECRET: ${COOKIE_SECRET:-your-cookie-secret-change-in-production-min-32-chars}
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       SECURITY_RATE_LIMIT: "true"
-      # Local-Prod: Reduced rate limits for local testing
-      SECURITY_RATE_LIMIT_MAX: 2000
+      SECURITY_RATE_LIMIT_MAX: 4000
       SECURITY_RATE_LIMIT_WINDOW_MS: 1000
       CACHE_TTL: 3600
-      CACHE_PREFIX: "healthcare:local-prod:"
+      CACHE_PREFIX: "healthcare:"
       RATE_LIMIT_TTL: 60
-      RATE_LIMIT_MAX: 300
-      API_RATE_LIMIT: 500
+      RATE_LIMIT_MAX: 600
+      API_RATE_LIMIT: 1000
       AUTH_RATE_LIMIT: 30
       HEAVY_RATE_LIMIT: 50
-      USER_RATE_LIMIT: 250
-      HEALTH_RATE_LIMIT: 1000
-      # Video Configuration
+      USER_RATE_LIMIT: 500
+      HEALTH_RATE_LIMIT: 2000
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      # OPENVIDU_URL must be set in .env.local-prod or environment variables
-      # Do NOT hardcode - use environment variable to allow proper configuration
       OPENVIDU_URL: ${OPENVIDU_URL}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
     expose:
@@ -337,7 +355,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.5
         aliases:
-          - api.localhost
+          - backend-service-v1.ishswami.in
     dns: []
     extra_hosts:
       - "api:172.18.0.5"
@@ -351,7 +369,8 @@ services:
       dragonfly:
         condition: service_healthy
       coturn:
-        condition: service_healthy
+        condition: service_started
+        required: false
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
@@ -361,64 +380,46 @@ services:
       start_period: 120s
     deploy:
       resources:
-        # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "2.0"      # Production: 3.0
-          memory: 4G       # Production: 6GB
+          cpus: "3.0"
+          memory: 8G
         reservations:
-          cpus: "1.0"      # Production: 1.5
-          memory: 1G       # Production: 2GB
-    # Migrations run automatically via CMD in Dockerfile before starting the app
+          cpus: "1.5"
+          memory: 2G
     labels:
       - "com.docker.compose.service=api"
       - "app.component=backend"
       - "app.type=api"
-      - "app.environment=local-prod"
 
   worker:
     profiles: ["app"]
-    # Local-Prod: Build locally instead of using pre-built image
-    # Prisma Client is generated during Docker build (see Dockerfile line 34)
-    # NOT generated in CI or at container startup - only during build
-    build:
-      context: ../..
-      dockerfile: devops/docker/Dockerfile
-      target: production
-      pull: false
-    container_name: local-prod-worker
+    image: ${DOCKER_IMAGE:-ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest}
+    container_name: latest-worker
     hostname: worker
     env_file:
       - ../../.env.local-prod
-      - ../../.env.local  # Optional, highest priority
     environment:
-      NODE_ENV: local-prod
+      NODE_ENV: production
       APP_MODE: worker
       SERVICE_NAME: worker
       DEV_MODE: "false"
       DOCKER_ENV: "true"
-      # Local-Prod: Reduced connection pool for local testing
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/userdb?connection_limit=20&pool_timeout=60&statement_timeout=60000&idle_in_transaction_session_timeout=60000&connect_timeout=60&pool_size=10&max_connections=20
+      DATABASE_URL: ${DATABASE_URL}
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
-      # Cache Provider Configuration
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: "true"
       DRAGONFLY_ENABLED: "true"
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
-      DRAGONFLY_KEY_PREFIX: "healthcare:local-prod:"
-      # JWT Configuration
-      JWT_SECRET: ${JWT_SECRET:-local-prod-jwt-secret-change-in-production-min-32-chars}
-      # BullMQ Worker Configuration - Local-Prod: Reduced concurrency
-      BULL_WORKER_CONCURRENCY: "5"
-      BULL_MAX_JOBS_PER_WORKER: "50"
-      # Logging Configuration
+      DRAGONFLY_KEY_PREFIX: "healthcare:"
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
+      BULL_WORKER_CONCURRENCY: "10"
+      BULL_MAX_JOBS_PER_WORKER: "100"
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
-      # Email Configuration (Optional)
       AWS_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      # Firebase Configuration (Optional)
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
       FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL:-}
@@ -428,7 +429,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.6
         aliases:
-          - worker.localhost
+          - worker.ishswami.in
     dns: []
     extra_hosts:
       - "worker:172.18.0.6"
@@ -452,21 +453,17 @@ services:
       start_period: 30s
     deploy:
       resources:
-        # Local-Prod: Reduced limits for local testing
         limits:
-          cpus: "0.5"      # Production: 1.0
-          memory: 1G       # Production: 2GB
+          cpus: "1.0"
+          memory: 2G
         reservations:
-          cpus: "0.25"     # Production: 0.5
-          memory: 256M     # Production: 512MB
-    # Worker doesn't need migrations - only API container runs them
-    # Prisma Client is generated during Docker build, entrypoint verifies it exists
+          cpus: "0.5"
+          memory: 512M
     command: ["node", "dist/worker-bootstrap.js"]
     labels:
       - "com.docker.compose.service=worker"
       - "app.component=worker"
       - "app.type=worker"
-      - "app.environment=local-prod"
 
   # Portainer - Docker Management UI (like Vercel Dashboard)
   # Provides comprehensive Docker management: containers, images, networks, volumes, logs, stats
@@ -475,7 +472,7 @@ services:
   portainer:
     profiles: ["infrastructure"]
     image: portainer/portainer-ce:latest
-    container_name: local-prod-portainer
+    container_name: portainer
     ports:
       - "9000:9000"
       - "9443:9443"  # HTTPS port (optional)
@@ -504,8 +501,8 @@ services:
           cpus: "0.1"
           memory: 128M
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9000/api/system/status || exit 1"]
-      interval: 30s  # Reduced frequency to save resources
+      test: ["CMD", "wget", "-q", "--spider", "--timeout=3", "http://localhost:9000/api/status"]
+      interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
@@ -527,8 +524,6 @@ volumes:
     name: local-prod_openvidu_recordings
   portainer_data:
     name: local-prod_portainer_data
-    # Portainer data is minimal: only stores user preferences and settings
-    # Expected size: < 50MB (snapshots disabled, minimal logging)
 
 networks:
   app-network:
