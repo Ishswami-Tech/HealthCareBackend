@@ -3,7 +3,7 @@ services:
   # Infrastructure Services (Profile: infrastructure)
   postgres:
     profiles: ["infrastructure"]
-    image: postgres:18
+    image: postgres:18  # PostgreSQL 18 — do not downgrade to 16
     container_name: postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure

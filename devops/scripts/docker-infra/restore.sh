@@ -464,6 +464,10 @@ disaster_recovery() {
         exit 1
     }
     
+    # Pull infrastructure images (postgres:18 etc.) from docker-compose.prod.yml before starting
+    log_info "Pulling infrastructure images from docker-compose.prod.yml..."
+    docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+    
     if ! docker compose -f docker-compose.prod.yml --profile infrastructure up -d; then
         log_error "Failed to start infrastructure containers"
         exit 1

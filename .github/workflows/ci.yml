@@ -1,8 +1,22 @@
 # Continuous Integration Workflow - Docker Only
-# Flow: detect-changes → security → (docker-build || ensure-infrastructure-health) → check-infrastructure
-#       → if healthy: DEPLOY only (no backup/recreate/restore/verify).
-#       → if unhealthy: backup → recreate → restore → verify → DEPLOY (recovery flow only).
-# Recreate runs ONLY in recovery flow (when check-infrastructure fails). Never in healthy path or in Deploy job.
+#
+# FULL FLOW (push to main only):
+#   1. detect-changes (push) → security → docker-build + ensure-infrastructure-health (parallel)
+#   2. check-infrastructure (needs docker-build, ensure-infrastructure-health)
+#
+#   IF HEALTHY (infra-healthy=true):
+#      → check-infrastructure SUCCEEDS → deploy runs (backup/recreate/restore/verify SKIPPED)
+#
+#   IF UNHEALTHY (infra-healthy=false):
+#      → check-infrastructure FAILS
+#      → backup-infrastructure (backup first)
+#      → recreate-infrastructure (recreate ONLY unhealthy services; healthy left running)
+#      → restore-backup (if backup-id set; skipped if backup failed)
+#      → verify-infrastructure-readiness
+#      → deploy (if verify succeeds)
+#
+# Goal: Deploy app successfully with no infra issues and no API issues. Infra is fixed (recreate only unhealthy)
+# before deploy; after deploy we verify infra + API health and fail the pipeline if any issue remains.
 # Implementation summary: docs/CI_CD_WORKFLOW_SUMMARY.md
 name: CI/CD
 
@@ -369,14 +383,25 @@ jobs:
             cat /tmp/health-status.json
           fi
 
+      - name: Fail job if infrastructure is unhealthy
+        if: steps.health-check.outputs.infra-healthy != 'true'
+        run: |
+          echo "One or more infrastructure services are unhealthy - failing job."
+          exit 1
+
   # Infrastructure Health Check
   # Passes through infra-healthy (true/false). FAILS the job when unhealthy so UI shows red and recovery runs.
   # When infra-healthy=true  → Job succeeds (green) → Backup/Recreate/Restore/Verify SKIPPED → Deploy runs.
   # When infra-healthy=false → Job FAILS (red) → Backup → Recreate → Restore → Verify → Deploy run.
+  # Run even when ensure-infrastructure-health failed (so we have outputs and can run recovery).
   check-infrastructure:
     name: Check Infrastructure Health
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      always() &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      (needs.ensure-infrastructure-health.result == 'success' || needs.ensure-infrastructure-health.result == 'failure')
     environment: production
     needs: [docker-build, ensure-infrastructure-health]
     timeout-minutes: 10
@@ -395,20 +420,20 @@ jobs:
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" == "true" ]]; then
             echo "RESULT: HEALTHY → Job will succeed; Backup/Recreate/Restore/Verify SKIPPED; Deploy will run."
           else
-            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup → Recreate → Restore → Verify → then Deploy will run."
+            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup → Recreate only unhealthy → Restore → Verify → Deploy will run."
           fi
           echo "=============================================="
 
       - name: Fail job when infra is unhealthy
         run: |
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" != "true" ]]; then
-            echo "Infrastructure is unhealthy - failing this job so recovery pipeline (backup → recreate → restore → verify) runs."
+            echo "Infrastructure unhealthy - failing so recovery runs: backup → recreate only unhealthy → restore → verify → deploy."
             exit 1
           fi
 
   # Backup Infrastructure (RECOVERY FLOW ONLY)
-  # Runs ONLY when check-infrastructure FAILED (unhealthy). Never runs when infra is healthy.
-  # If backup step fails (e.g. postgres restarting), job still completes so recreate runs.
+  # Runs first when infra is unhealthy. Backup is used to restore after we recreate only unhealthy services.
+  # If backup step fails (e.g. postgres restarting), job still completes so recreate can run; restore will be skipped.
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
@@ -420,6 +445,8 @@ jobs:
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
+    outputs:
+      backup-id: ${{ steps.backup.outputs.backup-id }}
     steps:
       - name: Confirm running because infra is unhealthy
         run: |
@@ -582,15 +609,15 @@ jobs:
             echo "BACKUP_ID=${BACKUP_ID}" > /tmp/backup-id.txt
           ENDSSH
 
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
-          BACKUP_ID=$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
-          echo "backup-id=${BACKUP_ID}" >> $GITHUB_OUTPUT
-          echo "Backup ID: ${BACKUP_ID}"
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt || true
+          BACKUP_ID=$(grep BACKUP_ID /tmp/backup-id.txt 2>/dev/null | cut -d= -f2 || true)
+          echo "backup-id=${BACKUP_ID:-}" >> $GITHUB_OUTPUT
+          echo "Backup ID: ${BACKUP_ID:-}(empty if backup step failed)"
 
   # Recreate Infrastructure (RECOVERY FLOW ONLY)
-  # Required services (docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, openvidu-server, coturn, portainer.
-  # Runs ONLY when check-infrastructure FAILED (unhealthy) and backup-infrastructure completed.
-  # Recreates ONLY unhealthy services when list is set; otherwise recreates all (fallback) so every required service exists.
+  # Recreate ONLY unhealthy services/containers; healthy services are never recreated (left running).
+  # Flow: backup already ran → clean + recreate only unhealthy → then restore job runs.
+  # Volumes kept. Fallback: when unhealthy list is empty we recreate all so deploy can succeed.
   recreate-infrastructure:
     name: Recreate Infrastructure
     runs-on: ubuntu-latest
@@ -604,18 +631,20 @@ jobs:
     needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
     steps:
-      - name: Recreate mode (backup optional, only unhealthy services)
+      - name: Recreate mode (only unhealthy; healthy services untouched)
         run: |
           UNHEALTHY="${{ needs.check-infrastructure.outputs.unhealthy-services }}"
+          echo "Goal: Deploy app with all services healthy. We recreate ONLY unhealthy containers; healthy ones stay running."
+          echo "Flow: Backup (done) → Recreate only unhealthy → Restore backup → Verify → Deploy."
           if [[ -z "${{ needs.backup-infrastructure.outputs.backup-id }}" ]]; then
-            echo "No backup available - recreating infrastructure only; restore will be skipped."
+            echo "No backup-id - restore will be skipped after recreate."
           else
-            echo "Backup available (backup-id: ${{ needs.backup-infrastructure.outputs.backup-id }}) - recreate then restore will run."
+            echo "Backup available (backup-id: ${{ needs.backup-infrastructure.outputs.backup-id }}) - after recreate we will restore."
           fi
           if [[ -n "$UNHEALTHY" ]]; then
-            echo "Recreating ONLY unhealthy services: $UNHEALTHY"
+            echo "Recreating ONLY these unhealthy services (healthy services will NOT be recreated): $UNHEALTHY"
           else
-            echo "No unhealthy-services list (fallback: will recreate all infrastructure)."
+            echo "Unhealthy list empty (fallback: recreate all infra so we can reach a deployable state)."
           fi
       - uses: actions/checkout@v4
 
@@ -631,24 +660,35 @@ jobs:
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Copy docker-compose to server (ensures postgres:18 from repo)
+        run: |
+          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
+
       - name: Recreate infrastructure containers (only unhealthy services)
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
             set -e
+            cp /tmp/docker-compose.prod.yml /opt/healthcare-backend/devops/docker/docker-compose.prod.yml
             cd /opt/healthcare-backend/devops/docker || exit 1
             UNHEALTHY_SERVICES="${{ needs.check-infrastructure.outputs.unhealthy-services }}"
             
-            # Recreate only unhealthy services if list provided; otherwise recreate all (fallback)
+            # Recreate ONLY unhealthy services; healthy services are never touched
             if [[ -n "\${UNHEALTHY_SERVICES}" ]]; then
-              echo "🔄 Recreating ONLY unhealthy services: \${UNHEALTHY_SERVICES}"
+              echo "🧹 Clean then recreate ONLY unhealthy (healthy services left running): \${UNHEALTHY_SERVICES}"
+              echo "📥 Pulling infrastructure images first (ensures postgres:18 etc. from docker-compose.prod.yml)..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+              if echo "\${UNHEALTHY_SERVICES}" | grep -q "postgres"; then
+                echo "🔧 Fixing PostgreSQL 16→18 config (remove invalid autovacuum_worker_slots)..."
+                PG_VOL=\$(docker volume ls -q | grep postgres_data | head -1)
+                [[ -n "\$PG_VOL" ]] && docker run --rm -v "\${PG_VOL}:/v" alpine sh -c "test -f /v/pgdata/postgresql.conf && sed -i.bak '/autovacuum_worker_slots/d' /v/pgdata/postgresql.conf; exit 0" || true
+              fi
               RECREATE_LIST=()
               for s in \$(echo "\${UNHEALTHY_SERVICES}" | tr ',' ' '); do
                 s=\$(echo "\$s" | tr -d ' ')
                 [[ -n "\$s" ]] && RECREATE_LIST+=("\$s")
               done
-              
               for svc in "\${RECREATE_LIST[@]}"; do
-                echo "⏹️  Stopping \${svc}..."
+                echo "🧹 Cleaning \${svc} (stop + remove)..."
                 docker compose -f docker-compose.prod.yml --profile infrastructure stop "\$svc" 2>/dev/null || true
                 docker compose -f docker-compose.prod.yml --profile infrastructure rm -f "\$svc" 2>/dev/null || true
                 echo "🔄 Recreating \${svc}..."
@@ -658,7 +698,7 @@ jobs:
                 }
               done
             else
-              echo "🔄 No unhealthy-services list - recreating ALL required infrastructure (fallback)"
+              echo "🧹 Clean then recreate: ALL required infrastructure (fallback)"
               echo "📋 Required services (from docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, openvidu-server, coturn, portainer"
               VOLUMES=("postgres_data" "dragonfly_data")
               VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
@@ -666,11 +706,17 @@ jobs:
                 [[ ! -d "\${VOLUME_PATHS[\$i]}" ]] && mkdir -p "\${VOLUME_PATHS[\$i]}" || true
               done
               [[ ! -d "/opt/healthcare-backend/data/openvidu_recordings" ]] && mkdir -p /opt/healthcare-backend/data/openvidu_recordings || true
+              echo "🧹 Cleaning: stopping and removing all infrastructure containers (volumes kept)..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure down --remove-orphans || true
+              sleep 3
+              echo "🔧 Fixing PostgreSQL 16→18 config (remove invalid autovacuum_worker_slots from existing volume)..."
+              PG_VOL=\$(docker volume ls -q | grep postgres_data | head -1)
+              if [[ -n "\$PG_VOL" ]]; then
+                docker run --rm -v "\${PG_VOL}:/v" alpine sh -c "test -f /v/pgdata/postgresql.conf && sed -i.bak '/autovacuum_worker_slots/d' /v/pgdata/postgresql.conf; exit 0" || true
+              fi
               echo "📥 Pulling infrastructure images (including postgres:18)..."
               docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
-              docker compose -f docker-compose.prod.yml --profile infrastructure stop || true
-              sleep 3
-              echo "🚀 Starting all infrastructure services (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
+              echo "🚀 Recreating all infrastructure services (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
                 echo "❌ Infrastructure recreation failed"
                 exit 1
@@ -706,8 +752,8 @@ jobs:
           ENDSSH
 
   # Restore Backup (RECOVERY FLOW ONLY)
-  # Runs ONLY when check-infrastructure FAILED and backup-id exists. Never runs when infra is healthy.
-  # If no backup-id: skipped; pipeline continues (verify → deploy).
+  # Runs after recreate: restores backup so data is intact. Then verify → deploy.
+  # Skipped when no backup-id (e.g. backup failed); pipeline still continues (verify → deploy).
   restore-backup:
     name: Restore Backup
     runs-on: ubuntu-latest
@@ -1409,8 +1455,8 @@ jobs:
           echo "Server: [REDACTED]"
 
   # Post-Deployment Verification & Backup
-  # Verifies deployment health and creates a success backup
-  # Runs after successful deployment to ensure everything is working and create a recovery point
+  # Goal: No infra issues, no API issues. Verifies infra + API health (verify.sh deployment); fails job if any issue.
+  # Then creates a success backup as a recovery point.
   post-deployment-verification:
     name: Post-Deployment Verification & Backup
     runs-on: ubuntu-latest
@@ -1443,20 +1489,21 @@ jobs:
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
-      - name: Verify deployment health
+      - name: Verify deployment health (infra + API; fail if any issue)
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
             source /tmp/utils.sh
             chmod +x /tmp/verify.sh
             
-            echo "🔍 Verifying deployment health after successful deployment..."
+            echo "🔍 Verifying deployment: infra + API health (goal: no infra issues, no API issues)..."
             if /tmp/verify.sh deployment; then
-              echo "✅ Deployment verification passed"
+              echo "✅ Deployment verification passed (infra and API healthy)"
               echo "VERIFICATION_STATUS=success" > /tmp/post-deploy-status.txt
             else
-              echo "⚠️  Deployment verification had issues (but deployment succeeded)"
-              echo "VERIFICATION_STATUS=warning" > /tmp/post-deploy-status.txt
+              echo "❌ Deployment verification failed (infra or API has issues)"
+              echo "VERIFICATION_STATUS=failure" > /tmp/post-deploy-status.txt
+              exit 1
             fi
           ENDSSH
 
