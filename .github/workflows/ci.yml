@@ -389,27 +389,22 @@ jobs:
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
     steps:
-      - name: Skip when infra healthy
-        if: needs.check-infrastructure.outputs.infra-healthy == 'true'
-        run: |
-          echo "Infra healthy - skipping backup (proper flow: deploy will run after check-infrastructure)"
-
       - uses: actions/checkout@v4
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
 
       - name: Configure SSH
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -417,13 +412,11 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy backup scripts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/backup.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup.sh
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Run backup
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         id: backup
         env:
           S3_ENABLED: ${{ vars.S3_ENABLED }}
@@ -574,26 +567,22 @@ jobs:
   recreate-infrastructure:
     name: Recreate Infrastructure
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
     environment: production
     needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
     steps:
-      - name: Skip when infra healthy
-        if: needs.check-infrastructure.outputs.infra-healthy == 'true'
-        run: echo "Infra healthy - skipping recreate (proper flow)"
-
       - uses: actions/checkout@v4
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
 
       - name: Configure SSH
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -601,7 +590,6 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Recreate infrastructure containers
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
