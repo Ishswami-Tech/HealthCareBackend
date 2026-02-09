@@ -251,88 +251,139 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
   private static readonly serviceStartTime = Date.now(); // Track when service started
 
-  /** Timeout (ms) for dynamic import of @prisma/client to avoid hanging in Docker. */
-  private static readonly LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS = 20000;
-
   /**
    * Load PrismaClient from the fixed app-local directory.
-   * Tries absolute paths first (dist, then src) so Docker/production avoids symlink resolution
-   * which can hang when requiring @prisma/client. Then falls back to @prisma/client (with
-   * timeouted dynamic import to avoid indefinite hang).
+   * CRITICAL FIX: Uses ONLY synchronous require() to avoid async import() hanging in Docker.
+   * The async import() was causing indefinite hangs during onModuleInit in production.
+   *
+   * Strategy:
+   * 1. Try absolute paths with require() (Docker build generates to known location)
+   * 2. Try @prisma/client with require() (symlink should work)
+   * 3. Try standard .prisma/client location
+   * 4. FAIL FAST if none work (no async import fallback)
    */
-  private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
+  private static loadPrismaClientSync(): PrismaClientConstructor {
+    console.warn('[PrismaService] Starting PrismaClient loading (synchronous only)...');
     const cwd = process.cwd();
     const requireModule = createRequire(path.join(cwd, 'package.json'));
 
-    // Method 1: Absolute paths first (Docker has dist/.../generated; avoids symlink hang)
-    const absolutePaths = [
-      path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
-      path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+    // Expanded list of paths to try (synchronous require only)
+    const pathsToTry = [
+      // Docker production paths (dist/)
+      {
+        path: path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+        label: 'dist/generated',
+      },
+      {
+        path: path.join(
+          cwd,
+          'dist',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.js'
+        ),
+        label: 'dist/generated/index.js',
+      },
+      {
+        path: path.join(
+          cwd,
+          'dist',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'client.js'
+        ),
+        label: 'dist/generated/client.js',
+      },
+
+      // Local development paths (src/)
+      {
+        path: path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+        label: 'src/generated',
+      },
+      {
+        path: path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'index.js'
+        ),
+        label: 'src/generated/index.js',
+      },
+      {
+        path: path.join(
+          cwd,
+          'src',
+          'libs',
+          'infrastructure',
+          'database',
+          'prisma',
+          'generated',
+          'client.js'
+        ),
+        label: 'src/generated/client.js',
+      },
+
+      // Standard Prisma location
+      {
+        path: path.join(cwd, 'node_modules', '.prisma', 'client'),
+        label: 'node_modules/.prisma/client',
+      },
+      {
+        path: path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js'),
+        label: 'node_modules/.prisma/client/index.js',
+      },
+
+      // @prisma/client symlink (last resort)
+      { path: '@prisma/client', label: '@prisma/client (symlink)' },
     ];
-    for (const clientPath of absolutePaths) {
+
+    console.warn(`[PrismaService] Will try ${pathsToTry.length} paths (synchronous require only)`);
+
+    for (const { path: clientPath, label } of pathsToTry) {
       try {
+        console.warn(`[PrismaService] Trying: ${label}`);
         const prismaModule = requireModule(clientPath) as {
           PrismaClient?: PrismaClientConstructor;
         };
         if (prismaModule?.PrismaClient) {
+          console.warn(`[PrismaService] ✓ SUCCESS: Loaded PrismaClient from ${label}`);
           return prismaModule.PrismaClient;
+        } else {
+          console.warn(
+            `[PrismaService] ✗ FAILED: ${label} - module loaded but no PrismaClient export`
+          );
         }
-      } catch {
-        // Fall through to next path
-      }
-      try {
-        const prismaModule = (await import(clientPath)) as {
-          PrismaClient?: PrismaClientConstructor;
-        };
-        if (prismaModule?.PrismaClient) {
-          return prismaModule.PrismaClient;
-        }
-      } catch {
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        console.warn(`[PrismaService] ✗ FAILED: ${label} - ${errorMsg}`);
         // Continue to next path
       }
     }
 
-    // Method 2: @prisma/client with timeout (symlink in Docker can block sync require)
-    const modulePath = '@prisma/client';
-    try {
-      const prismaModule = requireModule(modulePath) as {
-        PrismaClient?: PrismaClientConstructor;
-      };
-      if (prismaModule?.PrismaClient) {
-        return prismaModule.PrismaClient;
-      }
-    } catch {
-      // Fall through to dynamic import with timeout
-    }
-    try {
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new Error(
-                `loadPrismaClient: import('@prisma/client') timed out after ${PrismaService.LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS}ms`
-              )
-            ),
-          PrismaService.LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS
-        )
-      );
-      const prismaModule = (await Promise.race([import(modulePath), timeoutPromise])) as {
-        PrismaClient?: PrismaClientConstructor;
-      };
-      if (prismaModule?.PrismaClient) {
-        return prismaModule.PrismaClient;
-      }
-    } catch {
-      // Fall through to error
-    }
+    // If we get here, all paths failed
+    console.error('[PrismaService] CRITICAL: Failed to load PrismaClient from any location');
+    console.error('[PrismaService] Checked paths:', pathsToTry.map(p => p.label).join(', '));
 
-    const allPaths = [...absolutePaths, modulePath];
     throw new HealthcareError(
       ErrorCode.DATABASE_CONNECTION_FAILED,
-      'Failed to load PrismaClient: PrismaClient not found in any expected location. Please ensure "prisma generate" has been run.',
+      'Failed to load PrismaClient: PrismaClient not found in any expected location. Please ensure "prisma generate" has been run and the generated files exist.',
       undefined,
-      { checkedPaths: allPaths },
-      'PrismaService.loadPrismaClient'
+      {
+        checkedPaths: pathsToTry.map(p => p.path),
+        cwd,
+        nodeVersion: process.version,
+      },
+      'PrismaService.loadPrismaClientSync'
     );
   }
 
@@ -1248,10 +1299,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static connectionPromise: Promise<void> | null = null;
   private static isFullyInitialized = false; // Track if Prisma is fully initialized (delegates ready)
 
-  async onModuleInit() {
-    // Initialize PrismaClient asynchronously using loadPrismaClient
-    // This handles Prisma 7 custom output where PrismaClient is not in standard location
+  onModuleInit() {
+    console.warn('[PrismaService] onModuleInit started');
+    // Initialize PrismaClient synchronously using loadPrismaClientSync
+    // CRITICAL FIX: Changed from async loadPrismaClient() to sync loadPrismaClientSync()
+    // to avoid indefinite hangs during dynamic import() in Docker production environment
     if (!PrismaService.sharedPrismaClient) {
+      console.warn('[PrismaService] Shared PrismaClient not found, creating new instance...');
       const constructorArgs = (
         PrismaService as unknown as {
           _sharedConstructorArgs?: PrismaClientConstructorArgs;
@@ -1259,8 +1313,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       )._sharedConstructorArgs;
       if (constructorArgs) {
         try {
-          // Load PrismaClient constructor asynchronously
-          const PrismaClientConstructor = await PrismaService.loadPrismaClient();
+          // Load PrismaClient constructor synchronously (no async import to avoid Docker hang)
+          const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
 
           // Create PrismaClient instance
           let client = new PrismaClientConstructor(constructorArgs) as unknown as PrismaClient;
@@ -1277,6 +1331,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           }
 
           PrismaService.sharedPrismaClient = client;
+          console.warn('[PrismaService] PrismaClient instance created and stored');
 
           // Set instance's prismaClient
           this.prismaClient = PrismaService.sharedPrismaClient;
@@ -1307,6 +1362,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
             });
           };
 
+          console.warn('[PrismaService] Starting delegate assignment...');
           // Assign all delegates using Object.defineProperty
           assignDelegate<UserDelegate>('user', 'user');
           assignDelegate<DoctorDelegate>('doctor', 'doctor');
@@ -1333,6 +1389,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           assignDelegate<InvoiceDelegate>('invoice', 'invoice');
           assignDelegate<PaymentDelegate>('payment', 'payment');
           assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
+          console.warn('[PrismaService] All delegates assigned successfully');
 
           // CRITICAL: Mark delegates as initialized IMMEDIATELY after assignment
           // This allows other services to use delegates even if connection is still in progress
@@ -1374,8 +1431,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       )._healthCheckConstructorArgs;
       if (healthCheckConstructorArgs) {
         try {
-          // Load PrismaClient constructor asynchronously
-          const PrismaClientConstructor = await PrismaService.loadPrismaClient();
+          // Load PrismaClient constructor synchronously (no async import to avoid Docker hang)
+          const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
 
           // Create health check PrismaClient instance
           PrismaService.healthCheckPrismaClient = new PrismaClientConstructor(
