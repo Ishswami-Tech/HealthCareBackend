@@ -251,30 +251,20 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static readonly STARTUP_GRACE_PERIOD = 60000; // 60 seconds grace period during startup (increased)
   private static readonly serviceStartTime = Date.now(); // Track when service started
 
+  /** Timeout (ms) for dynamic import of @prisma/client to avoid hanging in Docker. */
+  private static readonly LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS = 20000;
+
   /**
    * Load PrismaClient from the fixed app-local directory.
-   * Uses both resolution methods so that at least one works in all environments:
-   * - Method 1: Module id @prisma/client (Node resolution; Docker entrypoint symlink).
-   * - Method 2: Absolute paths to dist/.../generated and src/.../generated (original order).
+   * Tries absolute paths first (dist, then src) so Docker/production avoids symlink resolution
+   * which can hang when requiring @prisma/client. Then falls back to @prisma/client (with
+   * timeouted dynamic import to avoid indefinite hang).
    */
   private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
     const requireModule = createRequire(path.join(cwd, 'package.json'));
 
-    // Method 1: @prisma/client (symlink in Docker; standard Node resolution)
-    const modulePath = '@prisma/client';
-    try {
-      const prismaModule = requireModule(modulePath) as {
-        PrismaClient?: PrismaClientConstructor;
-      };
-      if (prismaModule?.PrismaClient) {
-        return prismaModule.PrismaClient;
-      }
-    } catch {
-      // Fall through to Method 2
-    }
-
-    // Method 2: Absolute paths (original order - dist first, then src)
+    // Method 1: Absolute paths first (Docker has dist/.../generated; avoids symlink hang)
     const absolutePaths = [
       path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
       path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
@@ -302,7 +292,41 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const allPaths = [modulePath, ...absolutePaths];
+    // Method 2: @prisma/client with timeout (symlink in Docker can block sync require)
+    const modulePath = '@prisma/client';
+    try {
+      const prismaModule = requireModule(modulePath) as {
+        PrismaClient?: PrismaClientConstructor;
+      };
+      if (prismaModule?.PrismaClient) {
+        return prismaModule.PrismaClient;
+      }
+    } catch {
+      // Fall through to dynamic import with timeout
+    }
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `loadPrismaClient: import('@prisma/client') timed out after ${PrismaService.LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS}ms`
+              )
+            ),
+          PrismaService.LOAD_PRISMA_CLIENT_IMPORT_TIMEOUT_MS
+        )
+      );
+      const prismaModule = (await Promise.race([import(modulePath), timeoutPromise])) as {
+        PrismaClient?: PrismaClientConstructor;
+      };
+      if (prismaModule?.PrismaClient) {
+        return prismaModule.PrismaClient;
+      }
+    } catch {
+      // Fall through to error
+    }
+
+    const allPaths = [...absolutePaths, modulePath];
     throw new HealthcareError(
       ErrorCode.DATABASE_CONNECTION_FAILED,
       'Failed to load PrismaClient: PrismaClient not found in any expected location. Please ensure "prisma generate" has been run.',
