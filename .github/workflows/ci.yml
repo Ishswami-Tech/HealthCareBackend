@@ -545,18 +545,18 @@ jobs:
             echo "💾 Creating backup of PostgreSQL and Dragonfly data..."
             echo "⚠️  This backup is CRITICAL - data will be lost if backup fails!"
             chmod +x /tmp/backup.sh
-            BACKUP_ID=\$(/tmp/backup.sh pre-deployment) || {
+            BACKUP_ID=$(/tmp/backup.sh pre-deployment) || {
               echo "❌ Backup failed - ABORTING to prevent data loss"
               exit 1
             }
-            echo "✅ Backup created successfully (ID: \${BACKUP_ID})"
-            echo "BACKUP_ID=\${BACKUP_ID}" > /tmp/backup-id.txt
+            echo "✅ Backup created successfully (ID: ${BACKUP_ID})"
+            echo "BACKUP_ID=${BACKUP_ID}" > /tmp/backup-id.txt
           ENDSSH
 
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/backup-id.txt /tmp/backup-id.txt
-          BACKUP_ID=\$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
-          echo "backup-id=\${BACKUP_ID}" >> $GITHUB_OUTPUT
-          echo "Backup ID: \${BACKUP_ID}"
+          BACKUP_ID=$(grep BACKUP_ID /tmp/backup-id.txt | cut -d= -f2)
+          echo "backup-id=${BACKUP_ID}" >> $GITHUB_OUTPUT
+          echo "Backup ID: ${BACKUP_ID}"
 
   # Recreate Infrastructure
   # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
@@ -734,26 +734,23 @@ jobs:
   restore-backup:
     name: Restore Backup
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.check-infrastructure.outputs.infra-healthy == 'false' &&
+      needs.backup-infrastructure.outputs.backup-id != ''
     environment: production
     needs: [check-infrastructure, backup-infrastructure, recreate-infrastructure]
     timeout-minutes: 20
     steps:
-      - name: Skip when infra healthy or no backup
-        if: needs.check-infrastructure.outputs.infra-healthy == 'true' || needs.backup-infrastructure.outputs.backup-id == ''
-        run: echo "Skipping restore - infra healthy or no backup"
-
       - uses: actions/checkout@v4
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false' && needs.backup-infrastructure.outputs.backup-id != ''
 
       - name: Configure SSH
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false' && needs.backup-infrastructure.outputs.backup-id != ''
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false' && needs.backup-infrastructure.outputs.backup-id != ''
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -761,13 +758,11 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy restore scripts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false' && needs.backup-infrastructure.outputs.backup-id != ''
         run: |
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/restore.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/restore.sh
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Restore from backup
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false' && needs.backup-infrastructure.outputs.backup-id != ''
         env:
           S3_ENABLED: ${{ vars.S3_ENABLED }}
           S3_PROVIDER: ${{ vars.S3_PROVIDER }}
@@ -845,7 +840,10 @@ jobs:
   verify-infrastructure-readiness:
     name: Verify Infrastructure Readiness
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: |
+      github.event_name == 'push' && 
+      github.ref == 'refs/heads/main' &&
+      needs.check-infrastructure.outputs.infra-healthy == 'false'
     environment: production
     needs:
       [
@@ -856,22 +854,14 @@ jobs:
       ]
     timeout-minutes: 10
     steps:
-      - name: Skip when infra healthy (ready for deploy)
-        if: needs.check-infrastructure.outputs.infra-healthy == 'true'
-        run: |
-          echo "Infra healthy - no verification needed (proper flow: deploy runs after this)"
-
       - uses: actions/checkout@v4
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
 
       - name: Configure SSH
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Add server to known hosts
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
@@ -879,13 +869,11 @@ jobs:
           chmod 600 ~/.ssh/known_hosts
 
       - name: Copy health check script
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/docker-infra/health-check.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/health-check.sh
           scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/scripts/shared/utils.sh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/utils.sh
 
       - name: Verify infrastructure readiness
-        if: needs.check-infrastructure.outputs.infra-healthy == 'false'
         run: |
           # Run health check and capture exit code
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -c "
