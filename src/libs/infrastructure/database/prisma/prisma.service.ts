@@ -252,27 +252,35 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static readonly serviceStartTime = Date.now(); // Track when service started
 
   /**
-   * Load PrismaClient from the fixed app-local directory
-   * Prisma Client is generated at build time to src/libs/infrastructure/database/prisma/generated
-   * and compiled to dist/libs/infrastructure/database/prisma/generated in production
+   * Load PrismaClient from the fixed app-local directory.
+   * Uses both resolution methods so that at least one works in all environments:
+   * - Method 1: Module id @prisma/client (Node resolution; Docker entrypoint symlink).
+   * - Method 2: Absolute paths to dist/.../generated and src/.../generated (original order).
    */
   private static async loadPrismaClient(): Promise<PrismaClientConstructor> {
     const cwd = process.cwd();
     const requireModule = createRequire(path.join(cwd, 'package.json'));
 
-    // Try paths in order of preference:
-    // 1. dist/libs/infrastructure/database/prisma/generated (production - compiled code)
-    // 2. src/libs/infrastructure/database/prisma/generated (development - source code)
-    // 3. @prisma/client (via path alias)
-    const possiblePaths = [
+    // Method 1: @prisma/client (symlink in Docker; standard Node resolution)
+    const modulePath = '@prisma/client';
+    try {
+      const prismaModule = requireModule(modulePath) as {
+        PrismaClient?: PrismaClientConstructor;
+      };
+      if (prismaModule?.PrismaClient) {
+        return prismaModule.PrismaClient;
+      }
+    } catch {
+      // Fall through to Method 2
+    }
+
+    // Method 2: Absolute paths (original order - dist first, then src)
+    const absolutePaths = [
       path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
       path.join(cwd, 'src', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
-      '@prisma/client',
     ];
-
-    for (const clientPath of possiblePaths) {
+    for (const clientPath of absolutePaths) {
       try {
-        // Try require first (CommonJS)
         const prismaModule = requireModule(clientPath) as {
           PrismaClient?: PrismaClientConstructor;
         };
@@ -280,10 +288,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           return prismaModule.PrismaClient;
         }
       } catch {
-        // Fall through to dynamic import
+        // Fall through to next path
       }
-
-      // Try dynamic import as fallback (ESM)
       try {
         const prismaModule = (await import(clientPath)) as {
           PrismaClient?: PrismaClientConstructor;
@@ -296,14 +302,12 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    // If still not found, throw error
+    const allPaths = [modulePath, ...absolutePaths];
     throw new HealthcareError(
       ErrorCode.DATABASE_CONNECTION_FAILED,
       'Failed to load PrismaClient: PrismaClient not found in any expected location. Please ensure "prisma generate" has been run.',
       undefined,
-      {
-        checkedPaths: possiblePaths,
-      },
+      { checkedPaths: allPaths },
       'PrismaService.loadPrismaClient'
     );
   }
