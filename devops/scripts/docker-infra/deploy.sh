@@ -1539,6 +1539,9 @@ rollback_to_backup_image() {
     BACKUP_IMAGE_ID=$(docker images --format "{{.ID}}" "$backup_image" 2>/dev/null | head -n 1)
     log_info "Backup image ID: ${BACKUP_IMAGE_ID:0:12}"
     
+    # Capture API logs and env before removing container (for debugging after rollback)
+    capture_failed_deploy_diagnostics "$api_container"
+    
     # Stop current containers
     docker stop "$api_container" "$worker_container" 2>&1 || true
     docker rm -f "$api_container" "$worker_container" 2>&1 || true
@@ -2621,9 +2624,43 @@ BASELINE_SQL
     fi
 }
 
+# Capture API container logs and env (DATABASE_URL redacted) to a file before rollback.
+# After rollback the container is removed; this file persists for debugging.
+capture_failed_deploy_diagnostics() {
+    local api_container="${1:-${CONTAINER_PREFIX}api}"
+    local out_dir="${BASE_DIR}/data"
+    local out_file="${out_dir}/deploy-failure-api-diagnostics-$(date +%Y%m%d-%H%M%S).txt"
+    mkdir -p "$out_dir"
+    {
+        echo "=== Failed deployment diagnostics (captured before rollback) ==="
+        echo "Timestamp: $(date -Iseconds)"
+        echo "API container: $api_container"
+        echo ""
+        if docker ps -a --format "{{.Names}}" | grep -q "^${api_container}$"; then
+            echo "=== API container env (DATABASE_URL host only; password redacted) ==="
+            docker exec "$api_container" env 2>/dev/null | grep -E '^DATABASE_URL=' | sed -E 's|://([^:]+):([^@]+)@|://\1:***@|' || echo "(could not read env)"
+            echo ""
+            echo "=== API container logs (last 250 lines) ==="
+            docker logs --tail 250 "$api_container" 2>&1 || true
+        else
+            echo "API container not found (already removed?)."
+        fi
+        echo ""
+        echo "=== End of diagnostics ==="
+    } >> "$out_file" 2>&1
+    log_info "Diagnostics saved to: $out_file (inspect after rollback with: cat $out_file)"
+    # Also print to stdout so GitHub Actions captures it (container will be gone after rollback)
+    if [[ -f "$out_file" ]]; then
+        log_info "=== Failed deploy diagnostics (for CI log) ==="
+        cat "$out_file" 2>/dev/null || true
+    fi
+}
+
 # Rollback deployment
 rollback_deployment() {
     log_warning "Initiating automatic rollback..."
+    # Capture API logs and redacted DATABASE_URL before removing container
+    capture_failed_deploy_diagnostics "${CONTAINER_PREFIX}api"
     
     # CRITICAL: First, restore the old Docker image if backup exists
     if [[ -n "${OLD_IMAGE_BACKUP_TAG:-}" ]]; then
