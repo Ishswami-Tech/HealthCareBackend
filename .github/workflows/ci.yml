@@ -354,9 +354,9 @@ jobs:
           fi
 
   # Infrastructure Health Check
-  # Waits for both docker-build and ensure-infrastructure-health to complete
-  # Then determines if infrastructure recovery is needed
-  # Sets outputs: infra-healthy, infra-status
+  # Passes through infra-healthy (true/false). FAILS the job when unhealthy so UI shows red and recovery runs.
+  # When infra-healthy=true  → Job succeeds (green) → Backup/Recreate/Restore/Verify SKIPPED → Deploy runs.
+  # When infra-healthy=false → Job FAILS (red) → Backup → Recreate → Restore → Verify → Deploy run.
   check-infrastructure:
     name: Check Infrastructure Health
     runs-on: ubuntu-latest
@@ -370,33 +370,43 @@ jobs:
     steps:
       - name: Display infrastructure health status
         run: |
-          echo "Infrastructure Health: ${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}"
-          echo "Infrastructure Status: ${{ needs.ensure-infrastructure-health.outputs.infra-status }}"
-          echo "Docker Build: ${{ needs.docker-build.result }}"
-          
+          echo "=============================================="
+          echo "Infra health result: ${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}"
+          echo "Infra status: ${{ needs.ensure-infrastructure-health.outputs.infra-status }}"
+          echo "=============================================="
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" == "true" ]]; then
-            echo "✅ Infrastructure is healthy - proceeding to deployment"
+            echo "RESULT: HEALTHY → Job will succeed; Backup/Recreate/Restore/Verify SKIPPED; Deploy will run."
           else
-            echo "⚠️ Infrastructure is unhealthy - recovery needed"
-            echo "Status: ${{ needs.ensure-infrastructure-health.outputs.infra-status }}"
+            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup → Recreate → Restore → Verify → then Deploy will run."
+          fi
+          echo "=============================================="
+
+      - name: Fail job when infra is unhealthy
+        run: |
+          if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" != "true" ]]; then
+            echo "Infrastructure is unhealthy - failing this job so recovery pipeline (backup → recreate → restore → verify) runs."
+            exit 1
           fi
 
   # Backup Infrastructure
-  # ONLY backs up existing infra data when check-infrastructure is UNHEALTHY.
-  # When healthy: job runs a skip step (no backup work); then recreate/restore/verify skip so deploy can run.
-  # When unhealthy: backup → recreate → restore → verify → deploy.
-  # Backup stored locally and optionally in S3 (Contabo)
+  # Runs when check-infrastructure FAILED (unhealthy). If backup fails (e.g. postgres restarting), job still completes so recreate runs.
+  # No backup available → recreate runs anyway, restore skipped, then verify → deploy.
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'push' && 
+      always() &&
+      github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.check-infrastructure.outputs.infra-healthy == 'false'
+      needs.check-infrastructure.result == 'failure'
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
     steps:
+      - name: Confirm running because infra is unhealthy
+        run: |
+          echo "This job runs ONLY when Check Infrastructure Health reported unhealthy (infra-healthy=false)."
+          echo "Current run: check-infrastructure.outputs.infra-healthy = ${{ needs.check-infrastructure.outputs.infra-healthy }}"
       - uses: actions/checkout@v4
 
       - name: Configure SSH
@@ -418,6 +428,7 @@ jobs:
 
       - name: Run backup
         id: backup
+        continue-on-error: true
         env:
           S3_ENABLED: ${{ vars.S3_ENABLED }}
           S3_PROVIDER: ${{ vars.S3_PROVIDER }}
@@ -561,20 +572,28 @@ jobs:
   # Recreate Infrastructure
   # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
   # Runs when: infrastructure is unhealthy (needs recovery)
-  # SKIPS when: infrastructure is healthy (deploy.sh handles app-only deployment)
-  # NOTE: If infrastructure is healthy but changed, deploy.sh skips recreation, so this job should also skip
-  # Preserves data volumes during recreation
+  # Runs when check-infrastructure FAILED (unhealthy) and backup completed (success or failure).
+  # If no backup is available (backup failed / backup-id empty): recreate runs anyway, then verify → deploy (restore skipped).
   recreate-infrastructure:
     name: Recreate Infrastructure
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'push' && 
+      always() &&
+      github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.check-infrastructure.outputs.infra-healthy == 'false'
+      needs.check-infrastructure.result == 'failure' &&
+      (needs.backup-infrastructure.result == 'success' || needs.backup-infrastructure.result == 'failure')
     environment: production
     needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
     steps:
+      - name: Recreate mode (backup optional)
+        run: |
+          if [[ -z "${{ needs.backup-infrastructure.outputs.backup-id }}" ]]; then
+            echo "No backup available (backup-id empty) - recreating infrastructure only; restore will be skipped, then verify → deploy."
+          else
+            echo "Backup available (backup-id: ${{ needs.backup-infrastructure.outputs.backup-id }}) - recreate then restore will run."
+          fi
       - uses: actions/checkout@v4
 
       - name: Configure SSH
@@ -729,15 +748,16 @@ jobs:
           ENDSSH
 
   # Restore Backup
-  # Restores PostgreSQL and Dragonfly data from backup after infrastructure recreation
-  # Runs when: backup was created successfully
+  # Restores PostgreSQL and Dragonfly data from backup after infrastructure recreation.
+  # Runs only when backup-id exists. If no backup: skipped; pipeline continues (verify → deploy).
   restore-backup:
     name: Restore Backup
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'push' && 
+      always() &&
+      github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.check-infrastructure.outputs.infra-healthy == 'false' &&
+      needs.check-infrastructure.result == 'failure' &&
       needs.backup-infrastructure.outputs.backup-id != ''
     environment: production
     needs: [check-infrastructure, backup-infrastructure, recreate-infrastructure]
@@ -833,24 +853,23 @@ jobs:
           ENDSSH
 
   # Verify Infrastructure Readiness
-  # Verifies that infrastructure is healthy and ready before deploying application
-  # Verifies: infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
-  # Runs after: restore-backup or when infrastructure is healthy
-  # Purpose: Ensure newly recreated infrastructure is healthy before deploying application
+  # Runs when check-infrastructure FAILED (recovery path). Verifies infra is healthy before deploy.
+  # Runs after recreate (and optionally after restore when backup-id exists).
   verify-infrastructure-readiness:
     name: Verify Infrastructure Readiness
     runs-on: ubuntu-latest
     if: |
-      github.event_name == 'push' && 
+      always() &&
+      github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.check-infrastructure.outputs.infra-healthy == 'false'
+      needs.check-infrastructure.result == 'failure' &&
+      (needs.recreate-infrastructure.result == 'success' || needs.recreate-infrastructure.result == 'failure')
     environment: production
     needs:
       [
         check-infrastructure,
         backup-infrastructure,
         recreate-infrastructure,
-        restore-backup,
       ]
     timeout-minutes: 10
     steps:
@@ -896,20 +915,16 @@ jobs:
           "'
 
   # Deploy to Production
-  # Runs ONLY when: docker-build succeeded AND (check-infrastructure healthy OR verify-infrastructure-readiness succeeded).
-  # Every job is dependent: deploy needs [docker-build, check-infrastructure, verify-infrastructure-readiness].
-  # Handles: database migrations, container startup, health checks
+  # Runs when: docker-build succeeded AND (check-infrastructure succeeded [healthy] OR verify-infrastructure-readiness succeeded [recovery path]).
+  # When check fails (unhealthy), deploy runs only after verify-infrastructure-readiness succeeds.
   deploy:
     name: Deploy to Production
     if: |
       always() &&
-      github.event_name == 'push' && 
+      github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.docker-build.result == 'success' &&
-      (
-        needs.check-infrastructure.outputs.infra-healthy == 'true' ||
-        needs.verify-infrastructure-readiness.result == 'success'
-      )
+      (needs.check-infrastructure.result == 'success' || needs.verify-infrastructure-readiness.result == 'success')
     runs-on: ubuntu-latest
     environment: production # Use production environment secrets
     needs:
