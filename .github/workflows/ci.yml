@@ -1,8 +1,8 @@
 # Continuous Integration Workflow - Docker Only
 # Flow: detect-changes → security → (docker-build || ensure-infrastructure-health) → check-infrastructure
-#       → if healthy: DEPLOY; if unhealthy: backup → recreate → restore → verify → DEPLOY
-# Deploy to prod ONLY when: docker-build succeeded AND (check-infrastructure healthy OR verify succeeded).
-# Backup infra ONLY when: check-infrastructure unhealthy; then backup existing data → recreate → restore → verify.
+#       → if healthy: DEPLOY only (no backup/recreate/restore/verify).
+#       → if unhealthy: backup → recreate → restore → verify → DEPLOY (recovery flow only).
+# Recreate runs ONLY in recovery flow (when check-infrastructure fails). Never in healthy path or in Deploy job.
 # Implementation summary: docs/CI_CD_WORKFLOW_SUMMARY.md
 name: CI/CD
 
@@ -278,6 +278,7 @@ jobs:
     outputs:
       infra-healthy: ${{ steps.health-check.outputs.infra-healthy }}
       infra-status: ${{ steps.health-check.outputs.infra-status }}
+      unhealthy-services: ${{ steps.health-check.outputs.unhealthy-services }}
     steps:
       - uses: actions/checkout@v4
 
@@ -332,6 +333,7 @@ jobs:
             if [[ "$EXIT_CODE" == "0" ]]; then
               echo "infra-healthy=true" >> $GITHUB_OUTPUT
               echo "infra-status=healthy" >> $GITHUB_OUTPUT
+              echo "unhealthy-services=" >> $GITHUB_OUTPUT
             else
               echo "infra-healthy=false" >> $GITHUB_OUTPUT
               if [[ "$EXIT_CODE" == "3" ]]; then
@@ -339,10 +341,24 @@ jobs:
               else
                 echo "infra-status=unhealthy" >> $GITHUB_OUTPUT
               fi
+              # Extract unhealthy service names from health-status.json; map openvidu -> openvidu-server for compose
+              if [[ -f /tmp/health-status.json ]]; then
+                UNHEALTHY=$(jq -r '.services | to_entries | map(select(.value.status != "healthy")) | .[].key' /tmp/health-status.json 2>/dev/null || true)
+                COMPOSE_SERVICES=""
+                for s in $UNHEALTHY; do
+                  [[ "$s" == "openvidu" ]] && s="openvidu-server"
+                  [[ -n "$COMPOSE_SERVICES" ]] && COMPOSE_SERVICES="${COMPOSE_SERVICES},"
+                  COMPOSE_SERVICES="${COMPOSE_SERVICES}${s}"
+                done
+                echo "unhealthy-services=${COMPOSE_SERVICES}" >> $GITHUB_OUTPUT
+              else
+                echo "unhealthy-services=" >> $GITHUB_OUTPUT
+              fi
             fi
           else
             echo "infra-healthy=false" >> $GITHUB_OUTPUT
             echo "infra-status=unknown" >> $GITHUB_OUTPUT
+            echo "unhealthy-services=" >> $GITHUB_OUTPUT
           fi
 
       - name: Display health status
@@ -367,12 +383,14 @@ jobs:
     outputs:
       infra-healthy: ${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}
       infra-status: ${{ needs.ensure-infrastructure-health.outputs.infra-status }}
+      unhealthy-services: ${{ needs.ensure-infrastructure-health.outputs.unhealthy-services }}
     steps:
       - name: Display infrastructure health status
         run: |
           echo "=============================================="
           echo "Infra health result: ${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}"
           echo "Infra status: ${{ needs.ensure-infrastructure-health.outputs.infra-status }}"
+          echo "Unhealthy services (recreate only these): ${{ needs.ensure-infrastructure-health.outputs.unhealthy-services }}"
           echo "=============================================="
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" == "true" ]]; then
             echo "RESULT: HEALTHY → Job will succeed; Backup/Recreate/Restore/Verify SKIPPED; Deploy will run."
@@ -388,9 +406,9 @@ jobs:
             exit 1
           fi
 
-  # Backup Infrastructure
-  # Runs when check-infrastructure FAILED (unhealthy). If backup fails (e.g. postgres restarting), job still completes so recreate runs.
-  # No backup available → recreate runs anyway, restore skipped, then verify → deploy.
+  # Backup Infrastructure (RECOVERY FLOW ONLY)
+  # Runs ONLY when check-infrastructure FAILED (unhealthy). Never runs when infra is healthy.
+  # If backup step fails (e.g. postgres restarting), job still completes so recreate runs.
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
@@ -569,11 +587,10 @@ jobs:
           echo "backup-id=${BACKUP_ID}" >> $GITHUB_OUTPUT
           echo "Backup ID: ${BACKUP_ID}"
 
-  # Recreate Infrastructure
-  # Recreates infrastructure containers (postgres, dragonfly, openvidu, coturn, portainer)
-  # Runs when: infrastructure is unhealthy (needs recovery)
-  # Runs when check-infrastructure FAILED (unhealthy) and backup completed (success or failure).
-  # If no backup is available (backup failed / backup-id empty): recreate runs anyway, then verify → deploy (restore skipped).
+  # Recreate Infrastructure (RECOVERY FLOW ONLY)
+  # Required services (docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, openvidu-server, coturn, portainer.
+  # Runs ONLY when check-infrastructure FAILED (unhealthy) and backup-infrastructure completed.
+  # Recreates ONLY unhealthy services when list is set; otherwise recreates all (fallback) so every required service exists.
   recreate-infrastructure:
     name: Recreate Infrastructure
     runs-on: ubuntu-latest
@@ -587,12 +604,18 @@ jobs:
     needs: [detect-changes, check-infrastructure, backup-infrastructure]
     timeout-minutes: 20
     steps:
-      - name: Recreate mode (backup optional)
+      - name: Recreate mode (backup optional, only unhealthy services)
         run: |
+          UNHEALTHY="${{ needs.check-infrastructure.outputs.unhealthy-services }}"
           if [[ -z "${{ needs.backup-infrastructure.outputs.backup-id }}" ]]; then
-            echo "No backup available (backup-id empty) - recreating infrastructure only; restore will be skipped, then verify → deploy."
+            echo "No backup available - recreating infrastructure only; restore will be skipped."
           else
             echo "Backup available (backup-id: ${{ needs.backup-infrastructure.outputs.backup-id }}) - recreate then restore will run."
+          fi
+          if [[ -n "$UNHEALTHY" ]]; then
+            echo "Recreating ONLY unhealthy services: $UNHEALTHY"
+          else
+            echo "No unhealthy-services list (fallback: will recreate all infrastructure)."
           fi
       - uses: actions/checkout@v4
 
@@ -608,148 +631,83 @@ jobs:
           ssh-keyscan -H ${{ secrets.SERVER_HOST }} >> ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Recreate infrastructure containers
+      - name: Recreate infrastructure containers (only unhealthy services)
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << ENDSSH
             set -e
             cd /opt/healthcare-backend/devops/docker || exit 1
+            UNHEALTHY_SERVICES="${{ needs.check-infrastructure.outputs.unhealthy-services }}"
             
-            # CRITICAL: Verify data volumes are preserved before recreation
-            echo "🔍 Verifying data volumes are preserved..."
-            VOLUMES=("postgres_data" "dragonfly_data")
-            VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
-            
-            for i in "${!VOLUMES[@]}"; do
-              VOLUME="${VOLUMES[$i]}"
-              VOLUME_PATH="${VOLUME_PATHS[$i]}"
+            # Recreate only unhealthy services if list provided; otherwise recreate all (fallback)
+            if [[ -n "\${UNHEALTHY_SERVICES}" ]]; then
+              echo "🔄 Recreating ONLY unhealthy services: \${UNHEALTHY_SERVICES}"
+              RECREATE_LIST=()
+              for s in \$(echo "\${UNHEALTHY_SERVICES}" | tr ',' ' '); do
+                s=\$(echo "\$s" | tr -d ' ')
+                [[ -n "\$s" ]] && RECREATE_LIST+=("\$s")
+              done
               
-              # Check if volume exists
-              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
-                echo "✅ Volume ${VOLUME} exists"
-                
-                # For bind mounts, verify the host path exists
-                if [[ -d "$VOLUME_PATH" ]]; then
-                  echo "✅ Volume path verified: ${VOLUME_PATH}"
-                else
-                  echo "⚠️  Volume path missing: ${VOLUME_PATH} (creating...)"
-                  mkdir -p "$VOLUME_PATH" || {
-                    echo "❌ Failed to create volume path: ${VOLUME_PATH}"
-                    exit 1
-                  }
-                fi
-              else
-                echo "⚠️  Volume ${VOLUME} does not exist (will be created)"
-              fi
-            done
-            
-            # CRITICAL: Ensure containers are running before graceful stop (for data flush)
-            echo "🔍 Ensuring containers are running for graceful shutdown..."
-            CONTAINERS=("postgres" "dragonfly")
-            # Note: Using variable for format string to avoid bash brace expansion issues in heredoc
-            DOCKER_NAME_FMT='{{.Names}}'
-            
-            for CONTAINER in "${CONTAINERS[@]}"; do
-              if ! docker ps --format "$DOCKER_NAME_FMT" | grep -q "^${CONTAINER}$"; then
-                echo "⚠️  Container ${CONTAINER} not running - starting for graceful shutdown..."
-                docker compose -f docker-compose.prod.yml --profile infrastructure up -d "${CONTAINER}" || {
-                  echo "❌ Failed to start ${CONTAINER}"
+              for svc in "\${RECREATE_LIST[@]}"; do
+                echo "⏹️  Stopping \${svc}..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure stop "\$svc" 2>/dev/null || true
+                docker compose -f docker-compose.prod.yml --profile infrastructure rm -f "\$svc" 2>/dev/null || true
+                echo "🔄 Recreating \${svc}..."
+                docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate --no-deps "\$svc" || {
+                  echo "❌ Failed to recreate \${svc}"
                   exit 1
                 }
-                # Wait for container to be ready
-                echo "⏳ Waiting for ${CONTAINER} to be ready..."
-                sleep 5
-              fi
-            done
+              done
+            else
+              echo "🔄 No unhealthy-services list - recreating ALL required infrastructure (fallback)"
+              echo "📋 Required services (from docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, openvidu-server, coturn, portainer"
+              VOLUMES=("postgres_data" "dragonfly_data")
+              VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
+              for i in "\${!VOLUMES[@]}"; do
+                [[ ! -d "\${VOLUME_PATHS[\$i]}" ]] && mkdir -p "\${VOLUME_PATHS[\$i]}" || true
+              done
+              [[ ! -d "/opt/healthcare-backend/data/openvidu_recordings" ]] && mkdir -p /opt/healthcare-backend/data/openvidu_recordings || true
+              echo "📥 Pulling infrastructure images (including postgres:18)..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+              docker compose -f docker-compose.prod.yml --profile infrastructure stop || true
+              sleep 3
+              echo "🚀 Starting all infrastructure services (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
+              docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
+                echo "❌ Infrastructure recreation failed"
+                exit 1
+              }
+            fi
             
-            # CRITICAL: Stop existing infrastructure containers gracefully
-            echo "🛑 Stopping infrastructure containers gracefully (ensuring data flush)..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure stop || {
-              echo "⚠️  Graceful stop had issues, forcing stop..."
-              docker compose -f docker-compose.prod.yml --profile infrastructure kill || true
-            }
-            
-            # Wait for data to flush to disk
-            echo "⏳ Waiting for data to flush to disk..."
-            sleep 3
-            
-            # CRITICAL: Recreate infrastructure containers (volumes are preserved)
-            echo "🔄 Recreating infrastructure containers (volumes will be preserved)..."
-            docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
-              echo "❌ Infrastructure recreation failed"
-              exit 1
-            }
-            
-            # Wait for containers to be healthy
-            echo "⏳ Waiting for infrastructure containers to be healthy..."
+            echo "⏳ Waiting for containers to stabilize..."
             sleep 15
             
-            # Wait for PostgreSQL to be ready
-            echo "⏳ Waiting for PostgreSQL to be ready..."
-            MAX_RETRIES=30
-            RETRY_COUNT=0
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              if docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1; then
-                echo "✅ PostgreSQL is ready"
-                break
-              fi
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "⏳ Waiting for PostgreSQL... (${RETRY_COUNT}/${MAX_RETRIES})"
-              sleep 2
-            done
-            
-            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-              echo "❌ PostgreSQL did not become ready"
-              exit 1
+            # Wait for PostgreSQL if it was recreated
+            if [[ -z "\${UNHEALTHY_SERVICES}" ]] || echo "\${UNHEALTHY_SERVICES}" | grep -q "postgres"; then
+              echo "⏳ Waiting for PostgreSQL to be ready..."
+              for i in \$(seq 1 30); do
+                docker exec postgres pg_isready -U postgres -d userdb >/dev/null 2>&1 && { echo "✅ PostgreSQL is ready"; break; }
+                [[ \$i -eq 30 ]] && { echo "❌ PostgreSQL did not become ready"; exit 1; }
+                sleep 2
+              done
             fi
             
-            # Wait for Dragonfly to be ready
-            echo "⏳ Waiting for Dragonfly to be ready..."
-            MAX_RETRIES=20
-            RETRY_COUNT=0
-            while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-              if docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1; then
-                echo "✅ Dragonfly is ready"
-                break
-              fi
-              RETRY_COUNT=$((RETRY_COUNT + 1))
-              echo "⏳ Waiting for Dragonfly... (${RETRY_COUNT}/${MAX_RETRIES})"
-              sleep 2
-            done
-            
-            if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-              echo "❌ Dragonfly did not become ready"
-              exit 1
+            # Wait for Dragonfly if it was recreated
+            if [[ -z "\${UNHEALTHY_SERVICES}" ]] || echo "\${UNHEALTHY_SERVICES}" | grep -q "dragonfly"; then
+              echo "⏳ Waiting for Dragonfly to be ready..."
+              for i in \$(seq 1 20); do
+                docker exec dragonfly redis-cli -p 6379 ping >/dev/null 2>&1 && { echo "✅ Dragonfly is ready"; break; }
+                [[ \$i -eq 20 ]] && { echo "❌ Dragonfly did not become ready"; exit 1; }
+                sleep 2
+              done
             fi
             
-            # Check container status
             echo "📊 Container status:"
             docker compose -f docker-compose.prod.yml --profile infrastructure ps
-            
-            # Verify volumes still exist
-            echo "🔍 Verifying volumes after recreation..."
-            for i in "${!VOLUMES[@]}"; do
-              VOLUME="${VOLUMES[$i]}"
-              VOLUME_PATH="${VOLUME_PATHS[$i]}"
-              
-              if docker volume inspect "docker_${VOLUME}" >/dev/null 2>&1; then
-                echo "✅ Volume ${VOLUME} preserved"
-              else
-                echo "⚠️  Volume ${VOLUME} not found (may be created on first use)"
-              fi
-              
-              if [[ -d "$VOLUME_PATH" ]]; then
-                echo "✅ Volume path preserved: ${VOLUME_PATH}"
-              else
-                echo "⚠️  Volume path missing: ${VOLUME_PATH}"
-              fi
-            done
-            
             echo "✅ Infrastructure recreation completed successfully"
           ENDSSH
 
-  # Restore Backup
-  # Restores PostgreSQL and Dragonfly data from backup after infrastructure recreation.
-  # Runs only when backup-id exists. If no backup: skipped; pipeline continues (verify → deploy).
+  # Restore Backup (RECOVERY FLOW ONLY)
+  # Runs ONLY when check-infrastructure FAILED and backup-id exists. Never runs when infra is healthy.
+  # If no backup-id: skipped; pipeline continues (verify → deploy).
   restore-backup:
     name: Restore Backup
     runs-on: ubuntu-latest
@@ -852,9 +810,9 @@ jobs:
             /tmp/restore.sh "$BACKUP_ID"
           ENDSSH
 
-  # Verify Infrastructure Readiness
-  # Runs when check-infrastructure FAILED (recovery path). Verifies infra is healthy before deploy.
-  # Runs after recreate (and optionally after restore when backup-id exists).
+  # Verify Infrastructure Readiness (RECOVERY FLOW ONLY)
+  # Runs ONLY when check-infrastructure FAILED. Verifies recreated infra is healthy before deploy.
+  # Never runs when infra was healthy (check succeeded).
   verify-infrastructure-readiness:
     name: Verify Infrastructure Readiness
     runs-on: ubuntu-latest
