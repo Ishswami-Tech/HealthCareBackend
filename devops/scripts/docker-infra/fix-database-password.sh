@@ -52,6 +52,8 @@ if ! container_running "postgres"; then
         exit 1
     }
     
+    # Pull so we use postgres:18 from docker-compose.prod.yml, not cached old image
+    docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres 2>/dev/null || true
     docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
         log_error "Failed to start PostgreSQL container"
         exit 1
@@ -202,7 +204,7 @@ if [[ -n "$PASSWORD_HASH" ]]; then
         log_warning "Password hash format detected: MD5 (old format)"
     elif [[ "$PASSWORD_HASH" == SCRAM-SHA-256* ]]; then
         PASSWORD_HASH_FORMAT="scram-sha-256"
-        log_success "Password hash format: SCRAM-SHA-256 (correct for PostgreSQL 16)"
+        log_success "Password hash format: SCRAM-SHA-256 (correct for PostgreSQL 10+/18)"
     elif [[ "$PASSWORD_HASH" == sha256* ]] || [[ "$PASSWORD_HASH" == sha* ]]; then
         PASSWORD_HASH_FORMAT="sha"
         log_warning "Password hash format detected: SHA (old format)"
@@ -371,7 +373,7 @@ if docker exec -e PGPASSWORD="$ACTUAL_PASSWORD" postgres psql -U postgres -d use
     log_success "Final database connection verified!"
     log_info "Password hash format: $FINAL_PASSWORD_FORMAT"
     if [[ "$FINAL_PASSWORD_FORMAT" == "scram-sha-256" ]]; then
-        log_success "Password hash is in correct format (scram-sha-256) for PostgreSQL 16"
+        log_success "Password hash is in correct format (scram-sha-256) for PostgreSQL 18"
     else
         log_warning "Password hash format: $FINAL_PASSWORD_FORMAT (should be scram-sha-256)"
         log_warning "This may cause authentication issues with Prisma"

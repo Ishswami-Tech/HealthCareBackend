@@ -217,8 +217,12 @@ deploy_infrastructure() {
         log_warning "Graceful stop had issues, but continuing..."
     }
     
+    # Pull infrastructure images (e.g. postgres:18) so server uses versions from docker-compose.prod.yml, not cached old images
+    log_info "Pulling infrastructure images (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
+    docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
+    
     # Recreate infrastructure (volumes are preserved by docker compose)
-    # Using --force-recreate to ensure containers are recreated, but volumes persist
+    # Using --force-recreate to ensure containers are recreated with pulled images (e.g. PostgreSQL 18)
     if docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate; then
         log_success "Infrastructure deployed"
         
@@ -2841,7 +2845,8 @@ main() {
             if [[ -n "$backup_script" ]] && [[ -f "$backup_script" ]]; then
                 log_info "Using backup script: ${backup_script}"
                 
-                # Ensure containers are running for backup
+                # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
+                docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                 if ! container_running "${POSTGRES_CONTAINER}"; then
                     log_warning "PostgreSQL container not running - starting for backup..."
                     docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
@@ -3049,7 +3054,8 @@ main() {
                     if [[ -n "$backup_script" ]] && [[ -f "$backup_script" ]]; then
                         log_info "Using backup script: ${backup_script}"
                         
-                        # Ensure containers are running for backup
+                        # Ensure containers are running for backup (pull first so postgres:18 etc. from compose is used)
+                        docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres dragonfly 2>/dev/null || true
                         if ! container_running "${POSTGRES_CONTAINER}"; then
                             log_warning "PostgreSQL container not running - starting for backup..."
                             docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {

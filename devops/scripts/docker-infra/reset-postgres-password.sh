@@ -53,6 +53,8 @@ check_container() {
             exit 1
         }
         
+        # Pull so we use postgres:18 from docker-compose.prod.yml
+        docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet postgres 2>/dev/null || true
         docker compose -f docker-compose.prod.yml --profile infrastructure up -d postgres || {
             log_error "Failed to start PostgreSQL container"
             exit 1

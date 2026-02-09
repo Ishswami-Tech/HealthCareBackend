@@ -1,5 +1,5 @@
 # Quick Start Development Environment
-# Run with: docker-compose -f devops/docker/docker-compose.dev.yml up -d
+# Run with: docker compose -f devops/docker/docker-compose.dev.yml up -d
 # Access: http://localhost:8088
 #
 # Environment Variables:
