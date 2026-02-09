@@ -262,9 +262,6 @@ jobs:
         with:
           filters: |
             infra:
-              - 'devops/docker/Dockerfile.postgres'
-              - 'devops/docker/Dockerfile.dragonfly'
-              - 'devops/docker/Dockerfile.openvidu'
               - 'devops/docker/docker-compose.prod.yml'
               - 'src/libs/infrastructure/database/prisma/migrations/**'
             app:
@@ -272,6 +269,7 @@ jobs:
               - 'package.json'
               - 'yarn.lock'
               - 'tsconfig.json'
+              - 'nest-cli.json'
               - 'devops/docker/Dockerfile'
 
       - name: Output changes
