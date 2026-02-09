@@ -476,7 +476,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       // CRITICAL: Wait for Prisma to be ready before executing queries
       // This prevents "Retry failed" errors during application startup
       if (!this.prismaService.isReady()) {
-        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        const isReady = await this.prismaService.waitUntilReady(60000); // 60s during startup (Prisma + DB can be slow)
         if (!isReady) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -776,7 +776,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
       // CRITICAL: Wait for Prisma to be ready before executing queries
       // This prevents "Retry failed" errors during application startup
       if (!this.prismaService.isReady()) {
-        const isReady = await this.prismaService.waitUntilReady(30000); // 30 second timeout
+        const isReady = await this.prismaService.waitUntilReady(60000); // 60s during startup (Prisma + DB can be slow)
         if (!isReady) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
