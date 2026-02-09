@@ -101,15 +101,17 @@ export class RealtimeHealthGateway
       // This ensures health namespace respects CORS_ORIGIN environment variable
       // Same security model as the main app gateway and other WebSocket gateways
 
-      // CRITICAL: Explicitly bypass any global authentication middleware
-      // The health namespace is public and should not require authentication
-      const healthNamespace = server.of('/health');
+      // Namespaced gateway: NestJS may pass either the root Socket.IO server (has .of())
+      // or the namespace instance (no .of()). Use whichever we receive.
+      const healthNamespace =
+        typeof (server as Server & { of?: unknown }).of === 'function'
+          ? server.of('/health')
+          : server;
+
       if (healthNamespace) {
         // Remove any authentication middleware that might be applied globally
         // This ensures the health namespace is truly public
-        healthNamespace.use((socket, next) => {
-          // Allow all connections without authentication
-          // Access is controlled only via CORS configuration
+        healthNamespace.use((socket: unknown, next: () => void) => {
           next();
         });
       }
@@ -136,8 +138,8 @@ export class RealtimeHealthGateway
         }
       );
 
-      // Set server in broadcaster
-      this.broadcaster.setSocketServer(server);
+      // Set server in broadcaster (pass namespace so broadcaster can emit without calling .of again)
+      this.broadcaster.setSocketServer(healthNamespace as Server);
 
       // No authentication middleware - health namespace is completely public
       // Access is controlled only via CORS configuration

@@ -130,6 +130,7 @@ WHATSAPP_APPOINTMENT_TEMPLATE_ID=appointment_reminder
 WHATSAPP_PRESCRIPTION_TEMPLATE_ID=prescription_notification
 
 # Video Configuration (OpenVidu)
+# OPENVIDU_SECRET: only a-zA-Z0-9, hyphens (-), underscores (_). No = or other special chars (e.g. no base64 padding).
 VIDEO_ENABLED=true
 VIDEO_PROVIDER=openvidu
 OPENVIDU_URL=https://your-video-domain.com

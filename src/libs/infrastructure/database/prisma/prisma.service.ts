@@ -1130,9 +1130,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
 
     // If onModuleInit hasn't completed yet, check if PrismaClient files are generated
-    // and wait a bit for onModuleInit to complete
-    const maxRetries = 10;
-    const retryDelay = 1000; // 1 second
+    // and wait a bit for onModuleInit to complete (allow 60s total during heavy startup)
+    const maxRetries = 20;
+    const retryDelay = 1500; // 1.5 seconds
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       // Check if shared instance was created by onModuleInit

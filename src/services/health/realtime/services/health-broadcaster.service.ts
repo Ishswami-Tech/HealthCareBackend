@@ -49,16 +49,26 @@ export class HealthBroadcasterService implements OnModuleInit {
   }
 
   /**
+   * Resolve namespace: socketServer may be the root Server (has .of) or the /health namespace (no .of).
+   */
+  private getNamespace(): Server | null {
+    if (!this.socketServer) return null;
+    if (typeof (this.socketServer as Server & { of?: (n: string) => unknown }).of === 'function') {
+      return this.socketServer.of(this.NAMESPACE) as unknown as Server;
+    }
+    return this.socketServer;
+  }
+
+  /**
    * Broadcast full health status
    */
   broadcastStatus(status: AggregatedHealthStatus): void {
-    if (!this.socketServer) {
+    const namespace = this.getNamespace();
+    if (!namespace) {
       return;
     }
 
     try {
-      const namespace = this.socketServer.of(this.NAMESPACE);
-
       // Convert to optimized format
       const realtimeStatus: RealtimeHealthStatusPayload = {
         t: status.timestamp,
@@ -73,7 +83,7 @@ export class HealthBroadcasterService implements OnModuleInit {
         u: status.uptime,
       };
 
-      // Broadcast to all clients in the room
+      // Broadcast to all clients in the room (namespace is /health server or namespace)
       namespace.to(this.ROOM_ALL).emit('health:status', realtimeStatus);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -92,13 +102,12 @@ export class HealthBroadcasterService implements OnModuleInit {
    * Broadcast health changes
    */
   broadcastChanges(changes: HealthChange[], status: AggregatedHealthStatus): void {
-    if (!this.socketServer || changes.length === 0) {
+    const namespace = this.getNamespace();
+    if (!namespace || changes.length === 0) {
       return;
     }
 
     try {
-      const namespace = this.socketServer.of(this.NAMESPACE);
-
       // Broadcast each change as incremental update
       for (const change of changes) {
         const update: HealthUpdate = {
@@ -134,13 +143,12 @@ export class HealthBroadcasterService implements OnModuleInit {
    * Broadcast heartbeat (lightweight ping)
    */
   broadcastHeartbeat(overallStatus: RealtimeHealthStatus): void {
-    if (!this.socketServer) {
+    const namespace = this.getNamespace();
+    if (!namespace) {
       return;
     }
 
     try {
-      const namespace = this.socketServer.of(this.NAMESPACE);
-
       const heartbeat: HealthHeartbeat = {
         t: new Date().toISOString(),
         o: overallStatus,

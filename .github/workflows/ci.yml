@@ -4,16 +4,17 @@
 #   1. detect-changes (push) → security → docker-build + ensure-infrastructure-health (parallel)
 #   2. check-infrastructure (needs docker-build, ensure-infrastructure-health)
 #
+#   Backup runs in EVERY condition (healthy or unhealthy). Restore runs after recreation only.
+#
 #   IF HEALTHY (infra-healthy=true):
-#      → check-infrastructure SUCCEEDS → deploy runs (backup/recreate/restore/verify SKIPPED)
+#      → check-infrastructure SUCCEEDS → backup-infrastructure (always take backup) → deploy runs
 #
 #   IF UNHEALTHY (infra-healthy=false):
 #      → check-infrastructure FAILS
-#      → backup-infrastructure (backup first)
-#      → recreate-infrastructure (recreate ONLY unhealthy services; healthy left running)
-#      → restore-backup (if backup-id set; skipped if backup failed)
-#      → verify-infrastructure-readiness
-#      → deploy (if verify succeeds)
+#      → backup-infrastructure (take backup)
+#      → recreate-infrastructure (recreate ONLY unhealthy services)
+#      → restore-backup (restore the backup after recreation; skipped if no backup-id)
+#      → verify-infrastructure-readiness → deploy (if verify succeeds)
 #
 # Goal: Deploy app successfully with no infra issues and no API issues. Infra is fixed (recreate only unhealthy)
 # before deploy; after deploy we verify infra + API health and fail the pipeline if any issue remains.
@@ -418,9 +419,9 @@ jobs:
           echo "Unhealthy services (recreate only these): ${{ needs.ensure-infrastructure-health.outputs.unhealthy-services }}"
           echo "=============================================="
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" == "true" ]]; then
-            echo "RESULT: HEALTHY → Job will succeed; Backup/Recreate/Restore/Verify SKIPPED; Deploy will run."
+            echo "RESULT: HEALTHY → Job will succeed; Backup (always) runs then Deploy; Recreate/Restore/Verify SKIPPED."
           else
-            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup → Recreate only unhealthy → Restore → Verify → Deploy will run."
+            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup (always) → Recreate only unhealthy → Restore backup → Verify → Deploy."
           fi
           echo "=============================================="
 
@@ -431,9 +432,8 @@ jobs:
             exit 1
           fi
 
-  # Backup Infrastructure (RECOVERY FLOW ONLY)
-  # Runs first when infra is unhealthy. Backup is used to restore after we recreate only unhealthy services.
-  # If backup step fails (e.g. postgres restarting), job still completes so recreate can run; restore will be skipped.
+  # Backup Infrastructure (ALWAYS: healthy or unhealthy)
+  # Take backup in every condition. When unhealthy, this backup is restored after recreation.
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
@@ -441,17 +441,17 @@ jobs:
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      needs.check-infrastructure.result == 'failure'
+      (needs.check-infrastructure.result == 'success' || needs.check-infrastructure.result == 'failure')
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
     outputs:
       backup-id: ${{ steps.backup.outputs.backup-id }}
     steps:
-      - name: Confirm running because infra is unhealthy
+      - name: Confirm backup runs in every condition (healthy or unhealthy)
         run: |
-          echo "This job runs ONLY when Check Infrastructure Health reported unhealthy (infra-healthy=false)."
-          echo "Current run: check-infrastructure.outputs.infra-healthy = ${{ needs.check-infrastructure.outputs.infra-healthy }}"
+          echo "Backup runs whether infra is healthy or unhealthy. When unhealthy, this backup will be restored after recreation."
+          echo "check-infrastructure.result = ${{ needs.check-infrastructure.result }}, infra-healthy = ${{ needs.check-infrastructure.outputs.infra-healthy }}"
       - uses: actions/checkout@v4
 
       - name: Configure SSH
@@ -857,8 +857,7 @@ jobs:
           ENDSSH
 
   # Verify Infrastructure Readiness (RECOVERY FLOW ONLY)
-  # Runs ONLY when check-infrastructure FAILED. Verifies recreated infra is healthy before deploy.
-  # Never runs when infra was healthy (check succeeded).
+  # Order: Recreate → Restore (if backup-id) → Verify → Deploy. Runs after restore so we verify post-restore state.
   verify-infrastructure-readiness:
     name: Verify Infrastructure Readiness
     runs-on: ubuntu-latest
@@ -867,13 +866,15 @@ jobs:
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
       needs.check-infrastructure.result == 'failure' &&
-      (needs.recreate-infrastructure.result == 'success' || needs.recreate-infrastructure.result == 'failure')
+      (needs.recreate-infrastructure.result == 'success' || needs.recreate-infrastructure.result == 'failure') &&
+      (needs.restore-backup.result == 'success' || needs.restore-backup.result == 'failure' || needs.restore-backup.result == 'skipped')
     environment: production
     needs:
       [
         check-infrastructure,
         backup-infrastructure,
         recreate-infrastructure,
+        restore-backup,
       ]
     timeout-minutes: 10
     steps:
@@ -1405,17 +1406,21 @@ jobs:
             chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/*.sh
             chmod +x /opt/healthcare-backend/devops/scripts/shared/*.sh
             
-            # VALIDATION: Check OPENVIDU_SECRET format before deployment
-            # OpenVidu secret must contain only alphanumeric [a-zA-Z0-9], hyphens (-), underscores (_)
-            OPENVIDU_SECRET="${OPENVIDU_SECRET:-}"
-            if [[ -n "${OPENVIDU_SECRET}" ]] && echo "${OPENVIDU_SECRET}" | grep -q '[^a-zA-Z0-9_-]'; then
-              echo "❌ ERROR: OPENVIDU_SECRET contains invalid characters!"
-              echo "📋 OpenVidu requires secret to contain ONLY:"
-              echo "   - Alphanumeric: a-z, A-Z, 0-9"
-              echo "   - Hyphens: - | Underscores: _"
-              echo "❌ NOT allowed: = + / or any other special characters"
-              echo ""
-              echo "🔧 ACTION: Update OPENVIDU_SECRET in GitHub Secrets"
+            # OPENVIDU_SECRET: OpenVidu allows only [a-zA-Z0-9_-]. Sanitize to avoid container exit (e.g. base64 "=" padding).
+            RAW_OPENVIDU=$(grep -E '^OPENVIDU_SECRET=' "${SERVER_DEPLOY_PATH}/.env.production" 2>/dev/null | cut -d= -f2- || true)
+            RAW_OPENVIDU="${RAW_OPENVIDU:-$OPENVIDU_SECRET}"
+            OPENVIDU_SANITIZED=$(echo "${RAW_OPENVIDU}" | tr -dc 'a-zA-Z0-9_-')
+            if [[ "${RAW_OPENVIDU}" != "${OPENVIDU_SANITIZED}" ]]; then
+              echo "⚠️ OPENVIDU_SECRET contained invalid characters (e.g. =); sanitized for OpenVidu (allowed: a-zA-Z0-9_-)."
+              sed -i "s|^OPENVIDU_SECRET=.*|OPENVIDU_SECRET=${OPENVIDU_SANITIZED}|" "${SERVER_DEPLOY_PATH}/.env.production"
+              if grep -q '^COTURN_SHARED_SECRET_KEY=' "${SERVER_DEPLOY_PATH}/.env.production" 2>/dev/null; then
+                sed -i "s|^COTURN_SHARED_SECRET_KEY=.*|COTURN_SHARED_SECRET_KEY=${OPENVIDU_SANITIZED}|" "${SERVER_DEPLOY_PATH}/.env.production"
+              fi
+            fi
+            export OPENVIDU_SECRET="${OPENVIDU_SANITIZED}"
+            export COTURN_SHARED_SECRET_KEY="${OPENVIDU_SANITIZED}"
+            if [[ -z "${OPENVIDU_SECRET}" ]]; then
+              echo "❌ ERROR: OPENVIDU_SECRET is empty after sanitization. Set OPENVIDU_SECRET in GitHub Secrets (only a-zA-Z0-9_-)."
               exit 1
             fi
             
