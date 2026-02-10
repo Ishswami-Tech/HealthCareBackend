@@ -607,7 +607,7 @@ export class ClinicController {
 
   @Get(':id/doctors')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'clinic:{id}:doctors',
@@ -618,7 +618,7 @@ export class ClinicController {
   @ApiOperation({
     summary: 'Get all doctors for a clinic',
     description:
-      'Retrieves all doctors associated with a specific clinic. Super Admin and Clinic Admin can see all doctors. Cached for performance.',
+      'Retrieves all doctors associated with a specific clinic. Super Admin, Clinic Admin, Receptionist, and Patients can see all doctors. Cached for performance.',
   })
   @ApiParam({
     name: 'id',

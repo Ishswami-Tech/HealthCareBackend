@@ -64,10 +64,10 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping OTP send.',
+        'WhatsApp service is disabled. Simulating successful OTP send.',
         'WhatsAppService'
       );
-      return false;
+      return true;
     }
 
     let retries = 0;
@@ -173,10 +173,10 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping appointment reminder.',
+        'WhatsApp service is disabled. Simulating successful appointment reminder.',
         'WhatsAppService'
       );
-      return false;
+      return true;
     }
 
     try {
@@ -265,10 +265,10 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping prescription notification.',
+        'WhatsApp service is disabled. Simulating successful prescription notification.',
         'WhatsAppService'
       );
-      return false;
+      return true;
     }
 
     try {
@@ -396,10 +396,10 @@ export class WhatsAppService {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'WhatsApp service is disabled. Skipping custom message.',
+          'WhatsApp service is disabled. Simulating successful custom message.',
           'WhatsAppService'
         );
-        return false;
+        return true;
       }
 
       await this.httpService.post(
@@ -513,7 +513,13 @@ export class WhatsAppService {
 
       // Fallback to global provider (existing behavior)
       if (!this.whatsAppConfig.enabled) {
-        throw new Error('WhatsApp service is disabled');
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'WhatsApp service is disabled. Simulating successful template message.',
+          'WhatsAppService'
+        );
+        return { success: true, simulated: true };
       }
 
       const response = await this.httpService.post(
@@ -638,10 +644,10 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping invoice delivery.',
+        'WhatsApp service is disabled. Simulating successful invoice delivery.',
         'WhatsAppService'
       );
-      return false;
+      return true;
     }
 
     try {
@@ -711,10 +717,10 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Skipping subscription confirmation.',
+        'WhatsApp service is disabled. Simulating successful subscription confirmation.',
         'WhatsAppService'
       );
-      return false;
+      return true;
     }
 
     try {
