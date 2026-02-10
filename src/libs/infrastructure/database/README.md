@@ -1,8 +1,8 @@
 # Database Service
 
-**Purpose:** Unified database service with Prisma, multi-tenant isolation, and HIPAA compliance
-**Location:** `src/libs/infrastructure/database`
-**Status:** ✅ Production-ready
+**Purpose:** Unified database service with Prisma, multi-tenant isolation, and
+HIPAA compliance **Location:** `src/libs/infrastructure/database` **Status:** ✅
+Production-ready
 
 ---
 
@@ -33,7 +33,7 @@ export class MyService {
   async example() {
     // Execute read query with multi-tenant isolation
     const result = await this.databaseService.executeHealthcareRead(
-      async (client) => {
+      async client => {
         return await client.user.findMany({
           where: { clinicId: 'clinic-123' },
         });
@@ -42,7 +42,7 @@ export class MyService {
 
     // Execute write query with transaction
     await this.databaseService.executeHealthcareWrite(
-      async (client) => {
+      async client => {
         return await client.user.create({
           data: { email: 'user@example.com', clinicId: 'clinic-123' },
         });
@@ -66,7 +66,8 @@ export class MyService {
 - ✅ **Transaction Management** - ACID-compliant transactions
 - ✅ **Query Optimization** - Built-in query performance monitoring
 - ✅ **HIPAA Compliance** - Audit logging and data encryption
-- ✅ **Connection Pooling** - Efficient connection management (500 max connections)
+- ✅ **Connection Pooling** - Efficient connection management (500 max
+  connections)
 - ✅ **Health Monitoring** - Database health checks
 - ✅ **Clinic Isolation Service** - Multi-tenant context management
 
@@ -91,8 +92,21 @@ DatabaseModule
     └── *.mapper.ts               # DB <-> Domain type mappers
 ```
 
-**Consolidated Documentation:**
-📖 [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#database-infrastructure) - Architecture, design decisions, cross-service patterns
+**Consolidated Documentation:** 📖
+[Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#database-infrastructure) -
+Architecture, design decisions, cross-service patterns
+
+### Database access rules
+
+- **Single PrismaService:** There is one `PrismaService` (in
+  `prisma/prisma.service.ts`). It is **internal** to this module and not
+  exported.
+- **Single public entry point:** All application code (services, controllers,
+  health, video, users, appointments, etc.) must use **only** `DatabaseService`
+  from `@infrastructure/database`.
+- **Do not** import or inject `PrismaService` outside this database module.
+  Health and readiness are obtained via `DatabaseService.getHealthStatus()`
+  (used by `DatabaseHealthIndicator`).
 
 ---
 
@@ -188,7 +202,8 @@ DATABASE_HEALTH_CHECK_INTERVAL=60000
 
 The DatabaseService automatically enforces multi-tenant isolation:
 
-1. **Automatic Clinic Scoping**: All queries are scoped to the current clinic context
+1. **Automatic Clinic Scoping**: All queries are scoped to the current clinic
+   context
 2. **Row-Level Security**: Database-level RLS policies (if enabled)
 3. **Query Filtering**: Automatic `clinicId` filtering in queries
 4. **Audit Logging**: All queries logged with clinic context
@@ -210,8 +225,8 @@ The DatabaseService automatically enforces multi-tenant isolation:
 ### Simple Transaction
 
 ```typescript
-await this.databaseService.executeHealthcareWrite(async (client) => {
-  return await client.$transaction(async (tx) => {
+await this.databaseService.executeHealthcareWrite(async client => {
+  return await client.$transaction(async tx => {
     // All operations in transaction
     await tx.user.create({ data: userData });
     await tx.profile.create({ data: profileData });
@@ -222,14 +237,16 @@ await this.databaseService.executeHealthcareWrite(async (client) => {
 ### Nested Transactions
 
 ```typescript
-await this.databaseService.executeHealthcareWrite(async (client) => {
-  return await client.$transaction(async (tx) => {
+await this.databaseService.executeHealthcareWrite(async client => {
+  return await client.$transaction(async tx => {
     // Outer transaction
     const user = await tx.user.create({ data: userData });
 
-    await tx.$transaction(async (innerTx) => {
+    await tx.$transaction(async innerTx => {
       // Nested transaction (savepoint)
-      await innerTx.profile.create({ data: { ...profileData, userId: user.id } });
+      await innerTx.profile.create({
+        data: { ...profileData, userId: user.id },
+      });
     });
 
     return user;
@@ -307,31 +324,37 @@ pnpm prisma:studio
 ## Dependencies
 
 ### Required Services
+
 - Prisma Client (generated from schema)
 - LoggingService (for query logging)
 - CacheService (for query result caching)
 
 ### Optional Services
+
 - EventService (for database events)
 
 ---
 
 ## Events Emitted
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `database.query.slow` | { query, duration, clinicId } | When query exceeds threshold (30s) |
-| `database.connection.pool.exhausted` | { poolSize, activeConnections } | When connection pool is full |
-| `database.health.degraded` | { status, latency } | When database health degrades |
+| Event                                | Payload                         | Description                        |
+| ------------------------------------ | ------------------------------- | ---------------------------------- |
+| `database.query.slow`                | { query, duration, clinicId }   | When query exceeds threshold (30s) |
+| `database.connection.pool.exhausted` | { poolSize, activeConnections } | When connection pool is full       |
+| `database.health.degraded`           | { status, latency }             | When database health degrades      |
 
 ---
 
 ## Related Documentation
 
-- [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#database-infrastructure) - Architecture overview, design decisions
-- [Database Guidelines](../../../.ai-rules/database.md) - Database best practices
-- [Multi-Tenant Architecture](../../../.ai-rules/architecture.md) - Multi-tenancy patterns
-- [System Architecture](../../../docs/architecture/SYSTEM_ARCHITECTURE.md) - Overall system design
+- [Complete Infrastructure Documentation](../../../INFRASTRUCTURE_DOCUMENTATION.md#database-infrastructure) -
+  Architecture overview, design decisions
+- [Database Guidelines](../../../.ai-rules/database.md) - Database best
+  practices
+- [Multi-Tenant Architecture](../../../.ai-rules/architecture.md) -
+  Multi-tenancy patterns
+- [System Architecture](../../../docs/architecture/SYSTEM_ARCHITECTURE.md) -
+  Overall system design
 - [Prisma Schema](./prisma/schema.prisma) - Database schema definition
 
 ---
@@ -341,6 +364,7 @@ pnpm prisma:studio
 ### Common Issues
 
 **Issue 1: Connection Pool Exhausted**
+
 - **Cause:** Too many concurrent connections
 - **Solution:** Increase `DATABASE_POOL_SIZE` or optimize connection usage
   ```env
@@ -348,8 +372,10 @@ pnpm prisma:studio
   ```
 
 **Issue 2: Slow Queries**
+
 - **Cause:** Missing indexes or inefficient queries
 - **Solution:** Check query execution plan, add indexes, optimize query
+
   ```bash
   # Check slow query logs
   pnpm logs:slow-queries
@@ -359,6 +385,7 @@ pnpm prisma:studio
   ```
 
 **Issue 3: Read Replica Lag**
+
 - **Cause:** High write load or network latency
 - **Solution:** Monitor replica lag, consider additional replicas
   ```bash
@@ -367,15 +394,20 @@ pnpm prisma:studio
   ```
 
 **Issue 4: Multi-Tenant Isolation Not Working**
+
 - **Cause:** Missing `clinicId` in context
-- **Solution:** Ensure `ClinicGuard` is applied or `clinicId` is in request metadata
+- **Solution:** Ensure `ClinicGuard` is applied or `clinicId` is in request
+  metadata
   ```typescript
   // Apply ClinicGuard to controller
   @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard)
-  export class MyController { /* ... */ }
+  export class MyController {
+    /* ... */
+  }
   ```
 
 **Issue 5: Prisma Client Not Generated**
+
 - **Cause:** Prisma client not generated after schema changes
 - **Solution:** Regenerate Prisma client
   ```bash

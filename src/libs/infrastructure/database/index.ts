@@ -39,7 +39,8 @@
  * ```
  *
  * NOTE: All database infrastructure components are INTERNAL.
- * External services should ONLY use DatabaseService.
+ * Do NOT import or use PrismaService in any code outside this module.
+ * Use DatabaseService only (from @infrastructure/database).
  */
 export { DatabaseModule } from './database.module';
 
