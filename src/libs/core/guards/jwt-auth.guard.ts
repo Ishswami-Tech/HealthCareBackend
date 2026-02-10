@@ -201,7 +201,7 @@ export class JwtAuthGuard implements CanActivate {
       if (this.rateLimitService && !this.configService.isDevelopment()) {
         const rateLimitResult = await this.rateLimitService.checkRateLimit(`${clientIp}:${path}`, {
           windowMs: 60000, // 1 minute window
-          max: 5, // 5 requests per minute for auth endpoints
+          max: 60, // 60 requests per minute for auth endpoints
         });
 
         if (!rateLimitResult.allowed) {
@@ -424,7 +424,12 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException('Token has been revoked');
         }
       } catch (blacklistError) {
-        // Reduce to WARN - blacklist check failure is non-critical, validation continues
+        // CRITICAL: Re-throw UnauthorizedException immediately - this is NOT a cache error
+        if (blacklistError instanceof UnauthorizedException) {
+          throw blacklistError;
+        }
+
+        // Only catch and log actual cache/network errors
         void logger.log(
           LogType.AUTH,
           LogLevel.WARN,

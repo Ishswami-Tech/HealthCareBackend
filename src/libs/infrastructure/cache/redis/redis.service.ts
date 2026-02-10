@@ -460,9 +460,13 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
           errorCode,
           host: redisHost,
           port: redisPort,
+          cacheEnabled: isCacheEnabled(),
+          cacheProvider: getCacheProvider(),
           environment: {
             REDIS_HOST: this.configService.getEnv('REDIS_HOST'),
             REDIS_PORT: this.configService.getEnv('REDIS_PORT'),
+            CACHE_ENABLED: this.configService.getEnv('CACHE_ENABLED'),
+            CACHE_PROVIDER: this.configService.getEnv('CACHE_PROVIDER'),
             DOCKER_ENV: this.configService.getEnv('DOCKER_ENV'),
             NODE_ENV: this.configService.getEnvironment(),
             isDocker,
@@ -477,7 +481,7 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
             local: 'If running locally, ensure Redis is installed and running: redis-cli ping',
             connection: `Check connection: redis-cli -h ${redisHost} -p ${redisPort} ping`,
             disable: this.isDevelopment
-              ? 'To disable Redis in development, set REDIS_ENABLED=false'
+              ? 'To disable Redis in development, set CACHE_ENABLED=false'
               : undefined,
           },
         }
@@ -486,6 +490,17 @@ export class RedisService extends BaseCacheClientService implements OnModuleInit
       this.circuitBreakerOpen = true;
       this.circuitBreakerFailures = this.circuitBreakerThreshold;
       this.circuitBreakerLastFailureTime = Date.now();
+
+      void this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.INFO,
+        `Circuit breaker opened after connection failure - future cache operations will fail fast`,
+        'CacheService',
+        {
+          circuitBreakerThreshold: this.circuitBreakerThreshold,
+          resetTimeoutMs: this.circuitBreakerResetTimeout,
+        }
+      );
       // Don't throw - allow application to continue without Redis
     }
   }

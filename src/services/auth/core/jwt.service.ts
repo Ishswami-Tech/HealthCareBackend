@@ -396,20 +396,24 @@ export class JwtAuthService {
           throw new Error('Token has been revoked');
         }
       } catch (blacklistError) {
-        // If blacklist check fails due to cache, log but continue verification
-        // Only throw if token is actually blacklisted
+        // If token is actually blacklisted, throw immediately
         if (
           blacklistError instanceof Error &&
           blacklistError.message === 'Token has been revoked'
         ) {
           throw blacklistError;
         }
+
+        // For cache errors (e.g., "not ready" or connection failures), just log and continue
+        // This ensures authentication works even when cache is down
         void this.loggingService.log(
           LogType.AUTH,
-          LogLevel.WARN,
-          'Blacklist check failed (non-critical), continuing verification',
+          LogLevel.DEBUG,
+          'Blacklist check skipped due to cache unavailability (non-critical)',
           'JwtAuthService',
-          {}
+          {
+            error: blacklistError instanceof Error ? blacklistError.message : 'Unknown',
+          }
         );
       }
 
