@@ -331,30 +331,9 @@ deploy_application() {
         log_info "Using DOCKER_IMAGE from environment: ${DOCKER_IMAGE}"
     fi
     
-    # CRITICAL: Create backup BEFORE removing containers
-    # This ensures all data is safely backed up before any container operations
-    log_info "Creating pre-deployment backup before container removal..."
-    local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
-    [[ ! -f "$backup_script" ]] && backup_script="${SCRIPT_DIR}/backup.sh"
-    [[ ! -f "$backup_script" ]] && backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
-    
-    local PRE_DEPLOYMENT_BACKUP=""
-    if [[ -f "$backup_script" ]]; then
-        log_info "Running backup script: ${backup_script}"
-        PRE_DEPLOYMENT_BACKUP=$("$backup_script" "pre-deployment") || {
-            log_error "Pre-deployment backup failed - ABORTING to prevent data loss"
-            log_error "Please fix backup issues before deploying"
-            return 1
-        }
-        if [[ -n "$PRE_DEPLOYMENT_BACKUP" ]]; then
-            log_success "Pre-deployment backup created: ${PRE_DEPLOYMENT_BACKUP}"
-        else
-            log_warning "Backup script returned empty backup ID, but continuing..."
-        fi
-    else
-        log_warning "Backup script not found at ${backup_script} - proceeding without backup"
-        log_warning "This is risky - ensure you have recent backups before continuing"
-    fi
+    # Backup policy: no backup here to keep deploy fast. Pre-change backup runs only when infra
+    # is unhealthy (CI backup-infrastructure job). Success backup runs after deploy (CI post-deployment-verification).
+    log_info "Skipping pre-deployment backup (deploy first, backups after)"
     
     # CRITICAL: Tag current running image as backup before pulling new one
     # This allows rollback if new deployment fails
@@ -1005,21 +984,8 @@ deploy_application() {
                 log_success "Image cleanup completed - only latest image + 1 backup remain"
             fi
             
-            # Create success backup after successful deployment
-            log_info "Creating success backup after successful deployment..."
-            local backup_script="${DEPLOY_SCRIPT_DIR}/backup.sh"
-            [[ ! -f "$backup_script" ]] && backup_script="${SCRIPT_DIR}/backup.sh"
-            [[ ! -f "$backup_script" ]] && backup_script="${BASE_DIR}/devops/scripts/docker-infra/backup.sh"
-            
-            if [[ -f "$backup_script" ]]; then
-                SUCCESS_BACKUP_ID=$("$backup_script" "success") || {
-                    log_warning "Success backup failed (deployment still succeeded)"
-                }
-                if [[ -n "$SUCCESS_BACKUP_ID" ]]; then
-                    log_success "Success backup created: ${SUCCESS_BACKUP_ID}"
-                fi
-            fi
-            
+            # Success backup is run by CI (post-deployment-verification) so deploy finishes fast
+            log_info "Deploy complete. Success backup will run in CI post-deployment step (non-blocking)."
             log_success "Application deployed successfully"
             
             # CRITICAL: Run post-deployment verification to ensure everything is correct
