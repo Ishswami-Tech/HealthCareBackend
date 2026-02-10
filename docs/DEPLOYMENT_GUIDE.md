@@ -900,23 +900,67 @@ docker compose -f devops/docker/docker-compose.prod.yml ps
 
 ## 🔄 Rollback Procedure
 
-If deployment fails or you need to rollback:
+### Automatic rollback (CI / deploy.sh)
 
-```bash
-# SSH into server
-ssh user@your-server-ip
-cd /opt/healthcare-backend
+When a deployment fails (e.g. app health check fails), **deploy.sh**
+automatically:
 
-# Pull previous image
-docker pull ghcr.io/your-username/your-repo/healthcare-api:main-<previous-sha>
+1. Captures failed-deploy diagnostics (logs, redacted env) for debugging.
+2. Rolls back the **container image** to the previous `rollback-backup-*` tag.
+3. Restores the **database** from the **last success backup** (taken after the
+   previous good deploy).  
+   If no success backup exists, it falls back to the pre-deployment backup (when
+   available).
 
-# Tag as latest
-docker tag ghcr.io/your-username/your-repo/healthcare-api:main-<previous-sha> \
-  ghcr.io/your-username/your-repo/healthcare-api:latest
+So **success backups** (created after each successful deploy) are your rollback
+points for the next failed deploy.
 
-# Restart services
-docker compose -f devops/docker/docker-compose.prod.yml up -d
-```
+### Manual rollback (if you need to revert outside CI)
+
+1. **Restore the last success backup (DB + optional Dragonfly)**
+
+   From the server (utils.sh provides `find_last_backup`):
+
+   ```bash
+   ssh user@your-server-ip
+   cd /opt/healthcare-backend
+   export SCRIPT_DIR="$(pwd)/devops/scripts/docker-infra"
+   source devops/scripts/shared/utils.sh
+   ./devops/scripts/docker-infra/restore.sh "$(find_last_backup "success")"
+   ```
+
+   If you need the backup ID manually, list metadata files:  
+   `ls -t backups/metadata/success-*.json 2>/dev/null | head -1` (strip path and
+   `.json` to get the ID).
+
+2. **Revert to the previous API image**
+
+   ```bash
+   # List rollback images (newest first)
+   docker images ghcr.io/your-org/healthcare-api --format "{{.Repository}}:{{.Tag}}" | grep rollback-backup
+
+   # Use the most recent rollback-backup tag as DOCKER_IMAGE, then:
+   export DOCKER_IMAGE=ghcr.io/your-org/healthcare-api:main-<sha>-rollback-backup-YYYYMMDD-HHMMSS
+   cd devops/docker
+   docker compose -f docker-compose.prod.yml up -d api worker
+   ```
+
+3. **Restart services**
+
+   ```bash
+   cd /opt/healthcare-backend/devops/docker
+   docker compose -f docker-compose.prod.yml up -d api worker
+   ```
+
+### Rollback summary
+
+| When                       | What to use for DB restore      | What to use for app           |
+| -------------------------- | ------------------------------- | ----------------------------- |
+| After a failed deploy (CI) | Automatic (last success backup) | Automatic (rollback image)    |
+| Manual revert later        | `restore.sh <last-success-id>`  | Previous image / rollback tag |
+
+Success backups are kept with retention (e.g. last 5); see
+`devops/scripts/docker-infra/backup.sh` and `README.md` there.
 
 ---
 

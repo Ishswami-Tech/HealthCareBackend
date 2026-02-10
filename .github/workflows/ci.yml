@@ -419,9 +419,9 @@ jobs:
           echo "Unhealthy services (recreate only these): ${{ needs.ensure-infrastructure-health.outputs.unhealthy-services }}"
           echo "=============================================="
           if [[ "${{ needs.ensure-infrastructure-health.outputs.infra-healthy }}" == "true" ]]; then
-            echo "RESULT: HEALTHY → Job will succeed; Backup (always) runs then Deploy; Recreate/Restore/Verify SKIPPED."
+            echo "RESULT: HEALTHY → Job will succeed; no pre-deploy backup; Deploy runs; Recreate/Restore/Verify SKIPPED."
           else
-            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup (always) → Recreate only unhealthy → Restore backup → Verify → Deploy."
+            echo "RESULT: UNHEALTHY → Job will FAIL (red); Backup (pre-recreate) → Recreate only unhealthy → Restore backup → Verify → Deploy."
           fi
           echo "=============================================="
 
@@ -1578,14 +1578,11 @@ jobs:
             
             chmod +x /tmp/backup.sh
             
-            echo "💾 Creating success backup (backup of all after successful deployment only)..."
-            echo "📋 This is the last-known-good recovery point; created only when deployment has succeeded."
-            BACKUP_ID=$(/tmp/backup.sh success) || {
-              echo "⚠️  Success backup failed (non-critical, but recommended)"
-              exit 0  # Don't fail the job if backup fails
-            }
-            echo "✅ Success backup created (ID: ${BACKUP_ID})"
-            echo "BACKUP_ID=${BACKUP_ID}" > /tmp/post-deploy-backup-id.txt
+            echo "💾 Starting success backup in background (Postgres + S3 upload; does not block CI)..."
+            echo "📋 Logs: /tmp/success-backup.log (last-known-good recovery point)."
+            nohup /tmp/backup.sh success >> /tmp/success-backup.log 2>&1 &
+            echo $! > /tmp/success-backup.pid
+            echo "✅ Backup started in background (PID: $(cat /tmp/success-backup.pid)). Pipeline continues; backup continues on server."
           ENDSSH
 
       - name: Post-deployment summary
@@ -1594,6 +1591,6 @@ jobs:
           echo "📊 Post-Deployment Summary"
           echo "═══════════════════════════════════════════════════════════"
           echo "✅ Deployment verification completed"
-          echo "💾 Success backup created (if backup succeeded)"
-          echo "🎉 Deployment is healthy and backed up!"
+          echo "💾 Success backup started in background on server (see /tmp/success-backup.log)"
+          echo "🎉 Deployment is healthy; backup runs async and does not block pipeline."
           echo "═══════════════════════════════════════════════════════════"

@@ -8,13 +8,14 @@ structure
 
 ## 📋 Quick Reference
 
-| Category          | File                                                   | Description                             |
-| ----------------- | ------------------------------------------------------ | --------------------------------------- |
-| **⭐ Start Here** | [SYSTEM_COMPLETE.md](./SYSTEM_COMPLETE.md)             | Complete system overview                |
-| **API**           | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)         | 250+ endpoints reference                |
-| **Developer**     | [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)             | Quick start & best practices            |
-| **Environment**   | [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) | All environment variables               |
-| **API Inventory** | [ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)   | Complete endpoint list (235+ endpoints) |
+| Category          | File                                                   | Description                                  |
+| ----------------- | ------------------------------------------------------ | -------------------------------------------- |
+| **⭐ Start Here** | [SYSTEM_COMPLETE.md](./SYSTEM_COMPLETE.md)             | Complete system overview                     |
+| **API**           | [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)         | 250+ endpoints reference                     |
+| **Developer**     | [DEVELOPER_GUIDE.md](./DEVELOPER_GUIDE.md)             | Quick start & best practices                 |
+| **Environment**   | [ENVIRONMENT_VARIABLES.md](./ENVIRONMENT_VARIABLES.md) | All environment variables                    |
+| **API Inventory** | [ACTUAL_API_INVENTORY.md](./ACTUAL_API_INVENTORY.md)   | Complete endpoint list (235+ endpoints)      |
+| **Deployment**    | [DEPLOYMENT_GUIDE.md](./DEPLOYMENT_GUIDE.md)           | CI/CD, server setup, **rollback & recovery** |
 
 ---
 

@@ -402,26 +402,31 @@ EOF
     return 1
 }
 
-# Create combined metadata
+# Create combined metadata (only for fully successful backups: Postgres local + S3)
 create_metadata() {
     local postgres_meta="${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
     local dragonfly_meta="${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
-    
-    # Always create metadata if postgres backup succeeded (dragonfly is optional)
-    if [[ -f "$postgres_meta" ]]; then
-        local postgres_json=$(cat "$postgres_meta")
-        local dragonfly_json="null"
-        
-        # Include dragonfly metadata if available
-        if [[ -f "$dragonfly_meta" ]]; then
-            dragonfly_json=$(cat "$dragonfly_meta")
-        fi
-        
-        # Extract array values to variables for use in heredoc (fixes syntax error)
-        local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
-        local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]}"
-        
-        cat > "$METADATA_FILE" <<EOF
+    local postgres_s3_status="${BACKUP_RESULTS[postgres_s3]:-failed}"
+
+    # Only successful backups: require Postgres S3 upload to have succeeded
+    if [[ "$postgres_s3_status" != "success" ]]; then
+        log_error "Backup not fully successful (Postgres S3 upload failed) - not creating metadata"
+        return 1
+    fi
+
+    if [[ ! -f "$postgres_meta" ]]; then
+        log_error "Cannot create metadata: PostgreSQL metadata file not found: ${postgres_meta}"
+        return 1
+    fi
+
+    local postgres_json=$(cat "$postgres_meta")
+    local dragonfly_json="null"
+    if [[ -f "$dragonfly_meta" ]]; then
+        dragonfly_json=$(cat "$dragonfly_meta")
+    fi
+
+    local postgres_local_status="${BACKUP_RESULTS[postgres_local]}"
+    cat > "$METADATA_FILE" <<EOF
 {
   "backup_id": "${BACKUP_ID}",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -433,18 +438,15 @@ create_metadata() {
   }
 }
 EOF
-        
-        chmod 600 "$METADATA_FILE"
-        
-        # Upload metadata to S3
-        local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
-        s3_upload "$METADATA_FILE" "$s3_meta_path" || log_warning "Failed to upload metadata to S3"
-        
-        log_success "Backup metadata created: ${METADATA_FILE}"
-    else
-        log_error "Cannot create metadata: PostgreSQL metadata file not found: ${postgres_meta}"
+    chmod 600 "$METADATA_FILE"
+
+    local s3_meta_path="backups/metadata/${BACKUP_ID}.json"
+    if ! s3_upload "$METADATA_FILE" "$s3_meta_path"; then
+        log_error "Failed to upload metadata to S3 - backup not registered as success"
         return 1
     fi
+    log_success "Backup metadata created: ${METADATA_FILE}"
+    return 0
 }
 
 # ============================================================================
@@ -637,27 +639,28 @@ main_backup() {
         log_warning "Dragonfly backup failed (non-critical)"
     fi
     
-    # Create metadata
+    # Create metadata only for successful backups (Postgres local + S3, metadata uploaded)
     if ! create_metadata; then
-        log_error "Failed to create backup metadata - backup may not be restorable"
-        log_error "Backup files were created but metadata is missing"
-        # Don't exit - backup files are still valid, just metadata is missing
+        log_error "Backup not fully successful - not registering (only successful backups are kept)"
+        # Remove partial/failed backup artifacts so we don't retain failed backups
+        rm -f "${postgres_backup_file}" "${BACKUP_DIR}/metadata/postgres-${TIMESTAMP}.json"
+        rm -f "${dragonfly_backup_file}" "${BACKUP_DIR}/metadata/dragonfly-${TIMESTAMP}.json"
+        rm -f "$METADATA_FILE"
+        log_info "Removed partial backup files for failed run"
+        exit 1
     fi
-    
-    # Verify metadata file was created
+
     if [[ ! -f "$METADATA_FILE" ]]; then
         log_error "Metadata file was not created: ${METADATA_FILE}"
-        log_error "This backup may not be restorable via restore.sh"
-    else
-        log_success "Backup metadata verified: ${METADATA_FILE}"
+        exit 1
     fi
-    
-    # Cleanup old backups based on retention policy
+    log_success "Backup metadata verified: ${METADATA_FILE}"
+
+    # Cleanup old backups based on retention policy (only successful ones are kept)
     cleanup_old_backups_by_type "$backup_type"
-    
-    # Output backup ID for use in restore
+
+    # Output backup ID only for successful backups
     echo "$BACKUP_ID"
-    
     log_success "Backup process completed (ID: ${BACKUP_ID})"
 }
 
