@@ -100,7 +100,7 @@
     "@types/nodemailer": "^7.0.4",
     "@types/pdfkit": "^0.17.3",
     "@types/pg": "^8.15.6",
-    "axios": "^1.13.2",
+    "axios": "^1.13.5",
     "bcryptjs": "^3.0.3",
     "bullmq": "^5.64.0",
     "class-transformer": "^0.5.1",
@@ -179,6 +179,7 @@
     "lodash": ">=4.17.23",
     "lodash-es": ">=4.17.23",
     "fastify": ">=5.7.2",
-    "@isaacs/brace-expansion": ">=5.0.1"
+    "@isaacs/brace-expansion": ">=5.0.1",
+    "axios": ">=1.13.5"
   }
 }
