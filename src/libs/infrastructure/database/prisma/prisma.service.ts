@@ -262,13 +262,18 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * 3. Try standard .prisma/client location
    * 4. FAIL FAST if none work (no async import fallback)
    */
-  private static loadPrismaClientSync(): PrismaClientConstructor {
-    console.warn('[PrismaService] Starting PrismaClient loading (synchronous only)...');
+  /** Optional bootstrap logger (no console - use when called from onModuleInit). */
+  private static loadPrismaClientSync(
+    bootstrapLog?: (level: 'info' | 'warn' | 'error', message: string) => void
+  ): PrismaClientConstructor {
+    const log = bootstrapLog ?? ((): void => {});
+    log('info', '[PrismaService] Starting PrismaClient loading (synchronous only)...');
     const cwd = process.cwd();
     const requireModule = createRequire(path.join(cwd, 'package.json'));
 
-    // Expanded list of paths to try (synchronous require only)
+    // Try @prisma/client first (Docker entrypoint symlink), then absolute paths
     const pathsToTry = [
+      { path: '@prisma/client', label: '@prisma/client (symlink)' },
       // Docker production paths (dist/)
       {
         path: path.join(cwd, 'dist', 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
@@ -342,37 +347,31 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         path: path.join(cwd, 'node_modules', '.prisma', 'client', 'index.js'),
         label: 'node_modules/.prisma/client/index.js',
       },
-
-      // @prisma/client symlink (last resort)
-      { path: '@prisma/client', label: '@prisma/client (symlink)' },
     ];
 
-    console.warn(`[PrismaService] Will try ${pathsToTry.length} paths (synchronous require only)`);
+    log('info', `[PrismaService] Will try ${pathsToTry.length} paths (synchronous require only)`);
 
     for (const { path: clientPath, label } of pathsToTry) {
       try {
-        console.warn(`[PrismaService] Trying: ${label}`);
+        log('info', `[PrismaService] Trying: ${label}`);
         const prismaModule = requireModule(clientPath) as {
           PrismaClient?: PrismaClientConstructor;
         };
         if (prismaModule?.PrismaClient) {
-          console.warn(`[PrismaService] ✓ SUCCESS: Loaded PrismaClient from ${label}`);
+          log('info', `[PrismaService] SUCCESS: Loaded PrismaClient from ${label}`);
           return prismaModule.PrismaClient;
-        } else {
-          console.warn(
-            `[PrismaService] ✗ FAILED: ${label} - module loaded but no PrismaClient export`
-          );
         }
+        log('warn', `[PrismaService] FAILED: ${label} - module loaded but no PrismaClient export`);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
-        console.warn(`[PrismaService] ✗ FAILED: ${label} - ${errorMsg}`);
+        log('warn', `[PrismaService] FAILED: ${label} - ${errorMsg}`);
         // Continue to next path
       }
     }
 
     // If we get here, all paths failed
-    console.error('[PrismaService] CRITICAL: Failed to load PrismaClient from any location');
-    console.error('[PrismaService] Checked paths:', pathsToTry.map(p => p.label).join(', '));
+    log('error', '[PrismaService] CRITICAL: Failed to load PrismaClient from any location');
+    log('error', `[PrismaService] Checked paths: ${pathsToTry.map(p => p.label).join(', ')}`);
 
     throw new HealthcareError(
       ErrorCode.DATABASE_CONNECTION_FAILED,
@@ -941,8 +940,102 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     // Store the instance
     PrismaService.instance = this;
 
+    // CRITICAL: Create shared PrismaClient in constructor so it exists before any
+    // other module's onModuleInit runs (NestJS init order is not guaranteed).
+    this.ensureSharedClientCreated();
+
     // Tenant isolation will be handled via manual filtering in service methods
     // as $use middleware is deprecated
+  }
+
+  /**
+   * Ensures the shared PrismaClient exists and this instance has delegates.
+   * Called from constructor so client is ready before any onModuleInit runs.
+   */
+  private ensureSharedClientCreated(): void {
+    if (PrismaService.sharedPrismaClient) {
+      this.prismaClient = PrismaService.sharedPrismaClient;
+      this.assignDelegatesToThis();
+      PrismaService.isFullyInitialized = true;
+      return;
+    }
+    const constructorArgs = (
+      PrismaService as unknown as { _sharedConstructorArgs?: PrismaClientConstructorArgs }
+    )._sharedConstructorArgs;
+    if (!constructorArgs) {
+      return; // Will be created in onModuleInit when args are set (e.g. health-check-only path)
+    }
+    const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
+    let client = new PrismaClientConstructor(constructorArgs) as unknown as PrismaClient;
+    const isProductionEnv = isProduction();
+    if (isProductionEnv) {
+      const productionExtendArgs = (this as unknown as { _productionExtendArgs?: PrismaExtendArgs })
+        ._productionExtendArgs;
+      if (productionExtendArgs) {
+        client = PrismaService.extendPrismaClient(client, productionExtendArgs);
+      }
+    }
+    PrismaService.sharedPrismaClient = client;
+    this.prismaClient = PrismaService.sharedPrismaClient;
+    this.assignDelegatesToThis();
+    PrismaService.isFullyInitialized = true;
+  }
+
+  /**
+   * Assigns all Prisma delegates from this.prismaClient to this instance.
+   * Must be called when this.prismaClient is set.
+   */
+  private assignDelegatesToThis(): void {
+    if (!this.prismaClient) {
+      return;
+    }
+    const clientTyped = this.prismaClient as unknown as Record<string, unknown>;
+    const assignDelegate = <TDelegate>(
+      propertyName: string,
+      targetProperty: keyof PrismaService
+    ): void => {
+      const delegateValue = clientTyped[propertyName];
+      if (delegateValue === undefined || delegateValue === null) {
+        throw new HealthcareError(
+          ErrorCode.DATABASE_QUERY_FAILED,
+          `Delegate '${propertyName}' not found on PrismaClient`,
+          undefined,
+          { propertyName },
+          'PrismaService.assignDelegatesToThis'
+        );
+      }
+      Object.defineProperty(this, targetProperty, {
+        value: delegateValue as TDelegate,
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      });
+    };
+    assignDelegate<UserDelegate>('user', 'user');
+    assignDelegate<DoctorDelegate>('doctor', 'doctor');
+    assignDelegate<PatientDelegate>('patient', 'patient');
+    assignDelegate<ReceptionistDelegate>('receptionist', 'receptionist');
+    assignDelegate<ClinicAdminDelegate>('clinicAdmin', 'clinicAdmin');
+    assignDelegate<SuperAdminDelegate>('superAdmin', 'superAdmin');
+    assignDelegate<PharmacistDelegate>('pharmacist', 'pharmacist');
+    assignDelegate<TherapistDelegate>('therapist', 'therapist');
+    assignDelegate<LabTechnicianDelegate>('labTechnician', 'labTechnician');
+    assignDelegate<FinanceBillingDelegate>('financeBilling', 'financeBilling');
+    assignDelegate<SupportStaffDelegate>('supportStaff', 'supportStaff');
+    assignDelegate<NurseDelegate>('nurse', 'nurse');
+    assignDelegate<CounselorDelegate>('counselor', 'counselor');
+    assignDelegate<ClinicDelegate>('clinic', 'clinic');
+    assignDelegate<AppointmentDelegate>('appointment', 'appointment');
+    assignDelegate<AuditLogDelegate>('auditLog', 'auditLog');
+    assignDelegate<PermissionDelegate>('permission', 'permission');
+    assignDelegate<RbacRoleDelegate>('rbacRole', 'rbacRole');
+    assignDelegate<RolePermissionDelegate>('rolePermission', 'rolePermission');
+    assignDelegate<UserRoleDelegate>('userRole', 'userRole');
+    assignDelegate<BillingPlanDelegate>('billingPlan', 'billingPlan');
+    assignDelegate<SubscriptionDelegate>('subscription', 'subscription');
+    assignDelegate<InvoiceDelegate>('invoice', 'invoice');
+    assignDelegate<PaymentDelegate>('payment', 'payment');
+    assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
   }
 
   /**
@@ -1196,7 +1289,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
    * Use this for models like therapyQueue, checkInLocation, etc. that are not typed delegates
    */
   getRawPrismaClient(): PrismaClient {
-    // First check if shared instance exists (created in onModuleInit)
+    // First check if shared instance exists (created in constructor or onModuleInit)
     // This is the preferred path - use the shared singleton instance
     if (PrismaService.sharedPrismaClient) {
       this.prismaClient = PrismaService.sharedPrismaClient;
@@ -1299,13 +1392,27 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   private static connectionPromise: Promise<void> | null = null;
   private static isFullyInitialized = false; // Track if Prisma is fully initialized (delegates ready)
 
-  onModuleInit() {
-    console.warn('[PrismaService] onModuleInit started');
+  async onModuleInit(): Promise<void> {
+    // CRITICAL: Run sync initialization in same tick (no Promise.then) so sharedPrismaClient
+    // is set before any other module's onModuleInit or getRawPrismaClient() runs.
+    if (this.loggingService) {
+      void this.loggingService.log(
+        LogType.DATABASE,
+        LogLevel.INFO,
+        'onModuleInit started',
+        'PrismaService.onModuleInit'
+      );
+    }
     // Initialize PrismaClient synchronously using loadPrismaClientSync
-    // CRITICAL FIX: Changed from async loadPrismaClient() to sync loadPrismaClientSync()
-    // to avoid indefinite hangs during dynamic import() in Docker production environment
     if (!PrismaService.sharedPrismaClient) {
-      console.warn('[PrismaService] Shared PrismaClient not found, creating new instance...');
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.INFO,
+          'Shared PrismaClient not found, creating new instance',
+          'PrismaService.onModuleInit'
+        );
+      }
       const constructorArgs = (
         PrismaService as unknown as {
           _sharedConstructorArgs?: PrismaClientConstructorArgs;
@@ -1313,8 +1420,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       )._sharedConstructorArgs;
       if (constructorArgs) {
         try {
+          const bootstrapLog = (level: 'info' | 'warn' | 'error', message: string): void => {
+            if (this.loggingService) {
+              const logLevel =
+                level === 'error'
+                  ? LogLevel.ERROR
+                  : level === 'warn'
+                    ? LogLevel.WARN
+                    : LogLevel.INFO;
+              void this.loggingService.log(
+                LogType.DATABASE,
+                logLevel,
+                message,
+                'PrismaService.loadPrismaClientSync'
+              );
+            }
+          };
           // Load PrismaClient constructor synchronously (no async import to avoid Docker hang)
-          const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
+          const PrismaClientConstructor = PrismaService.loadPrismaClientSync(bootstrapLog);
 
           // Create PrismaClient instance
           let client = new PrismaClientConstructor(constructorArgs) as unknown as PrismaClient;
@@ -1331,65 +1454,34 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           }
 
           PrismaService.sharedPrismaClient = client;
-          console.warn('[PrismaService] PrismaClient instance created and stored');
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.INFO,
+              'PrismaClient instance created and stored',
+              'PrismaService.onModuleInit'
+            );
+          }
 
-          // Set instance's prismaClient
+          // Set instance's prismaClient and assign delegates (single source of truth)
           this.prismaClient = PrismaService.sharedPrismaClient;
-
-          // Initialize delegate properties using Object.defineProperty
-          const clientTyped = this.prismaClient as unknown as Record<string, unknown>;
-
-          const assignDelegate = <TDelegate>(
-            propertyName: string,
-            targetProperty: keyof PrismaService
-          ): void => {
-            const delegateValue = clientTyped[propertyName];
-            if (delegateValue === undefined || delegateValue === null) {
-              throw new HealthcareError(
-                ErrorCode.DATABASE_QUERY_FAILED,
-                `Delegate '${propertyName}' not found on PrismaClient`,
-                undefined,
-                { propertyName },
-                'PrismaService'
-              );
-            }
-            // Use Object.defineProperty to set the property
-            Object.defineProperty(this, targetProperty, {
-              value: delegateValue as TDelegate,
-              writable: false,
-              enumerable: true,
-              configurable: false,
-            });
-          };
-
-          console.warn('[PrismaService] Starting delegate assignment...');
-          // Assign all delegates using Object.defineProperty
-          assignDelegate<UserDelegate>('user', 'user');
-          assignDelegate<DoctorDelegate>('doctor', 'doctor');
-          assignDelegate<PatientDelegate>('patient', 'patient');
-          assignDelegate<ReceptionistDelegate>('receptionist', 'receptionist');
-          assignDelegate<ClinicAdminDelegate>('clinicAdmin', 'clinicAdmin');
-          assignDelegate<SuperAdminDelegate>('superAdmin', 'superAdmin');
-          assignDelegate<PharmacistDelegate>('pharmacist', 'pharmacist');
-          assignDelegate<TherapistDelegate>('therapist', 'therapist');
-          assignDelegate<LabTechnicianDelegate>('labTechnician', 'labTechnician');
-          assignDelegate<FinanceBillingDelegate>('financeBilling', 'financeBilling');
-          assignDelegate<SupportStaffDelegate>('supportStaff', 'supportStaff');
-          assignDelegate<NurseDelegate>('nurse', 'nurse');
-          assignDelegate<CounselorDelegate>('counselor', 'counselor');
-          assignDelegate<ClinicDelegate>('clinic', 'clinic');
-          assignDelegate<AppointmentDelegate>('appointment', 'appointment');
-          assignDelegate<AuditLogDelegate>('auditLog', 'auditLog');
-          assignDelegate<PermissionDelegate>('permission', 'permission');
-          assignDelegate<RbacRoleDelegate>('rbacRole', 'rbacRole');
-          assignDelegate<RolePermissionDelegate>('rolePermission', 'rolePermission');
-          assignDelegate<UserRoleDelegate>('userRole', 'userRole');
-          assignDelegate<BillingPlanDelegate>('billingPlan', 'billingPlan');
-          assignDelegate<SubscriptionDelegate>('subscription', 'subscription');
-          assignDelegate<InvoiceDelegate>('invoice', 'invoice');
-          assignDelegate<PaymentDelegate>('payment', 'payment');
-          assignDelegate<TransactionDelegate['$transaction']>('$transaction', '$transaction');
-          console.warn('[PrismaService] All delegates assigned successfully');
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.INFO,
+              'Starting delegate assignment',
+              'PrismaService.onModuleInit'
+            );
+          }
+          this.assignDelegatesToThis();
+          if (this.loggingService) {
+            void this.loggingService.log(
+              LogType.DATABASE,
+              LogLevel.INFO,
+              'All delegates assigned successfully',
+              'PrismaService.onModuleInit'
+            );
+          }
 
           // CRITICAL: Mark delegates as initialized IMMEDIATELY after assignment
           // This allows other services to use delegates even if connection is still in progress
@@ -1431,8 +1523,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       )._healthCheckConstructorArgs;
       if (healthCheckConstructorArgs) {
         try {
+          const bootstrapLog = (level: 'info' | 'warn' | 'error', message: string): void => {
+            if (this.loggingService) {
+              const logLevel =
+                level === 'error'
+                  ? LogLevel.ERROR
+                  : level === 'warn'
+                    ? LogLevel.WARN
+                    : LogLevel.INFO;
+              void this.loggingService.log(
+                LogType.DATABASE,
+                logLevel,
+                message,
+                'PrismaService.loadPrismaClientSync'
+              );
+            }
+          };
           // Load PrismaClient constructor synchronously (no async import to avoid Docker hang)
-          const PrismaClientConstructor = PrismaService.loadPrismaClientSync();
+          const PrismaClientConstructor = PrismaService.loadPrismaClientSync(bootstrapLog);
 
           // Create health check PrismaClient instance
           PrismaService.healthCheckPrismaClient = new PrismaClientConstructor(
@@ -1519,6 +1627,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         'PrismaService.onModuleInit'
       );
     }
+    // Satisfy eslint: async method must contain await (connection intentionally not awaited)
+    await Promise.resolve();
   }
 
   /**

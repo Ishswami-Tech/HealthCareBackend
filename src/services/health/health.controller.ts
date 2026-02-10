@@ -1,20 +1,18 @@
-import { Controller, Get, Res, Query, Inject, Optional, forwardRef } from '@nestjs/common';
+import { Controller, Get, Res, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
-import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 
+/**
+ * Health controller uses HealthService only.
+ * Database readiness comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
+ */
 @ApiTags('health')
 @Controller('health')
 export class HealthController {
-  constructor(
-    private readonly healthService: HealthService,
-    @Optional()
-    @Inject(forwardRef(() => PrismaService))
-    private readonly prismaService?: PrismaService
-  ) {}
+  constructor(private readonly healthService: HealthService) {}
 
   /**
    * Unified Health Check Endpoint using HealthService
@@ -105,47 +103,34 @@ export class HealthController {
   })
   async getHealth(@Res() res: FastifyReply, @Query('detailed') detailed?: string): Promise<void> {
     try {
-      // CRITICAL: Check Prisma connection directly - requires actual database connection
-      // isReady() now returns true when delegates are ready (connection can be in progress)
-      // So we need to check isConnected() separately to ensure actual connection
-      const isPrismaReady = this.prismaService?.isReady() ?? false;
-      const isDatabaseConnected = this.prismaService?.isConnected() ?? false;
-
       const isDetailed = detailed === 'true' || detailed === '1';
       const healthResult = isDetailed
         ? await this.healthService.getDetailedHealth()
         : await this.healthService.getHealth();
 
-      const databaseStatus = healthResult.services?.database;
+      const databaseStatus = healthResult.services?.database as
+        | { status?: string; details?: unknown }
+        | undefined;
 
-      // Application is healthy only if:
-      // 1. Prisma delegates are ready (isReady() returns true)
-      // 2. Database is actually connected (isConnected is true)
-      // 3. Health check shows database as healthy
-      // 4. Overall health status is healthy
-      if (
-        isPrismaReady &&
-        isDatabaseConnected &&
-        databaseStatus?.status === 'healthy' &&
-        healthResult.status === 'healthy'
-      ) {
-        // Database is connected and all services are healthy - return 200
+      // Application is healthy only if database and overall health are healthy.
+      // Database status comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
+      const isDatabaseHealthy = databaseStatus?.status === 'healthy';
+      const isOverallHealthy = healthResult.status === 'healthy';
+
+      if (isDatabaseHealthy && isOverallHealthy) {
         return res.status(200).send(healthResult);
-      } else {
-        // Database not connected or services unhealthy - return 503
-        return res.status(503).send({
-          status: 'unhealthy',
-          timestamp: new Date().toISOString(),
-          message:
-            'Application is not ready - database connection in progress or services unhealthy',
-          database: {
-            connected: isDatabaseConnected,
-            healthStatus: databaseStatus?.status,
-            details: databaseStatus?.details,
-          },
-          services: healthResult.services,
-        });
       }
+
+      return res.status(503).send({
+        status: 'unhealthy',
+        timestamp: new Date().toISOString(),
+        message: 'Application is not ready - database connection in progress or services unhealthy',
+        database: {
+          healthStatus: databaseStatus?.status,
+          details: databaseStatus?.details,
+        },
+        services: healthResult.services,
+      });
     } catch (error) {
       // If health check fails, return 503
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

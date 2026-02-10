@@ -81,6 +81,30 @@ export default [
     },
   },
   {
+    // Forbid importing PrismaService outside the database module. Use DatabaseService only.
+    files: ['src/**/*.ts'],
+    ignores: ['src/libs/infrastructure/database/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '**/prisma/prisma.service',
+                '**/prisma.service',
+                '@database/prisma/prisma.service',
+                '@infrastructure/database/prisma/prisma.service',
+              ],
+              message:
+                'Do not import PrismaService. Use DatabaseService from @infrastructure/database instead.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // Allow console.log in seed files and scripts
     files: ['**/seed.ts', '**/seed.js', '**/scripts/**/*.ts', '**/scripts/**/*.js'],
     rules: {
