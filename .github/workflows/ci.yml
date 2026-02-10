@@ -4,20 +4,22 @@
 #   1. detect-changes (push) → security → docker-build + ensure-infrastructure-health (parallel)
 #   2. check-infrastructure (needs docker-build, ensure-infrastructure-health)
 #
-#   Backup runs in EVERY condition (healthy or unhealthy). Restore runs after recreation only.
+#   Pre-change backup: ONLY when infra is unhealthy (before recreate). No backup on healthy path.
+#   Post-success backup: ONLY after successful deployment (in post-deployment-verification).
 #
 #   IF HEALTHY (infra-healthy=true):
-#      → check-infrastructure SUCCEEDS → backup-infrastructure (always take backup) → deploy runs
+#      → check-infrastructure SUCCEEDS → deploy runs (no backup-infrastructure)
+#      → post-deployment-verification → verify health → create success backup
 #
 #   IF UNHEALTHY (infra-healthy=false):
 #      → check-infrastructure FAILS
-#      → backup-infrastructure (take backup)
+#      → backup-infrastructure (take backup before touching infra)
 #      → recreate-infrastructure (recreate ONLY unhealthy services)
 #      → restore-backup (restore the backup after recreation; skipped if no backup-id)
 #      → verify-infrastructure-readiness → deploy (if verify succeeds)
+#      → post-deployment-verification → verify health → create success backup
 #
-# Goal: Deploy app successfully with no infra issues and no API issues. Infra is fixed (recreate only unhealthy)
-# before deploy; after deploy we verify infra + API health and fail the pipeline if any issue remains.
+# Goal: Deploy app successfully; backup only when unhealthy (pre-recreate) and after successful deploy (success backup).
 # Implementation summary: docs/CI_CD_WORKFLOW_SUMMARY.md
 name: CI/CD
 
@@ -430,8 +432,8 @@ jobs:
             exit 1
           fi
 
-  # Backup Infrastructure (ALWAYS: healthy or unhealthy)
-  # Take backup in every condition. When unhealthy, this backup is restored after recreation.
+  # Backup Infrastructure (ONLY when infra unhealthy)
+  # Take backup only before we recreate infra. When healthy, skip this; deploy then creates success backup after deploy.
   backup-infrastructure:
     name: Backup Infrastructure
     runs-on: ubuntu-latest
@@ -439,16 +441,16 @@ jobs:
       always() &&
       github.event_name == 'push' &&
       github.ref == 'refs/heads/main' &&
-      (needs.check-infrastructure.result == 'success' || needs.check-infrastructure.result == 'failure')
+      needs.check-infrastructure.result == 'failure'
     environment: production
     needs: [detect-changes, check-infrastructure]
     timeout-minutes: 30
     outputs:
       backup-id: ${{ steps.backup.outputs.backup-id }}
     steps:
-      - name: Confirm backup runs in every condition (healthy or unhealthy)
+      - name: Pre-recreate backup (infra unhealthy)
         run: |
-          echo "Backup runs whether infra is healthy or unhealthy. When unhealthy, this backup will be restored after recreation."
+          echo "Infra unhealthy - taking backup before recreate. This backup will be restored after recreation."
           echo "check-infrastructure.result = ${{ needs.check-infrastructure.result }}, infra-healthy = ${{ needs.check-infrastructure.outputs.infra-healthy }}"
       - uses: actions/checkout@v4
 
@@ -940,6 +942,9 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     timeout-minutes: 60
+    env:
+      # Keep SSH alive during long operations (e.g. rclone upload to S3) to avoid "Broken pipe"
+      SSH_OPTS: "-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -o ServerAliveInterval=30 -o ServerAliveCountMax=60"
     steps:
       - uses: actions/checkout@v4
 
@@ -1234,10 +1239,10 @@ jobs:
       - name: Copy files to server
         run: |
           # Copy all deployment scripts
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
+          scp $SSH_OPTS -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
+          scp $SSH_OPTS /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
           # Copy docker-compose file
-          scp -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
+          scp $SSH_OPTS devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
 
       - name: Set deployment image name
         id: deploy-image
@@ -1276,7 +1281,7 @@ jobs:
 
       - name: Setup server directories
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh $SSH_OPTS ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
             # Run directory setup script
@@ -1311,7 +1316,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_USERNAME: ${{ github.actor }}
         run: |
-          ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
+          ssh $SSH_OPTS ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             
             # Set deployment variables (values embedded from GitHub Actions)
@@ -1423,11 +1428,12 @@ jobs:
             fi
             
             # Set deployment variables for deploy.sh
+            # BACKUP_ID only set on unhealthy path (backup-infrastructure not in deploy needs to avoid skipping deploy when healthy)
             export INFRA_CHANGED="${{ needs.detect-changes.outputs.infra-changed }}"
             export APP_CHANGED="${{ needs.detect-changes.outputs.app-changed }}"
             export INFRA_HEALTHY="${{ needs.check-infrastructure.outputs.infra-healthy }}"
             export INFRA_STATUS="${{ needs.check-infrastructure.outputs.infra-status }}"
-            export BACKUP_ID="${{ needs.backup-infrastructure.outputs.backup-id || '' }}"
+            export BACKUP_ID=""
             
             # Set DOCKER_IMAGE for docker-compose (uses IMAGE:IMAGE_TAG format)
             export DOCKER_IMAGE="${IMAGE}:${IMAGE_TAG}"
@@ -1457,9 +1463,8 @@ jobs:
           # Security: Don't log server hostname in public logs
           echo "Server: [REDACTED]"
 
-  # Post-Deployment Verification & Backup
-  # Goal: No infra issues, no API issues. Verifies infra + API health (verify.sh deployment); fails job if any issue.
-  # Then creates a success backup as a recovery point.
+  # Post-Deployment Verification & Success Backup
+  # Runs only after deploy succeeds. Verifies infra + API health; then creates "backup of all" as last-known-good recovery point.
   post-deployment-verification:
     name: Post-Deployment Verification & Backup
     runs-on: ubuntu-latest
@@ -1573,8 +1578,8 @@ jobs:
             
             chmod +x /tmp/backup.sh
             
-            echo "💾 Creating success backup after deployment..."
-            echo "📋 This backup serves as a recovery point for the successful deployment"
+            echo "💾 Creating success backup (backup of all after successful deployment only)..."
+            echo "📋 This is the last-known-good recovery point; created only when deployment has succeeded."
             BACKUP_ID=$(/tmp/backup.sh success) || {
               echo "⚠️  Success backup failed (non-critical, but recommended)"
               exit 0  # Don't fail the job if backup fails
