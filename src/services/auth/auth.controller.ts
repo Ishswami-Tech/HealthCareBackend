@@ -1203,12 +1203,6 @@ export class AuthController {
     }
   }
 
-  @Public()
-  @Post('register')
-  @InvalidateCache({
-    patterns: ['user_profiles:*', 'auth:*'],
-    tags: ['user_profiles', 'auth'],
-  })
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
   @PatientCache({
