@@ -146,7 +146,7 @@ if (!databaseUrl || databaseUrl.trim() === '') {
 module.exports = {
   schema: 'src/libs/infrastructure/database/prisma/schema.prisma',
   migrations: {
-    path: 'src/libs/infrastructure/database/prisma/migrations',
+    path: './migrations',  // Relative to this config file (/app/src/libs/infrastructure/database/prisma/)
   },
   datasource: {
     // Use the cleaned URL, or let Prisma fall back to DATABASE_URL env var if empty
