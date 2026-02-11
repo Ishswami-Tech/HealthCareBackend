@@ -92,6 +92,16 @@ export class HealthcareErrorsService {
     return this.createError(ErrorCode.AUTH_OTP_INVALID, HttpStatus.BAD_REQUEST, context);
   }
 
+  otpSendFailed(message?: string, context?: string): HealthcareError {
+    return new HealthcareError(
+      ErrorCode.SMS_SERVICE_FAILED,
+      message || 'Failed to send OTP. Please try again later.',
+      HttpStatus.SERVICE_UNAVAILABLE,
+      undefined,
+      context
+    );
+  }
+
   /**
    * Creates an error for authentication failure
    *

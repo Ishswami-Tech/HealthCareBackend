@@ -7,7 +7,9 @@ import {
   Request,
   HttpCode,
   HttpStatus,
+  Res,
 } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import {
   ApiTags,
   ApiOperation,
@@ -42,7 +44,8 @@ import {
 } from '@dtos/auth.dto';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
-import { Cache, InvalidateCache, PatientCache, InvalidatePatientCache } from '@core/decorators';
+import { Cache, InvalidateCache, PatientCache } from '@core/decorators';
+import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -458,13 +461,36 @@ export class AuthController {
   })
   async refreshToken(
     @Body() refreshTokenDto: RefreshTokenDto,
-    @Request() req: FastifyRequestWithUser
+    @Request() req: FastifyRequestWithUser,
+    @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<DataResponseDto<AuthTokens>> {
     try {
       const tokens = await this.authService.refreshToken(refreshTokenDto, {
         userAgent: (req.headers['user-agent'] as string) || 'unknown',
         ipAddress: req.ip || '127.0.0.1',
       });
+
+      // ✅ FIX: Set new tokens as httpOnly cookies using Fastify API
+      // This ensures frontend cookies are updated after refresh
+      const isProduction = process.env['NODE_ENV'] === 'production';
+
+      // Fastify uses reply.setCookie() not res.cookie()
+      reply.setCookie('access_token', tokens.accessToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 15 * 60, // 15 minutes (in seconds for Fastify)
+      });
+
+      reply.setCookie('refresh_token', tokens.refreshToken, {
+        httpOnly: true,
+        secure: isProduction,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 7 * 24 * 60 * 60, // 7 days (in seconds for Fastify)
+      });
+
       return new DataResponseDto(tokens, 'Token refreshed successfully');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
@@ -479,14 +505,10 @@ export class AuthController {
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @InvalidateCache({
-    patterns: [
-      'auth:refresh_token:{userId}:*',
-      'user:{userId}:*',
-      'auth:login_attempt:{email}:*',
-      'user_sessions:*',
-    ],
-    tags: ['auth', 'refresh_tokens', 'user_profiles', 'user_sessions'],
+    patterns: ['user:{userId}:*', 'user_sessions:*', 'auth:*'],
+    tags: ['user_sessions', 'auth'],
   })
+  @ApiBearerAuth()
   @ApiOperation({
     summary: 'Logout user',
     description:
@@ -803,8 +825,9 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Post('change-password')
-  @HttpCode(HttpStatus.OK)
-  @InvalidatePatientCache({
+  @RateLimitAPI({ points: 5, duration: 900 }) // 5 requests per 15 minutes - prevents brute force
+  @ApiBearerAuth()
+  @InvalidateCache({
     patterns: ['user:{userId}:*', 'user_profiles', 'auth'],
     tags: ['user_profiles', 'auth'],
   })
@@ -1180,6 +1203,12 @@ export class AuthController {
     }
   }
 
+  @Public()
+  @Post('register')
+  @InvalidateCache({
+    patterns: ['user_profiles:*', 'auth:*'],
+    tags: ['user_profiles', 'auth'],
+  })
   @UseGuards(JwtAuthGuard)
   @Get('sessions')
   @PatientCache({
