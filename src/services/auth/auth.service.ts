@@ -33,6 +33,7 @@ import { Role } from '@core/types/enums.types';
 import type { UserWithPassword, UserWithRelations } from '@core/types/user.types';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
+import type { FastifyReply } from 'fastify';
 
 @Injectable()
 export class AuthService {
@@ -1180,7 +1181,6 @@ export class AuthService {
         // Include clinicId: from verifyDto, or user's primaryClinicId
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
         ...(clinicIdFromHeader && { currentClinicId: clinicIdFromHeader }),
-        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(
         userForTokens,
@@ -1294,7 +1294,7 @@ export class AuthService {
    * Check if user profile is complete
    * Profile is complete if user has: dateOfBirth, gender, address, and phone
    */
-  private isProfileComplete(user: {
+  public isProfileComplete(user: {
     dateOfBirth?: Date | string | null;
     gender?: string | null;
     address?: string | null;
@@ -1441,11 +1441,7 @@ export class AuthService {
       }
 
       // 2. Check if phone already exists
-      // TypeScript workaround: method exists but type inference issue in some environments
-      const dbService = this.databaseService as {
-        findUserByPhoneSafe: (phone: string) => Promise<UserWithRelations | null>;
-      };
-      const existingUser = await dbService.findUserByPhoneSafe(phone);
+      const existingUser = await this.databaseService.findUserByPhoneSafe(phone);
       if (existingUser) {
         throw this.errors.validationError(
           'phone',
@@ -1546,7 +1542,7 @@ export class AuthService {
   /**
    * Generate JWT tokens with enhanced security features
    */
-  private async generateTokens(
+  public async generateTokens(
     user: UserProfile | UserWithPassword | UserWithRelations,
     sessionId: string,
     deviceFingerprint?: string,
@@ -1738,7 +1734,7 @@ export class AuthService {
     await this.logging.log(
       LogType.SECURITY,
       LogLevel.WARN,
-      `Failed login attempt ${failedCount}/5 for ${email}`,
+      `Failed login attempt ${failedCount}/10 for ${email}`,
       'AuthService.trackFailedLogin',
       {
         email,
@@ -1749,18 +1745,18 @@ export class AuthService {
       }
     );
 
-    // Lock account after 5 failed attempts
-    if (failedCount >= 5) {
-      const lockDuration = 30 * 60 * 1000; // 30 minutes
+    // Lock account after 10 failed attempts
+    if (failedCount >= 10) {
+      const lockDuration = 20 * 60 * 1000; // 20 minutes
       const unlockTime = new Date(Date.now() + lockDuration);
 
-      // Store lock with 30-minute TTL
-      await this.cacheService.set(lockKey, unlockTime.toISOString(), 1800);
+      // Store lock with 20-minute TTL
+      await this.cacheService.set(lockKey, unlockTime.toISOString(), 1200);
 
       await this.logging.log(
         LogType.SECURITY,
         LogLevel.ERROR,
-        `Account locked for ${email} - 5 failed login attempts`,
+        `Account locked for ${email} - 10 failed login attempts`,
         'AuthService.trackFailedLogin',
         {
           email,
@@ -1780,5 +1776,31 @@ export class AuthService {
         metadata,
       });
     }
+  }
+  /**
+   * Set authentication cookies in the response
+   * @param reply - FastifyReply object
+   * @param tokens - Authentication tokens
+   */
+  public setAuthCookies(reply: FastifyReply, tokens: AuthTokens): void {
+    const isProduction = process.env['NODE_ENV'] === 'production';
+
+    // Set access token cookie
+    reply.setCookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 15 * 60, // 15 minutes
+    });
+
+    // Set refresh token cookie
+    reply.setCookie('refresh_token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: 'lax',
+      path: '/',
+      maxAge: 7 * 24 * 60 * 60, // 7 days
+    });
   }
 }

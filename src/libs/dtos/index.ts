@@ -46,3 +46,7 @@ export * from './role.dto';
 export * from './video.dto';
 export * from './billing.dto';
 export * from './ehr.dto';
+export * from './doctor.dto';
+export * from './patient.dto';
+export * from './staff.dto';
+export * from './logging.dto';
