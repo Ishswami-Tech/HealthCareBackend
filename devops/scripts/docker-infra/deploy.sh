@@ -2434,6 +2434,19 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
                 for migration_name in $migrations_found; do
                     log_info "Baselining migration: $migration_name"
                     
+                    # Debug: Verify migration structure before baseline
+                    log_info "Verifying migration structure in container..."
+                    docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        echo '[DEBUG] Current directory: '\$(pwd)
+                        echo '[DEBUG] Migrations directory exists:' \$([ -d /app/src/libs/infrastructure/database/prisma/migrations ] && echo 'YES' || echo 'NO')
+                        echo '[DEBUG] Migration folder exists:' \$([ -d /app/src/libs/infrastructure/database/prisma/migrations/$migration_name ] && echo 'YES' || echo 'NO')
+                        echo '[DEBUG] migration.sql exists:' \$([ -f /app/src/libs/infrastructure/database/prisma/migrations/$migration_name/migration.sql ] && echo 'YES' || echo 'NO')
+                        echo '[DEBUG] Contents of migrations directory:'
+                        ls -la /app/src/libs/infrastructure/database/prisma/migrations/ || echo '[DEBUG] Failed to list migrations directory'
+                        echo '[DEBUG] Contents of migration folder:'
+                        ls -la /app/src/libs/infrastructure/database/prisma/migrations/$migration_name/ || echo '[DEBUG] Failed to list migration folder'
+                    " 2>&1 || true
+                    
                     if docker exec "${CONTAINER_PREFIX}api" bash -c "
                         export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
                         unset DIRECT_URL
