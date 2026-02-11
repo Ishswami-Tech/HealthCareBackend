@@ -377,6 +377,34 @@ export class AuthService {
     clinicIdFromHeader?: string
   ): Promise<AuthResponse> {
     try {
+      // ✅ SECURITY: Check if account is locked due to failed login attempts
+      const lockKey = `account_lock:${loginDto.email}`;
+      const lockData = await this.cacheService.get<string>(lockKey);
+
+      if (lockData) {
+        const unlockTime = new Date(lockData);
+        if (unlockTime > new Date()) {
+          // Account still locked
+          await this.logging.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Login attempt for locked account: ${loginDto.email}`,
+            'AuthService.login',
+            {
+              email: loginDto.email,
+              unlockTime: unlockTime.toISOString(),
+              ipAddress: sessionMetadata?.ipAddress,
+              userAgent: sessionMetadata?.userAgent,
+            }
+          );
+          throw this.errors.accountLocked('AuthService.login');
+        } else {
+          // Lock expired, clear it
+          await this.cacheService.del(lockKey);
+          await this.cacheService.del(`failed_login:${loginDto.email}`);
+        }
+      }
+
       // Find user directly without caching for login (password must be fresh)
       // Use findUserByEmailForAuth which explicitly selects the password field
       const userResult = (await this.databaseService.findUserByEmailForAuth(loginDto.email)) as
@@ -390,6 +418,8 @@ export class AuthService {
           `User not found for login: ${loginDto.email}`,
           'AuthService.login'
         );
+        // Track failed attempt for non-existent users (prevent enumeration but still track)
+        await this.trackFailedLogin(loginDto.email, sessionMetadata || {});
         throw this.errors.invalidCredentials('AuthService.login');
       }
       // userResult already has the correct type (UserWithRelations & { password: string })
@@ -404,6 +434,7 @@ export class AuthService {
           'AuthService.login',
           { email: loginDto.email, userId: user.id }
         );
+        await this.trackFailedLogin(loginDto.email, sessionMetadata || {});
         throw this.errors.invalidCredentials('AuthService.login');
       }
 
@@ -417,8 +448,13 @@ export class AuthService {
           'AuthService.login',
           { email: loginDto.email, userId: user.id }
         );
+        // Track failed attempt for invalid password
+        await this.trackFailedLogin(loginDto.email, sessionMetadata || {});
         throw this.errors.invalidCredentials('AuthService.login');
       }
+
+      // ✅ SECURITY: Clear failed login attempts on successful login
+      await this.cacheService.del(`failed_login:${loginDto.email}`);
 
       // Get clinic ID from header or user's primary clinic
       const clinicId = clinicIdFromHeader || loginDto.clinicId || user.primaryClinicId;
@@ -949,7 +985,7 @@ export class AuthService {
           clinicId
         );
       } else {
-        // Use user phone if available, otherwise identifier
+        // ✅ DUAL-CHANNEL OTP: Send via WhatsApp AND email (if available) for better delivery
         const phoneTarget = user?.phone || requestDto.identifier;
         if (!phoneTarget) {
           throw this.errors.validationError(
@@ -958,15 +994,63 @@ export class AuthService {
             'AuthService.requestOtp'
           );
         }
-        result = await this.otpService.sendOtpSms(
-          phoneTarget,
-          requestDto.isRegistration ? 'verification' : 'login',
-          clinicId
+
+        const promises: Promise<{ success: boolean; message: string }>[] = [
+          this.otpService.sendOtpSms(
+            phoneTarget,
+            requestDto.isRegistration ? 'verification' : 'login',
+            clinicId
+          ),
+        ];
+
+        // Also send to email if user has one (increases delivery success rate)
+        if (user?.email) {
+          promises.push(
+            this.otpService
+              .sendOtpEmail(
+                user.email,
+                userName,
+                requestDto.isRegistration ? 'verification' : 'login',
+                clinicId
+              )
+              .catch((err: Error) => {
+                // Log but don't fail if email send fails (WhatsApp is primary)
+                void this.logging.log(
+                  LogType.SYSTEM,
+                  LogLevel.WARN,
+                  'Email OTP fallback failed for phone login',
+                  'AuthService.requestOtp',
+                  { error: err.message, phone: phoneTarget }
+                );
+                return { success: false, message: err.message };
+              })
+          );
+        }
+
+        // Wait for all channels
+        const results = await Promise.allSettled(promises);
+        const successful = results.filter(
+          (r): r is PromiseFulfilledResult<{ success: boolean; message: string }> =>
+            r.status === 'fulfilled'
         );
+
+        // ✅ At least one channel must succeed
+        if (successful.length === 0) {
+          throw this.errors.otpSendFailed(
+            'Failed to send OTP via all channels. Please try again later.',
+            'AuthService.requestOtp'
+          );
+        }
+
+        // Use the first successful result
+        result =
+          successful.length > 0 && successful[0]?.status === 'fulfilled'
+            ? (successful[0] as PromiseFulfilledResult<{ success: boolean; message: string }>).value
+            : { success: true, message: 'OTP sent via multiple channels' };
       }
 
       if (!result.success) {
-        throw new Error(result.message || 'Failed to send OTP');
+        throw new Error(result.message ?? 'Failed to send OTP');
       }
 
       // Emit OTP requested event
@@ -992,7 +1076,7 @@ export class AuthService {
 
       return {
         success: true,
-        message: result.message || 'OTP sent successfully',
+        message: result.message ?? 'OTP sent successfully',
       };
     } catch (_error) {
       await this.logging.log(
@@ -1052,6 +1136,20 @@ export class AuthService {
       );
 
       if (!verificationResult.success) {
+        // ✅ SECURITY: Log failed OTP attempts for audit trail
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.WARN,
+          `Failed OTP verification for ${verifyDto.identifier}`,
+          'AuthService.verifyOtp',
+          {
+            identifier: verifyDto.identifier,
+            ipAddress: sessionMetadata?.ipAddress,
+            userAgent: sessionMetadata?.userAgent,
+            reason: verificationResult.message,
+            timestamp: new Date().toISOString(),
+          }
+        );
         // Return proper 400 error instead of 500
         throw this.errors.otpInvalid('AuthService.verifyOtp');
       }
@@ -1614,6 +1712,73 @@ export class AuthService {
         }
       );
       throw _error;
+    }
+  }
+
+  /**
+   * Track failed login attempts and lock account after threshold
+   * ✅ SECURITY: Prevents brute force attacks by locking account after 5 failed attempts
+   * @private
+   */
+  private async trackFailedLogin(
+    email: string,
+    metadata: { ipAddress?: string; userAgent?: string }
+  ): Promise<void> {
+    const failedKey = `failed_login:${email}`;
+    const lockKey = `account_lock:${email}`;
+
+    // Get current failed count
+    const current = await this.cacheService.get<string>(failedKey);
+    const failedCount = current ? parseInt(current) + 1 : 1;
+
+    // Store failed count for 1 hour
+    await this.cacheService.set(failedKey, failedCount.toString(), 3600);
+
+    // Log the failed attempt
+    await this.logging.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      `Failed login attempt ${failedCount}/5 for ${email}`,
+      'AuthService.trackFailedLogin',
+      {
+        email,
+        failedCount,
+        ipAddress: metadata?.ipAddress,
+        userAgent: metadata?.userAgent,
+        timestamp: new Date().toISOString(),
+      }
+    );
+
+    // Lock account after 5 failed attempts
+    if (failedCount >= 5) {
+      const lockDuration = 30 * 60 * 1000; // 30 minutes
+      const unlockTime = new Date(Date.now() + lockDuration);
+
+      // Store lock with 30-minute TTL
+      await this.cacheService.set(lockKey, unlockTime.toISOString(), 1800);
+
+      await this.logging.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        `Account locked for ${email} - 5 failed login attempts`,
+        'AuthService.trackFailedLogin',
+        {
+          email,
+          failedAttempts: failedCount,
+          unlockTime: unlockTime.toISOString(),
+          ipAddress: metadata?.ipAddress,
+          userAgent: metadata?.userAgent,
+        }
+      );
+
+      // Emit security event
+      await this.eventService.emit('security.account_locked', {
+        email,
+        reason: 'too_many_failed_attempts',
+        failedAttempts: failedCount,
+        unlockTime: unlockTime.toISOString(),
+        metadata,
+      });
     }
   }
 }

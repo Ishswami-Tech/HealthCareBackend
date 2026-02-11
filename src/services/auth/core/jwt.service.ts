@@ -580,8 +580,14 @@ export class JwtAuthService {
         ipAddress
       );
 
-      // Blacklist old refresh token (best effort - won't throw)
-      await this.blacklistToken(refreshToken, 'Token refresh');
+      // ✅ FIX: Don't blacklist refresh tokens on normal refresh
+      // Blacklisting causes "Token has been revoked" errors because frontend cookies
+      // cannot be updated client-side. Let tokens expire naturally after their TTL.
+      // Tokens are still blacklisted on:
+      // - User logout
+      // - Password reset
+      // - Security incidents
+      // await this.blacklistToken(refreshToken, 'Token refresh');
 
       return newTokens;
     } catch (_error) {
