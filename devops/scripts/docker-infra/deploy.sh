@@ -2438,7 +2438,8 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
                         export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
                         unset DIRECT_URL
                         cd /app && npx prisma migrate resolve --applied '$migration_name' \
-                            --schema '/app/src/libs/infrastructure/database/prisma/schema.prisma'
+                            --schema '/app/src/libs/infrastructure/database/prisma/schema.prisma' \
+                            --config '/app/src/libs/infrastructure/database/prisma/prisma.config.js'
                     " 2>&1; then
                         log_success "Baselined migration: $migration_name"
                     else
