@@ -137,6 +137,9 @@ export class DoctorsService {
       }
 
       if (filters?.clinicId) {
+        if (!where['doctor']) {
+          where['doctor'] = {};
+        }
         const doctorWhere = where['doctor'] as Record<string, unknown>;
         doctorWhere['clinics'] = {
           some: { clinicId: filters.clinicId },
