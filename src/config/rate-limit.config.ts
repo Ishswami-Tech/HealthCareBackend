@@ -45,9 +45,9 @@ export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
       },
       // Authentication endpoints
       auth: {
-        limit: parseInteger(getEnv('AUTH_RATE_LIMIT'), 5, 1, 100),
+        limit: parseInteger(getEnv('AUTH_RATE_LIMIT'), 20, 1, 100), // Increased from 5 to 20
         window: 60, // 1 minute
-        burst: 2, // Allow 2 extra attempts
+        burst: 5, // Allow 5 extra attempts
       },
       // Heavy operations (e.g., file uploads, reports)
       heavy: {
@@ -57,7 +57,7 @@ export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
       },
       // User profile operations
       user: {
-        limit: parseInteger(getEnv('USER_RATE_LIMIT'), 50, 1, 1000),
+        limit: parseInteger(getEnv('USER_RATE_LIMIT'), 100, 1, 1000), // Increased from 50 to 100
         window: 60, // 1 minute
       },
       // Health check endpoints

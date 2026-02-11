@@ -11,6 +11,7 @@ import {
   Put,
   ForbiddenException,
   BadRequestException,
+  Res,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -21,6 +22,9 @@ import {
   ApiSecurity,
 } from '@nestjs/swagger';
 import { UsersService } from '@services/users/users.service';
+import { AuthService } from '@services/auth/auth.service';
+import type { FastifyReply } from 'fastify';
+import type { JwtGuardUser } from '@core/types/guard.types';
 import { LocationManagementService } from '../services/location-management.service';
 import {
   UserResponseDto,
@@ -49,6 +53,7 @@ import { PatientCache, InvalidatePatientCache } from '@core/decorators';
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
+    private readonly authService: AuthService,
     private readonly rbacService: RbacService,
     private readonly locationManagementService: LocationManagementService
   ) {}
@@ -203,7 +208,8 @@ export class UsersController {
   async update(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserProfileDto,
-    @Request() req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<UserResponseDto> {
     if (!id || id === 'undefined') {
       throw new BadRequestException('User ID is required in the URL');
@@ -218,11 +224,39 @@ export class UsersController {
 
     // Allow Super Admin to update any user
     if (loggedInUser.role === Role.SUPER_ADMIN) {
-      return this.usersService.update(id, updateUserDto);
+      const updatedUser = await this.usersService.update(id, updateUserDto);
+      // If profile is complete, refresh session
+      if (this.authService.isProfileComplete(updatedUser)) {
+        const fullProfile = await this.usersService.getUserProfile(id);
+        const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
+        const tokens = await this.authService.generateTokens(
+          fullProfile,
+          sessionId,
+          req.headers['x-device-fingerprint'] as string,
+          req.headers['user-agent'],
+          req.ip
+        );
+        this.authService.setAuthCookies(reply, tokens);
+      }
+      return updatedUser;
     }
     // Allow any user to update their own profile
     if (loggedInUserId === id) {
-      return this.usersService.update(id, updateUserDto);
+      const updatedUser = await this.usersService.update(id, updateUserDto);
+      // If profile is complete, refresh session
+      if (this.authService.isProfileComplete(updatedUser)) {
+        const fullProfile = await this.usersService.getUserProfile(id);
+        const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
+        const tokens = await this.authService.generateTokens(
+          fullProfile,
+          sessionId,
+          req.headers['x-device-fingerprint'] as string,
+          req.headers['user-agent'],
+          req.ip
+        );
+        this.authService.setAuthCookies(reply, tokens);
+      }
+      return updatedUser;
     }
     // Otherwise, forbidden
     throw new ForbiddenException('You do not have permission to update this user.');
