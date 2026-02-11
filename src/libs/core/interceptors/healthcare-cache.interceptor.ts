@@ -327,7 +327,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
 
         // Standard cache retrieval
         const cachedValue = await this.cacheService.get(cacheKey);
-        return cachedValue ? JSON.parse(cachedValue as string) : null;
+        return cachedValue || null;
       } catch (cacheError) {
         // Cache service might not be fully initialized yet
         void this.loggingService?.log(

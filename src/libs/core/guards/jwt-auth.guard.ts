@@ -574,7 +574,13 @@ export class JwtAuthGuard implements CanActivate {
       this.configService.isDevelopment() || this.configService.getEnvBoolean('DEV_MODE', false);
     if (!isDev) {
       const currentFingerprint = this.generateDeviceFingerprint(request);
-      if (sessionData.deviceFingerprint !== currentFingerprint) {
+      const currentUserAgent = (request.headers['user-agent'] as string) || 'unknown';
+      const storedUserAgent = sessionData.deviceInfo?.userAgent || 'unknown';
+
+      if (
+        sessionData.deviceFingerprint !== currentFingerprint &&
+        !this.isSimilarUserAgent(storedUserAgent, currentUserAgent)
+      ) {
         void logger.log(
           LogType.AUTH,
           LogLevel.WARN,
@@ -585,6 +591,8 @@ export class JwtAuthGuard implements CanActivate {
             sessionId,
             storedFingerprint: sessionData.deviceFingerprint,
             currentFingerprint: currentFingerprint,
+            storedUserAgent,
+            currentUserAgent,
           }
         );
         // Depending on security policy, you might want to invalidate the session here.
