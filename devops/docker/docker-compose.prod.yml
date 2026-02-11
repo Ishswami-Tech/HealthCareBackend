@@ -414,10 +414,10 @@ services:
         # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users, ~1200-1800 req/s
         # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         # NOTE: Prisma migrations can be memory-intensive. If migrations fail with OOM (exit code 137),
-        # increase memory limit to 8G or higher. Current limit: 6G (may be insufficient for large databases)
+        # increase memory limit. Current limit: 12G (sufficient for large databases with 2000+ tables)
         limits:
           cpus: "3.0"      # Target: 8 vCPU server (3 CPU for API)
-          memory: 8G       # Increased from 6G to prevent OOM during Prisma migrations
+          memory: 12G      # Increased from 8G to prevent OOM during Prisma migrations
         reservations:
           cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
           memory: 2G       # Minimum guaranteed (works on 12GB server)
