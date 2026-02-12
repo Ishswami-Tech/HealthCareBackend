@@ -19,7 +19,7 @@ export class EHRClinicController {
   // ============ Comprehensive Patient Records ============
 
   @Get('comprehensive/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:clinic:comprehensive:{userId}:{clinicId}',
@@ -39,7 +39,7 @@ export class EHRClinicController {
   // ============ Clinic-Wide EHR Access ============
 
   @Get(':clinicId/patients/records')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read')
   @Cache({
     keyTemplate:
@@ -86,7 +86,7 @@ export class EHRClinicController {
   }
 
   @Get(':clinicId/patients/summary')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('ehr', 'read')
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:patients:summary',
@@ -99,7 +99,7 @@ export class EHRClinicController {
   }
 
   @Get(':clinicId/search')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read')
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:search:{q}:{types}',
@@ -117,7 +117,7 @@ export class EHRClinicController {
   }
 
   @Get(':clinicId/alerts/critical')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('ehr', 'read')
   @Cache({
     keyTemplate: 'ehr:clinic:{clinicId}:alerts:critical',

@@ -177,7 +177,7 @@ export class BillingService {
       if (clinicId) {
         whereClause['clinicId'] = clinicId;
       }
-    } else if (role === 'PATIENT' || role === 'DOCTOR') {
+    } else if (role === 'PATIENT' || role === 'DOCTOR' || role === 'ASSISTANT_DOCTOR') {
       // Patients and doctors can see:
       // 1. Public plans (clinicId is null)
       // 2. Plans for their clinic (if clinicId is provided)
@@ -1215,8 +1215,8 @@ export class BillingService {
   }
 
   /**
-   * Process per-appointment payment (for video appointments)
-   * Creates invoice and payment intent for single appointment
+   * Process per-appointment payment (VIDEO_CALL only).
+   * IN_PERSON appointments require subscription - use bookAppointmentWithSubscription.
    */
   async processAppointmentPayment(
     appointmentId: string,
@@ -1224,10 +1224,22 @@ export class BillingService {
     appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
     provider?: PaymentProvider
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+    if (appointmentType === 'IN_PERSON') {
+      throw new BadRequestException(
+        'IN_PERSON appointments are covered by subscription. Please use an active subscription to book.'
+      );
+    }
+
     const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
     if (!appointment) {
       throw new NotFoundException('Appointment not found');
+    }
+
+    if (String(appointment.type) !== appointmentType) {
+      throw new BadRequestException(
+        `Appointment type mismatch. Expected ${appointmentType}, got ${appointment.type}`
+      );
     }
 
     // Get user details

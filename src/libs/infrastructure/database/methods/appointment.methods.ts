@@ -5,6 +5,7 @@
 
 import { DatabaseMethodsBase } from './database-methods.base';
 import type { AppointmentWithRelations, AppointmentTimeSlot } from '@core/types/database.types';
+import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 import type {
   AppointmentCreateInput,
   AppointmentUpdateInput,
@@ -224,7 +225,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       async prisma => {
         return await prisma.appointment.update({
           where: { id },
-          data,
+          data: data as PrismaDelegateArgs,
           include: {
             patient: {
               include: {

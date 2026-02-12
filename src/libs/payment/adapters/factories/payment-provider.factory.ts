@@ -36,9 +36,14 @@ export class PaymentProviderFactory {
         break;
       }
 
+      case PaymentProvider.CASHFREE: {
+        await import('@payment/adapters/cashfree/cashfree-payment.adapter');
+        throw new Error(
+          'Cashfree adapter requires HttpService. Use createAdapterWithHttpService() method instead.'
+        );
+      }
+
       case PaymentProvider.PHONEPE: {
-        // PhonePe adapter requires HttpService - handled in createAdapterWithHttpService
-        // These imports are for type reference only, not used in this method
         await import('@nestjs/axios');
         await import('@payment/adapters/phonepe/phonepe-payment.adapter');
         throw new Error(
@@ -57,7 +62,7 @@ export class PaymentProviderFactory {
   }
 
   /**
-   * Create payment provider adapter with HttpService (for PhonePe)
+   * Create payment provider adapter with HttpService (for Cashfree, PhonePe)
    */
   async createAdapterWithHttpService(
     config: PaymentProviderConfig,
@@ -70,6 +75,13 @@ export class PaymentProviderFactory {
         const { RazorpayPaymentAdapter } =
           await import('@payment/adapters/razorpay/razorpay-payment.adapter');
         adapter = new RazorpayPaymentAdapter(this.loggingService);
+        break;
+      }
+
+      case PaymentProvider.CASHFREE: {
+        const { CashfreePaymentAdapter } =
+          await import('@payment/adapters/cashfree/cashfree-payment.adapter');
+        adapter = new CashfreePaymentAdapter(this.loggingService, httpService);
         break;
       }
 

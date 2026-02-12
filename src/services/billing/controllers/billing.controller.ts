@@ -51,7 +51,14 @@ export class BillingController {
   // ============ Billing Plans ============
 
   @Get('plans')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.PATIENT
+  )
   @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plans:{clinicId}',
@@ -69,7 +76,13 @@ export class BillingController {
   }
 
   @Get('plans/:id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.DOCTOR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('billing', 'read')
   @Cache({
     keyTemplate: 'billing:plan:{id}',
@@ -175,7 +188,14 @@ export class BillingController {
   }
 
   @Get('invoices/user/:userId')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('invoices', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'billing:invoices:user:{userId}',
@@ -196,6 +216,7 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.PATIENT,
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST
   )
   @RequireResourcePermission('invoices', 'read')
@@ -233,7 +254,14 @@ export class BillingController {
   }
 
   @Get('payments/user/:userId')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.DOCTOR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('payments', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'billing:payments:user:{userId}',
@@ -254,6 +282,7 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.PATIENT,
     Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST
   )
   @RequireResourcePermission('payments', 'read')
@@ -292,6 +321,8 @@ export class BillingController {
       const normalizedProvider = provider.toLowerCase();
       if (normalizedProvider === 'razorpay') {
         paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'cashfree') {
+        paymentProvider = PaymentProvider.CASHFREE;
       } else if (normalizedProvider === 'phonepe') {
         paymentProvider = PaymentProvider.PHONEPE;
       }
@@ -399,7 +430,7 @@ export class BillingController {
   }
 
   @Post('appointments/:appointmentId/cancel-subscription')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'update')
   async cancelSubscriptionAppointment(@Param('appointmentId') appointmentId: string) {
     await this.billingService.cancelSubscriptionAppointment(appointmentId);
@@ -506,6 +537,8 @@ export class BillingController {
       const normalizedProvider = provider.toLowerCase();
       if (normalizedProvider === 'razorpay') {
         paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'cashfree') {
+        paymentProvider = PaymentProvider.CASHFREE;
       } else if (normalizedProvider === 'phonepe') {
         paymentProvider = PaymentProvider.PHONEPE;
       }
@@ -540,6 +573,8 @@ export class BillingController {
       const normalizedProvider = provider.toLowerCase();
       if (normalizedProvider === 'razorpay') {
         paymentProvider = PaymentProvider.RAZORPAY;
+      } else if (normalizedProvider === 'cashfree') {
+        paymentProvider = PaymentProvider.CASHFREE;
       } else if (normalizedProvider === 'phonepe') {
         paymentProvider = PaymentProvider.PHONEPE;
       }

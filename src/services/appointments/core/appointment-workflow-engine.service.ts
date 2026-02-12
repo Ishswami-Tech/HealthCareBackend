@@ -81,8 +81,9 @@ export class AppointmentWorkflowEngine {
    */
   isValidStatusTransition(currentStatus: string, newStatus: string): boolean {
     const validTransitions: Record<string, string[]> = {
-      SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
-      CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
+      SCHEDULED: ['CONFIRMED', 'CHECKED_IN', 'CANCELLED', 'RESCHEDULED'],
+      CONFIRMED: ['CHECKED_IN', 'IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
+      CHECKED_IN: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
       IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
       COMPLETED: [], // Final state
       CANCELLED: [], // Final state

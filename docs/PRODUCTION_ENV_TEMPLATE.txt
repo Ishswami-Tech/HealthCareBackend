@@ -119,7 +119,8 @@ SOCKET_URL=/socket.io
 PRISMA_STUDIO_URL=/prisma
 PGADMIN_URL=/pgadmin
 
-# WhatsApp Configuration (Optional)
+# WhatsApp Configuration (Meta Business API)
+# See: https://developers.facebook.com/docs/whatsapp/cloud-api
 WHATSAPP_ENABLED=false
 WHATSAPP_API_URL=https://graph.facebook.com/v17.0
 WHATSAPP_API_KEY=
@@ -128,6 +129,9 @@ WHATSAPP_BUSINESS_ACCOUNT_ID=
 WHATSAPP_OTP_TEMPLATE_ID=otp_verification
 WHATSAPP_APPOINTMENT_TEMPLATE_ID=appointment_reminder
 WHATSAPP_PRESCRIPTION_TEMPLATE_ID=prescription_notification
+# Meta WhatsApp Webhook (required for /webhooks/whatsapp/meta verification & signature validation)
+META_WHATSAPP_WEBHOOK_VERIFY_TOKEN=CHANGE_THIS_VERIFY_TOKEN_FOR_META_WEBHOOK
+META_WHATSAPP_APP_SECRET=
 
 # Video Configuration (OpenVidu)
 # OPENVIDU_SECRET: only a-zA-Z0-9, hyphens (-), underscores (_). No = or other special chars (e.g. no base64 padding).

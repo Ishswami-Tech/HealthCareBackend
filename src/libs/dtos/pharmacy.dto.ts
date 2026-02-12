@@ -122,6 +122,12 @@ export class CreatePrescriptionDto {
   notes?: string;
 }
 
+export class UpdatePrescriptionStatusDto {
+  @ApiProperty({ enum: PrescriptionStatus, example: PrescriptionStatus.FILLED })
+  @IsEnum(PrescriptionStatus)
+  status!: PrescriptionStatus;
+}
+
 export class PharmacyStatsDto {
   @ApiProperty({ example: 150, description: 'Total medicines in stock' })
   totalMedicines!: number;

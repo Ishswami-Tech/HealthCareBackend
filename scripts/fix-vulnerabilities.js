@@ -92,13 +92,23 @@ function main() {
     log('\nStep 3: Ensuring yarn resolutions for vulnerable packages...', 'yellow');
 
     // Known vulnerable packages that need updates
-    // jws@4.0.0 has vulnerability (GHSA-869p-cjfg-cm3x) - requires 4.0.1+
     const vulnerablePackages = [
       {
         name: 'jws',
         minVersion: '4.0.1',
-        reason: 'HMAC signature verification vulnerability (GHSA-869p-cjfg-cm3x)',
+        reason: 'HMAC signature verification (GHSA-869p-cjfg-cm3x)',
       },
+      {
+        name: 'webpack',
+        minVersion: '5.104.1',
+        reason: 'buildHttp SSRF bypass (npm advisory 1113041/1113042)',
+      },
+      {
+        name: 'diff',
+        minVersion: '4.0.4',
+        reason: 'Denial of Service in parsePatch/applyPatch (npm advisory 1112704)',
+      },
+      { name: 'qs', minVersion: '6.14.2', reason: 'arrayLimit bypass DoS (npm advisory 1113159)' },
     ];
 
     // Check and update yarn.resolutions in package.json

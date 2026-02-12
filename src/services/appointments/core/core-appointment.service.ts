@@ -860,7 +860,8 @@ export class CoreAppointmentService {
         where['doctorId'] = context.userId;
         break;
       case 'PATIENT':
-        where['patientId'] = context.userId;
+        // Patient.userId = User.id; Appointment.patientId = Patient.id
+        where['patient'] = { userId: context.userId };
         break;
       case 'NURSE':
       case 'RECEPTIONIST':

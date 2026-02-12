@@ -664,9 +664,41 @@ export class ClinicController {
     }
   }
 
+  @Get(':id/staff')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Get all staff for a clinic',
+    description:
+      'Retrieves all staff members (doctors, receptionists, pharmacists, etc.) associated with the clinic.',
+  })
+  @ApiParam({ name: 'id', description: 'Clinic ID', type: 'string' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Returns an array of staff members.' })
+  async getClinicStaff(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
+    try {
+      const userId = req.user?.sub;
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+      const result = await this.clinicService.getClinicStaff(id, userId);
+      this.logger.log(`Retrieved ${result?.length || 0} staff for clinic ${id}`);
+      return result;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to get clinic staff for clinic ${id}: ${(_error as Error).message}`,
+        (_error as Error).stack
+      );
+      throw _error;
+    }
+  }
+
   @Get(':id/patients')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'clinic:{id}:patients',
@@ -788,7 +820,7 @@ export class ClinicController {
 
   @Post('associate-user')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('clinics', 'read')
   @ApiOperation({
     summary: 'Associate user with clinic by app name',
@@ -853,7 +885,7 @@ export class ClinicController {
 
   @Get('my-clinic')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @RequireResourcePermission('clinics', 'read')
   @Cache({
     keyTemplate: 'clinic:my:{userId}',
@@ -908,7 +940,14 @@ export class ClinicController {
 
   @Get('test/context')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.PATIENT
+  )
   @RequireResourcePermission('clinics', 'read')
   @ApiOperation({
     summary: 'Test clinic context',

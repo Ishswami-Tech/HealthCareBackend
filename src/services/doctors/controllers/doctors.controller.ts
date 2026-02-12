@@ -45,7 +45,14 @@ export class DoctorsController {
   }
 
   @Get()
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.PATIENT)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.PATIENT
+  )
   @ApiOperation({ summary: 'Get all doctors (optional filters)' })
   @ApiQuery({ name: 'specialization', required: false })
   @ApiQuery({ name: 'clinicId', required: false })
@@ -61,7 +68,14 @@ export class DoctorsController {
   }
 
   @Get(':id')
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.PATIENT)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.PATIENT
+  )
   @ApiOperation({ summary: 'Get doctor profile by ID (User ID)' })
   @ApiResponse({ status: 200, description: 'Doctor profile retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Doctor not found' })
