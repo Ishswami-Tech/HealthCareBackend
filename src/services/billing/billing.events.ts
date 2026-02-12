@@ -210,7 +210,31 @@ export class BillingEventsListener {
       // Only process if payment is for an appointment and status is completed
       if (payload.appointmentId && payload.status === 'completed' && payload.clinicId) {
         const appointmentId = payload.appointmentId;
-        // Update appointment status to CONFIRMED after successful payment
+        const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+
+        if (appointment) {
+          const isVideoCall = String(appointment.type) === 'VIDEO_CALL';
+          const isAwaitingSlot = String(appointment.status) === 'AWAITING_SLOT_CONFIRMATION';
+
+          // VIDEO_CALL in AWAITING_SLOT_CONFIRMATION: keep status unchanged - payment recorded,
+          // doctor must confirm slot (appointments.service.confirmVideoSlot)
+          if (isVideoCall && isAwaitingSlot) {
+            await this.loggingService.log(
+              LogType.APPOINTMENT,
+              LogLevel.INFO,
+              'Video appointment payment completed; awaiting doctor slot confirmation',
+              'BillingEventsListener',
+              {
+                appointmentId,
+                paymentId: payload.paymentId,
+                clinicId: payload.clinicId,
+              }
+            );
+            return;
+          }
+        }
+
+        // For non-video or non-awaiting-slot: update appointment status to CONFIRMED
         await this.databaseService.executeHealthcareWrite(
           async client => {
             const appointmentClient = client as unknown as {

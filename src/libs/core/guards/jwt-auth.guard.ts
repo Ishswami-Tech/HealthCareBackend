@@ -23,6 +23,7 @@ import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types
 import type { RedisSessionData as SessionData, LockoutStatus } from '@core/types/session.types';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';
+import { DatabaseService } from '@infrastructure/database';
 
 /**
  * JWT Authentication Guard for Healthcare Applications
@@ -148,7 +149,9 @@ export class JwtAuthGuard implements CanActivate {
     @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly sessionManagementService: SessionManagementService,
     @Inject(forwardRef(() => RateLimitService))
-    private readonly rateLimitService?: RateLimitService
+    private readonly rateLimitService?: RateLimitService,
+    @Inject(forwardRef(() => DatabaseService))
+    private readonly databaseService?: DatabaseService
   ) {}
 
   /**
@@ -260,11 +263,21 @@ export class JwtAuthGuard implements CanActivate {
 
       // Verify and decode JWT token
       const payload: JwtPayload = await this.verifyToken(token);
+      const userId = payload.sub || payload['id'];
+
+      // Reject deactivated users - invalidate session on next request
+      if (this.databaseService && typeof userId === 'string' && userId) {
+        const user = await this.databaseService.findUserByIdSafe(userId);
+        if (user && typeof user === 'object' && 'isActive' in user && user.isActive === false) {
+          throw new UnauthorizedException('Account has been deactivated');
+        }
+      }
+
       // Map JWT payload to request.user format expected by guards
       // RbacGuard expects request.user.id, but JWT uses 'sub' for user ID
       request.user = {
         ...payload,
-        id: payload.sub || payload['id'], // Map 'sub' to 'id' for compatibility
+        id: userId, // Map 'sub' to 'id' for compatibility
         clinicId: payload['clinicId'], // Ensure clinicId is available
       } as JwtPayload;
 
@@ -744,15 +757,25 @@ export class JwtAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<FastifyRequestWithUser>();
     const clientIp = request.ip || (request.headers['x-forwarded-for'] as string) || 'unknown';
 
-    // Record failed attempt
-    await this.recordFailedAttempt(clientIp);
-
     // Track security event
     await this.trackSecurityEvent(clientIp, 'AUTHENTICATION_FAILURE', {
       error: error.message || '',
       path: request.raw?.url ?? '',
       method: request.method ?? '',
     });
+
+    // Don't count token expiration or session availability issues as a failed attempt
+    // This prevents locking out users when multiple requests fail due to expiration/sync issues
+    if (
+      error.message.includes('Token has expired') ||
+      error.message.includes('Invalid session') ||
+      error.message.includes('Session ID is missing')
+    ) {
+      return;
+    }
+
+    // Record failed attempt for other errors
+    await this.recordFailedAttempt(clientIp);
 
     // Enhance error message if needed
     if (error instanceof UnauthorizedException) {

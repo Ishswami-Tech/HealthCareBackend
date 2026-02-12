@@ -15,7 +15,7 @@ export class QueueController {
   constructor(private readonly appointmentQueueService: AppointmentQueueService) {}
 
   @Post('call-next')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @ApiOperation({ summary: 'Call next patient from queue' })
   @ApiResponse({ status: 200, description: 'Next patient called successfully' })
   async callNext(@Body() body: { doctorId: string; domain?: string }) {
@@ -26,7 +26,7 @@ export class QueueController {
   }
 
   @Post('reorder')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @ApiOperation({ summary: 'Reorder queue' })
   @ApiBody({
     schema: {
@@ -59,7 +59,7 @@ export class QueueController {
   }
 
   @Get('stats')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get queue statistics' })
   async getQueueStats(@Query('locationId') locationId: string, @Query('domain') domain?: string) {
     if (!locationId) {
@@ -69,14 +69,14 @@ export class QueueController {
   }
 
   @Post('pause')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Pause queue' })
   async pauseQueue(@Body() body: { doctorId: string; domain?: string }) {
     return this.appointmentQueueService.pauseQueue(body.doctorId, body.domain || 'clinic');
   }
 
   @Post('resume')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Resume queue' })
   async resumeQueue(@Body() body: { doctorId: string; domain?: string }) {
     return this.appointmentQueueService.resumeQueue(body.doctorId, body.domain || 'clinic');

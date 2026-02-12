@@ -1,8 +1,7 @@
 # Payment Module
 
-**Purpose:** Multi-provider payment processing with clinic-specific configuration
-**Location:** `src/libs/payment`
-**Status:** ✅ Production-ready
+**Purpose:** Multi-provider payment processing with clinic-specific
+configuration **Location:** `src/libs/payment` **Status:** ✅ Production-ready
 
 ---
 
@@ -16,7 +15,11 @@ import { PaymentProvider } from '@types';
 export class MyService {
   constructor(private readonly paymentService: PaymentService) {}
 
-  async processPayment(clinicId: string, appointmentId: string, amount: number) {
+  async processPayment(
+    clinicId: string,
+    appointmentId: string,
+    amount: number
+  ) {
     // Create payment intent
     const result = await this.paymentService.createPaymentIntent(clinicId, {
       amount: amount * 100, // Convert to smallest currency unit (paise)
@@ -35,7 +38,8 @@ export class MyService {
 
 ## Key Features
 
-- ✅ **Multi-Provider Support** - Razorpay, PhonePe adapters
+- ✅ **Multi-Provider Support** - Razorpay, Cashfree, PhonePe adapters (same
+  pattern as Redis/Dragonfly)
 - ✅ **Multi-Tenant Configuration** - Clinic-specific provider settings
 - ✅ **Payment Intents** - Create one-time and subscription payments
 - ✅ **Payment Verification** - Verify payment status
@@ -47,19 +51,17 @@ export class MyService {
 
 ---
 
-## Payment Providers (2)
+## Payment Providers (3)
 
 1. **Razorpay** - India's leading payment gateway
-   - Payment intents
-   - Payment verification
-   - Refund processing
-   - Webhook verification
+   - Payment intents, verification, refunds, webhook verification
 
-2. **PhonePe** - UPI and digital payments
-   - Payment intents
-   - Payment verification
-   - Refund processing
-   - Webhook verification
+2. **Cashfree** - Full-stack payment platform (PG API)
+   - Payment intents (orders), verification, refunds, webhook verification
+     (x-cf-signature)
+
+3. **PhonePe** - UPI and digital payments
+   - Payment intents, verification, refunds, webhook verification
 
 ---
 
@@ -96,7 +98,7 @@ const result = await this.paymentService.createPaymentIntent(clinicId, {
 ```typescript
 // Recurring subscription
 const result = await this.paymentService.createPaymentIntent(clinicId, {
-  amount: 99900,              // ₹999.00/month
+  amount: 99900, // ₹999.00/month
   currency: 'INR',
   customerId: 'patient-123',
   description: 'Premium subscription',
@@ -235,6 +237,7 @@ const result = await this.paymentService.createPaymentIntent(
 ```
 
 **Provider Selection Logic:**
+
 1. Use explicitly specified provider if provided
 2. Otherwise use clinic's primary provider
 3. Fallback to clinic's fallback providers if primary fails
@@ -358,6 +361,7 @@ export class WebhookController {
 ## Payment Flow
 
 **Standard Payment Flow:**
+
 1. User initiates payment
 2. `createPaymentIntent()` called
 3. Payment URL/gateway returned to user
@@ -369,6 +373,7 @@ export class WebhookController {
 9. Emit `payment.captured` event
 
 **Refund Flow:**
+
 1. Cancellation/refund requested
 2. `refund()` called with payment ID
 3. Provider processes refund
@@ -398,13 +403,15 @@ PAYMENT_CURRENCY=INR
 PAYMENT_TIMEOUT_SECONDS=600
 ```
 
-**Multi-Tenant:** Each clinic's credentials stored encrypted in database via `CommunicationConfigService`
+**Multi-Tenant:** Each clinic's credentials stored encrypted in database via
+`CommunicationConfigService`
 
 ---
 
 ## Troubleshooting
 
 **Issue: Payment intent creation fails**
+
 ```typescript
 // 1. Check clinic configuration
 const config = await this.paymentConfigService.getClinicConfig(clinicId);
@@ -422,6 +429,7 @@ if (!config.payment.primary.enabled) {
 ```
 
 **Issue: Webhook verification fails**
+
 ```typescript
 // 1. Verify webhook secret is correct
 const isValid = await this.paymentService.verifyWebhook(clinicId, {
@@ -439,6 +447,7 @@ const isValid = await this.paymentService.verifyWebhook(clinicId, {
 ```
 
 **Issue: Refund not processing**
+
 ```typescript
 // 1. Check payment is captured
 const status = await this.paymentService.verifyPayment(clinicId, {
@@ -472,6 +481,7 @@ PaymentService (orchestrator)
 ```
 
 **Adapter Pattern:**
+
 - `BasePaymentAdapter` - Common functionality
 - `RazorpayPaymentAdapter` - Razorpay-specific implementation
 - `PhonePePaymentAdapter` - PhonePe-specific implementation

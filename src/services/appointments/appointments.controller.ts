@@ -69,6 +69,8 @@ import {
   UpdateFollowUpPlanDto,
   ProcessCheckInDto,
   StartConsultationDto,
+  ProposeVideoSlotsDto,
+  ConfirmVideoSlotDto,
 } from '@dtos/appointment.dto';
 import {
   VideoTokenResponseDto,
@@ -144,7 +146,7 @@ export class AppointmentsController {
   @Post()
   @RateLimitAPI()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create')
   @InvalidateAppointmentCache({
@@ -262,6 +264,99 @@ export class AppointmentsController {
 
       throw _error;
     }
+  }
+
+  @Post('video/propose')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.CREATED)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'create')
+  @InvalidateAppointmentCache({
+    patterns: [
+      'appointments:*',
+      'patient:*:appointments',
+      'doctor:*:appointments',
+      'clinic:*:appointments',
+    ],
+    tags: ['appointments', 'appointment_data'],
+  })
+  @ApiOperation({
+    summary: 'Propose video appointment with time slots',
+    description:
+      'Patient proposes 3-4 time slots for a video appointment. Doctor will select one to confirm.',
+  })
+  @ApiBody({ type: ProposeVideoSlotsDto })
+  @ApiResponse({
+    status: HttpStatus.CREATED,
+    description: 'Video appointment proposed successfully',
+  })
+  @ApiResponse({ status: HttpStatus.BAD_REQUEST, description: 'Invalid slots or validation error' })
+  async proposeVideoAppointment(
+    @Body() dto: ProposeVideoSlotsDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub;
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and user ID are required');
+    }
+    const result = await this.appointmentService.proposeVideoAppointment(
+      { ...dto, clinicId },
+      userId,
+      clinicId
+    );
+    return {
+      success: result.success,
+      data: result.data as unknown as AppointmentResponseDto,
+      message: result.message,
+    };
+  }
+
+  @Post(':id/video/confirm-slot')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:*', 'appointment:*'],
+    tags: ['appointments', 'appointment_data'],
+  })
+  @ApiOperation({
+    summary: 'Confirm video appointment slot',
+    description:
+      "Doctor selects one of the patient's proposed time slots to confirm the appointment.",
+  })
+  @ApiParam({ name: 'id', description: 'Appointment ID' })
+  @ApiBody({ type: ConfirmVideoSlotDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Slot confirmed successfully' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid slot index or appointment state',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
+  async confirmVideoSlot(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body() dto: ConfirmVideoSlotDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub;
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and user ID are required');
+    }
+    const result = await this.appointmentService.confirmVideoSlot(
+      appointmentId,
+      dto,
+      userId,
+      clinicId
+    );
+    return {
+      success: result.success,
+      data: result.data as unknown as AppointmentResponseDto,
+      message: result.message,
+    };
   }
 
   @Get('my-appointments')
@@ -1056,7 +1151,7 @@ export class AppointmentsController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -1196,7 +1291,7 @@ export class AppointmentsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -1362,7 +1457,7 @@ export class AppointmentsController {
 
   @Post(':id/video/create-room')
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @ApiOperation({
@@ -1484,7 +1579,7 @@ export class AppointmentsController {
 
   @Post(':id/video/join-token')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
   @ApiOperation({
@@ -1625,7 +1720,7 @@ export class AppointmentsController {
 
   @Post(':id/video/start')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -1743,7 +1838,7 @@ export class AppointmentsController {
 
   @Post(':id/video/end')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -1877,7 +1972,7 @@ export class AppointmentsController {
 
   @Get(':id/video/status')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', { requireOwnership: true })
   @ApiOperation({
@@ -1984,7 +2079,7 @@ export class AppointmentsController {
 
   @Post(':id/video/report-issue')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -2114,7 +2209,7 @@ export class AppointmentsController {
    */
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -2203,7 +2298,7 @@ export class AppointmentsController {
    */
   @Post(':id/check-in')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -2290,7 +2385,14 @@ export class AppointmentsController {
    */
   @Post(':id/check-in/force')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.RECEPTIONIST, Role.DOCTOR, Role.CLINIC_ADMIN, Role.NURSE, Role.SUPER_ADMIN)
+  @Roles(
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.NURSE,
+    Role.SUPER_ADMIN
+  )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
@@ -2495,7 +2597,7 @@ export class AppointmentsController {
    */
   @Post(':id/start')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -2584,7 +2686,7 @@ export class AppointmentsController {
   @Post('check-in/scan-qr')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @InvalidateAppointmentCache({
@@ -2996,7 +3098,7 @@ export class AppointmentsController {
   @Get('check-in/locations')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.SUPER_ADMIN)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @ApiOperation({
@@ -3399,7 +3501,7 @@ export class AppointmentsController {
   @Get('locations/:locationId/qr-code')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @Cache({
@@ -3543,7 +3645,7 @@ export class AppointmentsController {
    */
   @Post(':id/follow-up')
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -3741,7 +3843,7 @@ export class AppointmentsController {
    */
   @Get(':id/chain')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', {
     requireOwnership: true,
@@ -3836,7 +3938,7 @@ export class AppointmentsController {
    */
   @Get('patients/:patientId/follow-up-plans')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', {
     requireOwnership: true,
@@ -3930,7 +4032,7 @@ export class AppointmentsController {
    */
   @Post('follow-up-plans/:id/schedule')
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create', {
     requireOwnership: true,
@@ -4033,7 +4135,7 @@ export class AppointmentsController {
    */
   @Get(':id/follow-ups')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', {
     requireOwnership: true,
@@ -4117,7 +4219,7 @@ export class AppointmentsController {
    */
   @Put('follow-up-plans/:id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -4205,7 +4307,7 @@ export class AppointmentsController {
    */
   @Delete('follow-up-plans/:id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -4287,7 +4389,7 @@ export class AppointmentsController {
    */
   @Post('recurring')
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create', {
     requireOwnership: true,
@@ -4371,7 +4473,7 @@ export class AppointmentsController {
    */
   @Get('series/:id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read', {
     requireOwnership: true,
@@ -4454,7 +4556,7 @@ export class AppointmentsController {
    */
   @Put('series/:id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
@@ -4544,7 +4646,7 @@ export class AppointmentsController {
    */
   @Delete('series/:id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: true,
@@ -4618,7 +4720,14 @@ export class AppointmentsController {
 
   @Get('test/context')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.PATIENT
+  )
   @ApiOperation({
     summary: 'Test appointment context',
     description: 'Test endpoint to debug appointment context and permissions',
@@ -4666,7 +4775,7 @@ export class AppointmentsController {
   @Get('analytics/wait-times')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @Cache({
@@ -4791,7 +4900,7 @@ export class AppointmentsController {
   @Get('analytics/check-in-patterns')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @Cache({
@@ -4899,7 +5008,7 @@ export class AppointmentsController {
   @Get('analytics/no-show-correlation')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.SUPER_ADMIN)
+  @Roles(Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.SUPER_ADMIN)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @Cache({
@@ -5020,7 +5129,7 @@ export class AppointmentsController {
   }
 
   @Post('verify-qr')
-  @Roles(Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ApiOperation({ summary: 'Verify appointment QR code' })
   @ApiBody({ schema: { type: 'object', properties: { qrToken: { type: 'string' } } } })
   @ApiResponse({ status: 200, description: 'QR code verified successfully' })

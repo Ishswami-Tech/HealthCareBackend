@@ -1,6 +1,11 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { CreateMedicineDto, UpdateInventoryDto, CreatePrescriptionDto } from '@dtos/pharmacy.dto';
+import {
+  CreateMedicineDto,
+  UpdateInventoryDto,
+  CreatePrescriptionDto,
+  PrescriptionStatus,
+} from '@dtos/pharmacy.dto';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 
 @Injectable()
@@ -155,6 +160,67 @@ export class PharmacyService {
         resourceId: 'new',
         userRole: 'system',
         details: { patientId: dto.patientId },
+      }
+    );
+  }
+
+  /**
+   * Update prescription status (dispense/cancel). Enforces immutability:
+   * prescriptions with status FILLED cannot be modified.
+   */
+  async updatePrescriptionStatus(
+    prescriptionId: string,
+    status: PrescriptionStatus,
+    clinicId?: string
+  ) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          prescription: {
+            findUnique: (
+              args: PrismaDelegateArgs
+            ) => Promise<{ status: string; clinicId: string } | null>;
+            update: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
+        };
+
+        const existing = await typedClient.prescription.findUnique({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        if (!existing) {
+          throw new BadRequestException('Prescription not found');
+        }
+
+        if (clinicId && existing.clinicId !== clinicId) {
+          throw new BadRequestException('Prescription does not belong to this clinic');
+        }
+
+        // Immutability: reject updates when already FILLED
+        if (existing.status === 'FILLED') {
+          throw new BadRequestException(
+            'Cannot modify a prescription that has already been dispensed'
+          );
+        }
+
+        if (existing.status === 'CANCELLED' && status !== PrescriptionStatus.CANCELLED) {
+          throw new BadRequestException('Cannot update a cancelled prescription');
+        }
+
+        return await typedClient.prescription.update({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+          data: { status } as PrismaDelegateArgs,
+          include: { items: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId: clinicId ?? 'unknown',
+        resourceType: 'PRESCRIPTION',
+        operation: 'UPDATE',
+        resourceId: prescriptionId,
+        userRole: 'system',
+        details: { status },
       }
     );
   }

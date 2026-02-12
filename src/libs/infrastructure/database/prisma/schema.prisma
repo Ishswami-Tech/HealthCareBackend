@@ -31,6 +31,7 @@ model User {
   zipCode                 String?
   emergencyContact        String?
   isVerified              Boolean                   @default(false)
+  isActive                Boolean                   @default(true)
   lastLogin               DateTime?
   lastLoginIP             String?
   lastLoginDevice         String?
@@ -420,10 +421,12 @@ model Appointment {
   type                AppointmentType
   doctorId            String
   patientId           String
-  locationId          String
+  locationId          String? // Optional for VIDEO_CALL (uses virtual/online)
   clinicId            String
   date                DateTime
   time                String
+  proposedSlots       Json? // Video flow: [{date, time}...] proposed by patient (3-4 slots)
+  confirmedSlotIndex  Int? // Video flow: 0-based index of slot doctor selected
   duration            Int
   status              AppointmentStatus
   priority            String?           @default("NORMAL")
@@ -459,13 +462,13 @@ model Appointment {
   originalAppointmentId String? // Original appointment that triggered this
 
   // Relations
-  clinic       Clinic         @relation(fields: [clinicId], references: [id])
-  doctor       Doctor         @relation(fields: [doctorId], references: [id])
-  location     ClinicLocation @relation(fields: [locationId], references: [id])
-  patient      Patient        @relation(fields: [patientId], references: [id])
-  subscription Subscription?  @relation(fields: [subscriptionId], references: [id])
-  therapy      Therapy?       @relation(fields: [therapyId], references: [id])
-  user         User           @relation(fields: [userId], references: [id])
+  clinic       Clinic          @relation(fields: [clinicId], references: [id])
+  doctor       Doctor          @relation(fields: [doctorId], references: [id])
+  location     ClinicLocation? @relation(fields: [locationId], references: [id])
+  patient      Patient         @relation(fields: [patientId], references: [id])
+  subscription Subscription?   @relation(fields: [subscriptionId], references: [id])
+  therapy      Therapy?        @relation(fields: [therapyId], references: [id])
+  user         User            @relation(fields: [userId], references: [id])
 
   // Follow-up plan relation (one-to-one: appointment can have one follow-up plan)
   followUpPlan FollowUpPlan? @relation("AppointmentFollowUpPlan")
@@ -518,6 +521,7 @@ model Prescription {
   patientId  String
   doctorId   String
   date       DateTime           @default(now())
+  status     PrescriptionStatus @default(PENDING)
   notes      String?
   clinicId   String
   locationId String?
@@ -1914,6 +1918,7 @@ enum Role {
   SUPER_ADMIN
   CLINIC_ADMIN
   DOCTOR
+  ASSISTANT_DOCTOR
   PATIENT
   RECEPTIONIST
   PHARMACIST
@@ -1941,6 +1946,7 @@ enum AppointmentStatus {
   NO_SHOW
   PENDING
   FOLLOW_UP_SCHEDULED
+  AWAITING_SLOT_CONFIRMATION /// Video flow: patient proposed slots, awaiting doctor selection
 }
 
 enum PaymentStatus {
@@ -2033,6 +2039,12 @@ enum MedicineType {
   CLASSICAL
   PROPRIETARY
   HERBAL
+}
+
+enum PrescriptionStatus {
+  PENDING
+  FILLED
+  CANCELLED
 }
 
 enum DatabaseStatus {

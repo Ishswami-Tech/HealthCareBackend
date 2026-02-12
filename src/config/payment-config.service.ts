@@ -142,6 +142,10 @@ export class PaymentConfigService implements OnModuleInit {
           credentials: {},
           priority: 1,
         },
+        fallback: [
+          { provider: PaymentProvider.CASHFREE, enabled: true, credentials: {}, priority: 2 },
+          { provider: PaymentProvider.PHONEPE, enabled: true, credentials: {}, priority: 3 },
+        ],
         defaultCurrency: 'INR',
         defaultProvider: PaymentProvider.RAZORPAY,
       },

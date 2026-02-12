@@ -113,7 +113,7 @@ export class UsersService {
           const result = await typedClient.user.findMany({
             ...(role ? { where: { role } } : {}),
             include: {
-              doctor: role === Role.DOCTOR,
+              doctor: role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR,
               patient: role === Role.PATIENT,
               receptionists: role === Role.RECEPTIONIST,
               clinicAdmins: role === Role.CLINIC_ADMIN,
@@ -406,7 +406,7 @@ export class UsersService {
             const result = await typedClient.user.findUnique({
               where: { id: userRaw.id } as PrismaDelegateArgs,
               include: {
-                doctor: data.role === Role.DOCTOR,
+                doctor: data.role === Role.DOCTOR || data.role === Role.ASSISTANT_DOCTOR,
                 patient: data.role === Role.PATIENT,
                 receptionists: data.role === Role.RECEPTIONIST,
                 clinicAdmins: data.role === Role.CLINIC_ADMIN,
@@ -940,7 +940,10 @@ export class UsersService {
       details: { role: user.role },
     };
 
-    if ((user.role as Role) === Role.DOCTOR && userWithRelations.doctor) {
+    if (
+      ((user.role as Role) === Role.DOCTOR || (user.role as Role) === Role.ASSISTANT_DOCTOR) &&
+      userWithRelations.doctor
+    ) {
       await this.databaseService.executeHealthcareWrite<Doctor>(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -1118,13 +1121,14 @@ export class UsersService {
     userId?: string,
     clinicId?: string
   ): Promise<UserResponseDto> {
-    // RBAC: Check permission to update user roles (requires admin permissions)
-    if (userId && clinicId) {
+    // RBAC: Check permission to update user roles
+    if (userId) {
+      const permClinicId = clinicId || createUserDto.clinicId;
       const permissionCheck = await this.rbacService.checkPermission({
         userId,
-        clinicId,
+        clinicId: permClinicId || '',
         resource: 'users',
-        action: 'updateRole',
+        action: 'update',
         resourceId: id,
       });
       if (!permissionCheck.hasPermission) {
@@ -1147,7 +1151,7 @@ export class UsersService {
       const result = await typedClient.user.findUnique({
         where: { id } as PrismaDelegateArgs,
         include: {
-          doctor: true,
+          doctor: { include: { clinics: true } },
           patient: true,
           receptionists: true,
           clinicAdmins: true,
@@ -1167,9 +1171,42 @@ export class UsersService {
 
     const user = userRaw as unknown as UserWithRelations;
 
-    // Define staff roles that require locationId
-    const staffRoles = [
+    // Clinic Admin scope: can only assign roles to users in their clinic, and only to assignable staff roles
+    const clinicAdminAssignableRoles = [
       Role.DOCTOR,
+      Role.ASSISTANT_DOCTOR,
+      Role.RECEPTIONIST,
+      Role.PHARMACIST,
+      Role.NURSE,
+    ];
+    if (clinicId) {
+      const targetPrimaryClinic = (user as { primaryClinicId?: string | null })['primaryClinicId'];
+      const docClinics = (user.doctor as { clinics?: Array<{ clinicId: string }> } | undefined)
+        ?.clinics;
+      const belongsToClinic =
+        targetPrimaryClinic === clinicId ||
+        (Array.isArray(user.clinicAdmins) &&
+          user.clinicAdmins.some((ca: { clinicId: string }) => ca.clinicId === clinicId)) ||
+        (user.receptionists as { clinicId?: string } | null)?.clinicId === clinicId ||
+        docClinics?.some((c: { clinicId: string }) => c.clinicId === clinicId);
+      if (!belongsToClinic) {
+        throw this.errors.insufficientPermissions(
+          'UsersService.updateUserRole - User does not belong to your clinic'
+        );
+      }
+      if (!clinicAdminAssignableRoles.includes(role)) {
+        throw this.errors.validationError(
+          'role',
+          `Clinic Admin can only assign: ${clinicAdminAssignableRoles.join(', ')}`,
+          'UsersService.updateUserRole'
+        );
+      }
+    }
+
+    // Define staff roles that require locationId (for future location validation if needed)
+    const _staffRoles = [
+      Role.DOCTOR,
+      Role.ASSISTANT_DOCTOR,
       Role.RECEPTIONIST,
       Role.CLINIC_ADMIN,
       Role.PHARMACIST,
@@ -1182,16 +1219,8 @@ export class UsersService {
       Role.LOCATION_HEAD,
     ];
 
-    // Validate locationId is required for staff roles
-    if (staffRoles.includes(role) && !createUserDto.locationId) {
-      throw this.errors.validationError(
-        'locationId',
-        `Location ID is required for ${role} role`,
-        'UsersService.updateUserRole'
-      );
-    }
-
-    // Validate location belongs to clinic if locationId is provided
+    // Validate location belongs to clinic if locationId is provided (optional for clinic admin)
+    // locationId is optional - resolveLocationAndClinic will use clinicId when locationId not provided
     if (createUserDto.locationId) {
       const targetClinicId = createUserDto.clinicId || clinicId || user.primaryClinicId;
       if (!targetClinicId) {
@@ -1245,7 +1274,10 @@ export class UsersService {
       details: { oldRole: user.role, newRole: role },
     };
 
-    if ((user.role as Role) === Role.DOCTOR && user.doctor) {
+    if (
+      ((user.role as Role) === Role.DOCTOR || (user.role as Role) === Role.ASSISTANT_DOCTOR) &&
+      user.doctor
+    ) {
       await this.databaseService.executeHealthcareWrite<Doctor>(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -1409,6 +1441,7 @@ export class UsersService {
         break;
       }
       case Role.DOCTOR:
+      case Role.ASSISTANT_DOCTOR:
         await this.databaseService.executeHealthcareWrite<Doctor>(
           async client => {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates;

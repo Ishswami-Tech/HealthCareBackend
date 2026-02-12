@@ -126,6 +126,9 @@ export class RbacModule implements OnModuleInit {
           'invoices:read',
           'payments:read',
           'payments:create',
+          'video:read',
+          'video:create',
+          'video:update',
         ],
       };
 

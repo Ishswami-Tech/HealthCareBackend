@@ -79,7 +79,14 @@ export class ClinicLocationController {
   }
 
   @Get()
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.PATIENT
+  )
   @RequireResourcePermission('clinics', 'read')
   @CacheDecorator({
     keyTemplate: 'clinic_locations:{clinicId}:false',
@@ -101,7 +108,14 @@ export class ClinicLocationController {
   }
 
   @Get(':id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.RECEPTIONIST)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.PATIENT
+  )
   @CacheDecorator({
     keyTemplate: 'clinic_location:{id}',
     ttl: 1800, // 30 minutes

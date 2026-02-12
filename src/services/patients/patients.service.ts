@@ -265,6 +265,38 @@ export class PatientsService {
     );
   }
 
+  /**
+   * Check if patient belongs to clinic (via primaryClinicId or appointments)
+   */
+  async isPatientInClinic(patientUserId: string, clinicId: string): Promise<boolean> {
+    return await this.databaseService.executeHealthcareRead<boolean>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        user: {
+          findUnique: (
+            args: PrismaDelegateArgs
+          ) => Promise<{ primaryClinicId: string | null } | null>;
+        };
+        appointment: { findFirst: (args: PrismaDelegateArgs) => Promise<unknown> };
+        patient: { findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
+      };
+      const user = (await typedClient.user.findUnique({
+        where: { id: patientUserId } as PrismaDelegateArgs,
+        select: { primaryClinicId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { primaryClinicId: string | null } | null;
+      if (!user) return false;
+      if (user.primaryClinicId === clinicId) return true;
+      const patient = (await typedClient.patient.findUnique({
+        where: { userId: patientUserId } as PrismaDelegateArgs,
+        select: { id: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { id: string } | null;
+      if (!patient) return false;
+      const apt = await typedClient.appointment.findFirst({
+        where: { patientId: patient.id, clinicId } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+      return !!apt;
+    });
+  }
+
   async getPatientProfile(userId: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -293,40 +325,69 @@ export class PatientsService {
     });
   }
 
-  async getClinicPatients(clinicId: string, search?: string) {
+  /**
+   * Get patients for a clinic. When doctorUserId provided, filter to patients with appointments with that doctor.
+   */
+  async getClinicPatients(clinicId: string, search?: string, doctorUserId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        user: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-      };
-      // Find users who have accessed this clinic or are part of it, AND utilize role=PATIENT
-      // Find users who have accessed this clinic or are part of it, AND utilize role=PATIENT
-      const where: Record<string, unknown> = {
-        role: 'PATIENT',
-        // This logic depends on how users are associated with clinics.
-        // Prisma schema: clinics Clinic[] @relation("UserClinics")
-        clinics: {
-          some: {
-            id: clinicId,
-          },
-        },
+        appointment: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+        patient: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+        doctor: { findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
       };
 
-      if (search) {
-        where['OR'] = [
-          { firstName: { contains: search, mode: 'insensitive' } },
-          { lastName: { contains: search, mode: 'insensitive' } },
-          { email: { contains: search, mode: 'insensitive' } },
-          { phone: { contains: search, mode: 'insensitive' } },
-        ];
+      let patientIds: string[];
+
+      if (doctorUserId) {
+        const doctor = (await typedClient.doctor.findUnique({
+          where: { userId: doctorUserId } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as { id: string } | null;
+        if (!doctor) return [];
+        const appointments = (await typedClient.appointment.findMany({
+          where: { clinicId, doctorId: doctor.id } as PrismaDelegateArgs,
+          select: { patientId: true } as PrismaDelegateArgs,
+          distinct: ['patientId'] as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
+        patientIds = appointments.map(a => a.patientId);
+      } else {
+        const appointments = (await typedClient.appointment.findMany({
+          where: { clinicId } as PrismaDelegateArgs,
+          select: { patientId: true } as PrismaDelegateArgs,
+          distinct: ['patientId'] as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
+        patientIds = appointments.map(a => a.patientId);
       }
 
-      return await typedClient.user.findMany({
-        where: where as PrismaDelegateArgs,
+      if (patientIds.length === 0) return [];
+
+      const patients = await typedClient.patient.findMany({
+        where: { id: { in: patientIds } } as PrismaDelegateArgs,
         include: {
-          patient: true,
+          user: true,
           vitals: { take: 1, orderBy: { recordedAt: 'desc' } },
         } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
+
+      if (search) {
+        const s = search.toLowerCase();
+        const typed = patients as unknown as Array<{
+          user?: {
+            firstName?: string | null;
+            lastName?: string | null;
+            email?: string;
+            phone?: string | null;
+          };
+        }>;
+        return typed.filter(
+          p =>
+            p.user?.firstName?.toLowerCase().includes(s) ||
+            p.user?.lastName?.toLowerCase().includes(s) ||
+            p.user?.email?.toLowerCase().includes(s) ||
+            p.user?.phone?.toLowerCase().includes(s)
+        );
+      }
+      return patients;
     });
   }
 }

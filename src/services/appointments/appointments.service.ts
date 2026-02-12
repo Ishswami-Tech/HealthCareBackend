@@ -42,6 +42,8 @@ import {
   ProcessCheckInDto,
   CompleteAppointmentDto,
   StartConsultationDto,
+  ProposeVideoSlotsDto,
+  ConfirmVideoSlotDto,
 } from '@dtos/appointment.dto';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
 
@@ -132,16 +134,16 @@ export class AppointmentsService {
     // Queue Service - BullMQ-based queue system
     // Use QueueService from @infrastructure/queue (migrated from Bull to BullMQ)
     // Standard queue names: QueueService.APPOINTMENT_QUEUE, QueueService.NOTIFICATION_QUEUE, etc.
-    private readonly queueService: QueueService,
-    private readonly eventService: EventService,
-    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService,
+    @Inject(forwardRef(() => EventService)) private readonly eventService: EventService,
+    @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
 
     // Legacy Services (for backward compatibility)
-    private readonly databaseService: DatabaseService,
-    private readonly qrService: QrService,
+    @Inject(forwardRef(() => DatabaseService)) private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => QrService)) private readonly qrService: QrService,
 
     // Auth Integration
-    private readonly authService: AuthService,
+    @Inject(forwardRef(() => AuthService)) private readonly authService: AuthService,
 
     // Error Handling & RBAC
     private readonly errors: HealthcareErrorsService,
@@ -300,6 +302,213 @@ export class AppointmentsService {
     }
 
     return result;
+  }
+
+  /**
+   * Propose video appointment with 3-4 time slots (patient flow).
+   * Doctor will select one slot to confirm.
+   */
+  async proposeVideoAppointment(
+    dto: ProposeVideoSlotsDto,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'create',
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.proposeVideoAppointment');
+    }
+
+    const { patientId, doctorId } = await this.databaseService.executeHealthcareRead<{
+      patientId: string | null;
+      doctorId: string | null;
+    }>(async client => {
+      const prisma = client as {
+        patient: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+        doctor: { findFirst: (args: unknown) => Promise<{ id: string } | null> };
+      };
+      const patient = await prisma.patient.findFirst({
+        where: {
+          OR: [{ id: dto.patientId }, { userId: dto.patientId }],
+        },
+        select: { id: true },
+      });
+      const doctor = await prisma.doctor.findFirst({
+        where: {
+          OR: [{ id: dto.doctorId }, { userId: dto.doctorId }],
+        },
+        select: { id: true },
+      });
+      return {
+        patientId: patient?.id ?? null,
+        doctorId: doctor?.id ?? null,
+      };
+    });
+
+    if (!patientId || !doctorId) {
+      throw this.errors.validationError(
+        'patientId',
+        'Patient or doctor not found',
+        'AppointmentsService.proposeVideoAppointment'
+      );
+    }
+
+    const firstSlot = dto.proposedSlots[0];
+    if (!firstSlot) {
+      throw this.errors.validationError(
+        'proposedSlots',
+        'At least one slot is required',
+        'AppointmentsService.proposeVideoAppointment'
+      );
+    }
+    const { date: slotDate, time: slotTime } = firstSlot;
+    const appointmentData = {
+      patientId,
+      doctorId,
+      clinicId,
+      type: AppointmentType.VIDEO_CALL,
+      date: new Date(slotDate),
+      time: slotTime,
+      duration: dto.duration,
+      status: AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
+      priority: AppointmentPriority.NORMAL,
+      userId,
+      notes: dto.notes,
+      proposedSlots: dto.proposedSlots,
+    };
+
+    const appointment = await this.databaseService.createAppointmentSafe(
+      appointmentData as Parameters<typeof this.databaseService.createAppointmentSafe>[0]
+    );
+
+    await this.eventService.emit('appointment.created', {
+      appointmentId: appointment.id,
+      clinicId,
+      doctorId,
+      patientId,
+      status: AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
+      context: { userId },
+    });
+
+    return {
+      success: true,
+      data: appointment as unknown as Record<string, unknown>,
+      message: 'Video appointment proposed. Doctor will confirm one of your time slots.',
+    };
+  }
+
+  /**
+   * Confirm one slot from patient's proposed slots (doctor flow).
+   */
+  async confirmVideoSlot(
+    appointmentId: string,
+    dto: ConfirmVideoSlotDto,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'update',
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.confirmVideoSlot');
+    }
+
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment) {
+      throw this.errors.notFound('Appointment');
+    }
+    if (String(appointment.type) !== 'VIDEO_CALL') {
+      throw this.errors.validationError(
+        'type',
+        'Only video appointments support slot confirmation',
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+    if (String(appointment.status) !== 'AWAITING_SLOT_CONFIRMATION') {
+      throw this.errors.validationError(
+        'status',
+        'Appointment is not awaiting slot confirmation',
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+
+    const proposedSlots = ((appointment as AppointmentWithRelations & { proposedSlots?: unknown })
+      .proposedSlots ?? []) as Array<{ date: string; time: string }>;
+    if (dto.confirmedSlotIndex < 0 || dto.confirmedSlotIndex >= proposedSlots.length) {
+      throw this.errors.validationError(
+        'confirmedSlotIndex',
+        'Invalid slot index',
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+
+    // Payment required before doctor can confirm: VIDEO_CALL is per-appointment, patient must pay first
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId,
+      status: 'COMPLETED',
+    });
+    if (!payments || payments.length === 0) {
+      throw this.errors.validationError(
+        'payment',
+        'Patient must complete payment before the doctor can confirm the slot. Please remind the patient to pay.',
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+
+    const slot = proposedSlots[dto.confirmedSlotIndex];
+    if (!slot) {
+      throw this.errors.validationError(
+        'confirmedSlotIndex',
+        'Invalid slot index',
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+    const { date: slotDate, time: slotTime } = slot;
+    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
+      date: new Date(slotDate),
+      time: slotTime,
+      status: AppointmentStatus.SCHEDULED,
+      confirmedSlotIndex: dto.confirmedSlotIndex,
+    });
+
+    try {
+      await this.clinicVideoPlugin.process({
+        operation: 'createConsultationRoom',
+        appointmentId,
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        clinicId,
+        displayName: { name: 'Patient', email: '' },
+      });
+    } catch (videoError) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to auto-create video room after slot confirmation: ${videoError instanceof Error ? videoError.message : String(videoError)}`,
+        'AppointmentsService.confirmVideoSlot',
+        { appointmentId }
+      );
+    }
+
+    await this.eventService.emit('appointment.updated', {
+      appointmentId,
+      clinicId,
+      status: AppointmentStatus.SCHEDULED,
+      context: { userId },
+    });
+
+    return {
+      success: true,
+      data: updated as unknown as Record<string, unknown>,
+      message: 'Slot confirmed. Patient can now pay and join the video consultation.',
+    };
   }
 
   /**

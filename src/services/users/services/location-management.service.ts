@@ -145,7 +145,8 @@ export class LocationManagementService {
   ): Promise<{ id: string; name: string } | null> {
     try {
       switch (role as Role) {
-        case Role.DOCTOR: {
+        case Role.DOCTOR:
+        case Role.ASSISTANT_DOCTOR: {
           const doctor = await this.databaseService.executeHealthcareRead<{
             doctorClinic: Array<{ locationId: string | null }>;
           } | null>(async client => {
@@ -267,7 +268,8 @@ export class LocationManagementService {
       details: { role, locationId, changedBy },
     };
     switch (role as Role) {
-      case Role.DOCTOR: {
+      case Role.DOCTOR:
+      case Role.ASSISTANT_DOCTOR: {
         // First get doctorId from userId using DatabaseService
         const doctor = await this.databaseService.executeHealthcareRead<{
           id: string;

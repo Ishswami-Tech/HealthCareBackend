@@ -172,6 +172,7 @@ export interface PaymentProviderConfig {
  */
 export enum PaymentProvider {
   RAZORPAY = 'razorpay',
+  CASHFREE = 'cashfree',
   PHONEPE = 'phonepe',
   STRIPE = 'stripe', // For future use
   PAYU = 'payu', // For future use

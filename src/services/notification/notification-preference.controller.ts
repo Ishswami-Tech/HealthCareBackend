@@ -42,7 +42,16 @@ export class NotificationPreferenceController {
   constructor(private readonly preferenceService: NotificationPreferenceService) {}
 
   @Get('me')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @ApiOperation({
     summary: 'Get my notification preferences',
     description: 'Get notification preferences for the authenticated user',
@@ -89,7 +98,16 @@ export class NotificationPreferenceController {
   }
 
   @Post()
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @ApiOperation({
     summary: 'Create notification preferences',
     description: 'Create notification preferences for the authenticated user',
@@ -115,7 +133,16 @@ export class NotificationPreferenceController {
   }
 
   @Put('me')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @ApiOperation({
     summary: 'Update my notification preferences',
     description: 'Update notification preferences for the authenticated user',
@@ -168,7 +195,16 @@ export class NotificationPreferenceController {
   }
 
   @Delete('me')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @ApiOperation({
     summary: 'Delete my notification preferences',
     description: 'Delete notification preferences for the authenticated user (resets to defaults)',

@@ -1045,6 +1045,106 @@ export class ClinicService {
     }
   }
 
+  /**
+   * Get all staff members (non-patient users) associated with a clinic
+   */
+  async getClinicStaff(
+    id: string,
+    _userId: string
+  ): Promise<
+    Array<{
+      id: string;
+      name: string | null;
+      firstName: string | null;
+      lastName: string | null;
+      email: string;
+      phone: string | null;
+      role: string;
+      isActive: boolean;
+      profilePicture: string | null;
+      createdAt: Date;
+    }>
+  > {
+    try {
+      const staff = await this.databaseService.executeHealthcareRead<
+        Array<{
+          id: string;
+          name: string | null;
+          firstName: string | null;
+          lastName: string | null;
+          email: string;
+          phone: string | null;
+          role: string;
+          isActive: boolean;
+          profilePicture: string | null;
+          createdAt: Date;
+        }>
+      >(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const staffRoles = [
+          'CLINIC_ADMIN',
+          'DOCTOR',
+          'ASSISTANT_DOCTOR',
+          'RECEPTIONIST',
+          'PHARMACIST',
+          'NURSE',
+          'THERAPIST',
+          'LAB_TECHNICIAN',
+          'FINANCE_BILLING',
+          'SUPPORT_STAFF',
+          'COUNSELOR',
+          'LOCATION_HEAD',
+        ];
+        const result = await typedClient.user.findMany({
+          where: {
+            role: { in: staffRoles },
+            OR: [
+              { primaryClinicId: id },
+              { doctor: { clinics: { some: { clinicId: id } } } },
+              { receptionists: { clinicId: id } },
+              { clinicAdmins: { some: { clinicId: id } } },
+              { pharmacist: { clinicId: id } },
+            ],
+          } as PrismaDelegateArgs,
+          select: {
+            id: true,
+            name: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            role: true,
+            isActive: true,
+            profilePicture: true,
+            createdAt: true,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as Array<{
+          id: string;
+          name: string | null;
+          firstName: string | null;
+          lastName: string | null;
+          email: string;
+          phone: string | null;
+          role: string;
+          isActive: boolean;
+          profilePicture: string | null;
+          createdAt: Date;
+        }>;
+      });
+      return staff;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get clinic staff: ${(error as Error).message}`,
+        'ClinicService',
+        { error: (error as Error).stack }
+      );
+      throw error;
+    }
+  }
+
   async getClinicPatients(id: string, _userId: string): Promise<PatientWithUser[]> {
     try {
       // Use executeHealthcareRead for optimized query - Patients linked via appointments

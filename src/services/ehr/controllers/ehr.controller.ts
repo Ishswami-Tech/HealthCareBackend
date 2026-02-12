@@ -55,7 +55,7 @@ export class EHRController {
   // ============ Comprehensive Health Record ============
 
   @Get('comprehensive/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:comprehensive:{userId}',
@@ -72,14 +72,14 @@ export class EHRController {
   // ============ Medical History ============
 
   @Post('medical-history')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
   async createMedicalHistory(@Body() createDto: CreateMedicalHistoryDto) {
     return this.ehrService.createMedicalHistory(createDto);
   }
 
   @Get('medical-history/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:medical-history:{userId}',
@@ -94,7 +94,7 @@ export class EHRController {
   }
 
   @Put('medical-history/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
   async updateMedicalHistory(
     @Param('id') id: string,
@@ -104,7 +104,7 @@ export class EHRController {
   }
 
   @Delete('medical-history/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteMedicalHistory(@Param('id') id: string): Promise<void> {
@@ -114,14 +114,27 @@ export class EHRController {
   // ============ Lab Reports ============
 
   @Post('lab-reports')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.LAB_TECHNICIAN
+  )
   @RequireResourcePermission('lab-reports', 'create')
   async createLabReport(@Body() createDto: CreateLabReportDto): Promise<unknown> {
     return this.ehrService.createLabReport(createDto);
   }
 
   @Get('lab-reports/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.LAB_TECHNICIAN
+  )
   @RequireResourcePermission('lab-reports', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:lab-reports:{userId}',
@@ -136,14 +149,26 @@ export class EHRController {
   }
 
   @Put('lab-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.LAB_TECHNICIAN
+  )
   @RequireResourcePermission('lab-reports', 'update')
   async updateLabReport(@Param('id') id: string, @Body() updateDto: UpdateLabReportDto) {
     return this.ehrService.updateLabReport(id, updateDto);
   }
 
   @Delete('lab-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.LAB_TECHNICIAN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.LAB_TECHNICIAN
+  )
   @RequireResourcePermission('lab-reports', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteLabReport(@Param('id') id: string) {
@@ -153,14 +178,14 @@ export class EHRController {
   // ============ Radiology Reports ============
 
   @Post('radiology-reports')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'create')
   async createRadiologyReport(@Body() createDto: CreateRadiologyReportDto) {
     return this.ehrService.createRadiologyReport(createDto);
   }
 
   @Get('radiology-reports/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:radiology-reports:{userId}',
@@ -175,7 +200,7 @@ export class EHRController {
   }
 
   @Put('radiology-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'update')
   async updateRadiologyReport(
     @Param('id') id: string,
@@ -185,7 +210,7 @@ export class EHRController {
   }
 
   @Delete('radiology-reports/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteRadiologyReport(@Param('id') id: string) {
@@ -195,14 +220,14 @@ export class EHRController {
   // ============ Surgical Records ============
 
   @Post('surgical-records')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'create')
   async createSurgicalRecord(@Body() createDto: CreateSurgicalRecordDto) {
     return this.ehrService.createSurgicalRecord(createDto);
   }
 
   @Get('surgical-records/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:surgical-records:{userId}',
@@ -217,14 +242,14 @@ export class EHRController {
   }
 
   @Put('surgical-records/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'update')
   async updateSurgicalRecord(@Param('id') id: string, @Body() updateDto: UpdateSurgicalRecordDto) {
     return this.ehrService.updateSurgicalRecord(id, updateDto);
   }
 
   @Delete('surgical-records/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteSurgicalRecord(@Param('id') id: string) {
@@ -234,14 +259,14 @@ export class EHRController {
   // ============ Vitals ============
 
   @Post('vitals')
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'create')
   async createVital(@Body() createDto: CreateVitalDto) {
     return this.ehrService.createVital(createDto);
   }
 
   @Get('vitals/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:vitals:{userId}:{type}',
@@ -256,14 +281,14 @@ export class EHRController {
   }
 
   @Put('vitals/:id')
-  @Roles(Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'update')
   async updateVital(@Param('id') id: string, @Body() updateDto: UpdateVitalDto) {
     return this.ehrService.updateVital(id, updateDto);
   }
 
   @Delete('vitals/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteVital(@Param('id') id: string) {
@@ -273,14 +298,14 @@ export class EHRController {
   // ============ Allergies ============
 
   @Post('allergies')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
   async createAllergy(@Body() createDto: CreateAllergyDto) {
     return this.ehrService.createAllergy(createDto);
   }
 
   @Get('allergies/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:allergies:{userId}',
@@ -295,14 +320,14 @@ export class EHRController {
   }
 
   @Put('allergies/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
   async updateAllergy(@Param('id') id: string, @Body() updateDto: UpdateAllergyDto) {
     return this.ehrService.updateAllergy(id, updateDto);
   }
 
   @Delete('allergies/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteAllergy(@Param('id') id: string) {
@@ -312,14 +337,14 @@ export class EHRController {
   // ============ Medications ============
 
   @Post('medications')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'create')
   async createMedication(@Body() createDto: CreateMedicationDto) {
     return this.ehrService.createMedication(createDto);
   }
 
   @Get('medications/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:medications:{userId}:{activeOnly}',
@@ -337,14 +362,14 @@ export class EHRController {
   }
 
   @Put('medications/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'update')
   async updateMedication(@Param('id') id: string, @Body() updateDto: UpdateMedicationDto) {
     return this.ehrService.updateMedication(id, updateDto);
   }
 
   @Delete('medications/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteMedication(@Param('id') id: string) {
@@ -354,14 +379,14 @@ export class EHRController {
   // ============ Immunizations ============
 
   @Post('immunizations')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
   async createImmunization(@Body() createDto: CreateImmunizationDto) {
     return this.ehrService.createImmunization(createDto);
   }
 
   @Get('immunizations/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:immunizations:{userId}',
@@ -376,14 +401,14 @@ export class EHRController {
   }
 
   @Put('immunizations/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
   async updateImmunization(@Param('id') id: string, @Body() updateDto: UpdateImmunizationDto) {
     return this.ehrService.updateImmunization(id, updateDto);
   }
 
   @Delete('immunizations/:id')
-  @Roles(Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
   async deleteImmunization(@Param('id') id: string) {
@@ -393,7 +418,7 @@ export class EHRController {
   // ============ Analytics ============
 
   @Get('analytics/health-trends/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:analytics:health-trends:{userId}:{vitalType}:{startDate}:{endDate}',
@@ -418,7 +443,7 @@ export class EHRController {
   }
 
   @Get('analytics/medication-adherence/:userId')
-  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:analytics:medication-adherence:{userId}',

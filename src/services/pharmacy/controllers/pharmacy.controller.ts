@@ -15,17 +15,21 @@ import {
   CreateMedicineDto,
   UpdateInventoryDto,
   CreatePrescriptionDto,
+  UpdatePrescriptionStatusDto,
   PharmacyStatsDto,
 } from '@dtos/pharmacy.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
+import { RbacGuard } from '@core/rbac/rbac.guard';
+import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 
 @ApiTags('pharmacy')
 @Controller('pharmacy')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class PharmacyController {
   constructor(private readonly pharmacyService: PharmacyService) {}
 
@@ -38,6 +42,7 @@ export class PharmacyController {
    */
   @Get('inventory')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('inventory', 'read')
   @ApiOperation({ summary: 'Get all medicines in inventory' })
   async getInventory() {
     return this.pharmacyService.findAllMedicines();
@@ -52,6 +57,7 @@ export class PharmacyController {
    */
   @Post('inventory')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('inventory', 'create')
   @ApiOperation({ summary: 'Add new medicine to inventory' })
   async addMedicine(
     @Body() dto: CreateMedicineDto,
@@ -72,6 +78,7 @@ export class PharmacyController {
    */
   @Patch('inventory/:id')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('inventory', 'update')
   @ApiOperation({ summary: 'Update medicine stock or price' })
   async updateInventory(@Param('id') id: string, @Body() dto: UpdateInventoryDto) {
     return this.pharmacyService.updateInventory(id, dto);
@@ -86,6 +93,7 @@ export class PharmacyController {
    */
   @Get('prescriptions')
   @Roles(Role.PHARMACIST)
+  @RequireResourcePermission('prescriptions', 'read')
   @ApiOperation({ summary: 'Get all prescriptions' })
   async getPrescriptions(@Request() req: Request & { user?: { clinicId?: string } }) {
     const clinicId = req.user?.clinicId;
@@ -94,13 +102,14 @@ export class PharmacyController {
 
   /**
    * @endpoint POST /pharmacy/prescriptions
-   * @access DOCTOR
+   * @access DOCTOR, ASSISTANT_DOCTOR
    * @frontend pharmacy.server.ts
    * @status ACTIVE
    * @description Create new prescription for patient
    */
   @Post('prescriptions')
-  @Roles(Role.DOCTOR)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @RequireResourcePermission('prescriptions', 'create')
   @ApiOperation({ summary: 'Create a new prescription' })
   async createPrescription(
     @Body() dto: CreatePrescriptionDto,
@@ -108,6 +117,24 @@ export class PharmacyController {
   ) {
     const clinicId = req.user?.clinicId;
     return this.pharmacyService.createPrescription(dto, clinicId);
+  }
+
+  /**
+   * @endpoint PATCH /pharmacy/prescriptions/:id/status
+   * @access PHARMACIST
+   * @description Dispense (FILLED) or cancel a prescription. Enforces immutability.
+   */
+  @Patch('prescriptions/:id/status')
+  @Roles(Role.PHARMACIST)
+  @RequireResourcePermission('prescriptions', 'update')
+  @ApiOperation({ summary: 'Update prescription status (dispense/cancel)' })
+  async updatePrescriptionStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdatePrescriptionStatusDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const clinicId = req.user?.clinicId;
+    return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId);
   }
 
   /**
@@ -120,6 +147,7 @@ export class PharmacyController {
    */
   @Get('dashboard/stats')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('prescriptions', 'read')
   @ApiOperation({ summary: 'Get pharmacy dashboard statistics' })
   async getStats(): Promise<PharmacyStatsDto> {
     return this.pharmacyService.getStats();
@@ -135,7 +163,8 @@ export class PharmacyController {
    * @note Fixed dashboard redirect loop issue
    */
   @Get('prescriptions/patient/:userId')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.PHARMACIST)
+  @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
   @ApiOperation({ summary: 'Get prescriptions for a specific patient' })
   async getPatientPrescriptions(
     @Param('userId') userId: string,

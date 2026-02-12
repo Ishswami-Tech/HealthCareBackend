@@ -36,7 +36,7 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
-import { ClinicId } from '@core/decorators/clinic.decorator';
+import { ClinicId, OptionalClinicId } from '@core/decorators/clinic.decorator';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { Role } from '@core/types/enums.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -405,12 +405,12 @@ export class UsersController {
   }
 
   @Put(':id/role')
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('users', 'update')
   @ApiOperation({
     summary: 'Update user role',
     description:
-      "Update a user's role and associated role-specific information. Only accessible by Super Admin.",
+      "Update a user's role. Super Admin can assign any role. Clinic Admin can assign roles to staff within their clinic only (DOCTOR, ASSISTANT_DOCTOR, RECEPTIONIST, PHARMACIST, NURSE).",
   })
   @ApiBody({ type: UpdateUserRoleDto })
   @ApiResponse({
@@ -433,7 +433,9 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async updateUserRole(
     @Param('id') id: string,
-    @Body() updateUserRoleDto: UpdateUserRoleDto
+    @Body() updateUserRoleDto: UpdateUserRoleDto,
+    @Request() req: ClinicAuthenticatedRequest,
+    @OptionalClinicId() clinicId?: string
   ): Promise<UserResponseDto> {
     const minimalCreateUserDto = {
       email: 'placeholder@example.com',
@@ -442,9 +444,8 @@ export class UsersController {
       lastName: 'placeholder',
       phone: '0000000000',
       role: updateUserRoleDto.role,
-      clinicId: updateUserRoleDto.clinicId,
+      clinicId: updateUserRoleDto.clinicId ?? clinicId ?? '',
     };
-    // Handle clinicId properly for exactOptionalPropertyTypes
     const createUserData = {
       email: minimalCreateUserDto.email,
       password: minimalCreateUserDto.password,
@@ -456,8 +457,14 @@ export class UsersController {
         clinicId: minimalCreateUserDto.clinicId,
       }),
     };
-
-    return this.usersService.updateUserRole(id, updateUserRoleDto.role, createUserData);
+    const currentUserId = req.user?.sub || req.user?.id;
+    return this.usersService.updateUserRole(
+      id,
+      updateUserRoleDto.role,
+      createUserData,
+      currentUserId,
+      clinicId
+    );
   }
 
   @Post(':id/change-location')

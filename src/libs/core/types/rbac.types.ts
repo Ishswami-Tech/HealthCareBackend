@@ -18,6 +18,7 @@ export const RolesList = [
   'SUPER_ADMIN',
   'CLINIC_ADMIN',
   'DOCTOR',
+  'ASSISTANT_DOCTOR',
   'PATIENT',
   'RECEPTIONIST',
   'PHARMACIST',
@@ -27,6 +28,7 @@ export const RolesList = [
   'SUPPORT_STAFF',
   'NURSE',
   'COUNSELOR',
+  'LOCATION_HEAD',
 ] as const;
 
 export type Role = (typeof RolesList)[number];

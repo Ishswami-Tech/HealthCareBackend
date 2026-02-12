@@ -3,6 +3,7 @@ import {
   Post,
   Body,
   Get,
+  Query,
   UseGuards,
   Request,
   HttpCode,
@@ -22,6 +23,7 @@ import {
   ApiExtraModels,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
+import { RbacService } from '@core/rbac/rbac.service';
 import { HealthcareErrorsService } from '@core/errors';
 import { HealthcareError } from '@core/errors';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -69,6 +71,7 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 export class AuthController {
   constructor(
     private readonly authService: AuthService,
+    private readonly rbacService: RbacService,
     private readonly errors: HealthcareErrorsService,
     private readonly sessionService: SessionManagementService,
     private readonly jwtAuthService: JwtAuthService
@@ -1201,6 +1204,58 @@ export class AuthController {
       }
       throw _error;
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('permissions/validate')
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Validate permission for current user',
+    description:
+      'Check if the authenticated user has permission for a resource and action. Used by frontend for permission-based UI.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Permission check result',
+    schema: {
+      example: {
+        status: 'success',
+        data: { hasPermission: true, permissions: ['appointments:read', 'appointments:update'] },
+      },
+    },
+  })
+  async validatePermission(
+    @Query('resource') resource: string,
+    @Query('action') action: string,
+    @Query('clinicId') clinicIdQuery: string | undefined,
+    @Request() req: FastifyRequestWithUser
+  ) {
+    const userId = req.user?.sub || req.user?.id;
+    const clinicId =
+      clinicIdQuery ||
+      (req as { clinicContext?: { clinicId?: string } }).clinicContext?.clinicId ||
+      (req.user as { clinicId?: string })?.clinicId ||
+      (req.headers['x-clinic-id'] as string);
+    if (!userId || !resource || !action) {
+      return new DataResponseDto(
+        { hasPermission: false, permissions: [], reason: 'Missing userId, resource, or action' },
+        'Permission check completed'
+      );
+    }
+    const result = await this.rbacService.checkPermission({
+      userId,
+      clinicId: clinicId ?? '',
+      resource,
+      action,
+    });
+    return new DataResponseDto(
+      {
+        hasPermission: result.hasPermission,
+        permissions: result.permissions,
+        reason: result.reason,
+      },
+      'Permission check completed'
+    );
   }
 
   @UseGuards(JwtAuthGuard)

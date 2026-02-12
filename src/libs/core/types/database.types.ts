@@ -312,6 +312,8 @@ export interface AppointmentBase {
   completedAt?: Date | null;
   subscriptionId?: string | null;
   isSubscriptionBased: boolean;
+  proposedSlots?: unknown;
+  confirmedSlotIndex?: number | null;
 }
 
 export interface BillingPlanBase {

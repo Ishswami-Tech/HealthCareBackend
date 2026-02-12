@@ -78,60 +78,86 @@ export class PaymentService {
   }
 
   /**
-   * Create payment intent (for subscriptions or one-time payments)
+   * Create payment intent (for subscriptions or one-time payments).
+   * Uses primary provider from clinic config; on failure tries fallback providers in order.
+   * Only one provider at a time - fallback only when primary fails.
    */
   async createPaymentIntent(
     clinicId: string,
     options: PaymentIntentOptions,
     provider?: PaymentProvider
   ): Promise<PaymentResult> {
-    try {
-      const adapter = await this.getProviderAdapter(clinicId, provider);
-
-      // Add clinicId to options if not present
-      const paymentOptions: PaymentIntentOptions = {
-        ...options,
-        clinicId: options.clinicId || clinicId,
-      };
-
-      const result = await adapter.createPaymentIntent(paymentOptions);
-
-      // Emit payment event
-      const eventPayload: EnterpriseEventPayload = {
-        eventId: `payment-intent-${result.paymentId || Date.now()}`,
-        eventType: 'payment.intent.created',
-        category: EventCategory.BILLING,
-        priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
-        source: 'PaymentService',
-        version: '1.0.0',
-        clinicId,
-        ...(options.customerId && { userId: options.customerId }),
-        metadata: {
-          paymentId: result.paymentId,
-          amount: options.amount,
-          currency: options.currency,
-          appointmentId: options.appointmentId,
-          appointmentType: options.appointmentType,
-          isSubscription: options.isSubscription,
-        },
-      };
-      await this.eventService.emitEnterprise('payment.intent.created', eventPayload);
-
-      return result;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.PAYMENT,
-        LogLevel.ERROR,
-        `Failed to create payment intent: ${error instanceof Error ? error.message : String(error)}`,
-        'PaymentService',
-        {
-          clinicId,
-          error: error instanceof Error ? error.stack : undefined,
-        }
-      );
-      throw error;
+    const config = await this.paymentConfigService.getClinicConfig(clinicId);
+    if (!config || !config.payment.primary) {
+      throw new Error(`No payment configuration found for clinic: ${clinicId}`);
     }
+
+    const paymentOptions: PaymentIntentOptions = {
+      ...options,
+      clinicId: options.clinicId || clinicId,
+    };
+
+    const providersToTry: PaymentProvider[] = provider
+      ? [provider]
+      : [config.payment.primary.provider, ...(config.payment.fallback?.map(f => f.provider) || [])];
+
+    let lastError: Error | null = null;
+
+    for (const p of providersToTry) {
+      try {
+        const adapter = await this.getProviderAdapter(clinicId, p);
+        const result = await adapter.createPaymentIntent(paymentOptions);
+
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          `Payment intent created with provider: ${result.provider}`,
+          'PaymentService',
+          { clinicId, provider: result.provider, paymentId: result.paymentId }
+        );
+
+        const eventPayload: EnterpriseEventPayload = {
+          eventId: `payment-intent-${result.paymentId || Date.now()}`,
+          eventType: 'payment.intent.created',
+          category: EventCategory.BILLING,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'PaymentService',
+          version: '1.0.0',
+          clinicId,
+          ...(options.customerId && { userId: options.customerId }),
+          metadata: {
+            paymentId: result.paymentId,
+            amount: options.amount,
+            currency: options.currency,
+            appointmentId: options.appointmentId,
+            appointmentType: options.appointmentType,
+            isSubscription: options.isSubscription,
+          },
+        };
+        await this.eventService.emitEnterprise('payment.intent.created', eventPayload);
+
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          `Provider ${p} failed, trying next: ${lastError.message}`,
+          'PaymentService',
+          { clinicId, provider: p }
+        );
+      }
+    }
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.ERROR,
+      `All payment providers failed: ${lastError?.message}`,
+      'PaymentService',
+      { clinicId }
+    );
+    throw lastError || new Error('Failed to create payment intent');
   }
 
   /**

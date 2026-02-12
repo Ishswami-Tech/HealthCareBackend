@@ -13,6 +13,9 @@ import {
   Max,
   IsBoolean,
   IsObject,
+  ArrayMinSize,
+  ArrayMaxSize,
+  Matches,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
@@ -40,6 +43,7 @@ export enum AppointmentStatus {
   TRANSFERRED = 'TRANSFERRED',
   DISCHARGED = 'DISCHARGED',
   FOLLOW_UP_SCHEDULED = 'FOLLOW_UP_SCHEDULED',
+  AWAITING_SLOT_CONFIRMATION = 'AWAITING_SLOT_CONFIRMATION', // Video flow: patient proposed slots, awaiting doctor
 }
 
 /**
@@ -725,6 +729,83 @@ export class RescheduleAppointmentDto {
   @IsOptional()
   @IsBoolean({ message: 'Send notification must be a boolean' })
   sendNotification?: boolean = true;
+}
+
+/**
+ * Data Transfer Object for proposing video appointment slots
+ * Patient proposes 3-4 time slots; doctor selects one to confirm
+ */
+export class ProposedSlotItemDto {
+  @ApiProperty({ example: '2025-02-15', description: 'Date in YYYY-MM-DD format' })
+  @IsDateString({}, { message: 'Slot date must be a valid date string' })
+  date!: string;
+
+  @ApiProperty({ example: '10:00', description: 'Time in HH:mm format' })
+  @IsString()
+  @Matches(/^\d{1,2}:\d{2}$/, { message: 'Slot time must be in HH:mm format' })
+  time!: string;
+}
+
+/**
+ * DTO for patient to propose video appointment with 3-4 time slots
+ */
+export class ProposeVideoSlotsDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  patientId!: string;
+
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  doctorId!: string;
+
+  @ApiProperty()
+  @IsClinicId()
+  @IsNotEmpty()
+  clinicId!: string;
+
+  @ApiProperty({ example: 30, minimum: 15, maximum: 120 })
+  @IsNumber()
+  @Min(15)
+  @Max(120)
+  duration!: number;
+
+  @ApiProperty({
+    type: [ProposedSlotItemDto],
+    minItems: 3,
+    maxItems: 4,
+    example: [
+      { date: '2025-02-15', time: '10:00' },
+      { date: '2025-02-15', time: '14:00' },
+      { date: '2025-02-16', time: '09:00' },
+    ],
+  })
+  @IsArray()
+  @ArrayMinSize(3, { message: 'Must propose at least 3 time slots' })
+  @ArrayMaxSize(4, { message: 'Must propose at most 4 time slots' })
+  @ValidateNested({ each: true })
+  @Type(() => ProposedSlotItemDto)
+  proposedSlots!: ProposedSlotItemDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+/**
+ * DTO for doctor to confirm one slot from patient's proposed slots
+ */
+export class ConfirmVideoSlotDto {
+  @ApiProperty({
+    example: 0,
+    description: '0-based index of the slot to confirm (from proposedSlots array)',
+    minimum: 0,
+  })
+  @IsNumber()
+  @Min(0, { message: 'Slot index must be 0 or greater' })
+  confirmedSlotIndex!: number;
 }
 
 // =============================================

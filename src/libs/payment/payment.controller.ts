@@ -82,11 +82,10 @@ export class PaymentController {
       const orderEntity = payload?.['order'] as Record<string, unknown>;
 
       if (event === 'payment.captured' || event === 'payment.failed') {
-        const paymentId = paymentEntity?.['id'] as string;
-        const orderId = orderEntity?.['id'] as string;
+        const paymentId = typeof paymentEntity?.['id'] === 'string' ? paymentEntity['id'] : '';
+        const orderId = typeof orderEntity?.['id'] === 'string' ? orderEntity['id'] : '';
 
         if (paymentId && orderId) {
-          // Handle payment callback
           await this.billingService.handlePaymentCallback(
             clinicId,
             paymentId,
@@ -110,6 +109,91 @@ export class PaymentController {
         LogType.PAYMENT,
         LogLevel.ERROR,
         `Failed to process Razorpay webhook: ${error instanceof Error ? error.message : String(error)}`,
+        'PaymentController',
+        {
+          clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { success: false };
+    }
+  }
+
+  /**
+   * Cashfree webhook handler
+   */
+  @Post('cashfree/webhook')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Handle Cashfree webhook' })
+  @ApiHeader({ name: 'x-cf-signature', description: 'Cashfree webhook signature' })
+  @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
+  async handleCashfreeWebhook(
+    @Body() body: Record<string, unknown>,
+    @Headers('x-cf-signature') signature: string,
+    @Query('clinicId') clinicId: string
+  ): Promise<{ success: boolean }> {
+    try {
+      if (!clinicId) {
+        throw new Error('Clinic ID is required');
+      }
+
+      const isValid = await this.paymentService.verifyWebhook(
+        clinicId,
+        {
+          payload: body,
+          signature: signature || '',
+        },
+        PaymentProvider.CASHFREE
+      );
+
+      if (!isValid) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Invalid Cashfree webhook signature',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
+      // Parse orderId and orderStatus - support top-level and nested data (appointment/video payments)
+      const dataObj = (
+        typeof body['data'] === 'object' && body['data'] !== null ? body['data'] : body
+      ) as Record<string, unknown>;
+      const orderIdRaw =
+        dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
+      const orderStatusRaw =
+        dataObj['orderStatus'] ??
+        dataObj['order_status'] ??
+        body['orderStatus'] ??
+        body['order_status'] ??
+        '';
+      const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
+      const orderStatus = typeof orderStatusRaw === 'string' ? orderStatusRaw : '';
+      if (orderId && (orderStatus === 'PAID' || orderStatus === 'SUCCESS')) {
+        await this.billingService.handlePaymentCallback(
+          clinicId,
+          orderId,
+          orderId,
+          PaymentProvider.CASHFREE
+        );
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Cashfree webhook processed',
+        'PaymentController',
+        { clinicId }
+      );
+
+      return { success: true };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.ERROR,
+        `Failed to process Cashfree webhook: ${error instanceof Error ? error.message : String(error)}`,
         'PaymentController',
         {
           clinicId,
@@ -165,8 +249,12 @@ export class PaymentController {
         const decodedPayload = Buffer.from(base64Payload, 'base64').toString('utf-8');
         const paymentData = JSON.parse(decodedPayload) as Record<string, unknown>;
 
-        const merchantTransactionId = paymentData['merchantTransactionId'] as string;
-        const transactionId = paymentData['transactionId'] as string;
+        const merchantTransactionId =
+          typeof paymentData['merchantTransactionId'] === 'string'
+            ? paymentData['merchantTransactionId']
+            : '';
+        const transactionId =
+          typeof paymentData['transactionId'] === 'string' ? paymentData['transactionId'] : '';
 
         if (merchantTransactionId && transactionId) {
           // Handle payment callback
@@ -227,6 +315,8 @@ export class PaymentController {
         const normalizedProvider = provider.toLowerCase();
         if (normalizedProvider === 'razorpay') {
           paymentProvider = PaymentProvider.RAZORPAY;
+        } else if (normalizedProvider === 'cashfree') {
+          paymentProvider = PaymentProvider.CASHFREE;
         } else if (normalizedProvider === 'phonepe') {
           paymentProvider = PaymentProvider.PHONEPE;
         }
