@@ -42,8 +42,6 @@
  * Do NOT import or use PrismaService in any code outside this module.
  * Use DatabaseService only (from @infrastructure/database).
  */
-export { DatabaseModule } from './database.module';
-
 // SINGLE UNIFIED DATABASE SERVICE - This is the ONLY public interface
 // All database operations MUST go through this service with full optimization layers
 // DO NOT import or use any other database components directly
@@ -51,6 +49,8 @@ export { DatabaseModule } from './database.module';
 // ONLY PUBLIC EXPORT: DatabaseService
 // Use separate export file to avoid circular dependency issues
 export { DatabaseService } from './database-service.export';
+
+export { DatabaseModule } from './database.module';
 
 // Type exports for the unified service (re-export from @core/types)
 export type {
