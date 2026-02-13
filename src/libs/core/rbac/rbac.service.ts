@@ -8,6 +8,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
+import type { PrismaTransactionClient } from '@core/types/database.types';
 import type { RbacContext, RoleAssignment, PermissionCheck } from '@core/types/rbac.types';
 
 /**
@@ -950,19 +951,68 @@ export class RbacService {
 
   /**
    * Check medical record ownership
-   * Note: MedicalRecord model does not exist in Prisma schema.
-   * MedicalHistory model exists but has different structure.
-   * This placeholder remains until MedicalRecord model is added or MedicalHistory is used.
+   * Using MedicalHistory model
    */
-  private checkMedicalRecordOwnership(_recordId: string, _userId: string): Promise<boolean> {
-    // MedicalRecord model does not exist in Prisma schema
-    // If needed, use MedicalHistory model instead:
-    // await this.databaseService.executeHealthcareRead(async (client) => {
-    //   const history = await client.medicalHistory.findUnique({ where: { id: recordId } });
-    //   return history ? history.patientId === userId : false;
-    // });
-    // For now, return false as placeholder
-    return Promise.resolve(false);
+  private async checkMedicalRecordOwnership(recordId: string, userId: string): Promise<boolean> {
+    // Define minimal interface to satisfy TS when generated client types are incomplete
+    type ExtendedPrismaClient = PrismaTransactionClient & {
+      medicalHistory: {
+        findUnique: (args: {
+          where: { id: string };
+          select: { userId: boolean; doctorId: boolean };
+        }) => Promise<{ userId: string; doctorId: string | null } | null>;
+      };
+      doctor: {
+        findFirst: (args: {
+          where: { userId: string };
+          select: { id: boolean };
+        }) => Promise<{ id: string } | null>;
+      };
+    };
+
+    try {
+      return await this.databaseService.executeHealthcareRead<boolean>(
+        async (prisma: PrismaTransactionClient) => {
+          const client = prisma as unknown as ExtendedPrismaClient;
+
+          const record = await client.medicalHistory.findUnique({
+            where: { id: recordId },
+            select: { userId: true, doctorId: true },
+          });
+
+          if (!record) return false;
+
+          // Check if user is the patient
+          if (record.userId === userId) return true;
+
+          // Check if user is the doctor associated with the record
+          if (record.doctorId) {
+            // Find the doctor record for the current user to verify identity
+            const doctor = await client.doctor.findFirst({
+              where: { userId: userId },
+              select: { id: true },
+            });
+
+            if (doctor && doctor.id === record.doctorId) return true;
+          }
+
+          return false;
+        }
+      );
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Medical record ownership check failed`,
+        'RbacService',
+        {
+          recordId,
+          userId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      return false;
+    }
   }
 
   /**

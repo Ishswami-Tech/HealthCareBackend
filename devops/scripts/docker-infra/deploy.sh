@@ -9,7 +9,20 @@ DEPLOY_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"  # Will be overwritten by utils.sh, but we keep original
 source "${DEPLOY_SCRIPT_DIR}/../shared/utils.sh"
 # Restore deploy script directory after sourcing utils.sh
+# Restore deploy script directory after sourcing utils.sh
 SCRIPT_DIR="${DEPLOY_SCRIPT_DIR}"
+
+log_info "Deploy script started"
+log_info "Using BASE_DIR: ${BASE_DIR}"
+log_info "Using ENV_FILE: ${ENV_FILE}"
+
+# Verify environment file exists
+if [ ! -f "${ENV_FILE}" ]; then
+    log_error "CRITICAL: Environment file not found at ${ENV_FILE}"
+    log_error "This will cause migration and container startup failures."
+    log_error "Ensure CI/CD is creating the file in the correct location: ${BASE_DIR}/.env.production"
+    exit 1
+fi
 
 # This script is Docker-specific for production deployments
 
@@ -122,8 +135,8 @@ ensure_volumes_preserved() {
     
     local volumes=("postgres_data" "dragonfly_data")
     local volume_paths=(
-        "/opt/healthcare-backend/data/postgres"
-        "/opt/healthcare-backend/data/dragonfly"
+        "${BASE_DIR}/data/postgres"
+        "${BASE_DIR}/data/dragonfly"
     )
     
     for i in "${!volumes[@]}"; do

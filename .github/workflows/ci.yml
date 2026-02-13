@@ -487,6 +487,7 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             export SCRIPT_DIR="/tmp"
+            export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
             export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
@@ -799,6 +800,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
+            export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
             export S3_PROVIDER="${{ vars.S3_PROVIDER }}"
@@ -902,6 +904,7 @@ jobs:
           # Run health check and capture exit code
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'bash -c "
             export SCRIPT_DIR=\"/tmp\"
+            export BASE_DIR=\"${{ secrets.SERVER_DEPLOY_PATH }}\"
             chmod +x /tmp/health-check.sh /tmp/utils.sh 2>/dev/null || true
             
             echo \"🔍 Verifying infrastructure readiness before deployment...\"
@@ -1239,7 +1242,7 @@ jobs:
       - name: Copy files to server
         run: |
           # Copy all deployment scripts
-          scp $SSH_OPTS -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/healthcare-backend/devops/scripts/
+          scp $SSH_OPTS -r devops/scripts/shared devops/scripts/docker-infra ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/
           scp $SSH_OPTS /tmp/.env.production ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/.env.production
           # Copy docker-compose file
           scp $SSH_OPTS devops/docker/docker-compose.prod.yml ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/tmp/docker-compose.prod.yml
@@ -1280,19 +1283,24 @@ jobs:
           echo "ℹ️  Infrastructure images will be validated during deployment"
 
       - name: Setup server directories
+        env:
+          SERVER_DEPLOY_PATH: ${{ secrets.SERVER_DEPLOY_PATH }}
         run: |
           ssh $SSH_OPTS ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
+
+            # Set default path if not in env
+            SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH:-/opt/healthcare-backend}"
             
             # Run directory setup script
-            if [[ -f /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh ]]; then
+            if [[ -f "${SERVER_DEPLOY_PATH}/devops/scripts/docker-infra/setup-directories.sh" ]]; then
               echo "Setting up server directories..."
-              chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
-              /opt/healthcare-backend/devops/scripts/docker-infra/setup-directories.sh
+              chmod +x "${SERVER_DEPLOY_PATH}/devops/scripts/docker-infra/setup-directories.sh"
+              "${SERVER_DEPLOY_PATH}/devops/scripts/docker-infra/setup-directories.sh"
             else
               echo "Setup script not found, creating directories manually..."
-              mkdir -p /opt/healthcare-backend/backups/{postgres,dragonfly,metadata}
-              mkdir -p /opt/healthcare-backend/data/{postgres,dragonfly,openvidu_recordings}
+              mkdir -p "${SERVER_DEPLOY_PATH}/backups/{postgres,dragonfly,metadata}"
+              mkdir -p "${SERVER_DEPLOY_PATH}/data/{postgres,dragonfly,openvidu_recordings}"
               # /var/log/deployments requires sudo if not running as root
               if [[ "$EUID" -eq 0 ]]; then
                 mkdir -p /var/log/deployments
@@ -1301,8 +1309,8 @@ jobs:
                 sudo mkdir -p /var/log/deployments
                 sudo chmod 755 /var/log/deployments
               fi
-              chmod 700 /opt/healthcare-backend/backups
-              chmod 755 /opt/healthcare-backend/data
+              chmod 700 "${SERVER_DEPLOY_PATH}/backups"
+              chmod 755 "${SERVER_DEPLOY_PATH}/data"
               echo "Directories created"
             fi
           ENDSSH
@@ -1327,12 +1335,13 @@ jobs:
             # Input validation: Only allow alphanumeric, forward slashes, hyphens, and underscores
             # Prevent path traversal and command injection
             if [ -n "${SERVER_DEPLOY_PATH_SECRET_VALUE}" ] && [ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" != "" ]; then
-              # Validate path format (no .., no spaces, no special chars except /, -, _)
               if [[ ! "${SERVER_DEPLOY_PATH_SECRET_VALUE}" =~ ^[a-zA-Z0-9/_-]+$ ]] || [[ "${SERVER_DEPLOY_PATH_SECRET_VALUE}" == *".."* ]]; then
                 echo "❌ ERROR: Invalid SERVER_DEPLOY_PATH format (security check failed)"
                 exit 1
               fi
               export SERVER_DEPLOY_PATH="${SERVER_DEPLOY_PATH_SECRET_VALUE}"
+              # CRITICAL: Export BASE_DIR so utils.sh (and deploy.sh) uses the correct path
+              export BASE_DIR="${SERVER_DEPLOY_PATH}"
               echo "✅ Using SERVER_DEPLOY_PATH from secret: '${SERVER_DEPLOY_PATH}'"
             else
               export SERVER_DEPLOY_PATH="/opt/healthcare-backend"
@@ -1406,8 +1415,8 @@ jobs:
             }
             
             # Make scripts executable
-            chmod +x /opt/healthcare-backend/devops/scripts/docker-infra/*.sh
-            chmod +x /opt/healthcare-backend/devops/scripts/shared/*.sh
+            chmod +x ${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/docker-infra/*.sh
+            chmod +x ${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/shared/*.sh
             
             # OPENVIDU_SECRET: OpenVidu allows only [a-zA-Z0-9_-]. Sanitize to avoid container exit (e.g. base64 "=" padding).
             RAW_OPENVIDU=$(grep -E '^OPENVIDU_SECRET=' "${SERVER_DEPLOY_PATH}/.env.production" 2>/dev/null | cut -d= -f2- || true)
@@ -1451,8 +1460,8 @@ jobs:
             # Run smart deployment orchestrator
             # Note: deploy.sh will skip infrastructure operations if INFRA_ALREADY_HANDLED=true
             # and only handle application deployment
-            cd /opt/healthcare-backend
-            /opt/healthcare-backend/devops/scripts/docker-infra/deploy.sh
+            cd ${{ secrets.SERVER_DEPLOY_PATH }}
+            ${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/docker-infra/deploy.sh
             
           ENDSSH
 
@@ -1501,6 +1510,7 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             export SCRIPT_DIR="/tmp"
+            export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
             chmod +x /tmp/verify.sh
             
@@ -1529,6 +1539,7 @@ jobs:
           ssh -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=~/.ssh/known_hosts ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} << 'ENDSSH'
             set -e
             export SCRIPT_DIR="/tmp"
+            export BASE_DIR="${{ secrets.SERVER_DEPLOY_PATH }}"
             source /tmp/utils.sh
             export S3_ENABLED="${{ vars.S3_ENABLED }}"
             export S3_PROVIDER="${{ vars.S3_PROVIDER }}"

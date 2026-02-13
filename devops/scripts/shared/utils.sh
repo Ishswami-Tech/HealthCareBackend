@@ -30,7 +30,8 @@ log_error() {
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BASE_DIR="/opt/healthcare-backend"
+# Base directory for application (can be overridden by environment)
+BASE_DIR="${BASE_DIR:-/opt/healthcare-backend}"
 BACKUP_DIR="${BASE_DIR}/backups"
 LOG_DIR="/var/log/deployments"
 ENV_FILE="${BASE_DIR}/.env.production"
