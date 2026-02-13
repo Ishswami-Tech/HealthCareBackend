@@ -257,7 +257,7 @@ export class JwtAuthGuard implements CanActivate {
 
       const token = this.extractTokenFromHeader(request);
       if (!token) {
-        await this.recordFailedAttempt(clientIp);
+        // await this.recordFailedAttempt(clientIp); // Removed (handled in catch block)
         throw new UnauthorizedException('No token provided');
       }
 
@@ -769,7 +769,8 @@ export class JwtAuthGuard implements CanActivate {
     if (
       error.message.includes('Token has expired') ||
       error.message.includes('Invalid session') ||
-      error.message.includes('Session ID is missing')
+      error.message.includes('Session ID is missing') ||
+      error.message.includes('No token provided')
     ) {
       return;
     }
