@@ -24,14 +24,18 @@ import {
   AppointmentType,
   Prakriti,
   Dosha,
-} from '@core/types/enums.types';
-import type { Role } from '@core/types/rbac.types';
+} from '../../../core/types/enums.types';
+import type { Role } from '../../../core/types/rbac.types';
 // Import entity types from centralized types for proper type annotations
-import type { RbacRoleEntity, UserRoleEntity } from '@core/types';
-import { Gender } from '@dtos/user.dto';
+import type { RbacRoleEntity, UserRoleEntity } from '../../../core/types';
+import { Gender } from '../../../dtos/user.dto';
 // Use helper functions (which use dotenv) for environment variable access
 // These mimic ConfigService methods but work in seed scripts
-import { getEnvWithDefault, isProduction, isDevelopment } from '@config/environment/utils';
+import {
+  getEnvWithDefault,
+  isProduction,
+  isDevelopment,
+} from '../../../../config/environment/utils';
 
 // Role string literals (Role is a type, not an enum)
 const RoleValues = {
@@ -714,14 +718,14 @@ async function main() {
     const clinic1Locations = (await Promise.all([
       prisma.clinicLocation.create({
         data: {
-          name: 'Aadesh Main Branch',
+          name: 'Aadesh Pune Branch',
           address: 'Koregaon Park, Pune',
           city: 'Pune',
           state: 'Maharashtra',
           country: 'India',
           zipCode: '411001',
           phone: '+91-9876543210',
-          email: 'main@aadesh.com',
+          email: 'pune@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -729,14 +733,14 @@ async function main() {
       }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
-          name: 'Aadesh North Branch',
-          address: 'Baner Road, Pune',
-          city: 'Pune',
+          name: 'Aadesh Chinchwad Branch',
+          address: 'Chinchwad Station, Pune',
+          city: 'Chinchwad',
           state: 'Maharashtra',
           country: 'India',
-          zipCode: '411045',
+          zipCode: '411019',
           phone: '+91-9876543211',
-          email: 'north@aadesh.com',
+          email: 'chinchwad@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
@@ -744,14 +748,14 @@ async function main() {
       }) as unknown as Promise<{ id: string }>,
       prisma.clinicLocation.create({
         data: {
-          name: 'Aadesh South Branch',
-          address: 'Sinhagad Road, Pune',
-          city: 'Pune',
+          name: 'Aadesh Nashik Branch',
+          address: 'College Road, Nashik',
+          city: 'Nashik',
           state: 'Maharashtra',
           country: 'India',
-          zipCode: '411041',
+          zipCode: '422005',
           phone: '+91-9876543212',
-          email: 'south@aadesh.com',
+          email: 'nashik@aadesh.com',
           clinicId: clinic1.id,
           locationId: generateLocationId(),
           isActive: true,
