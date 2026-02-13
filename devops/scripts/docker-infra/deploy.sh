@@ -1954,9 +1954,14 @@ run_migrations_safely() {
         log_error "API container is not running (status: $container_status)"
         if [[ "$container_exit_code" != "0" ]] && [[ "$container_exit_code" != "" ]]; then
             log_error "Container exit code: $container_exit_code"
+            
+            # CRITICAL: Print logs to help diagnose startup failures
+            log_error "=== API Container Logs (Last 50 lines) ==="
+            docker logs --tail 50 "${CONTAINER_PREFIX}api" 2>&1 || log_error "Failed to retrieve logs"
+            log_error "============================================"
+
             if [[ "$container_exit_code" == "137" ]]; then
                 log_error "Exit code 137 indicates the container was killed (likely Out of Memory - OOM)"
-                log_error "Check container logs: docker logs ${CONTAINER_PREFIX}api"
                 log_error "Check system memory: free -h"
             fi
         fi
