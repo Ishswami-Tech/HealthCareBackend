@@ -570,11 +570,30 @@ export interface ClinicResponseDto {
     readonly email: string;
     readonly timezone: string;
     readonly workingHours: string;
+
     readonly isActive: boolean;
     readonly clinicId: string;
     readonly createdAt: Date;
     readonly updatedAt: Date;
   };
+  readonly locations?: Array<{
+    readonly id: string;
+    readonly locationId: string;
+    readonly name: string;
+    readonly address: string;
+    readonly city: string;
+    readonly state: string;
+    readonly country: string;
+    readonly zipCode: string;
+    readonly phone: string;
+    readonly email: string;
+    readonly timezone: string;
+    readonly workingHours: string;
+    readonly isActive: boolean;
+    readonly clinicId: string;
+    readonly createdAt: Date;
+    readonly updatedAt: Date;
+  }>;
 }
 
 /**

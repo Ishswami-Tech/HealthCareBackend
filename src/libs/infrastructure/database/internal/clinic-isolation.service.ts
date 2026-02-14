@@ -424,7 +424,20 @@ export class ClinicIsolationService implements OnModuleInit {
         });
         const userClinicAccess = rawUserClinicAccess as { id: string } | null;
 
-        if (!userClinicAccess) {
+        // Check UserRole table for active assignments
+        const userRoleAssignment = await this.prismaService.userRole.findFirst({
+          where: {
+            userId,
+            clinicId,
+            isActive: true,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            revokedAt: null,
+          },
+          select: { id: true },
+        });
+
+        // access is granted if EITHER direct association OR valid UserRole exists
+        if (!userClinicAccess && !userRoleAssignment) {
           return {
             success: false,
             error: `User ${userId} does not have access to clinic ${clinicId}`,
@@ -542,8 +555,29 @@ export class ClinicIsolationService implements OnModuleInit {
         }
 
         // Add associated clinics
-        for (const clinic of user.clinics) {
-          clinicIds.add(clinic.id);
+        if (user.clinics) {
+          for (const clinic of user.clinics) {
+            clinicIds.add(clinic.id);
+          }
+        }
+
+        // Add clinics from UserRole assignments
+        // Query UserRole table for active assignments
+        const userRoles = await this.prismaService.userRole.findMany({
+          where: {
+            userId,
+            isActive: true,
+            clinicId: { not: null },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+            revokedAt: null,
+          },
+          select: { clinicId: true },
+        });
+
+        for (const role of userRoles) {
+          if (role.clinicId) {
+            clinicIds.add(role.clinicId);
+          }
         }
 
         userClinics = Array.from(clinicIds);
@@ -733,6 +767,34 @@ export class ClinicIsolationService implements OnModuleInit {
 
       if (clinicIds.size > 0) {
         this.userClinicCache.set(user.id, Array.from(clinicIds));
+      }
+    }
+
+    // Load active UserRole assignments
+    const userRoleDelegate = this.prismaService.userRole;
+    // We can't easily do a single query for all users efficiently without grouping,
+    // but since this is initialization/background refresh, we can iterate or fetch all active roles.
+    // Fetch all active UserRole assignments with clinicId
+    const activeUserRoles = await userRoleDelegate.findMany({
+      where: {
+        isActive: true,
+        clinicId: { not: null },
+        OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        revokedAt: null,
+      },
+      select: {
+        userId: true,
+        clinicId: true,
+      },
+    });
+
+    for (const role of activeUserRoles) {
+      if (role.clinicId) {
+        const currentClinics = this.userClinicCache.get(role.userId) || [];
+        if (!currentClinics.includes(role.clinicId)) {
+          currentClinics.push(role.clinicId);
+          this.userClinicCache.set(role.userId, currentClinics);
+        }
       }
     }
   }

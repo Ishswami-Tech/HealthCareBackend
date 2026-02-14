@@ -51,8 +51,8 @@ const RoleValues = {
   SUPPORT_STAFF: 'SUPPORT_STAFF' as const,
   NURSE: 'NURSE' as const,
   COUNSELOR: 'COUNSELOR' as const,
-  // LOCATION_HEAD is not in Role enum yet, will be added in future migration
-  // LOCATION_HEAD: 'LOCATION_HEAD' as const,
+  LOCATION_HEAD: 'LOCATION_HEAD' as const,
+  ASSISTANT_DOCTOR: 'ASSISTANT_DOCTOR' as const,
 } satisfies Record<string, Role>;
 
 const SEED_COUNT = 50;

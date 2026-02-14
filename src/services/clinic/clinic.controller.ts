@@ -16,6 +16,7 @@ import {
   BadRequestException,
   Query,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ClinicService } from './clinic.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -231,7 +232,7 @@ export class ClinicController {
 
   @Get()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
   @RequireResourcePermission('clinics', 'read')
   @Cache({
     keyTemplate: 'clinics:list:{userId}',
@@ -282,6 +283,7 @@ export class ClinicController {
   ) {
     try {
       const userId = req.user?.sub;
+      const role = req.user?.role;
 
       if (!userId) {
         throw new BadRequestException('User ID is required');
@@ -293,7 +295,7 @@ export class ClinicController {
         search,
       });
 
-      const result = await this.clinicService.getAllClinics(userId);
+      const result = await this.clinicService.getAllClinics(userId, role);
 
       this.logger.log(
         `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`
@@ -356,6 +358,7 @@ export class ClinicController {
   ) {
     try {
       const userId = req.user?.sub;
+      const role = req.user?.role;
 
       if (!userId) {
         throw new BadRequestException('User ID is required');
@@ -363,11 +366,15 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic ${id} for user ${userId}`);
 
-      const result = await this.clinicService.getClinicById(id);
+      const result = await this.clinicService.getClinicById(id, false, userId, role);
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
       return result;
     } catch (_error) {
+      // Re-throw ForbiddenException directly
+      if (_error instanceof ForbiddenException) {
+        throw _error;
+      }
       this.logger.error(
         `Failed to get clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
         _error instanceof Error ? _error.stack : ''

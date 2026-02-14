@@ -1,4 +1,5 @@
-import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef, ForbiddenException } from '@nestjs/common';
+import { Role } from '@core/types/enums.types';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { CacheService } from '@infrastructure/cache';
@@ -803,14 +804,14 @@ export class ClinicService {
     }
   }
 
-  async getAllClinics(userId: string): Promise<ClinicResponseDto[]> {
-    const cacheKey = `clinics:user:${userId}`;
+  async getAllClinics(userId: string, role?: string): Promise<ClinicResponseDto[]> {
+    const cacheKey = `clinics:user:${userId}:${role || 'default'}`;
 
     if (this.cacheService) {
       return this.cacheService.cache(
         cacheKey,
         async () => {
-          return this.fetchAllClinics(userId);
+          return this.fetchAllClinics(userId, role);
         },
         {
           ttl: 1800, // 30 minutes
@@ -820,20 +821,67 @@ export class ClinicService {
       );
     }
 
-    return this.fetchAllClinics(userId);
+    return this.fetchAllClinics(userId, role);
   }
 
-  private async fetchAllClinics(userId: string): Promise<ClinicResponseDto[]> {
+  private async fetchAllClinics(userId: string, role?: string): Promise<ClinicResponseDto[]> {
     try {
-      // Use executeHealthcareRead for optimized query
+      // 1. Get assigned clinic IDs from UserRole for strict isolation
+      const assignedClinicIds = await this.databaseService.executeHealthcareRead<string[]>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const userRoles = await typedClient.userRole.findMany({
+            where: {
+              userId,
+              isActive: true,
+              clinicId: { not: null },
+            } as PrismaDelegateArgs,
+            select: { clinicId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          return (userRoles as unknown as Array<{ clinicId: string | null }>)
+            .map(ur => ur.clinicId)
+            .filter((id): id is string => id !== null);
+        }
+      );
+
+      // 2. Determine visibility rules based on Role
+      let whereClause: Record<string, unknown> = { isActive: true };
+
+      if (role === Role.SUPER_ADMIN) {
+        // Super Admin sees all active clinics
+        whereClause = { isActive: true };
+      } else if (role === Role.PATIENT) {
+        // Patient sees ONLY assigned clinics
+        if (assignedClinicIds.length === 0) {
+          return [];
+        }
+        whereClause = {
+          id: { in: assignedClinicIds },
+          isActive: true,
+        };
+      } else {
+        // Clinic Admin / Staff: Assigned OR Created (Legacy support)
+        const conditions: Record<string, unknown>[] = [];
+        if (assignedClinicIds.length > 0) {
+          conditions.push({ id: { in: assignedClinicIds } });
+        }
+        conditions.push({ createdBy: userId });
+
+        whereClause = {
+          isActive: true,
+          OR: conditions,
+        };
+      }
+
+      // 3. Query Clinics with optimized include
       const clinics = await this.databaseService.executeHealthcareRead<Clinic[]>(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         return await typedClient.clinic.findMany({
-          where: { createdBy: userId } as PrismaDelegateArgs,
+          where: whereClause as PrismaDelegateArgs,
           include: {
             locations: {
               where: { isActive: true } as PrismaDelegateArgs,
-              take: 1,
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
@@ -851,14 +899,32 @@ export class ClinicService {
     }
   }
 
-  async getClinicById(id: string, includeInactive = false): Promise<ClinicResponseDto> {
-    const cacheKey = `clinic:${id}:${includeInactive ? 'all' : 'active'}`;
+  async getClinicById(
+    id: string,
+    includeInactive = false,
+    userId?: string,
+    role?: string
+  ): Promise<ClinicResponseDto> {
+    // Cache key should include userId and role if they affect the result (which they do for isolation)
+    // However, since the clinic data itself doesn't change based on who asks (only access is denied),
+    // we can keep the cache key generic BUT we must perform the fetch (which has the check)
+    // OR we include userId in cache key to cache permission denials (bad idea for shared cache)
+    // BETTER APPROACH: The fetchClinicById method enforces security. We should probably NOT cache the *result* of the permission check
+    // mixed with the data if we want to share the cache.
+    // BUT since we are throwing ForbiddenException, we won't cache the error.
+    // So we can use the same cache key for the data, but we must verify permission BEFORE returning cached data?
+    // OR we just include userId in the key so each user has their own cached entry.
+    // Given the strict isolation requirement, per-user caching for this specific method is safer though less efficient.
+    // ACTUALLY: The best way is to check permissions first, then fetch/return cached data.
+    // But since permission check needs DB access (to user roles), we might as well do it inside fetchClinicById.
+    // For now, let's include userId in cache key to be safe and simple.
+    const cacheKey = `clinic:${id}:${includeInactive ? 'all' : 'active'}:${userId || 'anon'}`;
 
     if (this.cacheService) {
       return this.cacheService.cache(
         cacheKey,
         async () => {
-          return this.fetchClinicById(id, includeInactive);
+          return this.fetchClinicById(id, includeInactive, userId, role);
         },
         {
           ttl: 3600, // 1 hour
@@ -868,11 +934,42 @@ export class ClinicService {
       );
     }
 
-    return this.fetchClinicById(id, includeInactive);
+    return this.fetchClinicById(id, includeInactive, userId, role);
   }
 
-  private async fetchClinicById(id: string, includeInactive: boolean): Promise<ClinicResponseDto> {
+  private async fetchClinicById(
+    id: string,
+    includeInactive: boolean,
+    userId?: string,
+    role?: string
+  ): Promise<ClinicResponseDto> {
     try {
+      // Enforce isolation for patients
+      if (role === Role.PATIENT && userId) {
+        // Patients can only access clinics they are assigned to
+        const assignedClinicIds = await this.databaseService.executeHealthcareRead<string[]>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const userRoles = await typedClient.userRole.findMany({
+              where: {
+                userId,
+                isActive: true,
+                clinicId: { not: null },
+              } as PrismaDelegateArgs,
+              select: { clinicId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+
+            return (userRoles as unknown as Array<{ clinicId: string | null }>)
+              .map(ur => ur.clinicId)
+              .filter((id): id is string => id !== null);
+          }
+        );
+
+        if (!assignedClinicIds.includes(id)) {
+          throw new ForbiddenException('You do not have permission to view this clinic');
+        }
+      }
+
       // Use executeHealthcareRead for optimized query
       const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
         async client => {
@@ -882,8 +979,8 @@ export class ClinicService {
             where: whereClause as PrismaDelegateArgs,
             include: {
               locations: {
+                // Fetch all active locations for the clinic
                 where: { isActive: true } as PrismaDelegateArgs,
-                take: 1,
               } as PrismaDelegateArgs,
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
@@ -892,6 +989,9 @@ export class ClinicService {
       if (!clinic) throw new Error('Clinic not found');
       return clinic as ClinicResponseDto;
     } catch (error) {
+      if (error instanceof ForbiddenException) {
+        throw error;
+      }
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
