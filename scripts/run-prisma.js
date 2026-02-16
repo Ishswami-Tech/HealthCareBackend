@@ -93,7 +93,7 @@ try {
     log(`  Config: ${configPath}`, 'cyan');
     log(`  Database: ${cleanDbUrl.replace(/:[^:@]+@/, ':****@')}`, 'cyan');
     execSync(
-      `node node_modules/prisma/build/index.js migrate deploy --schema=${schemaPath} --config=${configPath}`,
+      `node --max-old-space-size=8192 node_modules/prisma/build/index.js migrate deploy --schema=${schemaPath} --config=${configPath}`,
       {
         stdio: 'inherit',
         cwd: path.join(__dirname, '..'),
@@ -108,7 +108,7 @@ try {
     log(`  Config: ${configPath}`, 'cyan');
     log(`  Database: ${cleanDbUrl.replace(/:[^:@]+@/, ':****@')}`, 'cyan');
     execSync(
-      `node node_modules/prisma/build/index.js db push --schema=${schemaPath} --config=${configPath} --accept-data-loss`,
+      `node --max-old-space-size=8192 node_modules/prisma/build/index.js db push --schema=${schemaPath} --config=${configPath} --accept-data-loss`,
       {
         stdio: 'inherit',
         cwd: path.join(__dirname, '..'),
