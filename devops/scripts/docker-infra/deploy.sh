@@ -2441,12 +2441,13 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
             log_info "Attempting automatic baseline of existing database..."
             
             # Find migration names from the migrations folder
+            # CRITICAL: Only baseline the FIRST migration (init). Subsequent migrations should be applied, not baselined.
             local migrations_found=$(docker exec "${CONTAINER_PREFIX}api" sh -c "
-                ls -1 /app/src/libs/infrastructure/database/prisma/migrations/ 2>/dev/null | grep -E '^[0-9]+_' | sort
+                ls -1 /app/src/libs/infrastructure/database/prisma/migrations/ 2>/dev/null | grep -E '^[0-9]+_' | sort | head -n 1
             " 2>/dev/null || echo "")
             
             if [[ -n "$migrations_found" ]]; then
-                log_info "Found migrations to baseline: $migrations_found"
+                log_info "Found initial migration to baseline: $migrations_found"
                 
                 # Baseline each migration
                 local baseline_success=true
