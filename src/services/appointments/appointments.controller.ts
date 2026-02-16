@@ -92,7 +92,7 @@ import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { VideoService } from '@services/video/video.service';
 import { CheckInService } from './plugins/checkin/check-in.service';
-import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+import { AppointmentQueueService } from '@infrastructure/queue';
 import { CheckInLocationService } from './plugins/therapy/check-in-location.service';
 import { AppointmentAnalyticsService } from './plugins/analytics/appointment-analytics.service';
 import { QrService, LocationQrService } from '@utils/QR';
