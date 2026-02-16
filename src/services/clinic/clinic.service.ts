@@ -20,7 +20,7 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
-import type { AssignClinicAdminDto } from '@dtos/clinic.dto';
+import type { AssignClinicAdminDto, ClinicStatsResponseDto } from '@dtos/clinic.dto';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -738,11 +738,7 @@ export class ClinicService {
     }
   }
 
-  async getClinicStats(clinicId: string): Promise<{
-    totalUsers: number;
-    totalLocations: number;
-    totalAppointments: number;
-  }> {
+  async getClinicStats(clinicId: string): Promise<ClinicStatsResponseDto> {
     const cacheKey = `clinic:${clinicId}:stats`;
 
     if (this.cacheService) {
@@ -762,14 +758,25 @@ export class ClinicService {
     return this.fetchClinicStats(clinicId);
   }
 
-  private async fetchClinicStats(clinicId: string): Promise<{
-    totalUsers: number;
-    totalLocations: number;
-    totalAppointments: number;
-  }> {
+  private async fetchClinicStats(clinicId: string): Promise<ClinicStatsResponseDto> {
     try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
       // Use executeHealthcareRead for parallel queries with optimization
-      const [totalUsers, totalLocations, totalAppointments] = await Promise.all([
+      const [
+        totalUsers,
+        totalLocations,
+        totalAppointments,
+        activeDoctors,
+        todayAppointments,
+        revenue,
+        activePatients,
+        totalEhrRecords,
+        lowStockAlerts,
+      ] = await Promise.all([
         this.databaseService.executeHealthcareRead<number>(async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
           return await typedClient.userRole.count({
@@ -785,12 +792,57 @@ export class ClinicService {
         this.databaseService.countAppointmentsSafe({
           clinicId,
         }),
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.doctorClinic.count({
+            where: { clinicId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }),
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.appointment.count({
+            where: {
+              clinicId,
+              date: {
+                gte: today,
+                lt: tomorrow,
+              },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }),
+        this.fetchClinicRevenue(clinicId),
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const result = await typedClient.appointment.groupBy({
+            by: ['patientId'],
+            where: { clinicId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          return Array.isArray(result) ? result.length : 0;
+        }),
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.healthRecord.count({
+            where: { clinicId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }),
+        this.databaseService.executeHealthcareRead<number>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.medicine.count({
+            where: { clinicId, stock: { lt: 10 } } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }),
       ]);
 
       return {
         totalUsers,
         totalLocations,
         totalAppointments,
+        activeDoctors,
+        todayAppointments,
+        revenue,
+        activePatients,
+        totalEhrRecords,
+        lowStockAlerts,
       };
     } catch (error) {
       void this.loggingService.log(
@@ -801,6 +853,29 @@ export class ClinicService {
         { error: (error as Error).stack }
       );
       throw error;
+    }
+  }
+
+  private async fetchClinicRevenue(clinicId: string): Promise<number> {
+    try {
+      const result = await this.databaseService.executeHealthcareRead<{
+        _sum: { amount: number | null };
+      }>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return (await typedClient.payment.aggregate({
+          where: { clinicId, status: 'COMPLETED' } as PrismaDelegateArgs,
+          _sum: { amount: true },
+        } as PrismaDelegateArgs)) as unknown as { _sum: { amount: number | null } };
+      });
+      return result._sum.amount || 0;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to fetch revenue: ${(error as Error).message}`,
+        'ClinicService'
+      );
+      return 0;
     }
   }
 
@@ -1123,14 +1198,16 @@ export class ClinicService {
             >;
           };
         };
-        return await typedClient.doctorClinic.findMany({
+        return (await typedClient.doctorClinic.findMany({
           where: { clinicId: id } as PrismaDelegateArgs,
           include: {
             doctor: {
               include: { user: true } as PrismaDelegateArgs,
             } as PrismaDelegateArgs,
           } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+        } as PrismaDelegateArgs)) as unknown as Array<{
+          doctor: Doctor & { user: { id: string; name: string; email: string } };
+        }>;
       });
       return doctors;
     } catch (error) {

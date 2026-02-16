@@ -11,15 +11,18 @@ import {
   Request,
   ForbiddenException,
   BadRequestException,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
 import {
-  ApiTags,
   ApiOperation,
   ApiBearerAuth,
   ApiQuery,
   ApiBody,
   ApiResponse,
+  ApiConsumes,
 } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PatientsService } from '../patients.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -31,7 +34,13 @@ import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { CreatePatientDto, UpdatePatientDto } from '@dtos/patient.dto';
 
-@ApiTags('patients')
+interface MulterFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
+
 @Controller('patients')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 @ApiBearerAuth()
@@ -62,6 +71,52 @@ export class PatientsController {
       ...(dto.emergencyContact != null && { emergencyContact: dto.emergencyContact }),
       ...(dto.insurance != null && { insurance: dto.insurance }),
     });
+  }
+
+  @Post(':id/documents')
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload patient document' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          format: 'binary',
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Document uploaded successfully' })
+  async uploadDocument(
+    @Param('id') patientId: string,
+    @UploadedFile() file: MulterFile,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+    const userId = req.user?.id || req.user?.sub;
+    if (!userId) {
+      throw new BadRequestException('User ID not found in request');
+    }
+    return await this.patientsService.uploadPatientDocument(patientId, file, {
+      userId,
+      userRole: req.user?.role || Role.PATIENT,
+      operation: 'CREATE',
+      resourceType: 'HEALTH_RECORD',
+      clinicId: req.clinicContext?.clinicId || '',
+    });
+  }
+
+  @Get(':id/insurance')
+  @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @ApiOperation({ summary: 'Get patient insurance details' })
+  @ApiResponse({ status: 200, description: 'Insurance details retrieved successfully' })
+  async getInsurance(@Param('id') patientId: string) {
+    return await this.patientsService.getInsurance(patientId);
   }
 
   @Get()

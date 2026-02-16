@@ -10,6 +10,7 @@
 
 import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
+import { DeliveryStatus } from '@core/types';
 
 // Infrastructure services - Use direct imports to avoid TDZ issues with barrel exports
 import { EventService } from '@infrastructure/events/event.service';
@@ -218,6 +219,8 @@ export class CommunicationService implements OnModuleInit {
           category: request.category,
           recipientCount: request.recipients.length,
           channels: request.channels,
+          initiatorId: request.initiatorId,
+          initiatorRole: request.initiatorRole,
         }
       );
 
@@ -1586,5 +1589,103 @@ export class CommunicationService implements OnModuleInit {
     }
     // Fallback: service exists
     return [true, 0];
+  }
+  /**
+   * Get notification delivery logs
+   */
+  async getDeliveryLogs(
+    filter: { clinicId?: string; channel?: string; status?: DeliveryStatus; userId?: string },
+    pagination: { limit: number; skip: number }
+  ) {
+    return this.databaseService.executeHealthcareRead(async prisma => {
+      const logClient = prisma as unknown as {
+        notificationDeliveryLog: {
+          findMany: (args: {
+            where: {
+              status?: string;
+              channel?: string;
+              notification: {
+                clinicId?: string;
+                userId?: string;
+              };
+            };
+            include: {
+              notification: true;
+            };
+            orderBy: {
+              sentAt: 'desc';
+            };
+            take: number;
+            skip: number;
+          }) => Promise<unknown[]>;
+          count: (args: {
+            where: {
+              status?: string;
+              channel?: string;
+              notification: {
+                clinicId?: string;
+                userId?: string;
+              };
+            };
+          }) => Promise<number>;
+        };
+      };
+
+      const where = {
+        ...(filter.status && { status: filter.status }),
+        ...(filter.channel && { channel: filter.channel }),
+        notification: {
+          ...(filter.clinicId && { clinicId: filter.clinicId }),
+          ...(filter.userId && { userId: filter.userId }),
+        },
+      };
+
+      const [logs, total] = await Promise.all([
+        logClient.notificationDeliveryLog.findMany({
+          where,
+          include: {
+            notification: true,
+          },
+          orderBy: {
+            sentAt: 'desc',
+          },
+          take: pagination.limit,
+          skip: pagination.skip,
+        }),
+        logClient.notificationDeliveryLog.count({ where }),
+      ]);
+
+      return {
+        logs,
+        total,
+        limit: pagination.limit,
+        skip: pagination.skip,
+      };
+    });
+  }
+
+  /**
+   * Get a single delivery log by ID
+   */
+  async getDeliveryLogById(id: string) {
+    return this.databaseService.executeHealthcareRead(async prisma => {
+      const logClient = prisma as unknown as {
+        notificationDeliveryLog: {
+          findUnique: (args: {
+            where: { id: string };
+            include: {
+              notification: true;
+            };
+          }) => Promise<unknown>;
+        };
+      };
+
+      return await logClient.notificationDeliveryLog.findUnique({
+        where: { id },
+        include: {
+          notification: true,
+        },
+      });
+    });
   }
 }

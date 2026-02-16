@@ -43,6 +43,8 @@ import {
   VerifyOtpRequestDto,
   LogoutDto,
   GoogleOAuthDto,
+  ResendVerificationDto,
+  VerifyEmailDto,
 } from '@dtos/auth.dto';
 import { DataResponseDto, SuccessResponseDto } from '@dtos/common-response.dto';
 import { AuthTokens } from '@core/types';
@@ -1409,6 +1411,59 @@ export class AuthController {
       }
 
       return new DataResponseDto(result, 'Google OAuth authentication successful');
+    } catch (_error) {
+      if (_error instanceof HealthcareError) {
+        this.errors.handleError(_error, 'AuthController');
+        throw _error;
+      }
+      throw _error;
+    }
+  }
+  @Public()
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify email address',
+    description: 'Verify user email address using OTP code.',
+    operationId: 'verifyEmail',
+  })
+  @ApiBody({ type: VerifyEmailDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Email verified successfully',
+    type: SuccessResponseDto,
+  })
+  async verifyEmail(@Body() verifyDto: VerifyEmailDto): Promise<SuccessResponseDto> {
+    try {
+      await this.authService.verifyEmail(verifyDto.email, verifyDto.otp);
+      return new SuccessResponseDto('Email verified successfully');
+    } catch (_error) {
+      if (_error instanceof HealthcareError) {
+        this.errors.handleError(_error, 'AuthController');
+        throw _error;
+      }
+      throw _error;
+    }
+  }
+
+  @Public()
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Resend verification email',
+    description: 'Resend email verification OTP.',
+    operationId: 'resendVerification',
+  })
+  @ApiBody({ type: ResendVerificationDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Verification email sent',
+    type: SuccessResponseDto,
+  })
+  async resendVerification(@Body() resendDto: ResendVerificationDto): Promise<SuccessResponseDto> {
+    try {
+      await this.authService.resendVerification(resendDto.email, resendDto.clinicId);
+      return new SuccessResponseDto('If the email exists, a verification code has been sent');
     } catch (_error) {
       if (_error instanceof HealthcareError) {
         this.errors.handleError(_error, 'AuthController');

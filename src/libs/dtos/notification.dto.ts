@@ -14,25 +14,14 @@ import {
 } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { EmailTemplate } from '@core/types';
 
-/**
- * Notification type enumeration
- * @enum {string} NotificationType
- * @description Defines the types of notifications that can be sent
- * @example NotificationType.PUSH
- */
 export enum NotificationType {
   PUSH = 'push',
   EMAIL = 'email',
   BOTH = 'both',
 }
 
-/**
- * Message type enumeration
- * @enum {string} MessageType
- * @description Defines the types of messages in chat system
- * @example MessageType.TEXT
- */
 export enum MessageType {
   TEXT = 'text',
   IMAGE = 'image',
@@ -41,12 +30,6 @@ export enum MessageType {
   VIDEO = 'video',
 }
 
-/**
- * Platform enumeration
- * @enum {string} Platform
- * @description Defines the supported mobile platforms
- * @example Platform.IOS
- */
 export enum Platform {
   IOS = 'ios',
   ANDROID = 'android',
@@ -491,10 +474,6 @@ export class NotificationStatsResponseDto {
   };
 }
 
-// ============================================================================
-// Notification Preference DTOs
-// ============================================================================
-
 export class QuietHoursDto {
   @ApiPropertyOptional({ description: 'Start time in HH:mm format', example: '22:00' })
   @IsOptional()
@@ -712,4 +691,79 @@ export class NotificationPreferenceResponseDto {
 
   @ApiProperty({ description: 'Updated at' })
   updatedAt!: Date;
+}
+
+export class CreateCommunicationTemplateDto {
+  @ApiProperty({ description: 'Template name' })
+  @IsString()
+  @Length(1, 100)
+  name!: string;
+
+  @ApiProperty({
+    description: 'Template type',
+    enum: ['EMAIL', 'SMS', 'WHATSAPP', 'PUSH', 'SOCKET'],
+  })
+  @IsEnum(['EMAIL', 'SMS', 'WHATSAPP', 'PUSH', 'SOCKET'])
+  type!: 'EMAIL' | 'SMS' | 'WHATSAPP' | 'PUSH' | 'SOCKET';
+
+  @ApiProperty({
+    description: 'Template category',
+    enum: ['APPOINTMENT', 'EHR', 'BILLING', 'SYSTEM'],
+  })
+  @IsEnum(['APPOINTMENT', 'EHR', 'BILLING', 'SYSTEM'])
+  category!: 'APPOINTMENT' | 'EHR' | 'BILLING' | 'SYSTEM';
+
+  @ApiPropertyOptional({ description: 'Subject for Email' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 200)
+  subject?: string;
+
+  @ApiProperty({ description: 'Template content with {{variable}} placeholders' })
+  @IsString()
+  content!: string;
+
+  @ApiPropertyOptional({ description: 'Channel-specific metadata' })
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Clinic ID for clinic-specific templates' })
+  @IsOptional()
+  @IsString()
+  clinicId?: string;
+}
+
+export class UpdateCommunicationTemplateDto {
+  @ApiPropertyOptional({ description: 'Subject for Email' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 200)
+  subject?: string;
+
+  @ApiPropertyOptional({ description: 'Template content' })
+  @IsOptional()
+  @IsString()
+  content?: string;
+
+  @ApiPropertyOptional({ description: 'Channel-specific metadata' })
+  @IsOptional()
+  @IsObject()
+  metadata?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Is template active' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
+}
+
+export class SendTestEmailDto {
+  @ApiProperty({ description: 'Recipient email address' })
+  @IsEmail()
+  to!: string;
+
+  @ApiPropertyOptional({ description: 'Template to use for testing', enum: EmailTemplate })
+  @IsOptional()
+  @IsEnum(EmailTemplate)
+  template?: EmailTemplate;
 }

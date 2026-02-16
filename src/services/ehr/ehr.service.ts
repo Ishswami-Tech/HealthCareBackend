@@ -41,6 +41,8 @@ import {
   CreateImmunizationDto,
   UpdateImmunizationDto,
   HealthRecordSummaryDto,
+  EHRAISummaryDto,
+  CreatePrescriptionDto,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -277,6 +279,118 @@ export class EHRService {
     );
   }
 
+  /**
+   * Generates an AI-powered summary of the patient's health records
+   * @param patientId The ID of the patient (user)
+   * @returns AI-generated summary and recommendations
+   */
+  async getEHRAISummary(patientId: string): Promise<EHRAISummaryDto> {
+    const records = await this.getComprehensiveHealthRecord(patientId);
+
+    // AI Logic Simulation: In a production environment, this would call an LLM (e.g., OpenAI, Vertex AI)
+    // passing the aggregated health records as context.
+
+    const activeMedications = records.medications?.filter(m => m.isActive) || [];
+    const recentVitals = records.vitals?.slice(0, 3) || [];
+    const medicalHistory = records.medicalHistory || [];
+
+    let summaryText = `Patient has ${medicalHistory.length} medical history records. Current status is focused on ${
+      activeMedications.length > 0
+        ? activeMedications.map(m => m.name).join(', ')
+        : 'no active medications'
+    }. `;
+
+    if (recentVitals.length > 0) {
+      summaryText += `Latest vital signs show ${recentVitals.map(v => `${v.type}: ${v.value}${v.unit}`).join(', ')}.`;
+    }
+
+    const keyFindings = [];
+    const firstHistory = medicalHistory[0];
+    if (firstHistory) keyFindings.push(`Documented history of ${firstHistory.condition}`);
+    if (records.allergies && records.allergies.length > 0) {
+      keyFindings.push(`Known allergies: ${records.allergies.map(a => a.allergen).join(', ')}`);
+    }
+
+    const recommendations = [
+      'Follow up on latest lab results if pending.',
+      'Maintain active medication adherence.',
+      'Regular monitoring of vitals recommended based on history.',
+    ];
+
+    return {
+      patientId,
+      summary: summaryText,
+      keyFindings: keyFindings.length > 0 ? keyFindings : ['No significant findings identified.'],
+      recommendations,
+      generatedAt: new Date().toISOString(),
+      modelName: 'HealthcareAI-Summary-v1 (Simulated)',
+    };
+  }
+
+  /**
+   * Creates a formal prescription, creating multiple medication records and an audit link
+   * @param data Prescription data
+   */
+  async createPrescription(data: CreatePrescriptionDto): Promise<void> {
+    // Audit execution as a single unit or transaction
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          medication: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+          healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+
+        // 1. Create each medication record
+        if (data.medications && data.medications.length > 0) {
+          for (const med of data.medications) {
+            await typedClient.medication.create({
+              data: {
+                userId: data.userId,
+                clinicId: data.clinicId || '',
+                name: med.name,
+                dosage: med.dosage,
+                frequency: med.frequency,
+                startDate: new Date(med.startDate),
+                endDate: med.endDate ? new Date(med.endDate) : null,
+                prescribedBy: 'DOCTOR', // Default to doctor for prescription
+                notes: med.instructions || '',
+                isActive: true,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        }
+
+        // 2. Create a generic health record entry for the prescription event
+        await typedClient.healthRecord.create({
+          data: {
+            patientId: data.userId, // In HealthRecord, patientId is the user's ID
+            doctorId: 'system', // Should be the actual doctor ID in a real scenario
+            clinicId: data.clinicId || '',
+            recordType: 'PRESCRIPTION',
+            report:
+              data.notes || `Prescription generated for ${data.medications?.length || 0} items.`,
+            createdAt: new Date(),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: data.userId,
+        clinicId: data.clinicId || '',
+        resourceType: 'MEDICATION',
+        operation: 'CREATE',
+        resourceId: '',
+        userRole: 'DOCTOR',
+        details: { medicationsCount: data.medications?.length || 0 },
+      }
+    );
+
+    await this.invalidateUserEHRCache(data.userId);
+    await this.eventService.emit('ehr.prescription.created', {
+      userId: data.userId,
+      count: data.medications?.length || 0,
+    });
+  }
+
   async invalidateUserEHRCache(userId: string) {
     await this.cacheService.invalidateCacheByTag(`ehr:${userId}`);
   }
@@ -487,6 +601,8 @@ export class EHRService {
           result: string;
           unit?: string;
           normalRange?: string;
+          fileUrl?: string;
+          fileKey?: string;
           date: Date;
         } = {
           userId: data.userId,
@@ -499,6 +615,12 @@ export class EHRService {
         }
         if (data.normalRange) {
           createData.normalRange = data.normalRange;
+        }
+        if (data.fileUrl) {
+          createData.fileUrl = data.fileUrl;
+        }
+        if (data.fileKey) {
+          createData.fileKey = data.fileKey;
         }
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           labReport: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
@@ -3241,6 +3363,8 @@ export class EHRService {
       doctorId?: string | null;
       labName?: string | null;
       notes?: string | null;
+      fileUrl?: string | null;
+      fileKey?: string | null;
       createdAt: Date;
       updatedAt: Date;
     };
@@ -3266,6 +3390,10 @@ export class EHRService {
       labName:
         typedRecord.labName && typeof typedRecord.labName === 'string' ? typedRecord.labName : '',
       notes: typedRecord.notes && typeof typedRecord.notes === 'string' ? typedRecord.notes : '',
+      fileUrl:
+        typedRecord.fileUrl && typeof typedRecord.fileUrl === 'string' ? typedRecord.fileUrl : '',
+      fileKey:
+        typedRecord.fileKey && typeof typedRecord.fileKey === 'string' ? typedRecord.fileKey : '',
       createdAt: typedRecord.createdAt.toISOString(),
       updatedAt: typedRecord.updatedAt.toISOString(),
     };

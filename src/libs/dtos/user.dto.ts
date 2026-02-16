@@ -78,6 +78,119 @@ export class EmergencyContactDto {
   address?: string;
 }
 
+/**
+ * Data Transfer Object for Insurance
+ */
+export class InsuranceDto {
+  @ApiProperty({
+    example: 'Blue Cross Blue Shield',
+    description: 'Insurance provider name',
+  })
+  @IsString()
+  @IsNotEmpty()
+  provider!: string;
+
+  @ApiProperty({
+    example: 'POL123456',
+    description: 'Insurance policy number',
+  })
+  @IsString()
+  @IsNotEmpty()
+  policyNumber!: string;
+
+  @ApiPropertyOptional({
+    example: 'GRP789',
+    description: 'Group number',
+  })
+  @IsOptional()
+  @IsString()
+  groupNumber?: string;
+
+  @ApiPropertyOptional({
+    example: 'John Doe',
+    description: 'Policy holder name',
+  })
+  @IsOptional()
+  @IsString()
+  policyHolder?: string;
+
+  @ApiPropertyOptional({
+    example: 'Spouse',
+    description: 'Relationship with policy holder',
+  })
+  @IsOptional()
+  @IsString()
+  relationship?: string;
+
+  @ApiPropertyOptional({
+    example: 'Full coverage for dental and vision',
+    description: 'Coverage details',
+  })
+  @IsOptional()
+  @IsString()
+  coverageDetails?: string;
+
+  @ApiPropertyOptional({
+    example: '2025-12-31',
+    description: 'Insurance expiry date',
+  })
+  @IsOptional()
+  @IsDateString()
+  expiryDate?: string;
+
+  @ApiPropertyOptional({
+    example: 'ACTIVE',
+    description: 'Insurance status',
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+/**
+ * Data Transfer Object for Medical Document
+ */
+export class MedicalDocumentDto {
+  @ApiProperty({
+    example: 'blood_report.pdf',
+    description: 'File name',
+  })
+  @IsString()
+  @IsNotEmpty()
+  fileName!: string;
+
+  @ApiProperty({
+    example: 'https://storage.example.com/blood_report.pdf',
+    description: 'File URL',
+  })
+  @IsString()
+  @IsNotEmpty()
+  fileUrl!: string;
+
+  @ApiProperty({
+    example: 'application/pdf',
+    description: 'File type (MIME)',
+  })
+  @IsString()
+  @IsNotEmpty()
+  fileType!: string;
+
+  @ApiProperty({
+    example: 102400,
+    description: 'File size in bytes',
+  })
+  @IsNumber()
+  fileSize!: number;
+
+  @ApiPropertyOptional({
+    example: 'Lab Results',
+    description: 'Document category',
+  })
+  @IsOptional()
+  @IsString()
+  category?: string;
+}
+
 // Import Role type from centralized types
 import { Role } from '@core/types/enums.types';
 
@@ -408,6 +521,26 @@ export class CreateUserDto extends SimpleCreateUserDto {
   @IsOptional()
   @IsString({ message: 'Apple ID must be a string' })
   appleId?: string;
+
+  @ApiPropertyOptional({
+    type: [InsuranceDto],
+    description: 'Insurance information (for patients)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InsuranceDto)
+  insurance?: InsuranceDto[];
+
+  @ApiPropertyOptional({
+    type: [MedicalDocumentDto],
+    description: 'Medical documents (for patients)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MedicalDocumentDto)
+  medicalDocuments?: MedicalDocumentDto[];
 }
 
 /**
@@ -767,6 +900,26 @@ export class UpdateUserProfileDto {
   @IsOptional()
   @IsUUID('4', { message: 'Studio ID must be a valid UUID' })
   studioId?: string;
+
+  @ApiPropertyOptional({
+    type: [InsuranceDto],
+    description: 'Insurance information',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => InsuranceDto)
+  insurance?: InsuranceDto[];
+
+  @ApiPropertyOptional({
+    type: [MedicalDocumentDto],
+    description: 'Medical documents',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MedicalDocumentDto)
+  medicalDocuments?: MedicalDocumentDto[];
 }
 
 /**

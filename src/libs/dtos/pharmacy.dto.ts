@@ -63,10 +63,79 @@ export class CreateMedicineDto {
   @IsDateString()
   expiryDate!: string;
 
+  @ApiPropertyOptional({ example: 10, description: 'Minimum stock threshold for alerts' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  minStockThreshold?: number;
+
+  @ApiPropertyOptional({ example: 'supplier-uuid', description: 'Supplier ID' })
+  @IsOptional()
+  @IsString()
+  supplierId?: string;
+
   @ApiPropertyOptional({ example: 'Take after food', description: 'Usage instructions' })
   @IsOptional()
   @IsString()
   instructions?: string;
+}
+
+export class CreateSupplierDto {
+  @ApiProperty({ example: 'PharmaCorp', description: 'Supplier name' })
+  @IsString()
+  @IsNotEmpty()
+  name!: string;
+
+  @ApiPropertyOptional({ example: 'John Doe', description: 'Contact person' })
+  @IsOptional()
+  @IsString()
+  contactPerson?: string;
+
+  @ApiPropertyOptional({ example: 'contact@pharmacorp.com', description: 'Email' })
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @ApiPropertyOptional({ example: '+1234567890', description: 'Phone' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiPropertyOptional({ example: '123 Supply Lane', description: 'Address' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+}
+
+export class UpdateSupplierDto {
+  @ApiPropertyOptional({ example: 'PharmaCorp Updated' })
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'Jane Doe' })
+  @IsOptional()
+  @IsString()
+  contactPerson?: string;
+
+  @ApiPropertyOptional({ example: 'new@pharmacorp.com' })
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @ApiPropertyOptional({ example: '+0987654321' })
+  @IsOptional()
+  @IsString()
+  phone?: string;
+
+  @ApiPropertyOptional({ example: '456 Delivery St' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  isActive?: boolean;
 }
 
 export class UpdateInventoryDto {

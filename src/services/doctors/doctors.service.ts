@@ -122,6 +122,7 @@ export class DoctorsService {
   async getAllDoctors(filters?: {
     specialization?: string | undefined;
     clinicId?: string | undefined;
+    locationId?: string | undefined;
   }) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -136,13 +137,25 @@ export class DoctorsService {
         };
       }
 
-      if (filters?.clinicId) {
+      if (filters?.clinicId || filters?.locationId) {
         if (!where['doctor']) {
           where['doctor'] = {};
         }
         const doctorWhere = where['doctor'] as Record<string, unknown>;
+
+        const clinicsFilter: Record<string, unknown> = {};
+
+        if (filters.clinicId) {
+          clinicsFilter['clinicId'] = filters.clinicId;
+        }
+
+        if (filters.locationId) {
+          // Match doctors assigned specifically to this location OR not assigned to any specific location (clinic-wide)
+          clinicsFilter['OR'] = [{ locationId: filters.locationId }, { locationId: null }];
+        }
+
         doctorWhere['clinics'] = {
-          some: { clinicId: filters.clinicId },
+          some: clinicsFilter,
         };
       }
 

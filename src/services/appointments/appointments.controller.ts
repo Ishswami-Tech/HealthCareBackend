@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Put,
   Delete,
   Body,
@@ -67,6 +68,7 @@ import {
   UpdateRecurringSeriesDto,
   RecurringSeriesResponseDto,
   UpdateFollowUpPlanDto,
+  UpdateAppointmentStatusDto,
   ProcessCheckInDto,
   StartConsultationDto,
   ProposeVideoSlotsDto,
@@ -793,6 +795,7 @@ export class AppointmentsController {
   async getDoctorAvailability(
     @Param('doctorId') doctorIdParam: string,
     @Query('date') date: string,
+    @Query('locationId') locationId: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<DoctorAvailabilityResponseDto> {
     try {
@@ -846,6 +849,7 @@ export class AppointmentsController {
         date,
         clinicId,
         req.user?.sub || '',
+        locationId,
         req.user?.role || Role.PATIENT
       );
 
@@ -1289,6 +1293,9 @@ export class AppointmentsController {
     }
   }
 
+  /**
+   * @deprecated Use PATCH /appointments/:id/status with status=CANCELLED instead
+   */
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
@@ -2204,8 +2211,110 @@ export class AppointmentsController {
   // =============================================
 
   /**
+   * Update appointment status (Consolidated Endpoint)
+   * PATCH /appointments/:id/status
+   */
+  @Patch(':id/status')
+  @HttpCode(HttpStatus.OK)
+  // Allow all roles that can update appointments; specific RBAC/State checks are in service
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.NURSE
+  )
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Update appointment status',
+    description:
+      'Consolidated endpoint to update appointment status (Check-in, Start, Complete, Cancel, etc.) via state machine.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    type: UpdateAppointmentStatusDto,
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Status updated successfully',
+  })
+  @InvalidateAppointmentCache()
+  async updateAppointmentStatus(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) updateDto: UpdateAppointmentStatusDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<unknown>> {
+    const startTime = Date.now();
+    const context = 'AppointmentsController.updateAppointmentStatus';
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    try {
+      const result = await this.appointmentService.updateStatus(
+        appointmentId,
+        updateDto,
+        userId,
+        clinicId,
+        req.user?.role || 'USER'
+      );
+
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `Appointment status updated to ${updateDto.status}`,
+        context,
+        {
+          appointmentId,
+          newStatus: updateDto.status,
+          userId,
+          clinicId,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: result,
+        message: `Appointment status updated to ${updateDto.status}`,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to update status: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          appointmentId,
+          targetStatus: updateDto.status,
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  /**
    * Complete an appointment
+   * @deprecated Use PATCH /:id/status instead
    * POST /appointments/:id/complete
+   */
+  /**
+   * @deprecated Use PATCH /appointments/:id/status with status=COMPLETED instead
    */
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
@@ -2294,7 +2403,11 @@ export class AppointmentsController {
 
   /**
    * Check in patient for appointment
+   * @deprecated Use PATCH /:id/status instead
    * POST /appointments/:id/check-in
+   */
+  /**
+   * @deprecated Use PATCH /appointments/:id/status with status=CHECKED_IN instead
    */
   @Post(':id/check-in')
   @HttpCode(HttpStatus.OK)
@@ -2380,21 +2493,15 @@ export class AppointmentsController {
   }
 
   /**
-   * Staff override: Force check-in for appointment (bypasses time window)
-   * POST /appointments/:id/check-in/force
+   * @deprecated Use PATCH /appointments/:id/status with status=CHECKED_IN (with override) instead
    */
-  @Post(':id/check-in/force')
+  @Post(':id/force-check-in')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
-    Role.CLINIC_ADMIN,
-    Role.NURSE,
-    Role.SUPER_ADMIN
-  )
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
   @ClinicRoute()
-  @RequireResourcePermission('appointments', 'update')
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: true,
+  })
   @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
   @RateLimitAPI({ points: 10, duration: 60 })
   @ApiOperation({
@@ -2593,9 +2700,13 @@ export class AppointmentsController {
 
   /**
    * Start consultation
+   * @deprecated Use PATCH /:id/status instead
    * POST /appointments/:id/start
    */
-  @Post(':id/start')
+  /**
+   * @deprecated Use PATCH /appointments/:id/status with status=IN_PROGRESS instead
+   */
+  @Post(':id/start-consultation')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
   @ClinicRoute()

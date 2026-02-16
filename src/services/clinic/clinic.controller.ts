@@ -50,6 +50,9 @@ import { Cache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 
+import { ClinicStatsResponseDto, ClinicOperatingHoursResponseDto } from '@dtos/clinic.dto';
+import { ClinicLocationService } from './services/clinic-location.service';
+
 @ApiTags('clinic')
 @ApiBearerAuth()
 @ApiSecurity('session-id')
@@ -73,6 +76,7 @@ export class ClinicController {
 
   constructor(
     private readonly clinicService: ClinicService,
+    private readonly clinicLocationService: ClinicLocationService,
     private readonly errors: HealthcareErrorsService
   ) {}
 
@@ -310,6 +314,61 @@ export class ClinicController {
     }
   }
 
+  @Get('my-clinic')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
+  @RequireResourcePermission('clinics', 'read')
+  @Cache({
+    keyTemplate: 'clinic:my:{userId}',
+    ttl: 1800, // 30 minutes
+    tags: ['clinics', 'user_clinic'],
+    enableSWR: true,
+  })
+  @ApiOperation({
+    summary: 'Get current user clinic',
+    description:
+      'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic. Cached for performance.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: "Returns the user's clinic data.",
+    type: Object,
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User does not have permission to view clinic.',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'User is not associated with any clinic.',
+  })
+  @ApiResponse({
+    status: HttpStatus.NOT_FOUND,
+    description: 'User not associated with any clinic.',
+  })
+  async getMyClinic(@Req() req: ClinicAuthenticatedRequest) {
+    try {
+      const userId = req.user?.sub;
+
+      if (!userId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      this.logger.log(`Getting clinic for user ${userId}`);
+
+      const result = await this.clinicService.getCurrentUserClinic(userId);
+
+      this.logger.log(`Retrieved clinic for user ${userId} successfully`);
+      return result;
+    } catch (_error) {
+      this.logger.error(
+        `Failed to get user clinic: ${(_error as Error).message}`,
+        (_error as Error).stack
+      );
+      throw _error;
+    }
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
@@ -379,6 +438,67 @@ export class ClinicController {
         `Failed to get clinic ${id}: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
         _error instanceof Error ? _error.stack : ''
       );
+      throw _error;
+    }
+  }
+
+  @Get(':id/stats')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Get clinic statistics',
+    description:
+      'Retrieves key statistics for a clinic, including totals and revenue. Requires CLINIC_ADMIN or SUPER_ADMIN role.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the clinic',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Returns clinic statistics.',
+    type: ClinicStatsResponseDto,
+  })
+  async getClinicStats(@Param('id', ParseUUIDPipe) id: string): Promise<ClinicStatsResponseDto> {
+    try {
+      this.logger.log(`Getting stats for clinic ${id}`);
+      return await this.clinicService.getClinicStats(id);
+    } catch (_error) {
+      this.logger.error(`Failed to get clinic stats: ${(_error as Error).message}`);
+      throw _error;
+    }
+  }
+
+  @Get(':id/operating-hours')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.PATIENT)
+  @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
+  @ApiOperation({
+    summary: 'Get clinic operating hours',
+    description: 'Retrieves operating hours for all locations in the clinic.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'The ID of the clinic',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Returns clinic operating hours by location.',
+    type: [ClinicOperatingHoursResponseDto],
+  })
+  async getClinicOperatingHours(
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<ClinicOperatingHoursResponseDto[]> {
+    try {
+      this.logger.log(`Getting operating hours for clinic ${id}`);
+      return await this.clinicLocationService.getClinicOperatingHours(id);
+    } catch (_error) {
+      this.logger.error(`Failed to get clinic operating hours: ${(_error as Error).message}`);
       throw _error;
     }
   }
@@ -621,6 +741,7 @@ export class ClinicController {
     ttl: 1800, // 30 minutes
     tags: ['clinics', 'clinic:{id}', 'doctors'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get all doctors for a clinic',
@@ -712,6 +833,7 @@ export class ClinicController {
     ttl: 1800, // 30 minutes
     tags: ['clinics', 'clinic:{id}', 'patients'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get all patients for a clinic',
@@ -885,61 +1007,6 @@ export class ClinicController {
       this.logger.error(
         `Failed to associate user with clinic: ${_error instanceof Error ? _error.message : 'Unknown _error'}`,
         _error instanceof Error ? _error.stack : ''
-      );
-      throw _error;
-    }
-  }
-
-  @Get('my-clinic')
-  @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
-  @RequireResourcePermission('clinics', 'read')
-  @Cache({
-    keyTemplate: 'clinic:my:{userId}',
-    ttl: 1800, // 30 minutes
-    tags: ['clinics', 'user_clinic'],
-    enableSWR: true,
-  })
-  @ApiOperation({
-    summary: 'Get current user clinic',
-    description:
-      'Get clinic details for the currently authenticated user. Patients, doctors, and staff can access their associated clinic. Cached for performance.',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: "Returns the user's clinic data.",
-    type: Object,
-  })
-  @ApiResponse({
-    status: HttpStatus.UNAUTHORIZED,
-    description: 'User does not have permission to view clinic.',
-  })
-  @ApiResponse({
-    status: HttpStatus.FORBIDDEN,
-    description: 'User is not associated with any clinic.',
-  })
-  @ApiResponse({
-    status: HttpStatus.NOT_FOUND,
-    description: 'User not associated with any clinic.',
-  })
-  async getMyClinic(@Req() req: ClinicAuthenticatedRequest) {
-    try {
-      const userId = req.user?.sub;
-
-      if (!userId) {
-        throw new BadRequestException('User ID is required');
-      }
-
-      this.logger.log(`Getting clinic for user ${userId}`);
-
-      const result = await this.clinicService.getCurrentUserClinic(userId);
-
-      this.logger.log(`Retrieved clinic for user ${userId} successfully`);
-      return result;
-    } catch (_error) {
-      this.logger.error(
-        `Failed to get user clinic: ${(_error as Error).message}`,
-        (_error as Error).stack
       );
       throw _error;
     }

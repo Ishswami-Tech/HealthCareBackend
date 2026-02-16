@@ -30,7 +30,17 @@ import { ChatBackupService } from './channels/chat/chat-backup.service';
 import { CommunicationAlertingService } from './services/communication-alerting.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
-import { CommunicationCategory, CommunicationPriority, CommunicationChannel } from '@core/types';
+import { EmailService } from './channels/email/email.service';
+import { ConfigService } from '@config/config.service';
+import {
+  CommunicationCategory,
+  CommunicationPriority,
+  CommunicationChannel,
+  EmailTemplate,
+  EmailContext,
+  AuthenticatedRequest,
+  DeliveryStatus,
+} from '@core/types';
 import {
   SendPushNotificationDto,
   SendMultiplePushNotificationsDto,
@@ -45,6 +55,7 @@ import {
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
+  SendTestEmailDto,
 } from '@dtos/index';
 import { NotificationType } from '@dtos/notification.dto';
 import type {
@@ -61,6 +72,7 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { RoleEnum as Role } from '@core/types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 /**
  * Unified Communication Controller
@@ -78,7 +90,9 @@ export class CommunicationController {
     private readonly chatBackupService: ChatBackupService,
     private readonly alertingService: CommunicationAlertingService,
     private readonly healthMonitor: CommunicationHealthMonitorService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    private readonly emailService: EmailService,
+    private readonly configService: ConfigService
   ) {}
 
   /**
@@ -98,7 +112,8 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendUnified(
-    @Body() unifiedDto: UnifiedNotificationDto
+    @Body() unifiedDto: UnifiedNotificationDto,
+    @Request() req: AuthenticatedRequest
   ): Promise<UnifiedNotificationResponse> {
     const channels: CommunicationChannel[] = [];
     const notificationType = unifiedDto.type;
@@ -130,6 +145,8 @@ export class CommunicationController {
       ...(channels.length > 0 && { channels }),
       priority: CommunicationPriority.NORMAL,
       ...(unifiedDto.data && { data: unifiedDto.data }),
+      initiatorId: req.user.id,
+      ...(req.user.role && { initiatorRole: req.user.role }),
     });
 
     return {
@@ -170,11 +187,16 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendAppointmentReminder(
-    @Body() appointmentDto: AppointmentReminderDto
+    @Body() appointmentDto: AppointmentReminderDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<NotificationResponseDto> {
     const channels: CommunicationChannel[] = appointmentDto.deviceToken
       ? ['push', 'email', 'whatsapp', 'socket']
       : ['email', 'whatsapp'];
+
+    const user = req.user;
+    const userId = user?.id || user?.sub || 'system';
+    const userRole = user?.role;
 
     const result = await this.communicationService.send({
       category: CommunicationCategory.APPOINTMENT,
@@ -196,6 +218,8 @@ export class CommunicationController {
         time: appointmentDto.time,
         location: appointmentDto.location,
       },
+      initiatorId: userId,
+      ...(userRole && { initiatorRole: userRole }),
     });
 
     return {
@@ -220,11 +244,16 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendPrescriptionReady(
-    @Body() prescriptionDto: PrescriptionNotificationDto
+    @Body() prescriptionDto: PrescriptionNotificationDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<NotificationResponseDto> {
     const channels: CommunicationChannel[] = prescriptionDto.deviceToken
       ? ['push', 'email', 'whatsapp', 'socket']
       : ['email', 'whatsapp'];
+
+    const user = req.user;
+    const userId = user?.id || user?.sub || 'system';
+    const userRole = user?.role;
 
     const result = await this.communicationService.send({
       category: CommunicationCategory.PRESCRIPTION,
@@ -243,6 +272,8 @@ export class CommunicationController {
         ...(prescriptionDto.prescriptionId && { prescriptionId: prescriptionDto.prescriptionId }),
         doctorName: prescriptionDto.doctorName,
       },
+      initiatorId: userId,
+      ...(userRole && { initiatorRole: userRole }),
     });
 
     return {
@@ -267,7 +298,8 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendPushNotification(
-    @Body() sendPushDto: SendPushNotificationDto
+    @Body() sendPushDto: SendPushNotificationDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<NotificationResponseDto> {
     const result = await this.communicationService.send({
       category: CommunicationCategory.USER_ACTIVITY,
@@ -281,6 +313,8 @@ export class CommunicationController {
       channels: ['push'],
       priority: CommunicationPriority.NORMAL,
       ...(sendPushDto.data && { data: sendPushDto.data }),
+      initiatorId: req.user?.id || 'system',
+      ...(req.user.role && { initiatorRole: req.user.role }),
     });
 
     const pushResult = result.results.find(r => r.channel === 'push');
@@ -307,7 +341,8 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendMultiplePushNotifications(
-    @Body() sendMultipleDto: SendMultiplePushNotificationsDto
+    @Body() sendMultipleDto: SendMultiplePushNotificationsDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<NotificationResponseDto> {
     const recipients = sendMultipleDto.deviceTokens.map(token => ({
       deviceToken: token,
@@ -321,6 +356,8 @@ export class CommunicationController {
       channels: ['push'],
       priority: CommunicationPriority.NORMAL,
       ...(sendMultipleDto.data && { data: sendMultipleDto.data }),
+      initiatorId: req.user?.id || 'system',
+      ...(req.user.role && { initiatorRole: req.user.role }),
     });
 
     const pushResults = result.results.filter(r => r.channel === 'push');
@@ -352,12 +389,15 @@ export class CommunicationController {
     type: NotificationResponseDto,
   })
   async sendTopicNotification(
-    @Body() sendTopicDto: SendTopicNotificationDto
+    @Body() sendTopicDto: SendTopicNotificationDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<NotificationResponseDto> {
     const result = await this.pushService.sendToTopic(sendTopicDto.topic, {
       title: sendTopicDto.title,
       body: sendTopicDto.body,
       ...(sendTopicDto.data && { data: sendTopicDto.data }),
+      initiatorId: req.user?.id || 'system',
+      ...(req.user.role && { initiatorRole: req.user.role }),
     });
 
     return {
@@ -382,7 +422,10 @@ export class CommunicationController {
     description: 'Email sent successfully',
     type: NotificationResponseDto,
   })
-  async sendEmail(@Body() sendEmailDto: SendEmailDto): Promise<NotificationResponseDto> {
+  async sendEmail(
+    @Body() sendEmailDto: SendEmailDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<NotificationResponseDto> {
     const result = await this.communicationService.send({
       category: CommunicationCategory.USER_ACTIVITY,
       title: sendEmailDto.subject,
@@ -396,10 +439,12 @@ export class CommunicationController {
       priority: CommunicationPriority.NORMAL,
       data: {
         ...(sendEmailDto.replyTo && { replyTo: sendEmailDto.replyTo }),
-        ...(sendEmailDto.cc && { cc: sendEmailDto.cc }),
-        ...(sendEmailDto.bcc && { bcc: sendEmailDto.bcc }),
+        cc: sendEmailDto.cc,
+        bcc: sendEmailDto.bcc,
         isHtml: sendEmailDto.isHtml !== false,
       },
+      initiatorId: req.user?.id || 'system',
+      ...(req.user.role && { initiatorRole: req.user.role }),
     });
 
     const emailResult = result.results.find(r => r.channel === 'email');
@@ -511,11 +556,11 @@ export class CommunicationController {
   })
   async registerDeviceToken(
     @Body() registerDto: RegisterDeviceTokenDto,
-    @Request() request: { user?: { id?: string; sub?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; error?: string }> {
-    // Extract userId from JWT token (request.user is set by JwtAuthGuard)
-    // Priority: DTO userId > request.user.id > request.user.sub > 'anonymous'
-    const userId = registerDto.userId || request.user?.id || request.user?.sub || 'anonymous';
+    // Extract userId from JWT token (req.user is set by JwtAuthGuard)
+    // Priority: DTO userId > req.user.id > req.user.sub > 'anonymous'
+    const userId = registerDto.userId || req.user?.id || req.user?.sub || 'anonymous';
 
     const success = await this.deviceTokenService.registerDeviceToken({
       userId,
@@ -864,6 +909,171 @@ export class CommunicationController {
       },
       period,
       timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Delivery Logs Endpoints
+   */
+  @Get('logs')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
+  @ApiOperation({ summary: 'Get notification delivery logs' })
+  @ApiQuery({ name: 'clinicId', required: false })
+  @ApiQuery({ name: 'channel', required: false })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'SENT', 'DELIVERED', 'FAILED', 'BOUNCED', 'REJECTED'],
+  })
+  @ApiQuery({ name: 'userId', required: false })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'skip', required: false, type: Number })
+  async getDeliveryLogs(
+    @Query('clinicId') clinicId?: string,
+    @Query('channel') channel?: string,
+    @Query('status') status?: DeliveryStatus,
+    @Query('userId') userId?: string,
+    @Query('limit') limit = 10,
+    @Query('skip') skip = 0
+  ) {
+    const filter = {
+      ...(clinicId && { clinicId }),
+      ...(channel && { channel }),
+      ...(status && { status }),
+      ...(userId && { userId }),
+    };
+    return this.communicationService.getDeliveryLogs(filter, { limit: +limit, skip: +skip });
+  }
+
+  @Get('logs/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'read')
+  @ApiOperation({ summary: 'Get notification delivery log by ID' })
+  async getDeliveryLogById(@Param('id') id: string) {
+    const log = await this.communicationService.getDeliveryLogById(id);
+    if (!log) {
+      return { success: false, message: 'Log not found' };
+    }
+    return log;
+  }
+
+  /**
+   * Test Endpoints (Consolidated from EmailController)
+   */
+  @Get('test-email')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'create')
+  @ApiOperation({ summary: 'Send a test email with default template' })
+  async sendTestEmail() {
+    const urlsConfig = this.configService.getUrlsConfig();
+    const frontendUrl =
+      urlsConfig.frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000';
+
+    const result = await this.emailService.sendEmail({
+      to: 'aadeshbhujbal@gmail.com',
+      subject: `${this.configService.getEnv('APP_NAME', 'Healthcare App')} - Email Test`,
+      template: EmailTemplate.VERIFICATION,
+      context: {
+        verificationUrl: `${frontendUrl}/verify`,
+      },
+    });
+
+    return {
+      success: result,
+      message: result ? 'Test email sent successfully' : 'Failed to send test email',
+      details: {
+        template: 'VERIFICATION',
+        sentTo: 'aadeshbhujbal@gmail.com',
+      },
+    };
+  }
+
+  @Post('test-email-custom')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('notifications', 'create')
+  @ApiOperation({ summary: 'Send a test email with custom recipient and template' })
+  async sendCustomTestEmail(@Body() dto: SendTestEmailDto) {
+    const urlsConfig = this.configService.getUrlsConfig();
+    const frontendUrl =
+      urlsConfig.frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000';
+
+    const template: EmailTemplate = dto.template || EmailTemplate.VERIFICATION;
+    let context: EmailContext = {};
+
+    switch (template) {
+      case EmailTemplate.VERIFICATION:
+        context = { verificationUrl: `${frontendUrl}/verify` };
+        break;
+      case EmailTemplate.PASSWORD_RESET:
+        context = {
+          name: 'Test User',
+          resetUrl: `${frontendUrl}/reset-password`,
+          expiryTime: '1 hour',
+        };
+        break;
+      case EmailTemplate.OTP_LOGIN:
+        context = { otp: '123456' };
+        break;
+      case EmailTemplate.MAGIC_LINK:
+        context = {
+          name: 'Test User',
+          loginUrl: `${frontendUrl}/magic-login`,
+          expiryTime: '15 minutes',
+        };
+        break;
+      case EmailTemplate.WELCOME:
+        context = {
+          name: 'Test User',
+          role: 'Patient',
+          loginUrl: `${frontendUrl}/login`,
+          dashboardUrl: `${frontendUrl}/patient/dashboard`,
+          supportEmail: 'support@healthcareapp.com',
+          isGoogleAccount: false,
+        };
+        break;
+      case EmailTemplate.LOGIN_NOTIFICATION:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          device: 'Desktop',
+          browser: 'Chrome',
+          operatingSystem: 'Windows',
+          ipAddress: '192.168.1.1',
+          location: 'New York, USA',
+        };
+        break;
+      case EmailTemplate.SECURITY_ALERT:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          action: 'All active sessions have been terminated for security.',
+        };
+        break;
+      case EmailTemplate.SUSPICIOUS_ACTIVITY:
+        context = {
+          name: 'Test User',
+          time: new Date().toLocaleString(),
+          supportEmail: 'support@healthcareapp.com',
+        };
+        break;
+    }
+
+    const result = await this.emailService.sendEmail({
+      to: dto.to,
+      subject: `${this.configService.getEnv('APP_NAME', 'Healthcare App')} - ${template} Test`,
+      template: template,
+      context: context,
+    });
+
+    return {
+      success: result,
+      message: result ? 'Custom test email sent successfully' : 'Failed to send custom test email',
+      details: {
+        template: template,
+        sentTo: dto.to,
+        context: context,
+      },
     };
   }
 

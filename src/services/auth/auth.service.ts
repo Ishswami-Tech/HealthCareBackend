@@ -1576,6 +1576,45 @@ export class AuthService {
   }
 
   /**
+   * Verify email with OTP
+   */
+  async verifyEmail(email: string, otp: string): Promise<boolean> {
+    const result = await this.otpService.verifyOtp(email, otp);
+    if (!result.success) {
+      throw this.errors.invalidCredentials('AuthService.verifyEmail');
+    }
+
+    const user = await this.databaseService.findUserByEmailSafe(email);
+    if (!user) {
+      throw this.errors.userNotFound(email, 'AuthService.verifyEmail');
+    }
+
+    if (!user.isVerified) {
+      await this.databaseService.updateUserSafe(user.id, { isVerified: true });
+    }
+
+    return true;
+  }
+
+  /**
+   * Resend verification email
+   */
+  async resendVerification(email: string, clinicId?: string): Promise<boolean> {
+    const user = await this.databaseService.findUserByEmailSafe(email);
+    if (!user) {
+      // Return true to avoid enumeration
+      return true;
+    }
+
+    if (user.isVerified) {
+      return true;
+    }
+
+    await this.otpService.sendOtpEmail(email, user.firstName || 'User', 'verification', clinicId);
+    return true;
+  }
+
+  /**
    * Authenticate with Google OAuth
    * @param googleToken - Google ID token or access token
    * @param clinicId - Optional clinic ID for multi-tenant context

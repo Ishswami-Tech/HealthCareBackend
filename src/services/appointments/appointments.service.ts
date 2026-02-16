@@ -3,7 +3,7 @@ import { ConfigService } from '@config/config.service';
 
 // Infrastructure Services
 import { CacheService } from '@infrastructure/cache';
-import { QueueService } from '@infrastructure/queue';
+import { QueueService, AppointmentQueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
@@ -23,7 +23,7 @@ import type { PluginContext } from '@core/types';
 
 // Direct Plugin Imports - Hot-path plugins (top 5 most frequently used)
 // These are directly injected for performance (10M+ users scale)
-import { ClinicQueuePlugin } from './plugins/queue/clinic-queue.plugin';
+
 import { ClinicCheckInPlugin } from './plugins/checkin/clinic-checkin.plugin';
 import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notification.plugin';
 import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
@@ -35,9 +35,11 @@ import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
+  UpdateAppointmentStatusDto,
   AppointmentFilterDto,
   AppointmentStatus,
   AppointmentType,
+  TreatmentType,
   AppointmentPriority,
   ProcessCheckInDto,
   CompleteAppointmentDto,
@@ -45,6 +47,7 @@ import {
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
 } from '@dtos/appointment.dto';
+import { Role } from '@core/types/enums.types';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
 
 // Legacy imports for backward compatibility
@@ -120,7 +123,6 @@ export class AppointmentsService {
     // Performance: Direct access eliminates registry lookup overhead (~0.1ms saved per call)
     // Type Safety: Full TypeScript support with IDE autocomplete
     // Scale: Critical for 10M+ concurrent users - these plugins handle 80% of traffic
-    private readonly clinicQueuePlugin: ClinicQueuePlugin, // Hot path: Queue operations (very frequent)
     private readonly clinicCheckInPlugin: ClinicCheckInPlugin, // Hot path: Check-in operations (very frequent)
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin, // Hot path: Notifications (every appointment action)
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
@@ -135,6 +137,7 @@ export class AppointmentsService {
     // Use QueueService from @infrastructure/queue (migrated from Bull to BullMQ)
     // Standard queue names: QueueService.APPOINTMENT_QUEUE, QueueService.NOTIFICATION_QUEUE, etc.
     @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService,
+    private readonly appointmentQueueService: AppointmentQueueService,
     @Inject(forwardRef(() => EventService)) private readonly eventService: EventService,
     @Inject(forwardRef(() => ConfigService)) private readonly configService: ConfigService,
 
@@ -676,6 +679,106 @@ export class AppointmentsService {
   }
 
   /**
+   * Consolidated status update method (State Machine Trigger)
+   *
+   * @description Orchestrates appointment state transitions using the new state machine pattern.
+   * Delegates to specific handlers based on the target status.
+   */
+  async updateStatus(
+    appointmentId: string,
+    updateDto: UpdateAppointmentStatusDto,
+    userId: string,
+    clinicId: string,
+    role: string = 'USER'
+  ): Promise<unknown> {
+    // 1. Get Appointment to validate existence
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment) {
+      throw this.errors.appointmentNotFound(appointmentId, 'AppointmentsService.updateStatus');
+    }
+
+    // 2. Dispatch based on new status
+    switch (updateDto.status) {
+      case AppointmentStatus.CHECKED_IN:
+        return this.processCheckIn(
+          {
+            appointmentId,
+            ...(updateDto.locationId && { locationId: updateDto.locationId }),
+            ...(updateDto.qrCode && { qrCode: updateDto.qrCode }),
+            ...(updateDto.checkInMethod && { checkInMethod: updateDto.checkInMethod }),
+            ...(updateDto.notes && { notes: updateDto.notes }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+
+      case AppointmentStatus.IN_PROGRESS:
+        return this.startConsultation(
+          appointmentId,
+          {
+            doctorId: appointment.doctorId || userId,
+            ...(updateDto.notes && { notes: updateDto.notes }),
+            ...(updateDto.consultationType && { consultationType: updateDto.consultationType }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+
+      case AppointmentStatus.COMPLETED:
+        return this.completeAppointment(
+          appointmentId,
+          {
+            doctorId: appointment.doctorId || userId,
+            ...(updateDto.notes && { notes: updateDto.notes }),
+            ...(updateDto.diagnosis && { diagnosis: updateDto.diagnosis }),
+            ...(updateDto.treatmentPlan && { treatmentPlan: updateDto.treatmentPlan }),
+            ...(updateDto.prescription && { prescription: updateDto.prescription }),
+            ...(updateDto.followUpRequired !== undefined && {
+              followUpRequired: updateDto.followUpRequired,
+            }),
+            ...(updateDto.followUpDate && { followUpDate: updateDto.followUpDate }),
+            ...(updateDto.followUpType && { followUpType: updateDto.followUpType }),
+            ...(updateDto.followUpInstructions && {
+              followUpInstructions: updateDto.followUpInstructions,
+            }),
+            ...(updateDto.followUpPriority && { followUpPriority: updateDto.followUpPriority }),
+            ...(updateDto.medications && { medications: updateDto.medications }),
+            ...(updateDto.tests && { tests: updateDto.tests }),
+            ...(updateDto.restrictions && { restrictions: updateDto.restrictions }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+
+      case AppointmentStatus.CANCELLED:
+        if (!updateDto.reason) {
+          throw this.errors.validationError(
+            'reason',
+            'Cancellation reason is required',
+            'AppointmentsService.updateStatus'
+          );
+        }
+        return this.cancelAppointment(appointmentId, updateDto.reason, userId, clinicId, role);
+
+      // Handle other status updates generically (e.g., CONFIRMED, NO_SHOW)
+      default:
+        return this.updateAppointment(
+          appointmentId,
+          {
+            status: updateDto.status,
+            ...(updateDto.notes && { notes: updateDto.notes }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+    }
+  }
+
+  /**
    * Cancel appointment using enhanced core service
    */
   async cancelAppointment(
@@ -983,7 +1086,8 @@ export class AppointmentsService {
                         clinicId,
                         appointmentDate: followUpDate.toISOString(),
                         duration: appointment.duration || 30,
-                        type: appointment.type || AppointmentType.FOLLOW_UP,
+                        type: appointment.type || AppointmentType.IN_PERSON,
+                        treatmentType: TreatmentType.FOLLOW_UP,
                         priority: completeDto.followUpPriority || AppointmentPriority.NORMAL,
                         notes: completeDto.followUpInstructions,
                         ...(appointment.locationId && { locationId: appointment.locationId }),
@@ -1195,7 +1299,7 @@ export class AppointmentsService {
   /**
    * Get queue information through plugins
    *
-   * Performance: Uses direct plugin injection for hot-path optimization (10M+ users scale)
+   * Performance: Uses direct service call for hot-path optimization (10M+ users scale)
    * Queue operations are extremely frequent in high-traffic scenarios
    */
   async getQueueInfo(
@@ -1206,12 +1310,8 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
-      // Hot path: Direct plugin injection for performance (very frequent operation)
-      const queueData = await this.clinicQueuePlugin.process({
-        operation: 'getDoctorQueue',
-        doctorId,
-        date,
-      });
+      // Hot path: Direct service call for performance (very frequent operation)
+      const queueData = await this.appointmentQueueService.getDoctorQueue(doctorId, date, 'clinic');
 
       const result = { success: true, data: queueData };
 
@@ -1452,6 +1552,7 @@ export class AppointmentsService {
     date: string,
     clinicId: string,
     userId: string,
+    locationId?: string,
     _role: string = 'USER'
   ): Promise<unknown> {
     // Use CacheService key factory for proper key generation (single source of truth)
@@ -1459,10 +1560,11 @@ export class AppointmentsService {
     const keyFactory = this.cacheService.getKeyFactory();
     // Key factory automatically adds 'healthcare' prefix
     const cacheKey = keyFactory.fromTemplate(
-      'doctor:{doctorId}:clinic:{clinicId}:availability:{date}',
+      'doctor:{doctorId}:clinic:{clinicId}:location:{locationId}:availability:{date}',
       {
         doctorId,
         clinicId,
+        locationId: locationId || 'all',
         date,
       }
     );
@@ -1474,7 +1576,13 @@ export class AppointmentsService {
         // The ClinicQueuePlugin is for queue management operations only
         const availabilityData = await this.coreAppointmentService.getDoctorAvailability(
           doctorId,
-          date
+          date,
+          {
+            userId,
+            role: _role as Role,
+            clinicId,
+            ...(locationId && { locationId }),
+          }
         );
 
         // Log the availability retrieval
@@ -1905,7 +2013,8 @@ export class AppointmentsService {
         clinicId,
         appointmentDate: scheduleDto.appointmentDate,
         duration: originalAppointment.duration || 30,
-        type: (followUpPlan['followUpType'] as AppointmentType) || AppointmentType.FOLLOW_UP,
+        type: (followUpPlan['followUpType'] as AppointmentType) || AppointmentType.IN_PERSON,
+        treatmentType: TreatmentType.FOLLOW_UP,
         notes: followUpPlan['instructions'] as string,
         priority: (followUpPlan['priority'] as AppointmentPriority) || AppointmentPriority.NORMAL,
       };

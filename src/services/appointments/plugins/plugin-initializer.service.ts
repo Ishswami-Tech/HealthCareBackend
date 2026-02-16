@@ -18,7 +18,7 @@ import type { BasePlugin, PluginContext, PluginInfo } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
 
 // Internal imports - Plugins
-import { ClinicQueuePlugin } from './queue/clinic-queue.plugin';
+
 import { ClinicNotificationPlugin } from './notifications/clinic-notification.plugin';
 import { ClinicReminderPlugin } from './reminders/clinic-reminder.plugin';
 import { ClinicAnalyticsPlugin } from './analytics/clinic-analytics.plugin';
@@ -47,7 +47,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
     private readonly pluginManager: EnterprisePluginManager,
     private readonly loggingService: LoggingService,
     // Inject all plugins
-    private readonly clinicQueuePlugin: ClinicQueuePlugin,
+
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin,
     private readonly clinicReminderPlugin: ClinicReminderPlugin,
     private readonly clinicAnalyticsPlugin: ClinicAnalyticsPlugin,
@@ -144,7 +144,6 @@ export class AppointmentPluginInitializer implements OnModuleInit {
    */
   private getAllPlugins(): BasePlugin[] {
     return [
-      this.clinicQueuePlugin,
       this.clinicNotificationPlugin,
       this.clinicReminderPlugin,
       this.clinicAnalyticsPlugin,

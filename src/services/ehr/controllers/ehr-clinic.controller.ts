@@ -7,6 +7,7 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { PatientCache, Cache } from '@core/decorators';
+import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
 import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
@@ -29,6 +30,7 @@ export class EHRClinicController {
     compress: true,
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getComprehensiveHealthRecordWithClinic(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -47,7 +49,9 @@ export class EHRClinicController {
     ttl: 900, // 15 minutes
     tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_records'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getClinicPatientsRecords(
     @Param('clinicId') clinicId: string,
     @Query('recordType') recordType?: string,
@@ -81,6 +85,7 @@ export class EHRClinicController {
     tags: ['ehr', 'clinic_ehr', 'analytics', 'clinic:{clinicId}'],
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getClinicEHRAnalytics(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicEHRAnalytics(clinicId);
   }
@@ -93,7 +98,9 @@ export class EHRClinicController {
     ttl: 900, // 15 minutes
     tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'patient_summary'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getClinicPatientsSummary(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicPatientsSummary(clinicId);
   }
@@ -106,7 +113,9 @@ export class EHRClinicController {
     ttl: 300, // 5 minutes (search results may change)
     tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'search'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async searchClinicRecords(
     @Param('clinicId') clinicId: string,
     @Query('q') searchTerm: string,
@@ -124,6 +133,7 @@ export class EHRClinicController {
     ttl: 60, // 1 minute (critical alerts change frequently)
     tags: ['ehr', 'clinic_ehr', 'clinic:{clinicId}', 'alerts'],
     enableSWR: true,
+    containsPHI: true,
   })
   async getClinicCriticalAlerts(@Param('clinicId') clinicId: string) {
     return this.ehrService.getClinicCriticalAlerts(clinicId);

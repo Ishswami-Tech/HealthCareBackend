@@ -17,6 +17,8 @@ import {
   CreatePrescriptionDto,
   UpdatePrescriptionStatusDto,
   PharmacyStatsDto,
+  CreateSupplierDto,
+  UpdateSupplierDto,
 } from '@dtos/pharmacy.dto';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -24,6 +26,8 @@ import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { Cache } from '@core/decorators';
+import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
 
 @ApiTags('pharmacy')
@@ -43,6 +47,8 @@ export class PharmacyController {
   @Get('inventory')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('inventory', 'read')
+  @Cache({ ttl: 300, tags: ['pharmacy', 'inventory'], priority: 'normal' })
+  @RateLimitAPI()
   @ApiOperation({ summary: 'Get all medicines in inventory' })
   async getInventory() {
     return this.pharmacyService.findAllMedicines();
@@ -80,8 +86,30 @@ export class PharmacyController {
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('inventory', 'update')
   @ApiOperation({ summary: 'Update medicine stock or price' })
-  async updateInventory(@Param('id') id: string, @Body() dto: UpdateInventoryDto) {
-    return this.pharmacyService.updateInventory(id, dto);
+  async updateInventory(
+    @Param('id') id: string,
+    @Body() dto: UpdateInventoryDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    return this.pharmacyService.updateInventory(id, dto, clinicId);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/inventory/low-stock
+   * @access PHARMACIST, CLINIC_ADMIN
+   */
+  @Get('inventory/low-stock')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @Cache({ ttl: 600, tags: ['pharmacy', 'low-stock'], priority: 'high' })
+  @RateLimitAPI()
+  @RequireResourcePermission('inventory', 'read')
+  @ApiOperation({ summary: 'Get medicines with low stock levels' })
+  async getLowStock(@Request() req: Request & { user?: { clinicId?: string } }) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    return this.pharmacyService.findLowStock(clinicId);
   }
 
   /**
@@ -92,8 +120,10 @@ export class PharmacyController {
    * @description Get all prescriptions for pharmacist review
    */
   @Get('prescriptions')
-  @Roles(Role.PHARMACIST)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR)
   @RequireResourcePermission('prescriptions', 'read')
+  @Cache({ ttl: 300, tags: ['pharmacy', 'prescriptions'], priority: 'normal', containsPHI: true })
+  @RateLimitAPI()
   @ApiOperation({ summary: 'Get all prescriptions' })
   async getPrescriptions(@Request() req: Request & { user?: { clinicId?: string } }) {
     const clinicId = req.user?.clinicId;
@@ -145,12 +175,61 @@ export class PharmacyController {
    * @description Get pharmacy statistics for admin dashboard
    * @note Used by admin panel (not yet implemented in main app)
    */
-  @Get('dashboard/stats')
+  @Get('stats')
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('prescriptions', 'read')
-  @ApiOperation({ summary: 'Get pharmacy dashboard statistics' })
-  async getStats(): Promise<PharmacyStatsDto> {
-    return this.pharmacyService.getStats();
+  @Cache({ ttl: 1800, tags: ['pharmacy', 'stats'], priority: 'low' })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Get pharmacy statistical summary' })
+  async getStats(
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ): Promise<PharmacyStatsDto> {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    return this.pharmacyService.getStats(clinicId);
+  }
+
+  // ============ Supplier Management ============
+
+  @Get('suppliers')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('inventory', 'read')
+  @Cache({ ttl: 3600, tags: ['pharmacy', 'suppliers'], priority: 'low' })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Get all medicine suppliers' })
+  async getSuppliers(@Request() req: Request & { user?: { clinicId?: string } }) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    return this.pharmacyService.findAllSuppliers(clinicId);
+  }
+
+  @Post('suppliers')
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('inventory', 'create')
+  @ApiOperation({ summary: 'Add a new supplier' })
+  async addSupplier(
+    @Body() dto: CreateSupplierDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    if (!clinicId) throw new ForbiddenException('Clinic context required');
+    return this.pharmacyService.addSupplier(dto, clinicId);
+  }
+
+  @Patch('suppliers/:id')
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('inventory', 'update')
+  @ApiOperation({ summary: 'Update supplier details' })
+  async updateSupplier(
+    @Param('id') id: string,
+    @Body() dto: UpdateSupplierDto,
+    @Request() req: Request & { user?: { clinicId?: string } }
+  ) {
+    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
+    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    if (!clinicId) throw new ForbiddenException('Clinic context required');
+    return this.pharmacyService.updateSupplier(id, dto, clinicId);
   }
 
   /**
@@ -163,8 +242,15 @@ export class PharmacyController {
    * @note Fixed dashboard redirect loop issue
    */
   @Get('prescriptions/patient/:userId')
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.PHARMACIST)
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PATIENT)
   @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
+  @Cache({
+    ttl: 300,
+    tags: ['pharmacy', 'patient-prescriptions'],
+    priority: 'normal',
+    containsPHI: true,
+  })
+  @RateLimitAPI()
   @ApiOperation({ summary: 'Get prescriptions for a specific patient' })
   async getPatientPrescriptions(
     @Param('userId') userId: string,

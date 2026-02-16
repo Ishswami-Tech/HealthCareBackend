@@ -105,6 +105,29 @@ export enum AppointmentType {
   HOME_VISIT = 'HOME_VISIT',
 }
 
+export enum TreatmentType {
+  GENERAL_CONSULTATION = 'GENERAL_CONSULTATION',
+  FOLLOW_UP = 'FOLLOW_UP',
+  THERAPY = 'THERAPY',
+  SURGERY = 'SURGERY',
+  LAB_TEST = 'LAB_TEST',
+  IMAGING = 'IMAGING',
+  VACCINATION = 'VACCINATION',
+  // Ayurveda Types
+  VIDDHAKARMA = 'VIDDHAKARMA',
+  AGNIKARMA = 'AGNIKARMA',
+  PANCHAKARMA = 'PANCHAKARMA',
+  NADI_PARIKSHA = 'NADI_PARIKSHA',
+  DOSHA_ANALYSIS = 'DOSHA_ANALYSIS',
+  SHIRODHARA = 'SHIRODHARA',
+  VIRECHANA = 'VIRECHANA',
+  ABHYANGA = 'ABHYANGA',
+  SWEDANA = 'SWEDANA',
+  BASTI = 'BASTI',
+  NASYA = 'NASYA',
+  RAKTAMOKSHANA = 'RAKTAMOKSHANA',
+}
+
 /**
  * Prakriti (Ayurvedic constitution) enumeration
  */
@@ -155,6 +178,39 @@ export enum NotificationStatus {
 }
 
 /**
+ * Delivery status enumeration
+ */
+export enum DeliveryStatus {
+  PENDING = 'PENDING',
+  SENT = 'SENT',
+  DELIVERED = 'DELIVERED',
+  FAILED = 'FAILED',
+  BOUNCED = 'BOUNCED',
+  REJECTED = 'REJECTED',
+}
+
+/**
+ * Suppression reason enumeration
+ */
+export enum SuppressionReason {
+  BOUNCE = 'BOUNCE',
+  COMPLAINT = 'COMPLAINT',
+  UNSUBSCRIBE = 'UNSUBSCRIBE',
+  MANUAL = 'MANUAL',
+}
+
+/**
+ * Suppression source enumeration
+ */
+export enum SuppressionSource {
+  SES = 'SES',
+  ZEPTOMAIL = 'ZEPTOMAIL',
+  USER_ACTION = 'USER_ACTION',
+  ADMIN = 'ADMIN',
+  SYSTEM = 'SYSTEM',
+}
+
+/**
  * Health record type enumeration
  */
 export enum HealthRecordType {
@@ -164,6 +220,7 @@ export enum HealthRecordType {
   PRESCRIPTION = 'PRESCRIPTION',
   DIAGNOSIS_REPORT = 'DIAGNOSIS_REPORT',
   PULSE_DIAGNOSIS = 'PULSE_DIAGNOSIS',
+  GENERAL_DOCUMENT = 'GENERAL_DOCUMENT',
 }
 
 /**

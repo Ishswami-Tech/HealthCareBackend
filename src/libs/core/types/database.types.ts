@@ -29,6 +29,7 @@ import { HttpStatus } from '@nestjs/common';
 
 // Re-export UserWithRelations type from user.types.ts for use in this file
 import type { UserWithRelations } from './user.types';
+import type { ClinicLocation } from './clinic.types';
 export type { UserWithRelations };
 
 // Use explicit interface definitions to avoid 'any' in union types from Prisma
@@ -71,6 +72,13 @@ export interface Doctor {
   consultationFee: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+export interface DoctorWithRelations extends Doctor {
+  user?: User;
+  appointments?: Appointment[];
+  reviews?: Review[];
+  clinicLocations?: ClinicLocation[];
+  doctorClinics?: DoctorClinic[];
 }
 export type Patient = PatientBase;
 export interface Clinic {
@@ -115,14 +123,145 @@ export interface DoctorClinic {
   createdAt: Date;
   updatedAt: Date;
 }
-export type Medicine = Record<string, never>;
-export type Therapy = Record<string, never>;
-export type Prescription = Record<string, never>;
-export type PrescriptionItem = Record<string, never>;
-export type Queue = Record<string, never>;
-export type HealthRecord = Record<string, never>;
-export type Review = Record<string, never>;
-export type Notification = Record<string, never>;
+
+export interface Medicine {
+  id: string;
+  name: string;
+  ingredients: string | null;
+  properties: string | null;
+  dosage: string | null;
+  manufacturer: string | null;
+  type: string; // MedicineType
+  clinicId: string;
+  locationId: string | null;
+  stock?: number;
+  price?: number;
+  expiryDate?: Date | null;
+  minStockThreshold?: number;
+  supplierId?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+}
+export interface Therapy {
+  id: string;
+  name: string;
+  description: string | null;
+  duration: number | null;
+  clinicId: string;
+  createdAt: Date;
+}
+export interface Prescription {
+  id: string;
+  patientId: string;
+  doctorId: string;
+  date: Date;
+  status: string; // PrescriptionStatus
+  notes: string | null;
+  clinicId: string;
+  locationId: string | null;
+  items?: PrescriptionItem[];
+}
+export interface PrescriptionItem {
+  id: string;
+  prescriptionId: string;
+  medicineId: string | null;
+  dosage: string | null;
+  frequency: string | null;
+  duration: string | null;
+  clinicId: string;
+  medicine?: Medicine;
+  quantity?: number;
+}
+export interface Queue {
+  id: string;
+  appointmentId: string;
+  queueNumber: number;
+  estimatedWaitTime: number | null;
+  status: string; // QueueStatus
+  clinicId: string;
+  updatedAt: Date;
+}
+export interface HealthRecord {
+  id: string;
+  patientId: string;
+  doctorId: string;
+  recordType: string; // HealthRecordType
+  report: string | null;
+  fileUrl: string | null;
+  clinicId: string;
+  createdAt: Date;
+}
+export interface ClinicExpense {
+  id: string;
+  clinicId: string;
+  amount: number;
+  category: string;
+  description: string | null;
+  date: Date;
+  status: string;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface MedicalDocument {
+  id: string;
+  patientId: string;
+  fileUrl: string;
+  fileName?: string;
+  fileType?: string;
+  uploadedAt: Date;
+  [key: string]: unknown;
+}
+export interface Insurance {
+  id: string;
+  userId: string;
+  provider: string;
+  policyNumber: string;
+  groupNumber: string | null;
+  primaryHolder: string;
+  coverageStartDate: Date;
+  coverageEndDate: Date | null;
+  coverageType: string;
+  createdAt: Date;
+  updatedAt: Date;
+  patientId: string | null;
+}
+export interface InsuranceClaim {
+  id: string;
+  patientId: string;
+  appointmentId: string | null;
+  invoiceId: string | null;
+  clinicId: string;
+  claimNumber: string;
+  provider: string;
+  amount: number;
+  status: string;
+  submittedAt: Date;
+  responseAt: Date | null;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+export interface Review {
+  id: string;
+  rating: number;
+  comment?: string;
+  patientId: string;
+  doctorId: string;
+  clinicId: string;
+  createdAt: Date;
+}
+export interface Notification {
+  id: string;
+  userId: string;
+  type: string; // NotificationType
+  message: string;
+  read: boolean;
+  sentAt: Date | null;
+  status: string; // NotificationStatus
+  clinicId: string | null;
+  createdAt: Date;
+}
 export type { PermissionEntity } from './rbac.types';
 export interface AuditLog {
   id: string;
@@ -253,6 +392,19 @@ export interface Counselor {
   updatedAt: Date;
 }
 
+export interface LocationHead {
+  id: string;
+  userId: string;
+  clinicId: string;
+  locationId: string | null;
+  assignedBy: string;
+  assignedAt: Date;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+  [key: string]: unknown;
+}
+
 export interface EmergencyContact {
   id: string;
   userId: string;
@@ -288,6 +440,7 @@ export type { LifestyleAssessment } from '@prisma/client';
 export interface AppointmentBase {
   id: string;
   type: string;
+  treatmentType?: string;
   doctorId: string;
   patientId: string;
   locationId: string;

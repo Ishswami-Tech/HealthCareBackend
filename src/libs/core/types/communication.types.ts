@@ -79,6 +79,10 @@ export interface CommunicationRequest {
   respectPreferences?: boolean;
   /** Whether to apply rate limiting */
   applyRateLimit?: boolean;
+  /** Initiator user ID (for auditing) */
+  initiatorId?: string;
+  /** Initiator role (for auditing) */
+  initiatorRole?: string;
   /** Custom metadata */
   metadata?: Record<string, unknown>;
 }

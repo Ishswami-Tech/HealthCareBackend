@@ -21,6 +21,7 @@ import type {
   SupportStaff,
   Nurse,
   Counselor,
+  LocationHead,
 } from './database.types';
 // Note: PrismaUser type is not needed - UserBase interface below provides all needed fields
 
@@ -98,6 +99,8 @@ export interface UserWithRelations extends UserBase {
   nurse?: Nurse | null;
   /** Counselor profile if user is a counselor */
   counselor?: Counselor | null;
+  /** Location head profile if user is a location head */
+  locationHead?: LocationHead | null;
 }
 
 /**
@@ -162,6 +165,8 @@ export interface UserResponse {
   nurse?: Nurse | null;
   /** Counselor profile if user is a counselor */
   counselor?: Counselor | null;
+  /** Location head profile if user is a location head */
+  locationHead?: LocationHead | null;
 }
 
 /**

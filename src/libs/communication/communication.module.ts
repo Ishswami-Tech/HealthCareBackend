@@ -22,7 +22,9 @@ import { CommunicationConfigModule } from './config/communication-config.module'
 import { CommunicationAdaptersModule } from './adapters/adapters.module';
 import { EmailServicesModule } from './adapters/email/email-services.module';
 import { ClinicTemplateService } from './services/clinic-template.service';
+import { CommunicationTemplateService } from './services/communication-template.service';
 import { CommunicationAlertingService } from './services/communication-alerting.service';
+import { TemplateController } from './controllers/template.controller';
 
 /**
  * Unified Communication Module
@@ -79,7 +81,7 @@ import { CommunicationAlertingService } from './services/communication-alerting.
     forwardRef(() => DatabaseModule), // Database for notification preferences and delivery tracking
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
-  controllers: [CommunicationController],
+  controllers: [CommunicationController, TemplateController],
   providers: [
     CommunicationService,
     {
@@ -88,6 +90,7 @@ import { CommunicationAlertingService } from './services/communication-alerting.
     },
     CommunicationHealthMonitorService,
     ClinicTemplateService,
+    CommunicationTemplateService,
     CommunicationAlertingService,
   ],
   exports: [
@@ -103,6 +106,7 @@ import { CommunicationAlertingService } from './services/communication-alerting.
     // Export health monitor for HealthService
     CommunicationHealthMonitorService,
     ClinicTemplateService, // Clinic template data service
+    CommunicationTemplateService,
     CommunicationAlertingService, // Alerting service
   ],
 })

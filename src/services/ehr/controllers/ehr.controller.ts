@@ -29,6 +29,8 @@ import {
   UpdateMedicationDto,
   CreateImmunizationDto,
   UpdateImmunizationDto,
+  CreatePrescriptionDto,
+  EHRAISummaryDto,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -67,6 +69,21 @@ export class EHRController {
   })
   async getComprehensiveHealthRecord(@Param('userId') userId: string): Promise<unknown> {
     return this.ehrService.getComprehensiveHealthRecord(userId);
+  }
+
+  @Get(':patientId/summary')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
+  async getEHRAISummary(@Param('patientId') patientId: string): Promise<EHRAISummaryDto> {
+    return this.ehrService.getEHRAISummary(patientId);
+  }
+
+  @Post('prescriptions')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('medical-records', 'create')
+  async createPrescription(@Body() createDto: CreatePrescriptionDto) {
+    return this.ehrService.createPrescription(createDto);
   }
 
   // ============ Medical History ============

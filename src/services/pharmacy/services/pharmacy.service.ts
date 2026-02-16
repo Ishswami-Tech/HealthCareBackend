@@ -5,6 +5,8 @@ import {
   UpdateInventoryDto,
   CreatePrescriptionDto,
   PrescriptionStatus,
+  CreateSupplierDto,
+  UpdateSupplierDto,
 } from '@dtos/pharmacy.dto';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 
@@ -14,9 +16,7 @@ export class PharmacyService {
 
   async findAllMedicines(clinicId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        medicine: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-      };
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       const where: Record<string, unknown> = {};
       if (clinicId) where['clinicId'] = clinicId;
 
@@ -28,9 +28,7 @@ export class PharmacyService {
 
   async findMedicineById(id: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        medicine: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
-      };
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       return await typedClient.medicine.findUnique({
         where: { id } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
@@ -42,9 +40,7 @@ export class PharmacyService {
 
     return await this.databaseService.executeHealthcareWrite(
       async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          medicine: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
-        };
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         // Mapping DTO to Schema
         // Schema has: name, ingredients?, properties?, dosage?, manufacturer?, type, clinicId
         // DTO has: name, manufacturer, description, type, quantity, price, expiryDate, instructions
@@ -56,6 +52,11 @@ export class PharmacyService {
             type: dto.type,
             properties: dto.description, // Mapping description to properties
             dosage: dto.instructions, // Mapping instructions to dosage provided generic usage
+            stock: dto.quantity, // Mapping quantity to stock
+            price: dto.price,
+            expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
+            minStockThreshold: dto.minStockThreshold ?? 10,
+            supplierId: dto.supplierId,
             clinicId: clinicId,
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
@@ -72,28 +73,44 @@ export class PharmacyService {
     );
   }
 
-  async updateInventory(id: string, _dto: UpdateInventoryDto) {
-    // Schema lacks quantity/price.
-    // We cannot strictly implement this without schema changes.
-    // For now, returning success with a warning or just no-op to allow frontend to function.
-    // Or we could update generic properties if mapped.
-    // Since this acts as a verification step, I'll log or just return current state.
+  async updateInventory(id: string, dto: UpdateInventoryDto, clinicId?: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
-    // Attempting to finding to ensure existence
-    await this.findMedicineById(id);
+        const existing = await typedClient.medicine.findUnique({
+          where: { id } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
 
-    // Return dummy success or the object unmodified
-    return {
-      success: true,
-      message: 'Inventory update ignored (Schema limitation: No quantity/price field)',
-    };
+        if (!existing) {
+          throw new BadRequestException('Medicine not found');
+        }
+
+        return await typedClient.medicine.update({
+          where: { id } as PrismaDelegateArgs,
+          data: {
+            ...(dto.quantityChange !== undefined && {
+              stock: { increment: dto.quantityChange },
+            }),
+            ...(dto.price !== undefined && { price: dto.price }),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId: clinicId || 'unknown',
+        resourceType: 'MEDICINE',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: { quantityChange: dto.quantityChange, price: dto.price },
+      }
+    );
   }
 
   async findAllPrescriptions(clinicId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        prescription: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-      };
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       const where: Record<string, unknown> = {};
       if (clinicId) where['clinicId'] = clinicId;
 
@@ -106,9 +123,7 @@ export class PharmacyService {
 
   async findPrescriptionsByPatient(userId: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        prescription: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-      };
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
       return await typedClient.prescription.findMany({
         where: { patientId: userId } as PrismaDelegateArgs,
@@ -131,9 +146,7 @@ export class PharmacyService {
 
     return await this.databaseService.executeHealthcareWrite(
       async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          prescription: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
-        };
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
         return await typedClient.prescription.create({
           data: {
@@ -144,7 +157,8 @@ export class PharmacyService {
             items: {
               create: dto.items.map(item => ({
                 medicineId: item.medicineId,
-                dosage: `${item.dosage || ''} (Qty: ${item.quantity})`, // Embedding quantity in dosage
+                quantity: item.quantity,
+                dosage: item.dosage,
                 clinicId: clinicId,
               })),
             },
@@ -175,14 +189,7 @@ export class PharmacyService {
   ) {
     return await this.databaseService.executeHealthcareWrite(
       async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          prescription: {
-            findUnique: (
-              args: PrismaDelegateArgs
-            ) => Promise<{ status: string; clinicId: string } | null>;
-            update: (args: PrismaDelegateArgs) => Promise<unknown>;
-          };
-        };
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
         const existing = await typedClient.prescription.findUnique({
           where: { id: prescriptionId } as PrismaDelegateArgs,
@@ -207,11 +214,26 @@ export class PharmacyService {
           throw new BadRequestException('Cannot update a cancelled prescription');
         }
 
-        return await typedClient.prescription.update({
+        const updatedPrescription = await typedClient.prescription.update({
           where: { id: prescriptionId } as PrismaDelegateArgs,
           data: { status } as PrismaDelegateArgs,
           include: { items: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
+
+        if (status === PrescriptionStatus.FILLED && updatedPrescription.items) {
+          for (const item of updatedPrescription.items) {
+            if (item.medicineId) {
+              await typedClient.medicine.update({
+                where: { id: item.medicineId } as PrismaDelegateArgs,
+                data: {
+                  stock: { decrement: item.quantity || 1 },
+                } as PrismaDelegateArgs,
+              });
+            }
+          }
+        }
+
+        return updatedPrescription;
       },
       {
         userId: 'system',
@@ -225,22 +247,119 @@ export class PharmacyService {
     );
   }
 
-  async getStats() {
+  async getStats(clinicId?: string) {
     // Simple count stats
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        medicine: { count: () => Promise<number> };
-        prescription: { count: () => Promise<number> };
-      };
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
 
-      const totalMedicines = await typedClient.medicine.count();
-      const totalPrescriptions = await typedClient.prescription.count();
+      const where: Record<string, unknown> = {};
+      if (clinicId) where['clinicId'] = clinicId;
+
+      const totalMedicines = await typedClient.medicine.count({
+        where: where as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+
+      const totalPrescriptions = await typedClient.prescription.count({
+        where: where as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+
+      // Fetch medicine stock levels to calculate low stock
+      const medicines = await typedClient.medicine.findMany({
+        where: where as PrismaDelegateArgs,
+        select: { stock: true, minStockThreshold: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+
+      const lowStockCount = medicines.filter(
+        m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0)
+      ).length;
 
       return {
         totalMedicines,
-        lowStock: 0, // Not trackable
-        pendingPrescriptions: totalPrescriptions, // Assuming all for stats rough
+        lowStock: lowStockCount,
+        pendingPrescriptions: totalPrescriptions,
       };
+    });
+  }
+
+  // ============ Supplier Management ============
+
+  async findAllSuppliers(clinicId?: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        supplier: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+      const where: Record<string, unknown> = { isActive: true };
+      if (clinicId) where['clinicId'] = clinicId;
+
+      return await typedClient.supplier.findMany({
+        where: where as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  async addSupplier(dto: CreateSupplierDto, clinicId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          supplier: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.supplier.create({
+          data: {
+            ...(dto as unknown as Record<string, unknown>),
+            clinicId,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'SUPPLIER',
+        operation: 'CREATE',
+        resourceId: 'new',
+        userRole: 'system',
+        details: { name: (dto as unknown as Record<string, unknown>)['name'] },
+      }
+    );
+  }
+
+  async updateSupplier(id: string, dto: UpdateSupplierDto, clinicId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          supplier: { update: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.supplier.update({
+          where: { id } as PrismaDelegateArgs,
+          data: dto as unknown as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'SUPPLIER',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: dto as unknown as Record<string, unknown>,
+      }
+    );
+  }
+
+  async findLowStock(clinicId?: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const where: Record<string, unknown> = {};
+      if (clinicId) where['clinicId'] = clinicId;
+
+      // Note: Prisma doesn't support comparing two columns directly in findMany filter easily without raw/computed
+      // For simplicity in this mock-style implementation, we'll fetch and filter if needed or use a raw query
+      // but here we will fetch all and filter for now as it's a small dataset usually.
+      // In production, we'd use a raw query or stock < minStockThreshold.
+      const medicines = await typedClient.medicine.findMany({
+        where: where as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+
+      return medicines.filter(m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0));
     });
   }
 }

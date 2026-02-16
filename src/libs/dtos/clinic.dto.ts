@@ -1002,3 +1002,54 @@ export class AppNameInlineDto {
   @ApiProperty({ description: 'App name (subdomain)', example: 'myclinic' })
   appName!: string;
 }
+
+/**
+ * Data Transfer Object for clinic statistics
+ */
+export class ClinicStatsResponseDto {
+  @ApiProperty({ example: 150 })
+  totalUsers!: number;
+
+  @ApiProperty({ example: 2 })
+  totalLocations!: number;
+
+  @ApiProperty({ example: 1250 })
+  totalAppointments!: number;
+
+  @ApiProperty({ example: 45 })
+  activeDoctors!: number;
+
+  @ApiProperty({ example: 500 })
+  activePatients!: number;
+
+  @ApiProperty({ example: 1250 })
+  totalEhrRecords!: number;
+
+  @ApiProperty({ example: 5 })
+  lowStockAlerts!: number;
+
+  @ApiProperty({ example: 12 })
+  todayAppointments!: number;
+
+  @ApiProperty({ example: 25000.5 })
+  revenue!: number;
+}
+
+/**
+ * Data Transfer Object for clinic operating hours
+ */
+export class ClinicOperatingHoursResponseDto {
+  @ApiProperty({ example: 'Main Location' })
+  locationName!: string;
+
+  @ApiProperty({ example: 'uuid-123' })
+  locationId!: string;
+
+  @ApiProperty({
+    example: {
+      monday: { start: '09:00', end: '17:00' },
+      tuesday: { start: '09:00', end: '17:00' },
+    },
+  })
+  workingHours!: string | Record<string, { start: string; end: string }>;
+}

@@ -1,16 +1,3 @@
-/**
- * Centralized EHR (Electronic Health Records) Types
- * @module @core/types/ehr.types
- * @description All EHR-related types and interfaces for the healthcare system
- */
-
-// ============================================================================
-// EHR RECORD TYPES
-// ============================================================================
-
-/**
- * Medical history record
- */
 export interface MedicalHistoryRecord {
   id: string;
   userId: string;
@@ -25,9 +12,6 @@ export interface MedicalHistoryRecord {
   updatedAt: Date;
 }
 
-/**
- * Lab report record
- */
 export interface LabReportRecord {
   id: string;
   userId: string;
@@ -39,13 +23,12 @@ export interface LabReportRecord {
   doctorId: string;
   labName?: string;
   notes?: string;
+  fileUrl?: string;
+  fileKey?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
-/**
- * Vital signs record
- */
 export interface VitalRecord {
   id: string;
   userId: string;
@@ -60,9 +43,6 @@ export interface VitalRecord {
   updatedAt: Date;
 }
 
-/**
- * Allergy record
- */
 export interface AllergyRecord {
   id: string;
   userId: string;
@@ -77,9 +57,6 @@ export interface AllergyRecord {
   updatedAt: Date;
 }
 
-/**
- * Medication record
- */
 export interface MedicationRecord {
   id: string;
   userId: string;
@@ -95,9 +72,6 @@ export interface MedicationRecord {
   updatedAt: Date;
 }
 
-/**
- * Immunization record
- */
 export interface ImmunizationRecord {
   id: string;
   userId: string;
@@ -110,9 +84,6 @@ export interface ImmunizationRecord {
   updatedAt: Date;
 }
 
-/**
- * Radiology report record
- */
 export interface RadiologyReportRecord {
   id: string;
   userId: string;
@@ -127,9 +98,6 @@ export interface RadiologyReportRecord {
   updatedAt: Date;
 }
 
-/**
- * Surgical record
- */
 export interface SurgicalRecord {
   id: string;
   userId: string;
@@ -143,13 +111,6 @@ export interface SurgicalRecord {
   updatedAt: Date;
 }
 
-// ============================================================================
-// ANALYTICS TYPES
-// ============================================================================
-
-/**
- * Clinic analytics data
- */
 export interface ClinicAnalytics {
   totalPatients: number;
   totalMedicalRecords: number;
@@ -168,9 +129,6 @@ export interface ClinicAnalytics {
   }>;
 }
 
-/**
- * Patient summary information
- */
 export interface PatientSummary {
   id: string;
   firstName: string;
@@ -184,9 +142,6 @@ export interface PatientSummary {
   activeMedications: number;
 }
 
-/**
- * Search result item for EHR records
- */
 export interface SearchResultItem {
   id: string;
   type: 'medicalHistory' | 'labReport' | 'vital' | 'allergy' | 'medication' | 'immunization';
@@ -202,9 +157,6 @@ export interface SearchResultItem {
   };
 }
 
-/**
- * Critical alert for patient health
- */
 export interface CriticalAlert {
   id: string;
   type: 'allergy' | 'medication' | 'vital' | 'lab';
@@ -216,28 +168,15 @@ export interface CriticalAlert {
   acknowledged: boolean;
 }
 
-// ============================================================================
-// PRISMA QUERY RESULT TYPES
-// ============================================================================
-
-/**
- * Prisma user select type
- */
 export interface PrismaUserSelect {
   id: boolean;
   userId: boolean;
 }
 
-/**
- * Prisma count result
- */
 export interface PrismaCountResult {
   count: number;
 }
 
-/**
- * Prisma group by result
- */
 export interface PrismaGroupByResult {
   condition?: string;
   allergen?: string;
@@ -247,9 +186,6 @@ export interface PrismaGroupByResult {
   };
 }
 
-/**
- * Prisma user with relations
- */
 export interface PrismaUserWithRelations {
   id: string;
   firstName: string;
@@ -261,13 +197,6 @@ export interface PrismaUserWithRelations {
   updatedAt: Date;
 }
 
-// ============================================================================
-// METHOD RETURN TYPES
-// ============================================================================
-
-/**
- * Result from getting clinic records by filter
- */
 export interface GetClinicRecordsByFilterResult {
   conditions: MedicalHistoryRecord[];
   allergies: AllergyRecord[];
@@ -275,9 +204,6 @@ export interface GetClinicRecordsByFilterResult {
   total: number;
 }
 
-/**
- * Result from getting clinic EHR analytics
- */
 export interface GetClinicEHRAnalyticsResult {
   totalPatients: number;
   totalMedicalRecords: number;
@@ -296,18 +222,12 @@ export interface GetClinicEHRAnalyticsResult {
   }>;
 }
 
-/**
- * Result from getting clinic patients summary
- */
 export interface GetClinicPatientsSummaryResult {
   patients: PatientSummary[];
   total: number;
   averageRecordsPerPatient: number;
 }
 
-/**
- * Result from searching clinic records
- */
 export interface SearchClinicRecordsResult {
   results: SearchResultItem[];
   total: number;
@@ -315,18 +235,12 @@ export interface SearchClinicRecordsResult {
   limit: number;
 }
 
-/**
- * Result from getting clinic critical alerts
- */
 export interface GetClinicCriticalAlertsResult {
   alerts: CriticalAlert[];
   total: number;
   unacknowledged: number;
 }
 
-/**
- * Filters for clinic EHR records query
- */
 export interface ClinicEHRRecordFilters {
   recordType?: string;
   hasCondition?: string;
@@ -336,13 +250,6 @@ export interface ClinicEHRRecordFilters {
   dateTo?: Date;
 }
 
-// ============================================================================
-// RESPONSE DTO TYPES
-// ============================================================================
-
-/**
- * Medical history response DTO
- */
 export interface MedicalHistoryResponse {
   id: string;
   userId: string;
@@ -357,9 +264,6 @@ export interface MedicalHistoryResponse {
   updatedAt: string;
 }
 
-/**
- * Lab report response DTO
- */
 export interface LabReportResponse {
   id: string;
   userId: string;
@@ -372,13 +276,12 @@ export interface LabReportResponse {
   doctorId: string;
   labName: string;
   notes: string;
+  fileUrl?: string;
+  fileKey?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-/**
- * Vital signs response DTO
- */
 export interface VitalResponse {
   id: string;
   userId: string;
@@ -393,9 +296,6 @@ export interface VitalResponse {
   updatedAt: string;
 }
 
-/**
- * Allergy response DTO
- */
 export interface AllergyResponse {
   id: string;
   userId: string;
@@ -410,9 +310,6 @@ export interface AllergyResponse {
   updatedAt: string;
 }
 
-/**
- * Medication response DTO
- */
 export interface MedicationResponse {
   id: string;
   userId: string;
@@ -432,9 +329,6 @@ export interface MedicationResponse {
   updatedAt: string;
 }
 
-/**
- * Immunization response DTO
- */
 export interface ImmunizationResponse {
   id: string;
   userId: string;
@@ -451,9 +345,6 @@ export interface ImmunizationResponse {
   updatedAt: string;
 }
 
-/**
- * Radiology report response DTO
- */
 export interface RadiologyReportResponse {
   id: string;
   userId: string;
@@ -468,9 +359,6 @@ export interface RadiologyReportResponse {
   updatedAt: string;
 }
 
-/**
- * Surgical record response DTO
- */
 export interface SurgicalRecordResponse {
   id: string;
   userId: string;
@@ -484,9 +372,6 @@ export interface SurgicalRecordResponse {
   updatedAt: string;
 }
 
-/**
- * Family history response DTO
- */
 export interface FamilyHistoryResponse {
   id: string;
   userId: string;
@@ -500,9 +385,6 @@ export interface FamilyHistoryResponse {
   updatedAt: string;
 }
 
-/**
- * Lifestyle assessment response DTO
- */
 export interface LifestyleAssessmentResponse {
   id: string;
   userId: string;
@@ -519,13 +401,6 @@ export interface LifestyleAssessmentResponse {
   updatedAt: string;
 }
 
-// ============================================================================
-// BASE ENTITY TYPES (Safe alternatives to Prisma types)
-// ============================================================================
-
-/**
- * Base MedicalHistory entity type (safe alternative to Prisma type)
- */
 export interface MedicalHistoryBase {
   id: string;
   userId: string;
@@ -540,9 +415,6 @@ export interface MedicalHistoryBase {
   updatedAt: Date;
 }
 
-/**
- * Base LabReport entity type (safe alternative to Prisma type)
- */
 export interface LabReportBase {
   id: string;
   userId: string;
@@ -554,14 +426,13 @@ export interface LabReportBase {
   labName?: string | null;
   doctorId?: string | null;
   notes?: string | null;
+  fileUrl?: string | null;
+  fileKey?: string | null;
   date: Date;
   createdAt: Date;
   updatedAt: Date;
 }
 
-/**
- * Base RadiologyReport entity type (safe alternative to Prisma type)
- */
 export interface RadiologyReportBase {
   id: string;
   userId: string;
@@ -576,9 +447,6 @@ export interface RadiologyReportBase {
   updatedAt: Date;
 }
 
-/**
- * Base SurgicalRecord entity type (safe alternative to Prisma type)
- */
 export interface SurgicalRecordBase {
   id: string;
   userId: string;
@@ -592,9 +460,6 @@ export interface SurgicalRecordBase {
   updatedAt: Date;
 }
 
-/**
- * Base Vital entity type (safe alternative to Prisma type)
- */
 export interface VitalBase {
   id: string;
   userId: string;
@@ -609,9 +474,6 @@ export interface VitalBase {
   updatedAt: Date;
 }
 
-/**
- * Base Allergy entity type (safe alternative to Prisma type)
- */
 export interface AllergyBase {
   id: string;
   userId: string;
@@ -626,9 +488,6 @@ export interface AllergyBase {
   updatedAt: Date;
 }
 
-/**
- * Base Medication entity type (safe alternative to Prisma type)
- */
 export interface MedicationBase {
   id: string;
   userId: string;
@@ -648,9 +507,6 @@ export interface MedicationBase {
   updatedAt: Date;
 }
 
-/**
- * Base Immunization entity type (safe alternative to Prisma type)
- */
 export interface ImmunizationBase {
   id: string;
   userId: string;
@@ -667,9 +523,6 @@ export interface ImmunizationBase {
   updatedAt: Date;
 }
 
-/**
- * Base FamilyHistory entity type (safe alternative to Prisma type)
- */
 export interface FamilyHistoryBase {
   id: string;
   userId: string;
@@ -683,9 +536,6 @@ export interface FamilyHistoryBase {
   updatedAt: Date;
 }
 
-/**
- * Base LifestyleAssessment entity type (safe alternative to Prisma type)
- */
 export interface LifestyleAssessmentBase {
   id: string;
   userId: string;

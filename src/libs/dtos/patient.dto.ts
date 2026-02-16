@@ -9,6 +9,7 @@ import {
   IsEnum,
   ValidateNested,
   Min,
+  IsDateString,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -59,6 +60,26 @@ export class PatientInsuranceDto {
   @IsOptional()
   @IsString()
   groupNumber?: string;
+
+  @ApiProperty({ example: 'John Doe', description: 'Primary insurance holder name' })
+  @IsString()
+  @IsNotEmpty()
+  primaryHolder!: string;
+
+  @ApiProperty({ example: '2024-01-01', description: 'Coverage start date (YYYY-MM-DD)' })
+  @IsDateString()
+  @IsNotEmpty()
+  coverageStartDate!: string;
+
+  @ApiPropertyOptional({ example: '2025-01-01', description: 'Coverage end date (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsDateString()
+  coverageEndDate?: string;
+
+  @ApiProperty({ example: 'Medical', description: 'Type of coverage (e.g., Medical, Dental)' })
+  @IsString()
+  @IsNotEmpty()
+  coverageType!: string;
 }
 
 /**
