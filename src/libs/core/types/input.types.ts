@@ -112,6 +112,7 @@ export type AppointmentCreateInput = {
   recurrencePattern?: string;
   recurrenceEndDate?: Date;
   parentAppointmentId?: string;
+  treatmentType?: string;
 };
 
 /**
@@ -137,6 +138,7 @@ export type AppointmentUpdateInput = {
   recurrencePattern?: string;
   recurrenceEndDate?: Date;
   parentAppointmentId?: string;
+  treatmentType?: string;
 };
 
 /**
@@ -154,6 +156,7 @@ export type AppointmentWhereInput = {
   priority?: string;
   isRecurring?: boolean;
   parentAppointmentId?: string;
+  treatmentType?: string;
 };
 
 /**

@@ -327,6 +327,57 @@ export class RegisterDto {
 }
 
 /**
+ * Data Transfer Object for resending verification email
+ */
+export class ResendVerificationDto {
+  @ApiProperty({
+    description: 'User email',
+    example: 'user@example.com',
+    format: 'email',
+  })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
+  @Transform(({ value }): string =>
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
+  )
+  email!: string;
+
+  @ApiProperty({
+    description: 'Clinic ID for multi-tenant context',
+    example: 'clinic-uuid-123',
+    required: false,
+  })
+  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsOptional()
+  clinicId?: string;
+}
+
+/**
+ * Data Transfer Object for verifying email
+ */
+export class VerifyEmailDto {
+  @ApiProperty({
+    description: 'User email',
+    example: 'user@example.com',
+    format: 'email',
+  })
+  @IsEmail({}, { message: 'Please provide a valid email address' })
+  @IsNotEmpty({ message: 'Email is required' })
+  @Transform(({ value }): string =>
+    typeof value === 'string' ? value.toLowerCase().trim() : (value as string)
+  )
+  email!: string;
+
+  @ApiProperty({
+    description: 'OTP code',
+    example: '123456',
+  })
+  @IsString({ message: 'OTP must be a string' })
+  @IsNotEmpty({ message: 'OTP is required' })
+  otp!: string;
+}
+
+/**
  * Data Transfer Object for user logout
  * @class LogoutDto
  * @description Contains session management options for user logout

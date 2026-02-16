@@ -59,11 +59,13 @@ export class DoctorsController {
   @ApiResponse({ status: 200, description: 'List of doctors retrieved successfully' })
   async getAllDoctors(
     @Query('specialization') specialization?: string,
-    @Query('clinicId') clinicId?: string
+    @Query('clinicId') clinicId?: string,
+    @Query('locationId') locationId?: string
   ) {
     return this.doctorsService.getAllDoctors({
       ...(specialization != null && { specialization }),
       ...(clinicId != null && { clinicId }),
+      ...(locationId != null && { locationId }),
     });
   }
 

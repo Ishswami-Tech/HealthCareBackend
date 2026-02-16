@@ -31,6 +31,9 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
+  CreateClinicExpenseDto,
+  CreateInsuranceClaimDto,
+  UpdateInsuranceClaimDto,
 } from '@dtos/billing.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
@@ -2317,5 +2320,168 @@ export class BillingService {
         }
       );
     }
+  }
+  async getStats(clinicId: string) {
+    const stats = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+
+      const revenue = (await typedClient.payment.aggregate({
+        where: { clinicId, status: PaymentStatus.COMPLETED } as PrismaDelegateArgs,
+        _sum: { amount: true },
+      } as PrismaDelegateArgs)) as unknown as { _sum: { amount: number | null } };
+
+      const expenses = (await typedClient.clinicExpense.aggregate({
+        where: { clinicId } as PrismaDelegateArgs,
+        _sum: { amount: true },
+      } as PrismaDelegateArgs)) as unknown as { _sum: { amount: number | null } };
+
+      const totalRevenue = revenue._sum?.amount || 0;
+      const totalExpenses = expenses._sum?.amount || 0;
+
+      return {
+        totalRevenue,
+        totalExpenses,
+        netProfit: totalRevenue - totalExpenses,
+      };
+    });
+
+    return stats;
+  }
+
+  // ============ Clinic Expenses ============
+
+  async createClinicExpense(data: CreateClinicExpenseDto, userId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinicExpense.create({
+          data: {
+            ...data,
+            userId,
+            date: data.date ? new Date(data.date) : new Date(),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId,
+        clinicId: data.clinicId,
+        resourceType: 'EXPENSE',
+        operation: 'CREATE',
+        resourceId: 'new',
+        userRole: 'system',
+        details: { amount: data.amount, category: data.category },
+      }
+    );
+  }
+
+  async getClinicExpenses(clinicId: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.clinicExpense.findMany({
+        where: { clinicId } as PrismaDelegateArgs,
+        orderBy: { date: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  // ============ Insurance Claims ============
+
+  async createInsuranceClaim(data: CreateInsuranceClaimDto) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.insuranceClaim.create({
+          data: {
+            ...data,
+            status: 'SUBMITTED',
+            submittedAt: new Date(),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId: data.clinicId,
+        resourceType: 'INSURANCE_CLAIM',
+        operation: 'CREATE',
+        resourceId: 'new',
+        userRole: 'system',
+        details: { claimNumber: data.claimNumber, amount: data.amount },
+      }
+    );
+  }
+
+  async updateInsuranceClaimStatus(id: string, data: UpdateInsuranceClaimDto, clinicId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.insuranceClaim.update({
+          where: { id } as PrismaDelegateArgs,
+          data: {
+            ...data,
+            responseAt: data.responseAt ? new Date(data.responseAt) : undefined,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'INSURANCE_CLAIM',
+        operation: 'UPDATE',
+        resourceId: id,
+        userRole: 'system',
+        details: data as unknown as Record<string, unknown>,
+      }
+    );
+  }
+
+  async getInsuranceClaims(clinicId: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.insuranceClaim.findMany({
+        where: { clinicId } as PrismaDelegateArgs,
+        include: {
+          patient: { include: { user: { select: { name: true } } } },
+        } as PrismaDelegateArgs,
+        orderBy: { submittedAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
+    });
+  }
+
+  async deleteClinicExpense(id: string, clinicId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.clinicExpense.delete({
+          where: { id, clinicId } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'EXPENSE',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+      }
+    );
+  }
+
+  async deleteInsuranceClaim(id: string, clinicId: string) {
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.insuranceClaim.delete({
+          where: { id, clinicId } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'INSURANCE_CLAIM',
+        operation: 'DELETE',
+        resourceId: id,
+        userRole: 'system',
+      }
+    );
   }
 }

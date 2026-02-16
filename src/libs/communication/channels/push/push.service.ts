@@ -7,53 +7,30 @@ import { LogType, LogLevel } from '@core/types';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 
-/**
- * Push notification data interface
- * @interface PushNotificationData
- */
 export interface PushNotificationData {
-  /** Notification title */
-  readonly title: string;
-  /** Notification body text */
-  readonly body: string;
-  /** Optional custom data payload */
-  readonly data?: Record<string, string>;
+  title: string;
+  body: string;
+  imageUrl?: string;
+  data?: Record<string, string>;
+  initiatorId?: string;
+  initiatorRole?: string;
 }
 
-/**
- * Push notification result interface
- * @interface PushNotificationResult
- */
 export interface PushNotificationResult {
-  /** Whether the operation was successful */
-  readonly success: boolean;
-  /** Message ID from Firebase (single device) */
-  readonly messageId?: string;
-  /** Number of successful deliveries (multiple devices) */
-  readonly successCount?: number;
-  /** Number of failed deliveries (multiple devices) */
-  readonly failureCount?: number;
-  /** Error message if operation failed */
-  readonly error?: string;
-  /** Provider used for delivery (fcm or sns) */
-  readonly provider?: 'fcm' | 'sns';
-  /** Whether fallback was used */
-  readonly usedFallback?: boolean;
+  success: boolean;
+  messageId?: string;
+  error?: string;
+  provider?: string;
+  usedFallback?: boolean;
+  successCount?: number;
+  failureCount?: number;
+  results?: Array<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+  }>;
 }
 
-/**
- * Push notification service using Firebase Cloud Messaging (Primary)
- * with AWS SNS as backup provider
- *
- * Architecture:
- * - FCM (Firebase Cloud Messaging) as primary provider (free, reliable)
- * - AWS SNS as backup provider (HIPAA-compliant, high availability)
- * - Automatic fallback: If FCM fails, retry with SNS
- * - Platform detection: Automatically detects iOS/Android for SNS
- *
- * @class PushNotificationService
- * @implements {OnModuleInit}
- */
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
   private firebaseApp: admin.app.App | null = null;
@@ -61,13 +38,6 @@ export class PushNotificationService implements OnModuleInit {
   private snsBackupService?: SNSBackupService;
   private deviceTokenService?: DeviceTokenService;
 
-  /**
-   * Creates an instance of PushNotificationService
-   * @param configService - Configuration service for environment variables
-   * @param loggingService - Logging service for HIPAA-compliant logging
-   * @param snsBackupService - Optional SNS backup service (injected via forwardRef to avoid circular dependency)
-   * @param deviceTokenService - Optional device token service for platform detection
-   */
   constructor(
     private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
@@ -77,7 +47,6 @@ export class PushNotificationService implements OnModuleInit {
     @Inject(forwardRef(() => DeviceTokenService))
     deviceTokenService?: DeviceTokenService
   ) {
-    // Only assign if value is defined to satisfy exactOptionalPropertyTypes
     if (snsBackupService !== undefined) {
       this.snsBackupService = snsBackupService;
     }
@@ -86,20 +55,12 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Initializes Firebase on module startup
-   */
   onModuleInit(): void {
     this.initializeFirebase();
   }
 
-  /**
-   * Initializes Firebase Admin SDK
-   * @private
-   */
   private initializeFirebase(): void {
     try {
-      // Use ConfigService (which uses dotenv) for environment variable access
       const projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
       const privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY');
       const clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
@@ -115,7 +76,6 @@ export class PushNotificationService implements OnModuleInit {
         return;
       }
 
-      // Initialize Firebase Admin SDK if not already initialized
       if (!admin.apps.length) {
         this.firebaseApp = admin.initializeApp({
           credential: admin.credential.cert({
@@ -150,23 +110,13 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Sends push notification to a single device
-   * Uses FCM as primary, falls back to SNS if FCM fails
-   * @param deviceToken - Firebase device token
-   * @param notification - Notification data
-   * @param userId - Optional user ID for platform detection
-   * @returns Promise resolving to notification result
-   */
   async sendToDevice(
     deviceToken: string,
     notification: PushNotificationData,
     userId?: string
   ): Promise<PushNotificationResult> {
-    // Try FCM first (primary provider)
-    const fcmResult = await this.sendViaFCM(deviceToken, notification);
+    const fcmResult = await this.sendViaFCM(deviceToken, notification, userId);
 
-    // If FCM succeeded, return immediately
     if (fcmResult.success) {
       return {
         ...fcmResult,
@@ -175,7 +125,6 @@ export class PushNotificationService implements OnModuleInit {
       };
     }
 
-    // FCM failed, try SNS backup
     void this.loggingService.log(
       LogType.NOTIFICATION,
       LogLevel.WARN,
@@ -186,6 +135,8 @@ export class PushNotificationService implements OnModuleInit {
         title: notification.title,
         fcmError: fcmResult.error,
         userId,
+        initiatorId: notification.initiatorId,
+        initiatorRole: notification.initiatorRole,
       }
     );
 
@@ -202,6 +153,8 @@ export class PushNotificationService implements OnModuleInit {
           title: notification.title,
           messageId: snsResult.messageId,
           userId,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
     } else {
@@ -216,6 +169,8 @@ export class PushNotificationService implements OnModuleInit {
           fcmError: fcmResult.error,
           snsError: snsResult.error,
           userId,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
     }
@@ -227,13 +182,10 @@ export class PushNotificationService implements OnModuleInit {
     };
   }
 
-  /**
-   * Sends push notification via FCM (primary provider)
-   * @private
-   */
   private async sendViaFCM(
     deviceToken: string,
-    notification: PushNotificationData
+    notification: PushNotificationData,
+    userId?: string
   ): Promise<PushNotificationResult> {
     if (!this.isInitialized || !this.firebaseApp) {
       return { success: false, error: 'FCM service not initialized' };
@@ -288,6 +240,9 @@ export class PushNotificationService implements OnModuleInit {
           messageId: response,
           deviceToken: this.maskToken(deviceToken),
           title: notification.title,
+          userId,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -303,6 +258,9 @@ export class PushNotificationService implements OnModuleInit {
           stack: error instanceof Error ? error.stack : undefined,
           deviceToken: this.maskToken(deviceToken),
           title: notification.title,
+          userId,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -313,17 +271,11 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Sends push notification via SNS (backup provider)
-   * Automatically detects platform (iOS/Android) from device token service
-   * @private
-   */
   private async sendViaSNS(
     deviceToken: string,
     notification: PushNotificationData,
     userId?: string
   ): Promise<PushNotificationResult> {
-    // Check if SNS backup service is available
     if (!this.snsBackupService || !this.snsBackupService.isHealthy()) {
       return {
         success: false,
@@ -331,8 +283,7 @@ export class PushNotificationService implements OnModuleInit {
       };
     }
 
-    // Detect platform from device token service if available
-    let platform: 'ios' | 'android' = 'android'; // Default to Android
+    let platform: 'ios' | 'android' = 'android';
 
     if (this.deviceTokenService && userId) {
       const userTokens = this.deviceTokenService.getUserTokens(userId);
@@ -342,8 +293,6 @@ export class PushNotificationService implements OnModuleInit {
       }
     }
 
-    // If platform still not detected, try heuristic (iOS tokens are typically longer)
-    // This is a fallback - proper detection should come from DeviceTokenService
     if (platform === 'android' && deviceToken.length > 100) {
       platform = 'ios';
     }
@@ -364,12 +313,6 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Sends push notification to multiple devices
-   * @param deviceTokens - Array of Firebase device tokens
-   * @param notification - Notification data
-   * @returns Promise resolving to notification result
-   */
   async sendToMultipleDevices(
     deviceTokens: string[],
     notification: PushNotificationData
@@ -420,6 +363,8 @@ export class PushNotificationService implements OnModuleInit {
           failureCount: response.failureCount,
           totalTokens: deviceTokens.length,
           title: notification.title,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -435,6 +380,8 @@ export class PushNotificationService implements OnModuleInit {
               {
                 deviceToken: this.maskToken(deviceTokens[idx] || ''),
                 error: resp.error.message,
+                initiatorId: notification.initiatorId,
+                initiatorRole: notification.initiatorRole,
               }
             );
           }
@@ -469,6 +416,8 @@ export class PushNotificationService implements OnModuleInit {
               {
                 deviceToken: this.maskToken(failedToken),
                 error: error instanceof Error ? error.message : 'Unknown error',
+                initiatorId: notification.initiatorId,
+                initiatorRole: notification.initiatorRole,
               }
             );
           }
@@ -479,7 +428,7 @@ export class PushNotificationService implements OnModuleInit {
         success: response.successCount > 0,
         successCount: response.successCount,
         failureCount: response.failureCount,
-        provider: response.failureCount === 0 ? 'fcm' : 'fcm', // Mixed if fallback used
+        provider: response.failureCount === 0 ? 'fcm' : 'fcm',
         usedFallback: response.failureCount < deviceTokens.length - response.successCount,
       };
     } catch (error) {
@@ -493,6 +442,8 @@ export class PushNotificationService implements OnModuleInit {
           stack: error instanceof Error ? error.stack : undefined,
           tokenCount: deviceTokens.length,
           title: notification.title,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -503,12 +454,6 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Sends push notification to a topic
-   * @param topic - Firebase topic name
-   * @param notification - Notification data
-   * @returns Promise resolving to notification result
-   */
   async sendToTopic(
     topic: string,
     notification: PushNotificationData
@@ -558,6 +503,8 @@ export class PushNotificationService implements OnModuleInit {
           messageId: response,
           topic,
           title: notification.title,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -573,6 +520,8 @@ export class PushNotificationService implements OnModuleInit {
           stack: error instanceof Error ? error.stack : undefined,
           topic,
           title: notification.title,
+          initiatorId: notification.initiatorId,
+          initiatorRole: notification.initiatorRole,
         }
       );
 
@@ -583,12 +532,6 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Subscribes a device to a topic
-   * @param deviceToken - Firebase device token
-   * @param topic - Topic name to subscribe to
-   * @returns Promise resolving to true if successful
-   */
   async subscribeToTopic(deviceToken: string, topic: string): Promise<boolean> {
     if (!this.isInitialized || !this.firebaseApp) {
       void this.loggingService.log(
@@ -631,12 +574,6 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Unsubscribes a device from a topic
-   * @param deviceToken - Firebase device token
-   * @param topic - Topic name to unsubscribe from
-   * @returns Promise resolving to true if successful
-   */
   async unsubscribeFromTopic(deviceToken: string, topic: string): Promise<boolean> {
     if (!this.isInitialized || !this.firebaseApp) {
       void this.loggingService.log(
@@ -679,21 +616,11 @@ export class PushNotificationService implements OnModuleInit {
     }
   }
 
-  /**
-   * Masks device token for logging (privacy)
-   * @param token - Device token to mask
-   * @returns Masked token string
-   * @private
-   */
   private maskToken(token: string): string {
     if (!token || token.length < 10) return 'INVALID_TOKEN';
     return `${token.substring(0, 6)}...${token.substring(token.length - 4)}`;
   }
 
-  /**
-   * Checks if the push notification service is healthy and initialized
-   * @returns True if service is ready to send notifications
-   */
   isHealthy(): boolean {
     return this.isInitialized;
   }

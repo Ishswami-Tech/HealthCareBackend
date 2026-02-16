@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, PrismaTransactionClientWithDelegates } from '@core/types';
 import { DatabaseService } from '@infrastructure/database';
 import type {
   AppointmentMetrics,
@@ -22,6 +22,17 @@ export type {
   AnalyticsFilter,
   AnalyticsResult,
 };
+
+interface HourlyStats {
+  timeSlot: string;
+  totalAppointments: number;
+  completedAppointments: number;
+  noShowRate: number;
+  averageDuration: number;
+  efficiency: number;
+  durations: number[];
+  noShows: number;
+}
 
 @Injectable()
 export class AppointmentAnalyticsService {
@@ -283,19 +294,84 @@ export class AppointmentAnalyticsService {
         return cached as AnalyticsResult;
       }
 
-      // Mock doctor metrics
-      const metrics: DoctorMetrics = {
-        doctorId,
-        doctorName: 'Dr. Smith',
-        totalAppointments: 50,
-        completedAppointments: 45,
-        averageRating: 4.5,
-        noShowRate: 10,
-        averageDuration: 40,
-        patientSatisfaction: 4.2,
-        revenue: 15000,
-        efficiency: 90,
-      };
+      const metrics = await this.databaseService.executeHealthcareRead(async baseClient => {
+        const client = baseClient as unknown as PrismaTransactionClientWithDelegates;
+        // Get doctor and related user info
+        const doctor = await client.doctor.findUnique({
+          where: { id: doctorId },
+          include: { user: { select: { name: true } } },
+        });
+
+        if (!doctor) {
+          throw new Error('Doctor not found');
+        }
+
+        const whereClause = {
+          doctorId,
+          date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        };
+
+        // Query all metrics in parallel
+        const [
+          totalAppointments,
+          completedAppointments,
+          noShowAppointments,
+          avgRatingResult,
+          revenueResult,
+          avgDurationResult,
+        ] = await Promise.all([
+          client.appointment.count({ where: whereClause }),
+          client.appointment.count({
+            where: { ...whereClause, status: 'COMPLETED' },
+          }),
+          client.appointment.count({
+            where: { ...whereClause, status: 'NO_SHOW' },
+          }),
+          client.review.aggregate({
+            where: { doctorId },
+            _avg: { rating: true },
+          }),
+          client.payment.aggregate({
+            where: {
+              appointment: { doctorId },
+              status: 'COMPLETED',
+              createdAt: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+            _sum: { amount: true },
+          }),
+          client.appointment.aggregate({
+            where: { ...whereClause, status: 'COMPLETED' },
+            _avg: { duration: true },
+          }),
+        ]);
+
+        const noShowRate =
+          totalAppointments > 0 ? (noShowAppointments / totalAppointments) * 100 : 0;
+        const efficiency =
+          totalAppointments > 0 ? (completedAppointments / totalAppointments) * 100 : 0;
+
+        const doctorMetrics: DoctorMetrics = {
+          doctorId,
+          doctorName: doctor.user?.name || 'Unknown',
+          totalAppointments,
+          completedAppointments,
+          averageRating: avgRatingResult._avg?.rating || 0,
+          noShowRate: Math.round(noShowRate * 10) / 10,
+          averageDuration: Math.round(avgDurationResult._avg?.duration || 0),
+          patientSatisfaction: avgRatingResult._avg?.rating || 0,
+          revenue:
+            (revenueResult as unknown as { _sum: { amount: number | null } })._sum?.amount || 0,
+          efficiency: Math.round(efficiency * 10) / 10,
+        };
+
+        return doctorMetrics;
+      });
 
       const result: AnalyticsResult = {
         success: true,
@@ -350,20 +426,101 @@ export class AppointmentAnalyticsService {
         return cached as AnalyticsResult;
       }
 
-      // Mock clinic metrics
-      const metrics: ClinicMetrics = {
-        clinicId,
-        clinicName: 'Healthcare Clinic',
-        totalAppointments: 200,
-        totalDoctors: 5,
-        totalPatients: 150,
-        averageWaitTime: 20,
-        queueEfficiency: 85,
-        patientSatisfaction: 4.3,
-        revenue: 60000,
-        costPerAppointment: 300,
-        utilizationRate: 75,
-      };
+      const metrics = await this.databaseService.executeHealthcareRead(async baseClient => {
+        const client = baseClient as unknown as PrismaTransactionClientWithDelegates;
+
+        // Get clinic info
+        const clinic = await client.clinic.findUnique({
+          where: { id: clinicId },
+          select: { name: true },
+        });
+
+        if (!clinic) {
+          throw new Error('Clinic not found');
+        }
+
+        const whereClause = {
+          clinicId,
+          date: {
+            gte: dateRange.from,
+            lte: dateRange.to,
+          },
+        };
+
+        // Query metrics in parallel
+        const [
+          totalAppointments,
+          totalDoctors,
+          totalPatients,
+          avgRatingResult,
+          revenueResult,
+          expenseResult,
+        ] = await Promise.all([
+          client.appointment.count({ where: whereClause }),
+          client.doctorClinic.count({
+            where: { clinicId },
+          }),
+          client.appointment
+            .groupBy({
+              by: ['patientId'],
+              where: whereClause,
+            })
+            .then((res: unknown[]) => res.length),
+          client.review.aggregate({
+            where: { clinicId },
+            _avg: { rating: true },
+          }),
+          client.payment.aggregate({
+            where: {
+              clinicId,
+              status: 'COMPLETED',
+              createdAt: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+            _sum: { amount: true },
+          }),
+          client.clinicExpense.aggregate({
+            where: {
+              clinicId,
+              date: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+            _sum: { amount: true },
+          }),
+        ]);
+
+        const revenue =
+          (revenueResult as unknown as { _sum: { amount: number | null } })._sum?.amount || 0;
+        const expenses =
+          (expenseResult as unknown as { _sum: { amount: number | null } })._sum?.amount || 0;
+        const costPerAppointment = totalAppointments > 0 ? expenses / totalAppointments : 0;
+
+        // Use wait time analytics for additional details
+        const waitTimeAnalytics = await this.getWaitTimeAnalytics(clinicId, dateRange);
+        const averageWaitTime = waitTimeAnalytics.success
+          ? (waitTimeAnalytics.data as { averageWaitTime: number }).averageWaitTime
+          : 0;
+
+        const clinicMetrics: ClinicMetrics = {
+          clinicId,
+          clinicName: clinic.name,
+          totalAppointments,
+          totalDoctors,
+          totalPatients,
+          averageWaitTime,
+          queueEfficiency: 85, // Placeholder for now
+          patientSatisfaction: avgRatingResult._avg?.rating || 0,
+          revenue,
+          costPerAppointment: Math.round(costPerAppointment),
+          utilizationRate: 75, // Placeholder for now
+        };
+
+        return clinicMetrics;
+      });
 
       const result: AnalyticsResult = {
         success: true,
@@ -418,37 +575,72 @@ export class AppointmentAnalyticsService {
         return cached as AnalyticsResult;
       }
 
-      // Mock time slot metrics
-      const timeSlots: TimeSlotMetrics[] = [
-        {
-          timeSlot: '09:00-10:00',
-          totalAppointments: 20,
-          completedAppointments: 18,
-          noShowRate: 10,
-          averageDuration: 45,
-          efficiency: 90,
-        },
-        {
-          timeSlot: '10:00-11:00',
-          totalAppointments: 25,
-          completedAppointments: 23,
-          noShowRate: 8,
-          averageDuration: 42,
-          efficiency: 92,
-        },
-        {
-          timeSlot: '11:00-12:00',
-          totalAppointments: 30,
-          completedAppointments: 28,
-          noShowRate: 6.7,
-          averageDuration: 40,
-          efficiency: 93,
-        },
-      ];
+      const data = await this.databaseService.executeHealthcareRead(async baseClient => {
+        const client = baseClient as unknown as PrismaTransactionClientWithDelegates;
+        const appointments = await client.appointment.findMany({
+          where: {
+            clinicId,
+            date: {
+              gte: dateRange.from,
+              lte: dateRange.to,
+            },
+          },
+          select: {
+            time: true,
+            status: true,
+            duration: true,
+          },
+        });
+
+        // Group by hour
+        const hourlyStats: Record<string, HourlyStats> = {};
+
+        appointments.forEach(apt => {
+          const hour = apt.time.split(':')[0] || '00';
+          const slot = `${hour}:00-${Number(hour) + 1}:00`;
+
+          if (!hourlyStats[slot]) {
+            hourlyStats[slot] = {
+              timeSlot: slot,
+              totalAppointments: 0,
+              completedAppointments: 0,
+              noShowRate: 0,
+              averageDuration: 0,
+              efficiency: 0,
+              durations: [],
+              noShows: 0,
+            };
+          }
+
+          const stats = hourlyStats[slot];
+          stats.totalAppointments++;
+          if (apt.status === 'COMPLETED') {
+            stats.completedAppointments++;
+            if (apt.duration) stats.durations.push(apt.duration);
+          } else if (apt.status === 'NO_SHOW') {
+            stats.noShows++;
+          }
+        });
+
+        const timeSlotMetrics: TimeSlotMetrics[] = Object.values(hourlyStats).map(stats => ({
+          timeSlot: stats.timeSlot,
+          totalAppointments: stats.totalAppointments,
+          completedAppointments: stats.completedAppointments,
+          noShowRate: Math.round((stats.noShows / stats.totalAppointments) * 100) || 0,
+          averageDuration:
+            stats.durations.length > 0
+              ? Math.round(stats.durations.reduce((a, b) => a + b, 0) / stats.durations.length)
+              : 0,
+          efficiency:
+            Math.round((stats.completedAppointments / stats.totalAppointments) * 100) || 0,
+        }));
+
+        return timeSlotMetrics;
+      });
 
       const result: AnalyticsResult = {
         success: true,
-        data: timeSlots,
+        data,
         generatedAt: new Date(),
         filters: {
           clinicId,
@@ -499,30 +691,51 @@ export class AppointmentAnalyticsService {
         return cached as AnalyticsResult;
       }
 
-      // Mock satisfaction analytics
-      const satisfactionData = {
-        overallRating: 4.3,
-        totalResponses: 120,
-        ratingDistribution: {
-          5: 45,
-          4: 35,
-          3: 25,
-          2: 10,
-          1: 5,
-        },
-        feedbackCategories: {
-          'Doctor Communication': 4.5,
-          'Wait Time': 3.8,
-          Facility: 4.2,
-          'Staff Friendliness': 4.4,
-          'Appointment Scheduling': 4.1,
-        },
-        improvementSuggestions: [
-          'Reduce wait times',
-          'Improve parking availability',
-          'Better appointment scheduling',
-        ],
-      };
+      const satisfactionData = await this.databaseService.executeHealthcareRead(
+        async baseClient => {
+          const client = baseClient as unknown as PrismaTransactionClientWithDelegates;
+          const reviews = await client.review.findMany({
+            where: {
+              clinicId,
+              createdAt: {
+                gte: dateRange.from,
+                lte: dateRange.to,
+              },
+            },
+          });
+
+          const totalResponses = reviews.length;
+          const ratingDistribution: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+          let sumRating = 0;
+
+          reviews.forEach(rev => {
+            const r = Math.min(5, Math.max(1, Math.round(rev.rating)));
+            ratingDistribution[r] = (ratingDistribution[r] || 0) + 1;
+            sumRating += rev.rating;
+          });
+
+          const overallRating =
+            totalResponses > 0 ? Math.round((sumRating / totalResponses) * 10) / 10 : 0;
+
+          return {
+            overallRating,
+            totalResponses,
+            ratingDistribution,
+            feedbackCategories: {
+              'General Satisfaction': overallRating,
+              // Categories are not explicitly in schema, using overall for defaults
+              'Doctor Communication': overallRating,
+              'Wait Time': overallRating,
+              Facility: overallRating,
+              'Staff Friendliness': overallRating,
+            },
+            improvementSuggestions: reviews
+              .filter(r => r.rating <= 3 && r.comment)
+              .map(r => r.comment as string)
+              .slice(0, 10),
+          };
+        }
+      );
 
       const result: AnalyticsResult = {
         success: true,

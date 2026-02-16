@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -27,6 +28,9 @@ import {
   UpdatePaymentDto,
   CreateInvoiceDto,
   UpdateInvoiceDto,
+  CreateClinicExpenseDto,
+  CreateInsuranceClaimDto,
+  UpdateInsuranceClaimDto,
 } from '@dtos/billing.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -35,6 +39,7 @@ import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
+import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
@@ -66,6 +71,7 @@ export class BillingController {
     tags: ['billing', 'billing_plans'],
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getBillingPlans(
     @Query('clinicId') clinicId?: string,
     @Request() req?: AuthenticatedRequest
@@ -90,6 +96,7 @@ export class BillingController {
     tags: ['billing', 'billing_plans', 'billing_plan:{id}'],
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getBillingPlan(@Param('id') id: string) {
     return this.billingService.getBillingPlan(id);
   }
@@ -135,7 +142,9 @@ export class BillingController {
     ttl: 1800, // 30 minutes
     tags: ['billing', 'subscriptions', 'user:{userId}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getUserSubscriptions(
     @Param('userId') userId: string,
     @Request() req?: AuthenticatedRequest
@@ -152,7 +161,9 @@ export class BillingController {
     ttl: 1800, // 30 minutes
     tags: ['billing', 'subscriptions', 'subscription:{id}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getSubscription(@Param('id') id: string) {
     return this.billingService.getSubscription(id);
   }
@@ -202,7 +213,9 @@ export class BillingController {
     ttl: 900, // 15 minutes
     tags: ['billing', 'invoices', 'user:{userId}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getUserInvoices(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
     const requestingUserId = req?.user?.['sub'] as string | undefined;
@@ -225,7 +238,9 @@ export class BillingController {
     ttl: 1800, // 30 minutes
     tags: ['billing', 'invoices', 'invoice:{id}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getInvoice(@Param('id') id: string) {
     return this.billingService.getInvoice(id);
   }
@@ -268,7 +283,9 @@ export class BillingController {
     ttl: 900, // 15 minutes
     tags: ['billing', 'payments', 'user:{userId}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getUserPayments(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
     const role = req?.user?.['role'];
     const requestingUserId = req?.user?.['sub'] as string | undefined;
@@ -291,6 +308,7 @@ export class BillingController {
     ttl: 1800, // 30 minutes
     tags: ['billing', 'payments', 'payment:{id}'],
     enableSWR: true,
+    containsPHI: true,
   })
   async getPayment(@Param('id') id: string) {
     return this.billingService.getPayment(id);
@@ -357,6 +375,7 @@ export class BillingController {
     tags: ['billing', 'analytics', 'revenue', 'clinic:{clinicId}'],
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getClinicRevenue(
     @Query('clinicId') clinicId: string,
     @Query('startDate') startDate?: string,
@@ -383,6 +402,7 @@ export class BillingController {
     tags: ['billing', 'analytics', 'subscriptions', 'clinic:{clinicId}'],
     enableSWR: true,
   })
+  @RateLimitAPI()
   async getSubscriptionMetrics(
     @Query('clinicId') clinicId: string,
     @Request() req?: AuthenticatedRequest
@@ -444,7 +464,9 @@ export class BillingController {
     ttl: 1800, // 30 minutes
     tags: ['billing', 'subscriptions', 'user:{userId}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getActiveUserSubscription(
     @Param('userId') userId: string,
     @Query('clinicId') clinicId: string
@@ -459,7 +481,9 @@ export class BillingController {
     ttl: 300, // 5 minutes
     tags: ['billing', 'subscriptions', 'subscription:{id}'],
     enableSWR: true,
+    containsPHI: true,
   })
+  @RateLimitAPI()
   async getSubscriptionUsageStats(@Param('id') subscriptionId: string) {
     return this.billingService.getSubscriptionUsageStats(subscriptionId);
   }
@@ -592,5 +616,72 @@ export class BillingController {
       paymentIntent: result.paymentIntent,
       message: 'Payment intent created successfully. Redirect user to payment gateway.',
     };
+  }
+
+  // ============ Clinic Expenses ============
+
+  @Post('expenses')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'create')
+  async createExpense(@Body() dto: CreateClinicExpenseDto, @Request() req: AuthenticatedRequest) {
+    const userId = req.user?.['sub'] as string;
+    return this.billingService.createClinicExpense(dto, userId);
+  }
+
+  @Get('expenses')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'read')
+  async getExpenses(@Query('clinicId') clinicId: string) {
+    return this.billingService.getClinicExpenses(clinicId);
+  }
+
+  @Delete('expenses/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'delete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteExpense(@Param('id') id: string, @Query('clinicId') clinicId: string) {
+    await this.billingService.deleteClinicExpense(id, clinicId);
+  }
+
+  // ============ Insurance Claims ============
+
+  @Post('insurance-claims')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'create')
+  async createInsuranceClaim(@Body() dto: CreateInsuranceClaimDto) {
+    return this.billingService.createInsuranceClaim(dto);
+  }
+
+  @Patch('insurance-claims/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'update')
+  async updateInsuranceClaim(
+    @Param('id') id: string,
+    @Body() dto: UpdateInsuranceClaimDto,
+    @Query('clinicId') clinicId: string
+  ) {
+    return this.billingService.updateInsuranceClaimStatus(id, dto, clinicId);
+  }
+
+  @Get('insurance-claims')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'read')
+  async getInsuranceClaims(@Query('clinicId') clinicId: string) {
+    return this.billingService.getInsuranceClaims(clinicId);
+  }
+
+  @Delete('insurance-claims/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('billing', 'delete')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteInsuranceClaim(@Param('id') id: string, @Query('clinicId') clinicId: string) {
+    await this.billingService.deleteInsuranceClaim(id, clinicId);
+  }
+
+  @Get('dashboard/financial-stats')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('reports', 'read')
+  async getFinancialStats(@Query('clinicId') clinicId: string) {
+    return this.billingService.getStats(clinicId);
   }
 }

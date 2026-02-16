@@ -50,44 +50,40 @@ export enum AppointmentStatus {
  * Appointment type enumeration
  * @enum {string} AppointmentType
  * @description Defines the different types of appointments available
- * @example AppointmentType.CONSULTATION
+ * @example AppointmentType.IN_PERSON
  */
 export enum AppointmentType {
-  // Healthcare Appointment Types
+  IN_PERSON = 'IN_PERSON',
+  VIDEO_CALL = 'VIDEO_CALL',
+  HOME_VISIT = 'HOME_VISIT',
+}
+
+/**
+ * Treatment type enumeration
+ * @enum {string} TreatmentType
+ * @description Defines the clinical intent of the appointment
+ */
+export enum TreatmentType {
   GENERAL_CONSULTATION = 'GENERAL_CONSULTATION',
-  CONSULTATION = 'CONSULTATION',
   FOLLOW_UP = 'FOLLOW_UP',
-  EMERGENCY = 'EMERGENCY',
   THERAPY = 'THERAPY',
   SURGERY = 'SURGERY',
   LAB_TEST = 'LAB_TEST',
   IMAGING = 'IMAGING',
   VACCINATION = 'VACCINATION',
-  PHYSICAL_EXAM = 'PHYSICAL_EXAM',
-  MENTAL_HEALTH = 'MENTAL_HEALTH',
-  DENTAL = 'DENTAL',
-  EYE_EXAM = 'EYE_EXAM',
-  PHYSIOTHERAPY = 'PHYSIOTHERAPY',
-  NUTRITION = 'NUTRITION',
-  ROUTINE_CHECKUP = 'ROUTINE_CHECKUP',
-  SPECIALIST_VISIT = 'SPECIALIST_VISIT',
-  // Ayurveda & Alternative Medicine
-  AYURVEDA = 'AYURVEDA',
+  // Ayurveda Types
+  VIDDHAKARMA = 'VIDDHAKARMA',
+  AGNIKARMA = 'AGNIKARMA',
   PANCHAKARMA = 'PANCHAKARMA',
+  NADI_PARIKSHA = 'NADI_PARIKSHA',
+  DOSHA_ANALYSIS = 'DOSHA_ANALYSIS',
   SHIRODHARA = 'SHIRODHARA',
   VIRECHANA = 'VIRECHANA',
+  ABHYANGA = 'ABHYANGA',
+  SWEDANA = 'SWEDANA',
   BASTI = 'BASTI',
   NASYA = 'NASYA',
   RAKTAMOKSHANA = 'RAKTAMOKSHANA',
-  AGNIKARMA = 'AGNIKARMA',
-  VIDDHAKARMA = 'VIDDHAKARMA',
-  NADI_PARIKSHA = 'NADI_PARIKSHA',
-  DOSHA_ANALYSIS = 'DOSHA_ANALYSIS',
-  // Consultation Types
-  IN_PERSON = 'IN_PERSON',
-  VIDEO_CALL = 'VIDEO_CALL',
-  HOME_VISIT = 'HOME_VISIT',
-  TELEMEDICINE = 'TELEMEDICINE',
 }
 
 /**
@@ -263,13 +259,23 @@ export class CreateAppointmentDto {
   duration!: number;
 
   @ApiProperty({
-    example: 'CONSULTATION',
-    description: 'Type of appointment',
+    example: 'IN_PERSON',
+    description: 'Type of appointment (Mode)',
     enum: AppointmentType,
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
   @IsNotEmpty({ message: 'Appointment type is required' })
   type!: AppointmentType;
+
+  @ApiPropertyOptional({
+    example: 'GENERAL_CONSULTATION',
+    description: 'Clinical intent of the appointment',
+    enum: TreatmentType,
+    default: TreatmentType.GENERAL_CONSULTATION,
+  })
+  @IsOptional()
+  @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
+  treatmentType?: TreatmentType = TreatmentType.GENERAL_CONSULTATION;
 
   @ApiPropertyOptional({
     example: 'MEDIUM',
@@ -363,11 +369,19 @@ export class UpdateAppointmentDto {
     example: 'HIGH',
     description: 'New appointment priority level',
   })
-  @IsOptional()
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
   })
   priority?: AppointmentPriority;
+
+  @ApiPropertyOptional({
+    example: 'GENERAL_CONSULTATION',
+    description: 'New treatment type',
+    enum: TreatmentType,
+  })
+  @IsOptional()
+  @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
+  treatmentType?: TreatmentType;
 
   @ApiPropertyOptional({
     example: 'Updated appointment notes',
@@ -476,7 +490,7 @@ export class AppointmentResponseDto {
   duration!: number;
 
   @ApiProperty({
-    example: 'CONSULTATION',
+    example: 'IN_PERSON',
     description: 'Type of appointment',
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
@@ -490,6 +504,15 @@ export class AppointmentResponseDto {
     message: 'Status must be a valid appointment status',
   })
   status!: AppointmentStatus;
+
+  @ApiPropertyOptional({
+    example: 'GENERAL_CONSULTATION',
+    description: 'Clinical intent of the appointment',
+    enum: TreatmentType,
+  })
+  @IsOptional()
+  @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
+  treatmentType?: TreatmentType;
 
   @ApiProperty({
     example: 'MEDIUM',
@@ -1045,6 +1068,22 @@ export class CompleteAppointmentDto {
   @IsOptional()
   @IsString({ message: 'Notes must be a string' })
   notes?: string;
+
+  // --- Check-in Specific Fields ---
+  @ApiPropertyOptional({ description: 'QR Code for check-in verification' })
+  @IsOptional()
+  @IsString()
+  qrCode?: string;
+
+  @ApiPropertyOptional({ description: 'Method of check-in (QR, MANUAL, LOCATION, etc.)' })
+  @IsOptional()
+  @IsString()
+  checkInMethod?: string;
+
+  @ApiPropertyOptional({ description: 'Location ID for check-in', required: false })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
 
   @ApiPropertyOptional({ description: 'Diagnosis', required: false })
   @IsOptional()
@@ -1629,4 +1668,132 @@ export class DoctorAvailabilityResponseDto {
   })
   @IsString({ message: 'Message must be a string' })
   message!: string;
+}
+
+/**
+ * Data Transfer Object for consolidated appointment status updates
+ * @class UpdateAppointmentStatusDto
+ * @description Unified DTO for managing appointment state transitions (check-in, start, complete, cancel, etc.)
+ */
+export class UpdateAppointmentStatusDto {
+  @ApiProperty({
+    description: 'New status for the appointment',
+    enum: AppointmentStatus,
+    example: 'CHECKED_IN',
+  })
+  @IsEnum(AppointmentStatus, { message: 'Status must be a valid appointment status' })
+  status!: AppointmentStatus;
+
+  @ApiPropertyOptional({
+    description: 'Reason for status change (required for cancellation/force check-in)',
+    example: 'Patient arrived late',
+  })
+  @IsOptional()
+  @IsString({ message: 'Reason must be a string' })
+  reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Notes related to the status change',
+    example: 'Patient reports mild fever',
+  })
+  @IsOptional()
+  @IsString({ message: 'Notes must be a string' })
+  notes?: string;
+
+  // --- Check-in Specific Fields ---
+  @ApiPropertyOptional({ description: 'QR Code for check-in verification' })
+  @IsOptional()
+  @IsString()
+  qrCode?: string;
+
+  @ApiPropertyOptional({ description: 'Method of check-in (QR, MANUAL, LOCATION, etc.)' })
+  @IsOptional()
+  @IsString()
+  checkInMethod?: string;
+
+  @ApiPropertyOptional({ description: 'Location ID for check-in' })
+  @IsOptional()
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId?: string;
+
+  @ApiPropertyOptional({ description: 'Coordinates for location validation' })
+  @IsOptional()
+  @IsObject({ message: 'Coordinates must be an object' })
+  coordinates?: { lat: number; lng: number };
+
+  @ApiPropertyOptional({ description: 'Device info for audit' })
+  @IsOptional()
+  @IsObject()
+  deviceInfo?: Record<string, unknown>;
+
+  // --- Consultation Specific Fields ---
+  @ApiPropertyOptional({ description: 'Type of consultation' })
+  @IsOptional()
+  @IsString()
+  consultationType?: string;
+
+  // --- Completion Specific Fields ---
+  @ApiPropertyOptional({ description: 'Diagnosis' })
+  @IsOptional()
+  @IsString()
+  diagnosis?: string;
+
+  @ApiPropertyOptional({ description: 'Treatment Plan' })
+  @IsOptional()
+  @IsString()
+  treatmentPlan?: string;
+
+  @ApiPropertyOptional({ description: 'Prescription text' })
+  @IsOptional()
+  @IsString()
+  prescription?: string;
+
+  @ApiPropertyOptional({ description: 'Follow-up required' })
+  @IsOptional()
+  @IsBoolean()
+  followUpRequired?: boolean;
+
+  @ApiPropertyOptional({ description: 'Follow-up date' })
+  @IsOptional()
+  @IsDateString()
+  followUpDate?: string;
+
+  @ApiPropertyOptional({
+    description: 'Follow-up type',
+    enum: ['routine', 'urgent', 'specialist', 'therapy', 'surgery'],
+  })
+  @IsOptional()
+  @IsString()
+  followUpType?: 'routine' | 'urgent' | 'specialist' | 'therapy' | 'surgery';
+
+  @ApiPropertyOptional({ description: 'Follow-up instructions' })
+  @IsOptional()
+  @IsString()
+  followUpInstructions?: string;
+
+  @ApiPropertyOptional({
+    description: 'Follow-up priority',
+    enum: ['low', 'normal', 'high', 'urgent'],
+  })
+  @IsOptional()
+  @IsString()
+  followUpPriority?: 'low' | 'normal' | 'high' | 'urgent';
+
+  @ApiPropertyOptional({ description: 'Medications prescribed', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  medications?: string[];
+
+  @ApiPropertyOptional({ description: 'Tests recommended', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tests?: string[];
+
+  @ApiPropertyOptional({ description: 'Restrictions', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  restrictions?: string[];
 }

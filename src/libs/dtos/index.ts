@@ -34,6 +34,7 @@ export {
   NotificationResponseDto,
   MessageHistoryResponseDto,
   NotificationStatsResponseDto,
+  SendTestEmailDto,
   // Notification Preference DTOs
   QuietHoursDto,
   CategoryPreferencesDto,

@@ -98,6 +98,8 @@ model User {
   clinics                 Clinic[]                  @relation("UserClinics")
   emailSuppressions       EmailSuppressionList[]
   whatsappSuppressions    WhatsAppSuppressionList[]
+  communicationTemplates  CommunicationTemplate[]
+  clinicExpenses          ClinicExpense[]
 
   @@index([primaryClinicId])
   @@index([email])
@@ -121,67 +123,71 @@ model Receptionist {
 }
 
 model Clinic {
-  id                    String                       @id @default(uuid())
-  clinicId              String                       @unique
-  name                  String
-  address               String
-  phone                 String
-  email                 String                       @unique
-  app_name              String                       @unique
-  db_connection_string  String
-  databaseName          String?
-  databaseStatus        DatabaseStatus               @default(CREATING)
-  databaseCreatedAt     DateTime?
-  databaseLastSync      DateTime?
-  isActive              Boolean                      @default(true)
-  createdAt             DateTime                     @default(now())
-  updatedAt             DateTime                     @updatedAt
-  createdBy             String
-  subdomain             String?                      @unique
-  logo                  String?
-  website               String?
-  description           String?
-  timezone              String?                      @default("UTC")
-  currency              String?                      @default("INR")
-  language              String?                      @default("en")
-  settings              Json?
-  appointments          Appointment[]
-  appointmentTemplates  AppointmentTemplate[]
-  ayurvedicTherapies    AyurvedicTherapy[]
-  businessRules         BusinessRule[]
-  checkInLocations      CheckInLocation[]
-  admins                ClinicAdmin[]
-  doctors               DoctorClinic[]
-  eligibilityChecks     EligibilityCheck[]
-  eligibilityCriteria   EligibilityCriteria[]
-  rbacRoles             RbacRole[]
-  receptionists         Receptionist[]
-  pharmacists           Pharmacist[]
-  therapists            Therapist[]
-  labTechnicians        LabTechnician[]
-  financeBilling        FinanceBilling[]
-  supportStaff          SupportStaff[]
-  nurses                Nurse[]
-  counselors            Counselor[]
-  recurringSeries       RecurringAppointmentSeries[]
-  followUpPlans         FollowUpPlan[]
-  resources             Resource[]
-  resourceBookings      ResourceBooking[]
-  rolePermissions       RolePermission[]
-  therapyQueues         TherapyQueue[]
-  therapySessions       TherapySession[]
-  userRoles             UserRole[]
-  waitlistEntries       WaitlistEntry[]
-  ReceptionistsAtClinic ReceptionistsAtClinic[]
-  locations             ClinicLocation[]
-  createdByUser         User                         @relation("UserCreatedClinics", fields: [createdBy], references: [id])
-  primaryUsers          User[]                       @relation("UserPrimaryClinic")
-  videoConsultations    VideoConsultation[]
-  users                 User[]                       @relation("UserClinics")
-  checkIns              CheckIn[]
-  locationHeads         LocationHead[]
-  emailSuppressions     EmailSuppressionList[]
-  whatsappSuppressions  WhatsAppSuppressionList[]
+  id                     String                       @id @default(uuid())
+  clinicId               String                       @unique
+  name                   String
+  address                String
+  phone                  String
+  email                  String                       @unique
+  app_name               String                       @unique
+  db_connection_string   String
+  databaseName           String?
+  databaseStatus         DatabaseStatus               @default(CREATING)
+  databaseCreatedAt      DateTime?
+  databaseLastSync       DateTime?
+  isActive               Boolean                      @default(true)
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+  createdBy              String
+  subdomain              String?                      @unique
+  logo                   String?
+  website                String?
+  description            String?
+  timezone               String?                      @default("UTC")
+  currency               String?                      @default("INR")
+  language               String?                      @default("en")
+  settings               Json?
+  appointments           Appointment[]
+  appointmentTemplates   AppointmentTemplate[]
+  ayurvedicTherapies     AyurvedicTherapy[]
+  businessRules          BusinessRule[]
+  checkInLocations       CheckInLocation[]
+  admins                 ClinicAdmin[]
+  doctors                DoctorClinic[]
+  eligibilityChecks      EligibilityCheck[]
+  eligibilityCriteria    EligibilityCriteria[]
+  rbacRoles              RbacRole[]
+  receptionists          Receptionist[]
+  pharmacists            Pharmacist[]
+  therapists             Therapist[]
+  labTechnicians         LabTechnician[]
+  financeBilling         FinanceBilling[]
+  supportStaff           SupportStaff[]
+  nurses                 Nurse[]
+  counselors             Counselor[]
+  recurringSeries        RecurringAppointmentSeries[]
+  followUpPlans          FollowUpPlan[]
+  resources              Resource[]
+  resourceBookings       ResourceBooking[]
+  rolePermissions        RolePermission[]
+  therapyQueues          TherapyQueue[]
+  therapySessions        TherapySession[]
+  userRoles              UserRole[]
+  waitlistEntries        WaitlistEntry[]
+  ReceptionistsAtClinic  ReceptionistsAtClinic[]
+  locations              ClinicLocation[]
+  createdByUser          User                         @relation("UserCreatedClinics", fields: [createdBy], references: [id])
+  primaryUsers           User[]                       @relation("UserPrimaryClinic")
+  videoConsultations     VideoConsultation[]
+  users                  User[]                       @relation("UserClinics")
+  checkIns               CheckIn[]
+  locationHeads          LocationHead[]
+  emailSuppressions      EmailSuppressionList[]
+  whatsappSuppressions   WhatsAppSuppressionList[]
+  suppliers              Supplier[]
+  clinicExpenses         ClinicExpense[]
+  insuranceClaims        InsuranceClaim[]
+  communicationTemplates CommunicationTemplate[]
 
   @@index([app_name])
   @@index([isActive])
@@ -414,11 +420,13 @@ model Patient {
   therapySessions    TherapySession[]
   waitlistEntries    WaitlistEntry[]
   videoConsultations VideoConsultation[]
+  insuranceClaims    InsuranceClaim[]
 }
 
 model Appointment {
   id                  String            @id @default(uuid())
   type                AppointmentType
+  treatmentType       TreatmentType     @default(GENERAL_CONSULTATION)
   doctorId            String
   patientId           String
   locationId          String? // Optional for VIDEO_CALL (uses virtual/online)
@@ -484,6 +492,7 @@ model Appointment {
   resourceBookings  ResourceBooking[]
   therapySessions   TherapySession[]
   VideoConsultation VideoConsultation[]
+  insuranceClaims   InsuranceClaim[]
 
   // Single-column indexes (existing)
   @@index([doctorId])
@@ -538,6 +547,7 @@ model PrescriptionItem {
   id             String       @id @default(uuid())
   prescriptionId String
   medicineId     String?
+  quantity       Int          @default(1)
   dosage         String?
   frequency      String?
   duration       String?
@@ -558,11 +568,35 @@ model Medicine {
   type              MedicineType
   clinicId          String
   locationId        String? // Medicine inventory per location
+  stock             Int                @default(0)
+  price             Float              @default(0)
+  expiryDate        DateTime?
+  minStockThreshold Int                @default(10)
+  supplierId        String?
   prescriptionItems PrescriptionItem[]
   location          ClinicLocation?    @relation(fields: [locationId], references: [id])
+  supplier          Supplier?          @relation(fields: [supplierId], references: [id])
 
   @@index([clinicId])
   @@index([locationId])
+  @@index([supplierId])
+}
+
+model Supplier {
+  id            String     @id @default(uuid())
+  name          String
+  contactPerson String?
+  email         String?
+  phone         String?
+  address       String?
+  clinicId      String
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  medicines     Medicine[]
+  clinic        Clinic     @relation(fields: [clinicId], references: [id])
+
+  @@index([clinicId])
 }
 
 model DoctorClinic {
@@ -661,16 +695,16 @@ model BillingPlan {
 }
 
 model Invoice {
-  id              String        @id @default(uuid())
-  invoiceNumber   String        @unique
+  id              String           @id @default(uuid())
+  invoiceNumber   String           @unique
   userId          String
   subscriptionId  String?
   clinicId        String
   amount          Float
-  tax             Float?        @default(0)
-  discount        Float?        @default(0)
+  tax             Float?           @default(0)
+  discount        Float?           @default(0)
   totalAmount     Float
-  status          InvoiceStatus @default(DRAFT)
+  status          InvoiceStatus    @default(DRAFT)
   dueDate         DateTime
   paidAt          DateTime?
   description     String?
@@ -678,18 +712,78 @@ model Invoice {
   metadata        Json?
   pdfFilePath     String?
   pdfUrl          String?
-  sentViaWhatsApp Boolean       @default(false)
+  sentViaWhatsApp Boolean          @default(false)
   whatsappSentAt  DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-  subscription    Subscription? @relation(fields: [subscriptionId], references: [id])
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  subscription    Subscription?    @relation(fields: [subscriptionId], references: [id])
   payments        Payment[]
+  insuranceClaims InsuranceClaim[]
 
   @@index([userId])
   @@index([subscriptionId])
   @@index([clinicId])
   @@index([status])
   @@index([dueDate])
+}
+
+model ClinicExpense {
+  id          String   @id @default(uuid())
+  clinicId    String
+  userId      String // Person who recorded the expense
+  amount      Float
+  category    String // e.g., Rent, Utilities, Salaries, Supplies
+  description String?
+  date        DateTime @default(now())
+  status      String   @default("PAID") // PAID, PENDING, RECURRING
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  clinic      Clinic   @relation(fields: [clinicId], references: [id])
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@index([clinicId])
+  @@index([userId])
+  @@index([category])
+  @@index([date])
+}
+
+model InsuranceClaim {
+  id            String              @id @default(uuid())
+  patientId     String
+  appointmentId String?
+  invoiceId     String?
+  clinicId      String
+  claimNumber   String              @unique
+  provider      String // Insurance company name
+  amount        Float
+  status        String              @default("SUBMITTED") // SUBMITTED, PROCESSING, APPROVED, REJECTED, PAID
+  submittedAt   DateTime            @default(now())
+  responseAt    DateTime?
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  patient       Patient             @relation(fields: [patientId], references: [id])
+  appointment   Appointment?        @relation(fields: [appointmentId], references: [id])
+  invoice       Invoice?            @relation(fields: [invoiceId], references: [id])
+  clinic        Clinic              @relation(fields: [clinicId], references: [id])
+  documents     InsuranceDocument[]
+
+  @@index([patientId])
+  @@index([clinicId])
+  @@index([status])
+  @@index([claimNumber])
+}
+
+model InsuranceDocument {
+  id           String         @id @default(uuid())
+  claimId      String
+  fileUrl      String
+  fileKey      String
+  documentType String // e.g., CLAIM_FORM, MEDICAL_RECORD, INVOICE
+  createdAt    DateTime       @default(now())
+  claim        InsuranceClaim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+
+  @@index([claimId])
 }
 
 model Queue {
@@ -964,6 +1058,8 @@ model LabReport {
   labName     String?
   doctorId    String?
   notes       String?
+  fileUrl     String?
+  fileKey     String?
   date        DateTime
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1978,6 +2074,7 @@ enum HealthRecordType {
   PRESCRIPTION
   DIAGNOSIS_REPORT
   PULSE_DIAGNOSIS
+  GENERAL_DOCUMENT
 }
 
 enum NotificationType {
@@ -2005,6 +2102,16 @@ enum AppointmentType {
   IN_PERSON
   VIDEO_CALL
   HOME_VISIT
+}
+
+enum TreatmentType {
+  GENERAL_CONSULTATION
+  FOLLOW_UP
+  THERAPY
+  SURGERY
+  LAB_TEST
+  IMAGING
+  VACCINATION
   VIDDHAKARMA
   AGNIKARMA
   PANCHAKARMA
@@ -2147,4 +2254,26 @@ enum SuppressionSource {
   USER_ACTION
   ADMIN
   SYSTEM
+}
+
+model CommunicationTemplate {
+  id        String   @id @default(uuid())
+  name      String // Template name (e.g., 'Appointment Reminder')
+  type      String // 'EMAIL', 'SMS', 'WHATSAPP'
+  category  String // 'APPOINTMENT', 'EHR', 'BILLING', 'SYSTEM'
+  subject   String? // For Email
+  content   String // The template body with placeholders {{variable}}
+  metadata  Json? // Channel-specific metadata (e.g., WhatsApp template ID, Push title)
+  clinicId  String? // Optional: clinic-specific template
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  clinic    Clinic?  @relation(fields: [clinicId], references: [id])
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+
+  @@unique([name, type, clinicId])
+  @@index([clinicId])
+  @@index([type])
+  @@index([category])
 }

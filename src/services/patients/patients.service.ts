@@ -2,12 +2,23 @@ import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
+import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
+import { HealthRecordType } from '@core/types/enums.types';
+import { AuditInfo } from '@core/types/database.types';
+
+interface MulterFile {
+  buffer: Buffer;
+  mimetype: string;
+  originalname: string;
+  size: number;
+}
 
 @Injectable()
 export class PatientsService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly staticAssetService: StaticAssetService
   ) {}
 
   /**
@@ -69,6 +80,10 @@ export class PatientsService {
       provider: string;
       policyNumber: string;
       groupNumber?: string;
+      primaryHolder: string;
+      coverageStartDate: string;
+      coverageEndDate?: string;
+      coverageType: string;
     };
   }) {
     const { userId } = data;
@@ -131,6 +146,12 @@ export class PatientsService {
                 provider: insuranceData.provider,
                 policyNumber: insuranceData.policyNumber,
                 groupNumber: insuranceData.groupNumber,
+                primaryHolder: insuranceData.primaryHolder,
+                coverageStartDate: new Date(insuranceData.coverageStartDate),
+                coverageEndDate: insuranceData.coverageEndDate
+                  ? new Date(insuranceData.coverageEndDate)
+                  : null,
+                coverageType: insuranceData.coverageType,
               } as PrismaDelegateArgs,
             });
           } else {
@@ -140,7 +161,12 @@ export class PatientsService {
                 provider: insuranceData.provider,
                 policyNumber: insuranceData.policyNumber,
                 groupNumber: insuranceData.groupNumber,
-                validFrom: new Date(),
+                primaryHolder: insuranceData.primaryHolder,
+                coverageStartDate: new Date(insuranceData.coverageStartDate),
+                coverageEndDate: insuranceData.coverageEndDate
+                  ? new Date(insuranceData.coverageEndDate)
+                  : null,
+                coverageType: insuranceData.coverageType,
               } as PrismaDelegateArgs,
             });
           }
@@ -234,6 +260,10 @@ export class PatientsService {
         provider: string;
         policyNumber: string;
         groupNumber?: string;
+        primaryHolder: string;
+        coverageStartDate: string;
+        coverageEndDate?: string;
+        coverageType: string;
       };
     });
   }
@@ -388,6 +418,60 @@ export class PatientsService {
         );
       }
       return patients;
+    });
+  }
+
+  /**
+   * Upload patient document and create health record
+   */
+  async uploadPatientDocument(patientId: string, file: MulterFile, auditInfo: AuditInfo) {
+    const fileName = `doc-${patientId}-${Date.now()}`;
+    const asset = await this.staticAssetService.uploadFile(
+      file.buffer,
+      fileName,
+      AssetType.DOCUMENT,
+      file.mimetype,
+      true
+    );
+
+    return await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+        };
+        return await typedClient.healthRecord.create({
+          data: {
+            patientId,
+            recordType: HealthRecordType.GENERAL_DOCUMENT,
+            fileUrl: asset.url,
+            clinicId: auditInfo.clinicId,
+            doctorId: auditInfo.userId, // Default to uploader
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        ...auditInfo,
+        resourceType: 'HEALTH_RECORD',
+        operation: 'CREATE',
+        resourceId: 'new',
+        userRole: 'system',
+        details: { action: 'upload_document', assetId: asset.key },
+      }
+    );
+  }
+
+  /**
+   * Get patient insurance details
+   */
+  async getInsurance(patientId: string) {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        insurance: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+      };
+      return await typedClient.insurance.findMany({
+        where: { patientId } as PrismaDelegateArgs,
+        orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs);
     });
   }
 }

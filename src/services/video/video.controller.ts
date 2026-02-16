@@ -766,6 +766,7 @@ export class VideoController {
     ttl: 60, // 1 minute (status changes frequently during active sessions)
     tags: ['video', 'consultation', 'appointment:{appointmentId}'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get video consultation status',
@@ -954,6 +955,7 @@ export class VideoController {
     ttl: 900, // 15 minutes
     tags: ['video', 'history', 'user:{userId}'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get video call history',
@@ -1325,6 +1327,7 @@ export class VideoController {
     ttl: 300, // 5 minutes (recordings may be added)
     tags: ['video', 'recording', 'appointment:{appointmentId}'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get recordings for a session',
@@ -1420,6 +1423,7 @@ export class VideoController {
     ttl: 30, // 30 seconds (participants change frequently during active sessions)
     tags: ['video', 'participants', 'appointment:{appointmentId}'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get participants',
@@ -1488,6 +1492,7 @@ export class VideoController {
     ttl: 300, // 5 minutes (analytics change frequently)
     tags: ['video', 'analytics', 'appointment:{appointmentId}'],
     enableSWR: true,
+    containsPHI: true,
   })
   @ApiOperation({
     summary: 'Get session analytics',

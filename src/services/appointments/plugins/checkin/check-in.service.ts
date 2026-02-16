@@ -58,6 +58,20 @@ export interface AppointmentWithRelations extends Appointment {
   location: ClinicLocation;
 }
 
+interface QueueRecord {
+  id: string;
+  appointmentId: string;
+  queueNumber: number;
+  status: string;
+  appointment?:
+    | {
+        id: string;
+        patient?: { user?: { name: string } | undefined } | undefined;
+        doctor?: { user?: { name: string } | undefined } | undefined;
+      }
+    | undefined;
+}
+
 @Injectable()
 export class CheckInService {
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
@@ -825,94 +839,62 @@ export class CheckInService {
   private async fetchLocationQueue(locationId: string, clinicId?: string): Promise<unknown[]> {
     // Fetch queue entries for the specific location from database
     try {
-      const queueEntries = await this.databaseService.executeHealthcareRead<
-        Array<{
-          id: string;
-          appointmentId: string;
-          position: number;
-          status: string;
-          appointment?: {
-            id: string;
-            patient?: { user?: { name: string } };
-            doctor?: { user?: { name: string } };
+      const queueEntries = await this.databaseService.executeHealthcareRead<QueueRecord[]>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            queue: {
+              findMany: (args: PrismaDelegateArgs) => Promise<QueueRecord[]>;
+            };
           };
-        }>
-      >(async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-          queue: {
-            findMany: <T>(args: T) => Promise<
-              Array<{
-                id: string;
-                appointmentId: string;
-                queueNumber: number;
-                status: string;
-                appointment?: {
-                  id: string;
-                  patient?: { user?: { name: string } };
-                  doctor?: { user?: { name: string } };
-                };
-              }>
-            >;
-          };
-        };
-        // Query Queue model filtered by locationId
-        const queues = await typedClient.queue.findMany({
-          where: {
-            locationId: locationId,
-            ...(clinicId && { clinicId: clinicId }),
-            status: { in: ['WAITING', 'IN_PROGRESS'] },
-          } as PrismaDelegateArgs,
-          include: {
-            appointment: {
-              include: {
-                patient: {
-                  include: {
-                    user: {
-                      select: { name: true } as PrismaDelegateArgs,
+          // Query Queue model filtered by locationId
+          const queues = await typedClient.queue.findMany({
+            where: {
+              locationId: locationId,
+              ...(clinicId && { clinicId: clinicId }),
+              status: { in: ['WAITING', 'IN_PROGRESS'] },
+            } as PrismaDelegateArgs,
+            include: {
+              appointment: {
+                include: {
+                  patient: {
+                    include: {
+                      user: {
+                        select: { name: true } as PrismaDelegateArgs,
+                      } as PrismaDelegateArgs,
                     } as PrismaDelegateArgs,
                   } as PrismaDelegateArgs,
-                } as PrismaDelegateArgs,
-                doctor: {
-                  include: {
-                    user: {
-                      select: { name: true } as PrismaDelegateArgs,
+                  doctor: {
+                    include: {
+                      user: {
+                        select: { name: true } as PrismaDelegateArgs,
+                      } as PrismaDelegateArgs,
                     } as PrismaDelegateArgs,
                   } as PrismaDelegateArgs,
                 } as PrismaDelegateArgs,
               } as PrismaDelegateArgs,
             } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs,
-          orderBy: {
-            queueNumber: 'asc',
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+            orderBy: {
+              queueNumber: 'asc',
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
 
-        return queues.map(q => ({
-          id: q.id,
-          appointmentId: q.appointmentId,
-          position: q.queueNumber,
-          status: q.status,
-          appointment: q.appointment,
-        })) as Array<{
-          id: string;
-          appointmentId: string;
-          position: number;
-          status: string;
-          appointment?: {
-            id: string;
-            patient?: { user?: { name: string } };
-            doctor?: { user?: { name: string } };
-          };
-        }>;
-      });
+          return queues.map((q: QueueRecord) => ({
+            id: q.id,
+            appointmentId: q.appointmentId,
+            queueNumber: q.queueNumber,
+            status: q.status,
+            appointment: q.appointment,
+          }));
+        }
+      );
 
       return queueEntries.map(entry => ({
         appointmentId: entry.appointmentId,
         patientName: entry.appointment?.patient?.user?.name || 'Unknown',
         doctorName: entry.appointment?.doctor?.user?.name || 'Unknown',
-        position: entry.position,
+        position: entry.queueNumber,
         status: entry.status,
-        estimatedWaitTime: entry.position * 10, // Simple calculation: 10 min per position
+        estimatedWaitTime: entry.queueNumber * 10,
       }));
     } catch (error) {
       void this.loggingService.log(

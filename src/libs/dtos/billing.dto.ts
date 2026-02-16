@@ -1,10 +1,3 @@
-/**
- * Billing DTOs
- * @module BillingDTOs
- * @description Centralized billing-related Data Transfer Objects
- * All enums are imported from centralized @core/types/enums.types
- */
-
 import {
   BillingInterval,
   SubscriptionStatus,
@@ -12,10 +5,16 @@ import {
   PaymentStatus,
   PaymentMethod,
 } from '@core/types/enums.types';
-import { IsOptional, IsNotEmpty } from 'class-validator';
+import {
+  IsOptional,
+  IsNotEmpty,
+  IsNumber,
+  IsPositive,
+  IsString,
+  IsDateString,
+} from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 
-// Billing Plan DTOs
 export class CreateBillingPlanDto {
   name!: string;
   description?: string;
@@ -46,7 +45,6 @@ export class UpdateBillingPlanDto {
   appointmentTypes?: Record<string, unknown>;
 }
 
-// Subscription DTOs
 export class CreateSubscriptionDto {
   userId!: string;
   planId!: string;
@@ -67,7 +65,6 @@ export class UpdateSubscriptionDto {
   metadata?: Record<string, unknown>;
 }
 
-// Payment DTOs
 export class CreatePaymentDto {
   amount!: number;
   @IsNotEmpty({ message: 'Clinic ID is required' })
@@ -91,7 +88,6 @@ export class UpdatePaymentDto {
   metadata?: Record<string, unknown>;
 }
 
-// Invoice DTOs
 export class CreateInvoiceDto {
   userId!: string;
   @IsNotEmpty({ message: 'Clinic ID is required' })
@@ -118,7 +114,82 @@ export class UpdateInvoiceDto {
   metadata?: Record<string, unknown>;
 }
 
-// Response DTOs
+export class CreateClinicExpenseDto {
+  @IsNotEmpty({ message: 'Clinic ID is required' })
+  @IsClinicId()
+  clinicId!: string;
+
+  @IsNotEmpty()
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  @IsNotEmpty()
+  @IsString()
+  category!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
+export class CreateInsuranceClaimDto {
+  @IsNotEmpty()
+  @IsString()
+  patientId!: string;
+
+  @IsOptional()
+  @IsString()
+  appointmentId?: string;
+
+  @IsOptional()
+  @IsString()
+  invoiceId?: string;
+
+  @IsNotEmpty()
+  @IsClinicId()
+  clinicId!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  claimNumber!: string;
+
+  @IsNotEmpty()
+  @IsString()
+  provider!: string;
+
+  @IsNotEmpty()
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class UpdateInsuranceClaimDto {
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @IsOptional()
+  @IsDateString()
+  responseAt?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
 export class BillingPlanResponseDto {
   id!: string;
   name!: string;
@@ -204,7 +275,6 @@ export class InvoiceResponseDto {
   updatedAt!: Date;
 }
 
-// Query DTOs
 export class BillingPlanQueryDto {
   @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
@@ -241,7 +311,6 @@ export class InvoiceQueryDto {
   endDate?: string;
 }
 
-// Analytics DTOs
 export class RevenueAnalyticsDto {
   totalRevenue!: number;
   paymentCount!: number;
@@ -272,7 +341,6 @@ export class SubscriptionUsageStatsDto {
   status!: SubscriptionStatus;
 }
 
-// Appointment Coverage DTOs
 export class AppointmentCoverageDto {
   covered!: boolean;
   requiresPayment!: boolean;

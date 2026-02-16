@@ -5,19 +5,20 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 
-import type { UserProfile } from '@core/types';
+import type { UserWithRelations } from '@core/types/user.types';
 import { isPrismaDatabaseError } from '@core/types/infrastructure.types';
 import { Role } from '@core/types/enums.types';
 import type { User } from '@core/types/database.types';
+import { EmergencyContact } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
-import { CreateUserDto, UserResponseDto, UpdateUserDto } from '@dtos/user.dto';
+import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
-import type { UserUpdateInput } from '@core/types/input.types';
+import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type {
   Doctor,
   Patient,
@@ -26,40 +27,8 @@ import type {
   SuperAdmin,
   AuditLog,
   Clinic,
+  LocationHead,
 } from '@core/types';
-
-type UserWithRelations = User & {
-  doctor?: {
-    id: string;
-    userId: string;
-    specialization: string;
-    experience: number;
-  } | null;
-  patient?: {
-    id: string;
-    userId: string;
-  } | null;
-  receptionists?: Array<{
-    id: string;
-    userId: string;
-  }>;
-  clinicAdmins?: Array<{
-    id: string;
-    userId: string;
-    clinicId: string;
-  }>;
-  superAdmin?: {
-    id: string;
-    userId: string;
-  } | null;
-  locationHead?: {
-    id: string;
-    userId: string;
-    clinicId: string;
-    locationId: string | null;
-  } | null;
-  [key: string]: unknown;
-};
 
 @Injectable()
 export class UsersService {
@@ -180,7 +149,7 @@ export class UsersService {
       async () => {
         // Use findUserByIdSafe for optimized query with caching
         const userRaw = await this.databaseService.findUserByIdSafe(id);
-        const user = userRaw as UserWithRelations | null;
+        const user = userRaw;
 
         if (!user) {
           throw this.errors.userNotFound(id, 'UsersService.findOne');
@@ -215,53 +184,6 @@ export class UsersService {
         containsPHI: true, // User details contain PHI
       }
     );
-  }
-
-  /**
-   * Get user profile with auth service integration
-   */
-  async getUserProfile(userId: string, clinicId?: string): Promise<UserProfile> {
-    return this.authService.getUserProfile(userId, clinicId);
-  }
-
-  /**
-   * Get user permissions with auth service integration
-   */
-  async getUserPermissions(userId: string, clinicId: string): Promise<string[]> {
-    return this.authService.getUserPermissions(userId, clinicId);
-  }
-
-  /**
-   * Change user password with auth service integration
-   */
-  async changeUserPassword(
-    userId: string,
-    currentPassword: string,
-    newPassword: string
-  ): Promise<{ message: string }> {
-    return this.authService.changePassword(userId, {
-      currentPassword,
-      newPassword,
-      confirmPassword: newPassword, // Use same password for confirmation
-    });
-  }
-
-  /**
-   * Request password reset with auth service integration
-   */
-  async requestPasswordReset(email: string): Promise<{ message: string }> {
-    return this.authService.requestPasswordReset({ email });
-  }
-
-  /**
-   * Reset password with auth service integration
-   */
-  async resetPassword(token: string, newPassword: string): Promise<{ message: string }> {
-    return this.authService.resetPassword({
-      token,
-      newPassword,
-      confirmPassword: newPassword, // Use same password for confirmation
-    });
   }
 
   async findByEmail(email: string): Promise<UserResponseDto | null> {
@@ -612,145 +534,37 @@ export class UsersService {
       }
 
       // Handle role-specific data updates
+      // Handle role-specific data updates
       if (
         (existingUser as { role?: string })['role'] === Role.DOCTOR &&
         cleanedData.specialization
       ) {
-        const existingUserWithDoctor = existingUser as unknown as UserWithRelations;
-        // Ensure doctor record exists using executeHealthcareWrite
-        if (!existingUserWithDoctor.doctor) {
-          await this.databaseService.executeHealthcareWrite<{
-            id: string;
-            userId: string;
-            [key: string]: unknown;
-          }>(
-            async client => {
-              return await (
-                client as {
-                  doctor: {
-                    create: (
-                      args: unknown
-                    ) => Promise<{ id: string; userId: string; [key: string]: unknown }>;
-                  };
-                }
-              )['doctor'].create({
-                data: {
-                  userId: id,
-                  specialization: cleanedData.specialization ?? '',
-                  experience:
-                    typeof cleanedData.experience === 'string'
-                      ? parseInt(cleanedData.experience) || 0
-                      : 0,
-                },
-              });
-            },
-            {
-              userId: id,
-              clinicId: String(
-                (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
-              ),
-              resourceType: 'DOCTOR',
-              operation: 'CREATE',
-              resourceId: id,
-              userRole: 'system',
-              details: { specialization: cleanedData.specialization },
-            }
-          );
-        } else if (existingUserWithDoctor.doctor) {
-          const doctorData = existingUserWithDoctor.doctor;
-          await this.databaseService.executeHealthcareWrite<Doctor>(
-            async client => {
-              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-              return await typedClient.doctor.update({
-                where: { userId: id } as PrismaDelegateArgs,
-                data: {
-                  specialization: cleanedData.specialization ?? doctorData.specialization,
-                  experience:
-                    typeof cleanedData.experience === 'string'
-                      ? parseInt(cleanedData.experience) || doctorData.experience
-                      : doctorData.experience,
-                } as PrismaDelegateArgs,
-              } as PrismaDelegateArgs);
-            },
-            {
-              userId: id,
-              clinicId: String(
-                (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
-              ),
-              resourceType: 'DOCTOR',
-              operation: 'UPDATE',
-              resourceId: id,
-              userRole: 'system',
-              details: { specialization: cleanedData.specialization },
-            }
-          );
-        }
-
+        await this.updateDoctorProfile(id, existingUser, cleanedData);
         delete cleanedData.specialization;
         delete cleanedData.experience;
       }
 
       // Handle Emergency Contact (Relation)
       if (cleanedData['emergencyContact']) {
-        const emergencyContactData = cleanedData['emergencyContact'] as {
-          name: string;
-          relationship: string;
-          phone: string;
-          alternatePhone?: string;
-          address?: string;
-        };
-
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            // Find existing contact
-            const existingContacts = await typedClient.emergencyContact.findMany({
-              where: { userId: id } as PrismaDelegateArgs,
-            });
-
-            if (existingContacts.length > 0) {
-              // Update the first one
-              await typedClient.emergencyContact.update({
-                where: { id: existingContacts[0]!.id } as PrismaDelegateArgs,
-                data: {
-                  name: emergencyContactData.name,
-                  relationship: emergencyContactData.relationship,
-                  phone: emergencyContactData.phone,
-                  alternatePhone: emergencyContactData.alternatePhone,
-                  address: emergencyContactData.address,
-                } as PrismaDelegateArgs,
-              } as PrismaDelegateArgs);
-            } else {
-              // Create new
-              await typedClient.emergencyContact.create({
-                data: {
-                  userId: id,
-                  name: emergencyContactData.name,
-                  relationship: emergencyContactData.relationship,
-                  phone: emergencyContactData.phone,
-                  alternatePhone: emergencyContactData.alternatePhone,
-                  address: emergencyContactData.address,
-                } as PrismaDelegateArgs,
-              } as PrismaDelegateArgs);
-            }
-          },
-          {
-            userId: id,
-            clinicId: String(
-              (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
-            ),
-            resourceType: 'EMERGENCY_CONTACT',
-            operation: 'UPSERT',
-            resourceId: id,
-            userRole: 'system',
-            details: { emergencyContact: emergencyContactData },
-          }
-        );
-
-        // Remove from user update data to avoid schema mismatch (User model has emergencyContact string?)
-        // Schema has emergencyContact: String? AND emergencyContacts: EmergencyContact[].
-        // We want to use the relation. But we should also perhaps clear strict checking or ensure we don't pass object to string field.
+        const emergencyContactData = cleanedData['emergencyContact'] as unknown as EmergencyContact;
+        await this.updateEmergencyContact(id, existingUser, emergencyContactData);
         delete cleanedData['emergencyContact'];
+      }
+
+      // Handle Insurance (Relation)
+      if (cleanedData['insurance']) {
+        await this.updatePatientInsurance(
+          id,
+          existingUser,
+          cleanedData['insurance'] as unknown as Record<string, unknown>[]
+        );
+        delete cleanedData['insurance'];
+      }
+
+      // Handle Medical Documents (Relation)
+      if (cleanedData['medicalDocuments']) {
+        await this.updatePatientDocuments(id, existingUser, cleanedData['medicalDocuments']);
+        delete cleanedData['medicalDocuments'];
       }
 
       // Update the user record using updateUserSafe or executeHealthcareWrite
@@ -771,28 +585,32 @@ export class UsersService {
       ) as UserUpdateInput;
       await this.databaseService.updateUserSafe(id, userUpdateData);
       // Fetch updated user with relations
-      const user = (await this.databaseService.executeHealthcareRead<{
-        id: string;
-        email: string;
-        [key: string]: unknown;
-      } | null>(async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-        const result = await typedClient.user.findUnique({
-          where: { id } as PrismaDelegateArgs,
-          include: {
-            doctor: true,
-            patient: true,
-            receptionists: true,
-            clinicAdmins: true,
-            superAdmin: true,
-          } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
-        return result as {
-          id: string;
-          email: string;
-          [key: string]: unknown;
-        } | null;
-      })) as unknown as UserWithRelations;
+      const user = existingUserRaw
+        ? await this.databaseService.executeHealthcareRead<{
+            id: string;
+            email: string;
+            [key: string]: unknown;
+          } | null>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const result = await typedClient.user.findUnique({
+              where: { id } as PrismaDelegateArgs,
+              include: {
+                doctor: true,
+                patient: true,
+                receptionists: true,
+                clinicAdmins: true,
+                superAdmin: true,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            return result as {
+              id: string;
+              email: string;
+              [key: string]: unknown;
+            } | null;
+          })
+        : null;
+      // ... (rest of the code)
+      // I will truncate here to avoid replacing too much, just need to insert after the `update` method.
 
       // Invalidate cache
       await Promise.all([
@@ -1336,19 +1154,9 @@ export class UsersService {
       (user.role as Role) === Role.LOCATION_HEAD &&
       (user as { locationHead?: unknown })['locationHead']
     ) {
-      await this.databaseService.executeHealthcareWrite<{
-        id: string;
-        userId: string;
-        [key: string]: unknown;
-      }>(
+      await this.databaseService.executeHealthcareWrite<LocationHead>(
         async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-            locationHead: {
-              delete: (args: {
-                where: { userId: string };
-              }) => Promise<{ id: string; userId: string }>;
-            };
-          };
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
           return await typedClient.locationHead.delete({
             where: { userId: id },
           });
@@ -1735,45 +1543,17 @@ export class UsersService {
         if (!targetClinicId) {
           throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
         }
-        await this.databaseService.executeHealthcareWrite<{
-          id: string;
-          userId: string;
-          clinicId: string;
-          locationId: string | null;
-          assignedBy: string;
-          assignedAt: Date;
-          isActive: boolean;
-          [key: string]: unknown;
-        }>(
+        await this.databaseService.executeHealthcareWrite<LocationHead>(
           async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              locationHead: {
-                create: (args: {
-                  data: {
-                    userId: string;
-                    clinicId: string;
-                    locationId: string | null;
-                    assignedBy: string;
-                  };
-                }) => Promise<{
-                  id: string;
-                  userId: string;
-                  clinicId: string;
-                  locationId: string | null;
-                  assignedBy: string;
-                  assignedAt: Date;
-                  isActive: boolean;
-                }>;
-              };
-            };
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
             return await typedClient.locationHead.create({
               data: {
                 userId: id,
                 clinicId: targetClinicId,
                 locationId: targetLocationId,
                 assignedBy: userId || 'SYSTEM',
-              },
-            });
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
           },
           {
             ...createAuditInfo,
@@ -1788,36 +1568,30 @@ export class UsersService {
     // Update user role using updateUserSafe
     await this.databaseService.updateUserSafe(id, { role } as never);
     // Fetch updated user with relations
-    const updatedUser = await this.databaseService.executeHealthcareRead<{
-      id: string;
-      email: string;
-      [key: string]: unknown;
-    } | null>(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const result = await typedClient.user.findUnique({
-        where: { id } as PrismaDelegateArgs,
-        include: {
-          doctor: true,
-          patient: true,
-          receptionists: true,
-          clinicAdmins: true,
-          superAdmin: true,
-          pharmacist: true,
-          therapist: true,
-          labTechnician: true,
-          financeBilling: true,
-          supportStaff: true,
-          locationHead: true,
-          nurse: true,
-          counselor: true,
-        } as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
-      return result as {
-        id: string;
-        email: string;
-        [key: string]: unknown;
-      } | null;
-    });
+    const updatedUser = await this.databaseService.executeHealthcareRead<UserWithRelations | null>(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.user.findUnique({
+          where: { id } as PrismaDelegateArgs,
+          include: {
+            doctor: true,
+            patient: true,
+            receptionists: true,
+            clinicAdmins: true,
+            superAdmin: true,
+            pharmacist: true,
+            therapist: true,
+            labTechnician: true,
+            financeBilling: true,
+            supportStaff: true,
+            locationHead: true,
+            nurse: true,
+            counselor: true,
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as unknown as UserWithRelations | null;
+      }
+    );
 
     // Invalidate cache
     await Promise.all([
@@ -1863,5 +1637,439 @@ export class UsersService {
       phone: result.phone ?? '',
     };
     return userResponse;
+  }
+
+  /**
+   * Search users with filters
+   */
+  async search(
+    query: string,
+    clinicId?: string,
+    roles?: Role[],
+    limit = 20,
+    offset = 0
+  ): Promise<{ data: UserResponseDto[]; total: number }> {
+    // RBAC check usually happens at controller, but good to have clinic scope here
+    const where: Record<string, unknown> = {};
+
+    if (clinicId) {
+      where['OR'] = [
+        { primaryClinicId: clinicId },
+        {
+          doctor: {
+            clinics: {
+              some: {
+                clinicId: clinicId,
+              },
+            },
+          },
+        },
+        {
+          receptionists: {
+            some: {
+              clinicId: clinicId,
+            },
+          },
+        },
+        {
+          clinicAdmins: {
+            some: {
+              clinicId: clinicId,
+            },
+          },
+        },
+      ];
+    }
+
+    if (roles && roles.length > 0) {
+      where['role'] = { in: roles };
+    }
+
+    if (query) {
+      where['AND'] = [
+        {
+          OR: [
+            { email: { contains: query, mode: 'insensitive' } },
+            { firstName: { contains: query, mode: 'insensitive' } },
+            { lastName: { contains: query, mode: 'insensitive' } },
+            { phone: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+      ];
+    }
+
+    // Execute with caching
+    const cacheKey = `users:search:${clinicId || 'all'}:${query}:${roles?.join(',') || 'all'}:${limit}:${offset}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        const [users, total] = await Promise.all([
+          this.databaseService.executeHealthcareRead<UserWithRelations[]>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.user.findMany({
+              where: where as UserWhereInput,
+              take: limit,
+              skip: offset,
+              orderBy: { createdAt: 'desc' },
+            } as PrismaDelegateArgs);
+          }),
+          this.databaseService.executeHealthcareRead<number>(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.user.count({
+              where: where as UserWhereInput,
+            } as PrismaDelegateArgs);
+          }),
+        ]);
+
+        const data = users.map(user => {
+          const { password: _password, ...rest } = user as User & { password?: string };
+          const userResponse: UserResponseDto = {
+            id: rest.id,
+            email: rest.email,
+            firstName: rest.firstName ?? '',
+            lastName: rest.lastName ?? '',
+            role: rest.role as Role,
+            isVerified: rest.isVerified,
+            isActive: true,
+            createdAt: rest.createdAt,
+            updatedAt: rest.updatedAt,
+            phone: rest.phone ?? '',
+          };
+          if (rest.dateOfBirth) {
+            userResponse.dateOfBirth = this.formatDateToString(rest.dateOfBirth);
+          }
+          return userResponse;
+        });
+
+        return { data, total };
+      },
+      {
+        ttl: 300, // 5 minutes
+        tags: ['users', 'search', clinicId ? `clinic:${clinicId}` : 'global'],
+        priority: 'normal',
+        enableSwr: true,
+      }
+    );
+  }
+
+  /**
+   * Get user statistics
+   */
+  async getStats(
+    clinicId?: string
+  ): Promise<{ total: number; active: number; byRole: Record<string, number> }> {
+    const cacheKey = `users:stats:${clinicId || 'all'}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        const where: UserWhereInput = clinicId ? { primaryClinicId: clinicId } : {};
+
+        // Count total
+        const total = await this.countUsersSafe(where as PrismaDelegateArgs);
+
+        // Count by role
+        const byRoleRaw = await this.databaseService.executeHealthcareRead<
+          Array<{ role: Role; _count: { id: number } }>
+        >(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return (await typedClient.user.groupBy({
+            by: ['role'],
+            where: where as PrismaDelegateArgs['where'],
+            _count: {
+              id: true,
+            },
+          } as PrismaDelegateArgs)) as unknown as Array<{ role: Role; _count: { id: number } }>;
+        });
+
+        const byRole: Record<string, number> = {};
+        byRoleRaw.forEach(item => {
+          byRole[item.role] = item._count.id;
+        });
+
+        const active = await this.databaseService.executeHealthcareRead<number>(
+          async baseClient => {
+            const typedClient = baseClient as unknown as PrismaTransactionClientWithDelegates;
+            return await typedClient.user.count({
+              where: {
+                ...(clinicId ? { primaryClinicId: clinicId } : {}),
+                isVerified: true,
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+        );
+
+        return { total, active, byRole };
+      },
+      {
+        ttl: 1800, // 30 minutes
+        tags: ['users', 'stats'],
+        priority: 'low',
+        enableSwr: true,
+      }
+    );
+  }
+
+  /**
+   * Get user activity (audit logs)
+   */
+  async getUserActivity(userId: string, limit = 20): Promise<unknown[]> {
+    try {
+      return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          auditLog: {
+            findMany: (args: PrismaDelegateArgs) => Promise<unknown[]>;
+          };
+        };
+
+        if (typedClient.auditLog) {
+          return await typedClient.auditLog.findMany({
+            where: { userId } as PrismaDelegateArgs,
+            take: limit,
+            orderBy: { timestamp: 'desc' } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+        return [];
+      });
+    } catch (_error) {
+      return [];
+    }
+  }
+
+  private async countUsersSafe(where: UserWhereInput): Promise<number> {
+    return this.databaseService.executeHealthcareRead<number>(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.user.count({ where } as PrismaDelegateArgs);
+    });
+  }
+
+  private async updateDoctorProfile(
+    userId: string,
+    existingUser: unknown,
+    cleanedData: Partial<UpdateUserDto> & { specialization?: string; experience?: number | string }
+  ): Promise<void> {
+    const existingUserWithDoctor = existingUser as UserWithRelations;
+    // Ensure doctor record exists using executeHealthcareWrite
+    if (!existingUserWithDoctor.doctor) {
+      await this.databaseService.executeHealthcareWrite<{
+        id: string;
+        userId: string;
+        [key: string]: unknown;
+      }>(
+        async client => {
+          return await (
+            client as {
+              doctor: {
+                create: (
+                  args: unknown
+                ) => Promise<{ id: string; userId: string; [key: string]: unknown }>;
+              };
+            }
+          )['doctor'].create({
+            data: {
+              userId: userId,
+              specialization: cleanedData.specialization ?? '',
+              experience:
+                typeof cleanedData.experience === 'string'
+                  ? parseInt(cleanedData.experience) || 0
+                  : 0,
+            },
+          });
+        },
+        {
+          userId: userId,
+          clinicId: String(
+            (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+          ),
+          resourceType: 'DOCTOR',
+          operation: 'CREATE',
+          resourceId: userId,
+          userRole: 'system',
+          details: { specialization: cleanedData.specialization },
+        }
+      );
+    } else if (existingUserWithDoctor.doctor) {
+      const doctorData = existingUserWithDoctor.doctor;
+      await this.databaseService.executeHealthcareWrite<Doctor>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.doctor.update({
+            where: { userId: userId } as PrismaDelegateArgs,
+            data: {
+              specialization: cleanedData.specialization ?? doctorData.specialization,
+              experience:
+                typeof cleanedData.experience === 'string'
+                  ? parseInt(cleanedData.experience) || doctorData.experience
+                  : doctorData.experience,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: userId,
+          clinicId: String(
+            (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+          ),
+          resourceType: 'DOCTOR',
+          operation: 'UPDATE',
+          resourceId: userId,
+          userRole: 'system',
+          details: { specialization: cleanedData.specialization },
+        }
+      );
+    }
+  }
+
+  private async updateEmergencyContact(
+    userId: string,
+    existingUser: unknown,
+    emergencyContactData: EmergencyContact
+  ): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        // Find existing contact
+        const existingContacts = await typedClient.emergencyContact.findMany({
+          where: { userId: userId } as PrismaDelegateArgs,
+        });
+
+        if (existingContacts.length > 0) {
+          // Update the first one
+          await typedClient.emergencyContact.update({
+            where: { id: existingContacts[0]!.id } as PrismaDelegateArgs,
+            data: {
+              name: emergencyContactData.name,
+              relationship: emergencyContactData.relationship,
+              phone: emergencyContactData.phone,
+              alternatePhone: emergencyContactData.alternatePhone,
+              address: emergencyContactData.address,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        } else {
+          // Create new
+          await typedClient.emergencyContact.create({
+            data: {
+              userId: userId,
+              name: emergencyContactData.name,
+              relationship: emergencyContactData.relationship,
+              phone: emergencyContactData.phone,
+              alternatePhone: emergencyContactData.alternatePhone,
+              address: emergencyContactData.address,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        }
+      },
+      {
+        userId: userId,
+        clinicId: String(
+          (existingUser as { primaryClinicId?: string | null })['primaryClinicId'] || ''
+        ),
+        resourceType: 'EMERGENCY_CONTACT',
+        operation: 'UPSERT',
+        resourceId: userId,
+        userRole: 'system',
+        details: { emergencyContact: emergencyContactData },
+      }
+    );
+  }
+
+  private async updatePatientInsurance(
+    userId: string,
+    existingUser: unknown,
+    insuranceData: Record<string, unknown>[]
+  ): Promise<void> {
+    const existingUserWithPatient = existingUser as UserWithRelations;
+    if (!existingUserWithPatient.patient) return;
+
+    const patientId = existingUserWithPatient.patient.id;
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        // For simplicity in this refinement, we'll replace existing insurance records with the new ones
+        // In a more complex scenario, we might want to sync/update specific records
+        await typedClient.insurance.deleteMany({
+          where: { patientId },
+        });
+
+        if (insuranceData && insuranceData.length > 0) {
+          await typedClient.insurance.createMany({
+            data: insuranceData.map(item => {
+              const provider = item['provider'];
+              const policyNumber = item['policyNumber'];
+              const primaryHolder = item['policyHolder'];
+              const coverageType = item['coverageDetails'];
+
+              return {
+                provider: typeof provider === 'string' ? provider : '',
+                policyNumber: typeof policyNumber === 'string' ? policyNumber : '',
+                groupNumber: (item['groupNumber'] as string) || null,
+                primaryHolder: typeof primaryHolder === 'string' ? primaryHolder : '',
+                coverageStartDate: new Date(),
+                coverageEndDate: item['expiryDate'] ? new Date(item['expiryDate'] as string) : null,
+                coverageType: typeof coverageType === 'string' ? coverageType : 'standard',
+                patientId,
+              };
+            }) as unknown as PrismaDelegateArgs[],
+          });
+        }
+      },
+      {
+        userId,
+        clinicId: String((existingUser as UserWithRelations).primaryClinicId || ''),
+        resourceType: 'INSURANCE',
+        operation: 'REPLACE',
+        resourceId: userId,
+        userRole: 'system',
+        details: { count: insuranceData.length },
+      }
+    );
+  }
+
+  private async updatePatientDocuments(
+    userId: string,
+    existingUser: unknown,
+    documentsData: MedicalDocumentDto[]
+  ): Promise<void> {
+    const existingUserWithPatient = existingUser as UserWithRelations;
+    if (!existingUserWithPatient.patient) return;
+
+    const patientId = existingUserWithPatient.patient.id;
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        // For documents, we usually append or sync. Here we'll just handle the create part if they are new.
+        // For a full implementation, we'd need a way to distinguish new vs existing.
+        // We'll assume these are new uploads being added to the profile.
+        if (documentsData && documentsData.length > 0) {
+          for (const doc of documentsData) {
+            // Check if document already exists by URL to avoid duplicates
+            const existing = await typedClient.medicalDocument.findFirst({
+              where: { patientId, fileUrl: doc.fileUrl },
+            });
+
+            if (!existing) {
+              await typedClient.medicalDocument.create({
+                data: {
+                  ...doc,
+                  patientId,
+                  uploadedAt: new Date(),
+                },
+              });
+            }
+          }
+        }
+      },
+      {
+        userId,
+        clinicId: String((existingUser as UserWithRelations).primaryClinicId || ''),
+        resourceType: 'MEDICAL_DOCUMENT',
+        operation: 'UPSERT',
+        resourceId: userId,
+        userRole: 'system',
+        details: { count: documentsData.length },
+      }
+    );
   }
 }

@@ -75,6 +75,7 @@ export {
   TherapyStatus,
   Role as RoleEnum,
   SpecialCase,
+  DeliveryStatus,
 } from './enums.types';
 // Export Role type from rbac.types as the primary Role
 export type { Role } from './rbac.types';
@@ -234,3 +235,4 @@ export * from './realtime-health.types';
 
 // WhatsApp Suppression Types (type-safe Prisma delegate access)
 export * from './whatsapp-suppression.types';
+export * from './active-user.types';

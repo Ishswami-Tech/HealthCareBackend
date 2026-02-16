@@ -30,7 +30,6 @@ import { PluginHealthService } from './plugins/health/plugin-health.service';
 import { AppointmentPluginInitializer } from './plugins/plugin-initializer.service';
 
 // Clinic-Specific Plugins - Updated with new libs structure
-import { ClinicQueuePlugin } from './plugins/queue/clinic-queue.plugin';
 
 import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notification.plugin';
 import { ClinicReminderPlugin } from './plugins/reminders/clinic-reminder.plugin';
@@ -73,7 +72,7 @@ import { BusinessRulesDatabaseService } from './core/business-rules-database.ser
 import { QrService } from '@utils/QR';
 import { QrModule } from '@utils/QR/qr.module';
 
-import { AppointmentQueueService } from './plugins/queue/appointment-queue.service';
+import { AppointmentQueueService } from '@infrastructure/queue';
 
 // Video Module - Standalone service
 import { VideoModule } from '@services/video/video.module';
@@ -148,7 +147,7 @@ import { CommunicationModule } from '@communication/communication.module';
     AppointmentPluginInitializer,
 
     // Clinic-Specific Plugins - All implemented plugins
-    ClinicQueuePlugin,
+
     ClinicNotificationPlugin,
     ClinicReminderPlugin,
     ClinicAnalyticsPlugin,
@@ -200,7 +199,7 @@ import { CommunicationModule } from '@communication/communication.module';
     PluginHealthService,
 
     // Clinic Plugins - All implemented plugins
-    ClinicQueuePlugin,
+
     ClinicNotificationPlugin,
     ClinicReminderPlugin,
     ClinicAnalyticsPlugin,

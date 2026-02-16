@@ -1084,6 +1084,65 @@ export class CoreAppointmentService {
       const endDate = new Date(date);
       endDate.setDate(endDate.getDate() + 1);
 
+      const workingHours = {
+        start: '09:00',
+        end: '18:00',
+      };
+
+      // Check doctor-clinic association and specific location availability
+      if (_context?.clinicId) {
+        try {
+          const doctorClinic = (await this.databaseService.executeHealthcareRead(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              doctorClinic: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+            };
+            return await typedClient.doctorClinic.findUnique({
+              where: {
+                doctorId_clinicId: {
+                  doctorId,
+                  clinicId: _context.clinicId,
+                },
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          })) as { locationId: string | null; startTime: Date | null; endTime: Date | null } | null;
+
+          if (doctorClinic) {
+            // If doctor is assigned to a specific location, satisfy strict location requirement
+            if (
+              _context.locationId &&
+              doctorClinic.locationId &&
+              doctorClinic.locationId !== _context.locationId
+            ) {
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                message: 'Doctor is not available at this location',
+              };
+            }
+
+            // Update working hours if defined
+            if (doctorClinic.startTime) {
+              workingHours.start = new Date(doctorClinic.startTime).toTimeString().slice(0, 5);
+            }
+            if (doctorClinic.endTime) {
+              workingHours.end = new Date(doctorClinic.endTime).toTimeString().slice(0, 5);
+            }
+          }
+        } catch (e) {
+          // Fallback to defaults if check fails
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to check doctor details for availability: ${e instanceof Error ? e.message : String(e)}`,
+            'CoreAppointmentService.getDoctorAvailability'
+          );
+        }
+      }
+
       const appointmentsResult = await this.databaseService.findAppointmentsSafe({
         doctorId,
         status: 'SCHEDULED',
@@ -1104,27 +1163,35 @@ export class CoreAppointmentService {
         appointments = Array.isArray(data) ? (data as AppointmentItem[]) : [];
       }
 
-      // Generate time slots (9 AM to 6 PM)
+      // Generate time slots based on working hours
       const timeSlots = [];
-      for (let hour = 9; hour < 18; hour++) {
-        for (let minute = 0; minute < 60; minute += 30) {
-          const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-          const isBooked = appointments.some(
-            (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
-          );
+      const [startHour, startMinute] = workingHours.start.split(':').map(Number);
+      const [endHour, endMinute] = workingHours.end.split(':').map(Number);
 
-          const bookedAppointment = isBooked
-            ? appointments.find(
-                (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
-              )
-            : null;
+      const startMinutes = (startHour || 9) * 60 + (startMinute || 0);
+      const endMinutes = (endHour || 18) * 60 + (endMinute || 0);
 
-          timeSlots.push({
-            time,
-            available: !isBooked,
-            appointmentId: bookedAppointment?.id ?? null,
-          });
-        }
+      // Interval 30 mins
+      for (let currentMinutes = startMinutes; currentMinutes < endMinutes; currentMinutes += 30) {
+        const hour = Math.floor(currentMinutes / 60);
+        const minute = currentMinutes % 60;
+
+        const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+        const isBooked = appointments.some(
+          (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
+        );
+
+        const bookedAppointment = isBooked
+          ? appointments.find(
+              (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
+            )
+          : null;
+
+        timeSlots.push({
+          time,
+          available: !isBooked,
+          appointmentId: bookedAppointment?.id ?? null,
+        });
       }
 
       return {
@@ -1133,10 +1200,7 @@ export class CoreAppointmentService {
         available: timeSlots.some(slot => slot.available),
         availableSlots: timeSlots.filter(slot => slot.available).map(slot => slot.time),
         bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
-        workingHours: {
-          start: '09:00',
-          end: '18:00',
-        },
+        workingHours,
         message: timeSlots.some(slot => slot.available)
           ? 'Doctor has available slots'
           : 'Doctor is fully booked for this date',

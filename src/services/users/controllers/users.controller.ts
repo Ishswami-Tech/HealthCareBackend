@@ -12,6 +12,7 @@ import {
   ForbiddenException,
   BadRequestException,
   Res,
+  Query,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -125,6 +126,31 @@ export class UsersController {
     return this.usersService.findAll();
   }
 
+  @Get('search')
+  @RequireResourcePermission('users', 'read')
+  @ApiOperation({ summary: 'Search users', description: 'Search users by name, email, or phone.' })
+  @ApiResponse({ status: 200, description: 'Return search results.' })
+  async search(
+    @Query('q') query: string,
+    @Query('roles') roles?: Role[],
+    @Query('limit') limit?: number,
+    @Query('offset') offset?: number,
+    @OptionalClinicId() clinicId?: string
+  ) {
+    return this.usersService.search(query, clinicId, roles, limit, offset);
+  }
+
+  @Get('stats')
+  @RequireResourcePermission('users', 'read')
+  @ApiOperation({
+    summary: 'Get user statistics',
+    description: 'Get user counts by role and status.',
+  })
+  @ApiResponse({ status: 200, description: 'Return user statistics.' })
+  async getStats(@OptionalClinicId() clinicId?: string) {
+    return this.usersService.getStats(clinicId);
+  }
+
   @Get('profile')
   @RequireResourcePermission('profile', 'read', { requireOwnership: true })
   @PatientCache({
@@ -188,6 +214,17 @@ export class UsersController {
     return this.usersService.findOne(id);
   }
 
+  @Get(':id/activity')
+  @RequireResourcePermission('users', 'read')
+  @ApiOperation({
+    summary: 'Get user activity',
+    description: 'Get recent activity logs for a user.',
+  })
+  @ApiResponse({ status: 200, description: 'Return user activity logs.' })
+  async getUserActivity(@Param('id') id: string) {
+    return this.usersService.getUserActivity(id);
+  }
+
   @Patch(':id')
   @UseGuards(RbacGuard)
   @RequireResourcePermission('users', 'update', { requireOwnership: true })
@@ -227,7 +264,7 @@ export class UsersController {
       const updatedUser = await this.usersService.update(id, updateUserDto);
       // If profile is complete, refresh session
       if (this.authService.isProfileComplete(updatedUser)) {
-        const fullProfile = await this.usersService.getUserProfile(id);
+        const fullProfile = await this.authService.getUserProfile(id);
         const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
         const tokens = await this.authService.generateTokens(
           fullProfile,
@@ -245,7 +282,7 @@ export class UsersController {
       const updatedUser = await this.usersService.update(id, updateUserDto);
       // If profile is complete, refresh session
       if (this.authService.isProfileComplete(updatedUser)) {
-        const fullProfile = await this.usersService.getUserProfile(id);
+        const fullProfile = await this.authService.getUserProfile(id);
         const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
         const tokens = await this.authService.generateTokens(
           fullProfile,

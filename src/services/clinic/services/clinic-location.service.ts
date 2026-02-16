@@ -433,4 +433,26 @@ export class ClinicLocationService {
       throw error;
     }
   }
+
+  async getClinicOperatingHours(
+    clinicId: string
+  ): Promise<Array<{ locationName: string; locationId: string; workingHours: string }>> {
+    try {
+      const locations = await this.getLocations(clinicId);
+      return locations.map(loc => ({
+        locationName: loc.name,
+        locationId: loc.id,
+        workingHours: loc.workingHours,
+      }));
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get clinic operating hours: ${(error as Error).message}`,
+        'ClinicLocationService',
+        { error: (error as Error).stack }
+      );
+      return [];
+    }
+  }
 }

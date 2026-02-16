@@ -94,6 +94,14 @@ export class CreateLabReportDto {
   @IsOptional()
   @IsString()
   appointmentId?: string;
+
+  @IsOptional()
+  @IsString()
+  fileUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  fileKey?: string;
 }
 
 export class UpdateLabReportDto {
@@ -393,6 +401,48 @@ export class CreateMedicationDto {
   status?: string;
 }
 
+export class PrescriptionMedicationDto {
+  @IsString()
+  name!: string;
+
+  @IsString()
+  dosage!: string;
+
+  @IsString()
+  frequency!: string;
+
+  @IsDateString()
+  startDate!: string;
+
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
+
+  @IsOptional()
+  @IsString()
+  instructions?: string;
+}
+
+export class CreatePrescriptionDto {
+  @IsString()
+  userId!: string;
+
+  @IsOptional()
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
+  clinicId?: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
+
+  @IsString()
+  @IsOptional()
+  diagnosis?: string;
+
+  @IsOptional()
+  medications?: PrescriptionMedicationDto[];
+}
+
 export class UpdateMedicationDto {
   @IsOptional()
   @IsString()
@@ -513,4 +563,24 @@ export class HealthRecordSummaryDto {
   immunizations?: ImmunizationResponse[];
   familyHistory?: FamilyHistoryResponse[];
   lifestyleAssessment?: LifestyleAssessmentResponse;
+}
+
+export class EHRAISummaryDto {
+  @IsString()
+  patientId!: string;
+
+  @IsString()
+  summary!: string;
+
+  @IsString()
+  keyFindings!: string[];
+
+  @IsString()
+  recommendations!: string[];
+
+  @IsDateString()
+  generatedAt!: string;
+
+  @IsString()
+  modelName!: string;
 }
