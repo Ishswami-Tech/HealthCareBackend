@@ -103,172 +103,185 @@ export class EHRService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
-        const results = (await Promise.all([
-          // Use executeHealthcareRead for all queries with full optimization layers
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.medicalHistory.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { date: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              labReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.labReport.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { date: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              radiologyReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.radiologyReport.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { date: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.surgicalRecord.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { date: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.vital.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.allergy.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              medication: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.medication.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              immunization: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.immunization.findMany({
-              where: { userId } as PrismaDelegateArgs,
-              orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<unknown[]>(async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              familyHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-            };
-            return await typedClient.familyHistory.findMany({
-              where: { userId } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }),
-          this.databaseService.executeHealthcareRead<LifestyleAssessmentBase | null>(
-            async client => {
+        try {
+          const results = (await Promise.all([
+            // Use executeHealthcareRead for all queries with full optimization layers
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
               const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-                lifestyleAssessment: {
-                  findFirst: (args: PrismaDelegateArgs) => Promise<LifestyleAssessmentBase | null>;
-                };
+                medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
-              return await typedClient.lifestyleAssessment.findFirst({
+              return await typedClient.medicalHistory.findMany({
                 where: { userId } as PrismaDelegateArgs,
-                orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
-            }
-          ),
-        ])) as [
-          MedicalHistoryBase[],
-          LabReportBase[],
-          RadiologyReportBase[],
-          SurgicalRecordBase[],
-          VitalBase[],
-          AllergyBase[],
-          MedicationBase[],
-          ImmunizationBase[],
-          FamilyHistoryBase[],
-          LifestyleAssessmentBase | null,
-        ];
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                labReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.labReport.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                radiologyReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.radiologyReport.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.surgicalRecord.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { date: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.vital.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.allergy.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                medication: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.medication.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                immunization: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.immunization.findMany({
+                where: { userId } as PrismaDelegateArgs,
+                orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<unknown[]>(async client => {
+              const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                familyHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+              };
+              return await typedClient.familyHistory.findMany({
+                where: { userId } as PrismaDelegateArgs,
+              } as PrismaDelegateArgs);
+            }),
+            this.databaseService.executeHealthcareRead<LifestyleAssessmentBase | null>(
+              async client => {
+                const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+                  lifestyleAssessment: {
+                    findFirst: (
+                      args: PrismaDelegateArgs
+                    ) => Promise<LifestyleAssessmentBase | null>;
+                  };
+                };
+                return await typedClient.lifestyleAssessment.findFirst({
+                  where: { userId } as PrismaDelegateArgs,
+                  orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
+                } as PrismaDelegateArgs);
+              }
+            ),
+          ])) as [
+            MedicalHistoryBase[],
+            LabReportBase[],
+            RadiologyReportBase[],
+            SurgicalRecordBase[],
+            VitalBase[],
+            AllergyBase[],
+            MedicationBase[],
+            ImmunizationBase[],
+            FamilyHistoryBase[],
+            LifestyleAssessmentBase | null,
+          ];
 
-        // Type assertions for the results (using Base types to avoid Prisma type errors)
-        const medicalHistoryRaw = results[0];
-        const labReportsRaw = results[1];
-        const radiologyReportsRaw = results[2];
-        const surgicalRecordsRaw = results[3];
-        const vitalsRaw = results[4];
-        const allergiesRaw = results[5];
-        const medicationsRaw = results[6];
-        const immunizationsRaw = results[7];
-        const familyHistoryRaw = results[8];
-        const lifestyleAssessmentRaw = results[9];
+          // Type assertions for the results (using Base types to avoid Prisma type errors)
+          const medicalHistoryRaw = results[0];
+          const labReportsRaw = results[1];
+          const radiologyReportsRaw = results[2];
+          const surgicalRecordsRaw = results[3];
+          const vitalsRaw = results[4];
+          const allergiesRaw = results[5];
+          const medicationsRaw = results[6];
+          const immunizationsRaw = results[7];
+          const familyHistoryRaw = results[8];
+          const lifestyleAssessmentRaw = results[9];
 
-        // Transform to response types
-        const medicalHistory = medicalHistoryRaw.map(record =>
-          this.transformMedicalHistory(record)
-        );
-        const labReports = labReportsRaw.map(record => this.transformLabReport(record));
-        const radiologyReports = radiologyReportsRaw.map(record =>
-          this.transformRadiologyReport(record)
-        );
-        const surgicalRecords = surgicalRecordsRaw.map(record =>
-          this.transformSurgicalRecord(record)
-        );
-        const vitals = vitalsRaw.map(record => this.transformVital(record));
-        const allergies = allergiesRaw.map(record => this.transformAllergy(record));
-        const medications = medicationsRaw.map(record => this.transformMedication(record));
-        const immunizations = immunizationsRaw.map(record => this.transformImmunization(record));
-        const familyHistory = familyHistoryRaw.map(record => this.transformFamilyHistory(record));
-        const lifestyleAssessment = lifestyleAssessmentRaw
-          ? this.transformLifestyleAssessment(lifestyleAssessmentRaw)
-          : {
-              id: '',
-              userId: '',
-              clinicId: '',
-              doctorId: '',
-              diet: '',
-              exercise: '',
-              smoking: '',
-              alcohol: '',
-              sleep: '',
-              stress: '',
-              notes: '',
-              createdAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            };
+          // Transform to response types
+          const medicalHistory = medicalHistoryRaw.map(record =>
+            this.transformMedicalHistory(record)
+          );
+          const labReports = labReportsRaw.map(record => this.transformLabReport(record));
+          const radiologyReports = radiologyReportsRaw.map(record =>
+            this.transformRadiologyReport(record)
+          );
+          const surgicalRecords = surgicalRecordsRaw.map(record =>
+            this.transformSurgicalRecord(record)
+          );
+          const vitals = vitalsRaw.map(record => this.transformVital(record));
+          const allergies = allergiesRaw.map(record => this.transformAllergy(record));
+          const medications = medicationsRaw.map(record => this.transformMedication(record));
+          const immunizations = immunizationsRaw.map(record => this.transformImmunization(record));
+          const familyHistory = familyHistoryRaw.map(record => this.transformFamilyHistory(record));
+          const lifestyleAssessment = lifestyleAssessmentRaw
+            ? this.transformLifestyleAssessment(lifestyleAssessmentRaw)
+            : {
+                id: '',
+                userId: '',
+                clinicId: '',
+                doctorId: '',
+                diet: '',
+                exercise: '',
+                smoking: '',
+                alcohol: '',
+                sleep: '',
+                stress: '',
+                notes: '',
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString(),
+              };
 
-        return {
-          medicalHistory,
-          labReports,
-          radiologyReports,
-          surgicalRecords,
-          vitals,
-          allergies,
-          medications,
-          immunizations,
-          familyHistory,
-          lifestyleAssessment,
-        };
+          return {
+            medicalHistory,
+            labReports,
+            radiologyReports,
+            surgicalRecords,
+            vitals,
+            allergies,
+            medications,
+            immunizations,
+            familyHistory,
+            lifestyleAssessment,
+          };
+        } catch (error) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            'Failed to fetch comprehensive health record',
+            'EHRService',
+            { userId, error: error instanceof Error ? error.message : String(error) }
+          );
+          throw error;
+        }
       },
       {
         ttl: 1800,
