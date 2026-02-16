@@ -123,10 +123,22 @@ export class PharmacyService {
 
   async findPrescriptionsByPatient(userId: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        patient: { findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
+      };
+
+      // Resolve Patient ID from User ID
+      const patient = await typedClient.patient.findUnique({
+        where: { userId } as PrismaDelegateArgs,
+        select: { id: true } as PrismaDelegateArgs,
+      });
+
+      if (!patient) {
+        return [];
+      }
 
       return await typedClient.prescription.findMany({
-        where: { patientId: userId } as PrismaDelegateArgs,
+        where: { patientId: patient.id } as PrismaDelegateArgs,
         include: {
           items: true,
           doctor: {
