@@ -20,7 +20,7 @@ export type { PluginHealthMetrics, PluginHealthSummary } from './health/plugin-h
 export * from './base/base-plugin.service';
 
 // Clinic Plugins (Healthcare Focus)
-export * from './queue/clinic-queue.plugin';
+
 export * from './location/clinic-location.plugin';
 export * from './confirmation/clinic-confirmation.plugin';
 export * from './checkin/clinic-checkin.plugin';
@@ -41,7 +41,7 @@ export * from '../communications';
 // Service Dependencies
 // VideoService is now in @services/video - use VideoModule instead
 export * from './payment/payment.service';
-export * from './queue/appointment-queue.service';
+export { AppointmentQueueService } from '@infrastructure/queue';
 export * from './location/appointment-location.service';
 export * from './confirmation/appointment-confirmation.service';
 export * from './checkin/check-in.service';
