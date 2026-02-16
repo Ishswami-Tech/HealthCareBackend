@@ -2416,7 +2416,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         if docker exec "${CONTAINER_PREFIX}api" sh -c "
             export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
             unset DIRECT_URL
-            cd /app/src/libs/infrastructure/database/prisma && npx prisma validate --schema './schema.prisma' --config './prisma.config.js'
+            cd /app/src/libs/infrastructure/database/prisma && npx prisma validate --schema './schema.prisma'
         " 2>&1; then
             log_success "Schema validation passed"
             return 0
