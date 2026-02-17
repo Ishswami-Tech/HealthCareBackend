@@ -1,149 +1,92 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
 
-// Internal imports - Core
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
-
-/**
- * Interface for location QR data structure
- */
-interface LocationQRData {
+export interface LocationQRData {
   locationId: string;
+  clinicId: string;
   type: string;
   timestamp: string;
+  signature: string;
 }
 
-/**
- * Location QR Service for Healthcare Applications
- *
- * Provides QR code generation and verification for clinic locations,
- * enabling location-based check-in functionality for healthcare applications.
- *
- * @class LocationQrService
- * @description Service for generating and verifying location-based QR codes
- * @version 1.0.0
- * @author Healthcare Backend Team
- * @since 2024
- *
- * @example
- * ```typescript
- * // Inject the service
- * constructor(private readonly locationQrService: LocationQrService) {}
- *
- * // Generate QR code for location
- * const qrData = await this.locationQrService.generateLocationQR('location-123');
- *
- * // Verify QR code
- * const isValid = await this.locationQrService.verifyLocationQR(qrData, 'location-123');
- * ```
- */
 @Injectable()
 export class LocationQrService {
-  /**
-   * Creates an instance of LocationQrService
-   */
-  constructor() {}
+  private readonly logger = new Logger(LocationQrService.name);
+  private readonly SECRET_KEY: string;
 
-  /**
-   * Generate a QR code for a specific clinic location
-   *
-   * @param locationId - The ID of the clinic location
-   * @returns Promise<string> - JSON string containing location QR data
-   *
-   * @description Generates QR code data for a specific clinic location that can be
-   * used for location-based check-in functionality. The QR code contains location
-   * information and timestamp for validation.
-   *
-   * @example
-   * ```typescript
-   * const qrData = await this.locationQrService.generateLocationQR('location-123');
-   * // Returns: '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}'
-   * ```
-   *
-   * @throws {HealthcareError} When QR code generation fails
-   */
-  generateLocationQR(locationId: string): Promise<string> {
+  constructor(private readonly configService: ConfigService) {
+    this.SECRET_KEY = this.configService.get<string>('QR_SECRET_KEY') || 'fallback_dev_secret';
+  }
+
+  generateLocationQR(locationId: string, clinicId: string): string {
+    const payload = {
+      locationId,
+      clinicId,
+      type: 'LOCATION_CHECK_IN',
+      timestamp: new Date().toISOString(),
+    };
+
+    const signature = this.generateSignature(payload);
+
+    // Return compact JSON string
+    return JSON.stringify({ ...payload, signature });
+  }
+
+  verifyLocationQR(
+    qrDataString: string,
+    expectedLocationId: string,
+    expectedClinicId: string
+  ): boolean {
     try {
-      // Create QR data with location information
-      const qrData: LocationQRData = {
-        locationId,
-        type: 'LOCATION_CHECK_IN',
-        timestamp: new Date().toISOString(),
-      };
+      const data = JSON.parse(qrDataString) as LocationQRData;
 
-      // Generate QR code
-      // Note: This would integrate with QrService in a real implementation
-      return Promise.resolve(JSON.stringify(qrData));
-    } catch (_error) {
-      throw new HealthcareError(
-        ErrorCode.EXTERNAL_SERVICE_UNAVAILABLE,
-        `Failed to generate location QR`,
-        undefined,
-        { locationId, error: _error instanceof Error ? _error.message : String(_error) },
-        'LocationQrService.generateLocationQR'
-      );
+      // Basic validation
+      if (!data.locationId || !data.clinicId || !data.type || !data.timestamp || !data.signature) {
+        this.logger.warn('Invalid QR data structure');
+        return false;
+      }
+
+      // Context validation
+      if (data.locationId !== expectedLocationId) {
+        this.logger.warn(
+          `Location mismatch: expected ${expectedLocationId}, got ${data.locationId}`
+        );
+        return false;
+      }
+
+      if (data.clinicId !== expectedClinicId) {
+        this.logger.warn(`Clinic mismatch: expected ${expectedClinicId}, got ${data.clinicId}`);
+        return false;
+      }
+
+      if (data.type !== 'LOCATION_CHECK_IN') {
+        this.logger.warn(`Invalid QR type: ${data.type}`);
+        return false;
+      }
+
+      // Verify signature
+      const { signature, ...payload } = data;
+      const expectedSignature = this.generateSignature(payload);
+
+      if (signature !== expectedSignature) {
+        this.logger.warn('Invalid HMAC signature');
+        return false;
+      }
+
+      // Optional: Timestamp expiry check could be added here
+
+      return true;
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to verify QR: ${errorMessage}`);
+      return false;
     }
   }
 
-  /**
-   * Verify QR code for a specific location
-   *
-   * @param qrData - The data scanned from the QR code
-   * @param appointmentLocationId - The location ID from the appointment
-   * @returns Promise<boolean> - Whether the QR code is valid for this location
-   *
-   * @description Verifies that a scanned QR code is valid for the specified location.
-   * Validates the QR code format and ensures it matches the expected location ID.
-   *
-   * @example
-   * ```typescript
-   * const isValid = await this.locationQrService.verifyLocationQR(
-   *   '{"locationId":"location-123","type":"LOCATION_CHECK_IN","timestamp":"2024-01-01T00:00:00.000Z"}',
-   *   'location-123'
-   * );
-   * // Returns: true if valid, throws HealthcareError if invalid
-   * ```
-   *
-   * @throws {HealthcareError} When QR code is invalid or doesn't match location
-   */
-  verifyLocationQR(qrData: string, appointmentLocationId: string): Promise<boolean> {
-    try {
-      const data = JSON.parse(qrData) as LocationQRData;
-
-      // Validate QR data format
-      if (data.type !== 'LOCATION_CHECK_IN') {
-        throw new HealthcareError(
-          ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Invalid QR code type',
-          undefined,
-          { qrData, expectedType: 'LOCATION_CHECK_IN', actualType: data.type },
-          'LocationQrService.verifyLocationQR'
-        );
-      }
-
-      // Verify if the QR code is for the correct location
-      if (data.locationId !== appointmentLocationId) {
-        throw new HealthcareError(
-          ErrorCode.VALIDATION_INVALID_FORMAT,
-          'QR code is not valid for this location',
-          undefined,
-          { qrLocationId: data.locationId, appointmentLocationId },
-          'LocationQrService.verifyLocationQR'
-        );
-      }
-
-      return Promise.resolve(true);
-    } catch (_error) {
-      if (_error instanceof HealthcareError) {
-        throw _error;
-      }
-      throw new HealthcareError(
-        ErrorCode.VALIDATION_INVALID_FORMAT,
-        'Invalid QR code',
-        undefined,
-        { error: _error instanceof Error ? _error.message : String(_error) },
-        'LocationQrService.verifyLocationQR'
-      );
-    }
+  private generateSignature(payload: Omit<LocationQRData, 'signature'>): string {
+    // Sort keys to ensure deterministic string or use specific order
+    const dataString = `${payload.clinicId}:${payload.locationId}:${payload.type}:${payload.timestamp}`;
+    return crypto.createHmac('sha256', this.SECRET_KEY).update(dataString).digest('hex');
   }
 }

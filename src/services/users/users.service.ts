@@ -62,8 +62,8 @@ export class UsersService {
     this.eventService = eventService;
   }
 
-  async findAll(role?: Role): Promise<UserResponseDto[]> {
-    const cacheKey = `users:all:${role || 'all'}`;
+  async findAll(role?: Role, clinicId?: string): Promise<UserResponseDto[]> {
+    const cacheKey = `users:all:${role || 'all'}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -79,8 +79,16 @@ export class UsersService {
           }>
         >(async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const where: Record<string, unknown> = {};
+          if (role) {
+            where['role'] = role;
+          }
+          // 🔒 TENANT ISOLATION: Filter by clinic when clinicId is provided
+          if (clinicId) {
+            where['userClinics'] = { some: { clinicId } };
+          }
           const result = await typedClient.user.findMany({
-            ...(role ? { where: { role } } : {}),
+            where: where as PrismaDelegateArgs,
             include: {
               doctor: role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR,
               patient: role === Role.PATIENT,
@@ -141,8 +149,8 @@ export class UsersService {
     );
   }
 
-  async findOne(id: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:${id}`;
+  async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
+    const cacheKey = `users:one:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -873,20 +881,20 @@ export class UsersService {
   }
 
   // Role-specific methods
-  async getDoctors(): Promise<UserResponseDto[]> {
-    return this.findAll(Role.DOCTOR);
+  async getDoctors(clinicId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.DOCTOR, clinicId);
   }
 
-  async getPatients(): Promise<UserResponseDto[]> {
-    return this.findAll(Role.PATIENT);
+  async getPatients(clinicId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.PATIENT, clinicId);
   }
 
-  async getReceptionists(): Promise<UserResponseDto[]> {
-    return this.findAll(Role.RECEPTIONIST);
+  async getReceptionists(clinicId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.RECEPTIONIST, clinicId);
   }
 
-  async getClinicAdmins(): Promise<UserResponseDto[]> {
-    return this.findAll(Role.CLINIC_ADMIN);
+  async getClinicAdmins(clinicId?: string): Promise<UserResponseDto[]> {
+    return this.findAll(Role.CLINIC_ADMIN, clinicId);
   }
 
   async logout(

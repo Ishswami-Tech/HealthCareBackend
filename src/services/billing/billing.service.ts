@@ -362,7 +362,12 @@ export class BillingService {
     }
   }
 
-  async getUserSubscriptions(userId: string, role?: string, requestingUserId?: string) {
+  async getUserSubscriptions(
+    userId: string,
+    role?: string,
+    requestingUserId?: string,
+    clinicId?: string
+  ) {
     // Apply role-based filtering
     // Patients can only see their own subscriptions
     // Clinic staff can see subscriptions for their clinic
@@ -370,7 +375,7 @@ export class BillingService {
       throw new BadRequestException('You can only view your own subscriptions');
     }
 
-    const cacheKey = `billing_subscriptions:user:${userId}`;
+    const cacheKey = `billing_subscriptions:user:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -379,10 +384,14 @@ export class BillingService {
 
         // If clinic staff, also filter by clinic
         if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          // Get user's clinic to filter subscriptions
-          const user = await this.databaseService.findUserByIdSafe(userId);
-          if (user?.primaryClinicId) {
-            whereClause['clinicId'] = user.primaryClinicId;
+          if (clinicId) {
+            whereClause['clinicId'] = clinicId;
+          } else {
+            // Fallback: Get user's clinic to filter subscriptions (Legacy)
+            const user = await this.databaseService.findUserByIdSafe(userId);
+            if (user?.primaryClinicId) {
+              whereClause['clinicId'] = user.primaryClinicId;
+            }
           }
         }
 
@@ -619,7 +628,12 @@ export class BillingService {
     }
   }
 
-  async getUserInvoices(userId: string, role?: string, requestingUserId?: string) {
+  async getUserInvoices(
+    userId: string,
+    role?: string,
+    requestingUserId?: string,
+    clinicId?: string
+  ) {
     // Apply role-based filtering
     // Patients can only see their own invoices
     // Clinic staff can see invoices for their clinic
@@ -627,7 +641,7 @@ export class BillingService {
       throw new BadRequestException('You can only view your own invoices');
     }
 
-    const cacheKey = `user_invoices:${userId}`;
+    const cacheKey = `user_invoices:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -636,10 +650,14 @@ export class BillingService {
 
         // If clinic staff, also filter by clinic
         if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          // Get user's clinic to filter invoices
-          const user = await this.databaseService.findUserByIdSafe(userId);
-          if (user?.primaryClinicId) {
-            whereClause['clinicId'] = user.primaryClinicId;
+          if (clinicId) {
+            whereClause['clinicId'] = clinicId;
+          } else {
+            // Fallback: Get user's clinic to filter invoices (Legacy)
+            const user = await this.databaseService.findUserByIdSafe(userId);
+            if (user?.primaryClinicId) {
+              whereClause['clinicId'] = user.primaryClinicId;
+            }
           }
         }
 
@@ -817,7 +835,12 @@ export class BillingService {
     return payment;
   }
 
-  async getUserPayments(userId: string, role?: string, requestingUserId?: string) {
+  async getUserPayments(
+    userId: string,
+    role?: string,
+    requestingUserId?: string,
+    clinicId?: string
+  ) {
     // Apply role-based filtering
     // Patients can only see their own payments
     // Clinic staff can see payments for their clinic
@@ -825,7 +848,7 @@ export class BillingService {
       throw new BadRequestException('You can only view your own payments');
     }
 
-    const cacheKey = `user_payments:${userId}`;
+    const cacheKey = `user_payments:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -834,10 +857,14 @@ export class BillingService {
 
         // If clinic staff, also filter by clinic
         if (role && role !== 'PATIENT' && role !== 'SUPER_ADMIN') {
-          // Get user's clinic to filter payments
-          const user = await this.databaseService.findUserByIdSafe(userId);
-          if (user?.primaryClinicId) {
-            whereClause['clinicId'] = user.primaryClinicId;
+          if (clinicId) {
+            whereClause['clinicId'] = clinicId;
+          } else {
+            // Fallback: Get user's clinic to filter payments (Legacy)
+            const user = await this.databaseService.findUserByIdSafe(userId);
+            if (user?.primaryClinicId) {
+              whereClause['clinicId'] = user.primaryClinicId;
+            }
           }
         }
 

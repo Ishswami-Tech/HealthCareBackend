@@ -698,7 +698,11 @@ export class CheckInService {
 
     // I need to fetch position AFTER checkin.
     // getPatientQueuePosition returns Promise<PatientQueuePositionResponse>
-    const pos = await this.appointmentQueueService.getPatientQueuePosition(appointmentId, domain);
+    const pos = await this.appointmentQueueService.getPatientQueuePosition(
+      appointmentId,
+      clinicId,
+      domain
+    );
 
     return {
       position: pos.position,
@@ -731,7 +735,7 @@ export class CheckInService {
     });
   }
 
-  private async removeFromQueue(appointmentId: string, _clinicId: string): Promise<void> {
+  private async removeFromQueue(appointmentId: string, clinicId: string): Promise<void> {
     // We need doctorId to remove from queue.
     // We might need to fetch appointment to get doctorId if not passed.
     // For now, let's try to find appointment or assume we can't easily remove without doctorId.
@@ -746,6 +750,7 @@ export class CheckInService {
       await this.appointmentQueueService.removePatientFromQueue(
         appointmentId,
         appointment.doctorId,
+        clinicId,
         'healthcare'
       ); // hardcoded domain or fetch?
     }
@@ -767,11 +772,12 @@ export class CheckInService {
 
   private async fetchQueuePosition(
     appointmentId: string,
-    _clinicId: string
+    clinicId: string
   ): Promise<AppointmentQueuePosition | null> {
     try {
       const pos = await this.appointmentQueueService.getPatientQueuePosition(
         appointmentId,
+        clinicId,
         'healthcare'
       ); // defaulting domain
       if (!pos) return null;
@@ -787,9 +793,10 @@ export class CheckInService {
     }
   }
 
-  private async fetchDoctorActiveQueue(doctorId: string, _clinicId: string): Promise<unknown[]> {
+  private async fetchDoctorActiveQueue(doctorId: string, clinicId: string): Promise<unknown[]> {
     const response = await this.appointmentQueueService.getDoctorQueue(
       doctorId,
+      clinicId,
       new Date().toISOString().split('T')[0] || '',
       'healthcare'
     );
@@ -829,6 +836,7 @@ export class CheckInService {
     await this.appointmentQueueService.reorderQueue(
       {
         doctorId: appt.doctorId,
+        clinicId,
         date: new Date().toISOString().split('T')[0] || '',
         newOrder: appointmentOrder,
       },

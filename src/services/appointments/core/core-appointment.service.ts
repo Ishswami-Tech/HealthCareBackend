@@ -112,6 +112,16 @@ export class CoreAppointmentService {
         'CoreAppointmentService.createAppointment'
       );
 
+      // 0. Validate clinic context integrity
+      if (createDto.clinicId && createDto.clinicId !== context.clinicId) {
+        return {
+          success: false,
+          error: 'VALIDATION_ERROR',
+          message: 'Clinic ID mismatch: Request body does not match context',
+          metadata: { processingTime: Date.now() - startTime },
+        };
+      }
+
       // 1. Validate appointment type requirements using strict type guards
       if (isVideoCallAppointmentType(createDto.type)) {
         // VIDEO_CALL appointments don't require locationId (can be null/optional)
@@ -271,6 +281,7 @@ export class CoreAppointmentService {
         doctorId: resolvedIds.doctorId,
         ...(resolvedIds.locationId && { locationId: resolvedIds.locationId }),
         userId: context.userId, // Add required userId
+        clinicId: context.clinicId, // Enforce context clinic ID
         status: AppointmentStatus.SCHEDULED,
         priority: createDto.priority || AppointmentPriority.NORMAL,
         date: new Date(dateStr),
@@ -479,7 +490,8 @@ export class CoreAppointmentService {
       // Get appointments using unified database service
       const existingAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
-      if (!existingAppointment) {
+      // Enforce strict isolation: Appointment must belong to current clinic context
+      if (!existingAppointment || existingAppointment.clinicId !== context.clinicId) {
         return {
           success: false,
           error: 'APPOINTMENT_NOT_FOUND',
@@ -653,7 +665,8 @@ export class CoreAppointmentService {
       // Get appointments using unified database service
       const existingAppointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
-      if (!existingAppointment) {
+      // Enforce strict isolation: Appointment must belong to current clinic context
+      if (!existingAppointment || existingAppointment.clinicId !== context.clinicId) {
         return {
           success: false,
           error: 'APPOINTMENT_NOT_FOUND',

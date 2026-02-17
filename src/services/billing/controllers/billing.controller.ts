@@ -35,6 +35,7 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
@@ -43,10 +44,11 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 @ApiTags('billing')
 @Controller('billing')
-@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,
@@ -72,12 +74,11 @@ export class BillingController {
     enableSWR: true,
   })
   @RateLimitAPI()
-  async getBillingPlans(
-    @Query('clinicId') clinicId?: string,
-    @Request() req?: AuthenticatedRequest
-  ) {
+  async getBillingPlans(@Request() req?: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
     const role = req?.user?.['role'];
-    const userId = req?.user?.['sub'] as string | undefined;
+    const userId = req?.user?.['sub'];
     return this.billingService.getBillingPlans(clinicId, role, userId);
   }
 
@@ -147,11 +148,13 @@ export class BillingController {
   @RateLimitAPI()
   async getUserSubscriptions(
     @Param('userId') userId: string,
-    @Request() req?: AuthenticatedRequest
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
     const role = req?.user?.['role'];
-    const requestingUserId = req?.user?.['sub'] as string | undefined;
-    return this.billingService.getUserSubscriptions(userId, role, requestingUserId);
+    const requestingUserId = req?.user?.['sub'];
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    return this.billingService.getUserSubscriptions(userId, role, requestingUserId, clinicId);
   }
 
   @Get('subscriptions/:id')
@@ -216,10 +219,15 @@ export class BillingController {
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getUserInvoices(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
+  async getUserInvoices(
+    @Param('userId') userId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
     const role = req?.user?.['role'];
-    const requestingUserId = req?.user?.['sub'] as string | undefined;
-    return this.billingService.getUserInvoices(userId, role, requestingUserId);
+    const requestingUserId = req?.user?.['sub'];
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    return this.billingService.getUserInvoices(userId, role, requestingUserId, clinicId);
   }
 
   @Get('invoices/:id')
@@ -286,10 +294,15 @@ export class BillingController {
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getUserPayments(@Param('userId') userId: string, @Request() req?: AuthenticatedRequest) {
+  async getUserPayments(
+    @Param('userId') userId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
     const role = req?.user?.['role'];
-    const requestingUserId = req?.user?.['sub'] as string | undefined;
-    return this.billingService.getUserPayments(userId, role, requestingUserId);
+    const requestingUserId = req?.user?.['sub'];
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    return this.billingService.getUserPayments(userId, role, requestingUserId, clinicId);
   }
 
   @Get('payments/:id')
@@ -330,9 +343,15 @@ export class BillingController {
   async refundPayment(
     @Param('id') paymentId: string,
     @Body() body: { amount?: number; reason?: string },
-    @Query('clinicId') clinicId: string,
-    @Query('provider') provider?: string
+    @Query('provider') provider?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for refund');
+    }
+
     // Convert provider string to PaymentProvider enum
     let paymentProvider: PaymentProvider | undefined;
     if (provider) {
@@ -377,13 +396,17 @@ export class BillingController {
   })
   @RateLimitAPI()
   async getClinicRevenue(
-    @Query('clinicId') clinicId: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
-    @Request() req?: AuthenticatedRequest
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for revenue analytics');
+    }
     const role = req?.user?.['role'];
-    const userId = req?.user?.['sub'] as string | undefined;
+    const userId = req?.user?.['sub'];
     return this.billingService.getClinicRevenue(
       clinicId,
       startDate ? new Date(startDate) : undefined,
@@ -403,12 +426,14 @@ export class BillingController {
     enableSWR: true,
   })
   @RateLimitAPI()
-  async getSubscriptionMetrics(
-    @Query('clinicId') clinicId: string,
-    @Request() req?: AuthenticatedRequest
-  ) {
+  async getSubscriptionMetrics(@Request() req?: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for subscription metrics');
+    }
     const role = req?.user?.['role'];
-    const userId = req?.user?.['sub'] as string | undefined;
+    const userId = req?.user?.['sub'];
     return this.billingService.getSubscriptionMetrics(clinicId, role, userId);
   }
 
@@ -631,7 +656,10 @@ export class BillingController {
   @Get('expenses')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('billing', 'read')
-  async getExpenses(@Query('clinicId') clinicId: string) {
+  async getExpenses(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     return this.billingService.getClinicExpenses(clinicId);
   }
 
@@ -639,7 +667,10 @@ export class BillingController {
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('billing', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteExpense(@Param('id') id: string, @Query('clinicId') clinicId: string) {
+  async deleteExpense(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     await this.billingService.deleteClinicExpense(id, clinicId);
   }
 
@@ -658,15 +689,21 @@ export class BillingController {
   async updateInsuranceClaim(
     @Param('id') id: string,
     @Body() dto: UpdateInsuranceClaimDto,
-    @Query('clinicId') clinicId: string
+    @Request() req: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     return this.billingService.updateInsuranceClaimStatus(id, dto, clinicId);
   }
 
   @Get('insurance-claims')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('billing', 'read')
-  async getInsuranceClaims(@Query('clinicId') clinicId: string) {
+  async getInsuranceClaims(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     return this.billingService.getInsuranceClaims(clinicId);
   }
 
@@ -674,14 +711,20 @@ export class BillingController {
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('billing', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteInsuranceClaim(@Param('id') id: string, @Query('clinicId') clinicId: string) {
+  async deleteInsuranceClaim(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     await this.billingService.deleteInsuranceClaim(id, clinicId);
   }
 
   @Get('dashboard/financial-stats')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
   @RequireResourcePermission('reports', 'read')
-  async getFinancialStats(@Query('clinicId') clinicId: string) {
+  async getFinancialStats(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new NotFoundException('Clinic context required');
     return this.billingService.getStats(clinicId);
   }
 }

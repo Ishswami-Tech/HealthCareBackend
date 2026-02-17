@@ -2878,7 +2878,7 @@ export class AppointmentsController {
         if (qrData.locationId && qrData.type === 'LOCATION_CHECK_IN') {
           locationIdFromQR = qrData.locationId;
           // Verify QR code is valid
-          await this.locationQrService.verifyLocationQR(scanDto.qrCode, qrData.locationId);
+          this.locationQrService.verifyLocationQR(scanDto.qrCode, qrData.locationId, clinicId);
         }
       } catch {
         // If not JSON format, treat as direct QR code string (database lookup)
@@ -3113,6 +3113,7 @@ export class AppointmentsController {
       try {
         const queueResponse = await this.appointmentQueueService.getPatientQueuePosition(
           appointment.id,
+          clinicId,
           'healthcare' // Use default domain since appointment.domain doesn't exist
         );
 
@@ -3686,7 +3687,7 @@ export class AppointmentsController {
       }
 
       // Generate QR code data string using LocationQrService
-      const qrCodeDataString = await this.locationQrService.generateLocationQR(location.id);
+      const qrCodeDataString = this.locationQrService.generateLocationQR(location.id, clinicId);
 
       // Generate QR code image using QrService
       const qrCodeDataUrl = await this.qrService.generateQR(qrCodeDataString);

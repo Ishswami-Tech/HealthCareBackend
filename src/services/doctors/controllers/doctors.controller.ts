@@ -31,11 +31,15 @@ export class DoctorsController {
   @ApiResponse({ status: 400, description: 'Bad request - Validation failed' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async createDoctor(@Body() dto: CreateDoctorDto, @Request() req: ClinicAuthenticatedRequest) {
-    const clinicId = dto.clinicId || req.clinicContext?.clinicId;
+    // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new Error('Clinic context is required');
+    }
 
     return this.doctorsService.createOrUpdateDoctor({
       userId: dto.userId,
-      ...(clinicId != null && { clinicId }),
+      clinicId,
       ...(dto.specialization != null && { specialization: dto.specialization }),
       ...(dto.experience != null && { experience: dto.experience }),
       ...(dto.qualification != null && { qualification: dto.qualification }),
@@ -53,15 +57,16 @@ export class DoctorsController {
     Role.SUPER_ADMIN,
     Role.PATIENT
   )
-  @ApiOperation({ summary: 'Get all doctors (optional filters)' })
+  @ApiOperation({ summary: 'Get all doctors (scoped to current clinic)' })
   @ApiQuery({ name: 'specialization', required: false })
-  @ApiQuery({ name: 'clinicId', required: false })
   @ApiResponse({ status: 200, description: 'List of doctors retrieved successfully' })
   async getAllDoctors(
     @Query('specialization') specialization?: string,
-    @Query('clinicId') clinicId?: string,
-    @Query('locationId') locationId?: string
+    @Query('locationId') locationId?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
+    const clinicId = req?.clinicContext?.clinicId;
     return this.doctorsService.getAllDoctors({
       ...(specialization != null && { specialization }),
       ...(clinicId != null && { clinicId }),

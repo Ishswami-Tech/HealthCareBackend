@@ -170,6 +170,26 @@ export class AppointmentsService {
     clinicId: string,
     role: string = 'USER'
   ): Promise<AppointmentResult> {
+    // SECURITY: Reject if body contains clinicId (must come from context only)
+    if ((createDto as unknown as Record<string, unknown>)['clinicId']) {
+      await this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.ERROR,
+        'Attempt to create appointment with clinicId in body',
+        'AppointmentsService.createAppointment',
+        {
+          userId,
+          bodyClinicId: (createDto as unknown as Record<string, unknown>)['clinicId'],
+          contextClinicId: clinicId,
+        }
+      );
+      throw this.errors.validationError(
+        'clinicId',
+        'Cannot specify clinicId in request body. Clinic context is automatically enforced.',
+        'AppointmentsService.createAppointment'
+      );
+    }
+
     // RBAC: Check permission to create appointments
     const permissionCheck = await this.rbacService.checkPermission({
       userId,
@@ -182,14 +202,16 @@ export class AppointmentsService {
       throw this.errors.insufficientPermissions('AppointmentsService.createAppointment');
     }
 
+    // Context with forced clinicId from request context (not body)
     const context: AppointmentContext = {
       userId,
       role,
-      clinicId,
+      clinicId, // Always from request context, never from body
       doctorId: createDto.doctorId,
       patientId: createDto.patientId,
     };
 
+    // Database layer will enforce clinic_id filtering on all queries
     const result = await this.coreAppointmentService.createAppointment(createDto, context);
 
     // Log security event for appointment creation
@@ -423,10 +445,11 @@ export class AppointmentsService {
       throw this.errors.insufficientPermissions('AppointmentsService.confirmVideoSlot');
     }
 
-    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
-    if (!appointment) {
-      throw this.errors.notFound('Appointment');
-    }
+    // Validate appointment and check clinic isolation
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
     if (String(appointment.type) !== 'VIDEO_CALL') {
       throw this.errors.validationError(
         'type',
@@ -691,11 +714,11 @@ export class AppointmentsService {
     clinicId: string,
     role: string = 'USER'
   ): Promise<unknown> {
-    // 1. Get Appointment to validate existence
-    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
-    if (!appointment) {
-      throw this.errors.appointmentNotFound(appointmentId, 'AppointmentsService.updateStatus');
-    }
+    // 1. Get Appointment to validate existence and clinic isolation
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
 
     // 2. Dispatch based on new status
     switch (updateDto.status) {
@@ -969,14 +992,11 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
-      // Get appointment to extract doctorId
-      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
-      if (!appointment) {
-        throw this.errors.appointmentNotFound(
-          appointmentId,
-          'AppointmentsService.completeAppointment'
-        );
-      }
+      // Get appointment to extract doctorId and validate clinic isolation
+      const appointment = (await this.getAppointmentById(
+        appointmentId,
+        clinicId
+      )) as AppointmentWithRelations;
 
       // Use appointment's doctorId, fallback to userId if not available
       const doctorId = appointment.doctorId || userId;
@@ -1249,6 +1269,9 @@ export class AppointmentsService {
     _role: string = 'USER'
   ): Promise<unknown> {
     try {
+      // Validate appointment exists in current clinic
+      await this.getAppointmentById(appointmentId, clinicId);
+
       // Hot path: Direct plugin injection for performance
       const consultationData = await this.clinicCheckInPlugin.process({
         operation: 'startConsultation',
@@ -1311,7 +1334,12 @@ export class AppointmentsService {
   ): Promise<unknown> {
     try {
       // Hot path: Direct service call for performance (very frequent operation)
-      const queueData = await this.appointmentQueueService.getDoctorQueue(doctorId, date, 'clinic');
+      const queueData = await this.appointmentQueueService.getDoctorQueue(
+        doctorId,
+        clinicId,
+        date,
+        'clinic'
+      );
 
       const result = { success: true, data: queueData };
 

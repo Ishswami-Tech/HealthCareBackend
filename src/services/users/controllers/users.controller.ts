@@ -97,7 +97,7 @@ export class UsersController {
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:all:{role}',
+    keyTemplate: 'users:all:{role}:{clinicId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists'],
     priority: 'normal',
@@ -122,8 +122,8 @@ export class UsersController {
     status: 401,
     description: 'Unauthorized - Invalid token or missing session ID',
   })
-  async findAll(): Promise<UserResponseDto[]> {
-    return this.usersService.findAll();
+  async findAll(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
+    return this.usersService.findAll(undefined, clinicId);
   }
 
   @Get('search')
@@ -192,7 +192,7 @@ export class UsersController {
   @Get(':id')
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:one:{id}',
+    keyTemplate: 'users:one:{id}:{clinicId}',
     ttl: 3600, // 1 hour
     tags: ['users', 'user_details'],
     priority: 'high',
@@ -210,8 +210,11 @@ export class UsersController {
     type: UserResponseDto,
   })
   @ApiResponse({ status: 404, description: 'User not found' })
-  async findOne(@Param('id') id: string): Promise<UserResponseDto> {
-    return this.usersService.findOne(id);
+  async findOne(
+    @Param('id') id: string,
+    @OptionalClinicId() clinicId?: string
+  ): Promise<UserResponseDto> {
+    return this.usersService.findOne(id, clinicId);
   }
 
   @Get(':id/activity')
@@ -318,7 +321,7 @@ export class UsersController {
   @Get('role/patient')
   @RequireResourcePermission('patients', 'read')
   @PatientCache({
-    keyTemplate: 'users:role:patient',
+    keyTemplate: 'users:role:patient:{clinicId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists', 'patients'],
     priority: 'normal',
@@ -329,7 +332,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all patients',
     description:
-      'Retrieve a list of all users with the patient role. No parameters required. Cached for performance.',
+      'Retrieve a list of all users with the patient role, scoped to the current clinic.',
   })
   @ApiResponse({
     status: 200,
@@ -340,14 +343,14 @@ export class UsersController {
     status: 401,
     description: 'Unauthorized - Invalid or missing token',
   })
-  async getPatients(): Promise<UserResponseDto[]> {
-    return this.usersService.getPatients();
+  async getPatients(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
+    return this.usersService.getPatients(clinicId);
   }
 
   @Get('role/doctors')
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:role:doctors',
+    keyTemplate: 'users:role:doctors:{clinicId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists', 'doctors'],
     priority: 'normal',
@@ -358,7 +361,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all doctors',
     description:
-      'Retrieves a list of all users with the Doctor role. No parameters required. Cached for performance.',
+      'Retrieves a list of all users with the Doctor role, scoped to the current clinic.',
   })
   @ApiResponse({
     status: 200,
@@ -369,15 +372,15 @@ export class UsersController {
     status: 401,
     description: 'Unauthorized - Invalid or missing token',
   })
-  async getDoctors(): Promise<UserResponseDto[]> {
-    return this.usersService.getDoctors();
+  async getDoctors(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
+    return this.usersService.getDoctors(clinicId);
   }
 
   @Get('role/receptionists')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:role:receptionists',
+    keyTemplate: 'users:role:receptionists:{clinicId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists', 'receptionists'],
     priority: 'normal',
@@ -388,7 +391,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all receptionists',
     description:
-      'Retrieves a list of all users with the Receptionist role. Only accessible by Super Admin and Clinic Admin. No parameters required. Cached for performance.',
+      'Retrieves a list of all users with the Receptionist role, scoped to the current clinic.',
   })
   @ApiResponse({
     status: 200,
@@ -403,15 +406,15 @@ export class UsersController {
     status: 403,
     description: 'Forbidden - Insufficient permissions',
   })
-  async getReceptionists(): Promise<UserResponseDto[]> {
-    return this.usersService.getReceptionists();
+  async getReceptionists(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
+    return this.usersService.getReceptionists(clinicId);
   }
 
   @Get('role/clinic-admins')
   @Roles(Role.SUPER_ADMIN)
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:role:clinic-admins',
+    keyTemplate: 'users:role:clinic-admins:{clinicId}',
     ttl: 1800, // 30 minutes
     tags: ['users', 'user_lists', 'clinic_admins'],
     priority: 'normal',
@@ -422,7 +425,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Get all clinic admins',
     description:
-      'Retrieves a list of all users with the Clinic Admin role. Only accessible by Super Admin. No parameters required. Cached for performance.',
+      'Retrieves a list of all users with the Clinic Admin role. Only accessible by Super Admin.',
   })
   @ApiResponse({
     status: 200,
@@ -437,8 +440,8 @@ export class UsersController {
     status: 403,
     description: 'Forbidden - Insufficient permissions',
   })
-  async getClinicAdmins(): Promise<UserResponseDto[]> {
-    return this.usersService.getClinicAdmins();
+  async getClinicAdmins(@OptionalClinicId() clinicId?: string): Promise<UserResponseDto[]> {
+    return this.usersService.getClinicAdmins(clinicId);
   }
 
   @Put(':id/role')
