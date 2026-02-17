@@ -1,15 +1,26 @@
-import { Controller, Get, Post, Body, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  UseGuards,
+  BadRequestException,
+  Req,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
 
 @ApiTags('queue')
 @Controller('queue')
-@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, ClinicGuard, RolesGuard, RbacGuard)
 @ApiBearerAuth()
 export class QueueController {
   constructor(private readonly appointmentQueueService: AppointmentQueueService) {}
@@ -18,11 +29,17 @@ export class QueueController {
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @ApiOperation({ summary: 'Call next patient from queue' })
   @ApiResponse({ status: 200, description: 'Next patient called successfully' })
-  async callNext(@Body() body: { doctorId: string; domain?: string }) {
+  async callNext(
+    @Body() body: { doctorId: string; domain?: string },
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
     if (!body.doctorId) {
       throw new BadRequestException('Doctor ID is required');
     }
-    return this.appointmentQueueService.callNext(body.doctorId, body.domain || 'clinic');
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+
+    return this.appointmentQueueService.callNext(body.doctorId, clinicId, body.domain || 'clinic');
   }
 
   @Post('reorder')
@@ -46,11 +63,16 @@ export class QueueController {
       date: string;
       newOrder: string[];
       domain?: string;
-    }
+    },
+    @Req() req: ClinicAuthenticatedRequest
   ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+
     return this.appointmentQueueService.reorderQueue(
       {
         doctorId: body.doctorId,
+        clinicId,
         date: body.date,
         newOrder: body.newOrder,
       },
@@ -61,24 +83,53 @@ export class QueueController {
   @Get('stats')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get queue statistics' })
-  async getQueueStats(@Query('locationId') locationId: string, @Query('domain') domain?: string) {
+  async getQueueStats(
+    @Query('locationId') locationId: string,
+    @Query('domain') domain: string | undefined,
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
     if (!locationId) {
       throw new BadRequestException('Location ID is required');
     }
-    return this.appointmentQueueService.getLocationQueueStats(locationId, domain || 'clinic');
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+
+    return this.appointmentQueueService.getLocationQueueStats(
+      locationId,
+      clinicId,
+      domain || 'clinic'
+    );
   }
 
   @Post('pause')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Pause queue' })
-  async pauseQueue(@Body() body: { doctorId: string; domain?: string }) {
-    return this.appointmentQueueService.pauseQueue(body.doctorId, body.domain || 'clinic');
+  async pauseQueue(
+    @Body() body: { doctorId: string; domain?: string },
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    return this.appointmentQueueService.pauseQueue(
+      body.doctorId,
+      clinicId,
+      body.domain || 'clinic'
+    );
   }
 
   @Post('resume')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
   @ApiOperation({ summary: 'Resume queue' })
-  async resumeQueue(@Body() body: { doctorId: string; domain?: string }) {
-    return this.appointmentQueueService.resumeQueue(body.doctorId, body.domain || 'clinic');
+  async resumeQueue(
+    @Body() body: { doctorId: string; domain?: string },
+    @Req() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new BadRequestException('Clinic ID is required');
+    return this.appointmentQueueService.resumeQueue(
+      body.doctorId,
+      clinicId,
+      body.domain || 'clinic'
+    );
   }
 }

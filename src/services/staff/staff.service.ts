@@ -142,13 +142,20 @@ export class StaffService {
     });
   }
 
-  async getStaffProfile(userId: string) {
+  async getStaffProfile(userId: string, clinicId?: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         user: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
       };
+
+      // 🔒 TENANT ISOLATION: Build where clause with clinic scoping
+      const where: Record<string, unknown> = { id: userId };
+      if (clinicId) {
+        where['userClinics'] = { some: { clinicId } };
+      }
+
       return await typedClient.user.findUnique({
-        where: { id: userId } as PrismaDelegateArgs,
+        where: where as PrismaDelegateArgs,
         include: {
           receptionists: true,
           clinicAdmins: true,

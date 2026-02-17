@@ -150,15 +150,24 @@ export class PatientsController {
   @ApiQuery({ name: 'search', required: false })
   @ApiResponse({ status: 200, description: 'Clinic patients retrieved successfully' })
   async getClinicPatients(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId') paramClinicId: string,
     @Query('search') search: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
+    const validatedClinicId = req.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    // Reject if URL param doesn't match validated context (prevents URL manipulation)
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot access patients from a different clinic');
+    }
     const doctorUserId =
       req.user?.role === Role.DOCTOR || req.user?.role === Role.ASSISTANT_DOCTOR
         ? (req.user?.id ?? req.user?.sub)
         : undefined;
-    return this.patientsService.getClinicPatients(clinicId, search, doctorUserId);
+    return this.patientsService.getClinicPatients(validatedClinicId, search, doctorUserId);
   }
 
   @Get(':id')
@@ -229,7 +238,15 @@ export class PatientsController {
   @ApiOperation({ summary: 'Delete (Soft Delete) patient profile' })
   @ApiResponse({ status: 200, description: 'Patient deleted successfully' })
   @ApiResponse({ status: 404, description: 'Patient not found' })
-  async deletePatient(@Param('id') id: string) {
+  async deletePatient(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Validate patient belongs to requesting clinic
+    const clinicId = req.clinicContext?.clinicId;
+    if (clinicId) {
+      const inClinic = await this.patientsService.isPatientInClinic(id, clinicId);
+      if (!inClinic) {
+        throw new ForbiddenException('Patient does not belong to your clinic');
+      }
+    }
     return this.patientsService.deletePatient(id);
   }
 }

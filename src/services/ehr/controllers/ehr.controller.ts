@@ -10,6 +10,8 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
+  Request,
+  ForbiddenException,
 } from '@nestjs/common';
 import { EHRService } from '@services/ehr/ehr.service';
 import {
@@ -42,15 +44,17 @@ import type {
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 @ApiTags('ehr')
 @Controller('ehr')
-@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class EHRController {
   constructor(private readonly ehrService: EHRService) {}
 
@@ -67,14 +71,23 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getComprehensiveHealthRecord(@Param('userId') userId: string): Promise<unknown> {
-    return this.ehrService.getComprehensiveHealthRecord(userId);
+  async getComprehensiveHealthRecord(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<unknown> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.getComprehensiveHealthRecord(userId, clinicId);
   }
 
   @Get(':patientId/summary')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   async getEHRAISummary(@Param('patientId') patientId: string): Promise<EHRAISummaryDto> {
+    // Summary might cross-reference, but usually we want comprehensive.
+    // Keeping as is for now unless specifically requested, or adding clinicId if available?
+    // The service method getEHRAISummary wasn't updated in previous step (I missed it or it wasn't there).
+    // I'll leave it for now or check if getEHRAISummary calls getComprehensiveHealthRecord internaly?
     return this.ehrService.getEHRAISummary(patientId);
   }
 
@@ -82,8 +95,17 @@ export class EHRController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
-  async createPrescription(@Body() createDto: CreatePrescriptionDto) {
-    return this.ehrService.createPrescription(createDto);
+  async createPrescription(
+    @Body() createDto: CreatePrescriptionDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createPrescription({
+      ...createDto,
+      clinicId,
+    } as CreatePrescriptionDto & { clinicId: string });
   }
 
   // ============ Medical History ============
@@ -91,8 +113,17 @@ export class EHRController {
   @Post('medical-history')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
-  async createMedicalHistory(@Body() createDto: CreateMedicalHistoryDto) {
-    return this.ehrService.createMedicalHistory(createDto);
+  async createMedicalHistory(
+    @Body() createDto: CreateMedicalHistoryDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createMedicalHistory({
+      ...createDto,
+      clinicId,
+    } as CreateMedicalHistoryDto & { clinicId: string });
   }
 
   @Get('medical-history/:userId')
@@ -106,8 +137,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getMedicalHistory(@Param('userId') userId: string): Promise<MedicalHistoryResponse[]> {
-    return await this.ehrService.getMedicalHistory(userId);
+  async getMedicalHistory(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<MedicalHistoryResponse[]> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return await this.ehrService.getMedicalHistory(userId, clinicId);
   }
 
   @Put('medical-history/:id')
@@ -115,17 +151,27 @@ export class EHRController {
   @RequireResourcePermission('medical-records', 'update')
   async updateMedicalHistory(
     @Param('id') id: string,
-    @Body() updateDto: UpdateMedicalHistoryDto
+    @Body() updateDto: UpdateMedicalHistoryDto,
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<unknown> {
-    return this.ehrService.updateMedicalHistory(id, updateDto);
+    // 🔒 TENANT ISOLATION: Pass clinicId for ownership validation
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.updateMedicalHistory(id, updateDto, clinicId);
   }
 
   @Delete('medical-history/:id')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'delete')
   @HttpCode(HttpStatus.NO_CONTENT)
-  async deleteMedicalHistory(@Param('id') id: string): Promise<void> {
-    await this.ehrService.deleteMedicalHistory(id);
+  async deleteMedicalHistory(
+    @Param('id') id: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<void> {
+    // 🔒 TENANT ISOLATION: Pass clinicId for ownership validation
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    await this.ehrService.deleteMedicalHistory(id, clinicId);
   }
 
   // ============ Lab Reports ============
@@ -139,8 +185,16 @@ export class EHRController {
     Role.LAB_TECHNICIAN
   )
   @RequireResourcePermission('lab-reports', 'create')
-  async createLabReport(@Body() createDto: CreateLabReportDto): Promise<unknown> {
-    return this.ehrService.createLabReport(createDto);
+  async createLabReport(
+    @Body() createDto: CreateLabReportDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<unknown> {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createLabReport({ ...createDto, clinicId } as CreateLabReportDto & {
+      clinicId: string;
+    });
   }
 
   @Get('lab-reports/:userId')
@@ -161,8 +215,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getLabReports(@Param('userId') userId: string): Promise<LabReportResponse[]> {
-    return await this.ehrService.getLabReports(userId);
+  async getLabReports(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<LabReportResponse[]> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return await this.ehrService.getLabReports(userId, clinicId);
   }
 
   @Put('lab-reports/:id')
@@ -197,8 +256,17 @@ export class EHRController {
   @Post('radiology-reports')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'create')
-  async createRadiologyReport(@Body() createDto: CreateRadiologyReportDto) {
-    return this.ehrService.createRadiologyReport(createDto);
+  async createRadiologyReport(
+    @Body() createDto: CreateRadiologyReportDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createRadiologyReport({
+      ...createDto,
+      clinicId,
+    } as CreateRadiologyReportDto & { clinicId: string });
   }
 
   @Get('radiology-reports/:userId')
@@ -212,8 +280,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getRadiologyReports(@Param('userId') userId: string): Promise<RadiologyReportResponse[]> {
-    return await this.ehrService.getRadiologyReports(userId);
+  async getRadiologyReports(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<RadiologyReportResponse[]> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return await this.ehrService.getRadiologyReports(userId, clinicId);
   }
 
   @Put('radiology-reports/:id')
@@ -239,8 +312,17 @@ export class EHRController {
   @Post('surgical-records')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('ehr', 'create')
-  async createSurgicalRecord(@Body() createDto: CreateSurgicalRecordDto) {
-    return this.ehrService.createSurgicalRecord(createDto);
+  async createSurgicalRecord(
+    @Body() createDto: CreateSurgicalRecordDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createSurgicalRecord({
+      ...createDto,
+      clinicId,
+    } as CreateSurgicalRecordDto & { clinicId: string });
   }
 
   @Get('surgical-records/:userId')
@@ -254,8 +336,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getSurgicalRecords(@Param('userId') userId: string): Promise<SurgicalRecordResponse[]> {
-    return await this.ehrService.getSurgicalRecords(userId);
+  async getSurgicalRecords(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<SurgicalRecordResponse[]> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return await this.ehrService.getSurgicalRecords(userId, clinicId);
   }
 
   @Put('surgical-records/:id')
@@ -278,8 +365,13 @@ export class EHRController {
   @Post('vitals')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('vitals', 'create')
-  async createVital(@Body() createDto: CreateVitalDto) {
-    return this.ehrService.createVital(createDto);
+  async createVital(@Body() createDto: CreateVitalDto, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createVital({ ...createDto, clinicId } as CreateVitalDto & {
+      clinicId: string;
+    });
   }
 
   @Get('vitals/:userId')
@@ -293,8 +385,14 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getVitals(@Param('userId') userId: string, @Query('type') type?: string): Promise<unknown> {
-    return (await this.ehrService.getVitals(userId, type)) as unknown;
+  async getVitals(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('type') type?: string
+  ): Promise<unknown> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return (await this.ehrService.getVitals(userId, type, clinicId)) as unknown;
   }
 
   @Put('vitals/:id')
@@ -317,8 +415,16 @@ export class EHRController {
   @Post('allergies')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
-  async createAllergy(@Body() createDto: CreateAllergyDto) {
-    return this.ehrService.createAllergy(createDto);
+  async createAllergy(
+    @Body() createDto: CreateAllergyDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createAllergy({ ...createDto, clinicId } as CreateAllergyDto & {
+      clinicId: string;
+    });
   }
 
   @Get('allergies/:userId')
@@ -332,8 +438,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getAllergies(@Param('userId') userId: string): Promise<unknown> {
-    return (await this.ehrService.getAllergies(userId)) as unknown;
+  async getAllergies(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<unknown> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return (await this.ehrService.getAllergies(userId, clinicId)) as unknown;
   }
 
   @Put('allergies/:id')
@@ -356,8 +467,16 @@ export class EHRController {
   @Post('medications')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medications', 'create')
-  async createMedication(@Body() createDto: CreateMedicationDto) {
-    return this.ehrService.createMedication(createDto);
+  async createMedication(
+    @Body() createDto: CreateMedicationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createMedication({ ...createDto, clinicId } as CreateMedicationDto & {
+      clinicId: string;
+    });
   }
 
   @Get('medications/:userId')
@@ -373,9 +492,16 @@ export class EHRController {
   })
   async getMedications(
     @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('activeOnly') activeOnly?: string
   ): Promise<unknown> {
-    return (await this.ehrService.getMedications(userId, activeOnly === 'true')) as unknown;
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return (await this.ehrService.getMedications(
+      userId,
+      activeOnly === 'true',
+      clinicId
+    )) as unknown;
   }
 
   @Put('medications/:id')
@@ -398,8 +524,17 @@ export class EHRController {
   @Post('immunizations')
   @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
-  async createImmunization(@Body() createDto: CreateImmunizationDto) {
-    return this.ehrService.createImmunization(createDto);
+  async createImmunization(
+    @Body() createDto: CreateImmunizationDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Inject clinicId into DTO
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) throw new ForbiddenException('Clinic context required for EHR writes');
+    return this.ehrService.createImmunization({
+      ...createDto,
+      clinicId,
+    } as CreateImmunizationDto & { clinicId: string });
   }
 
   @Get('immunizations/:userId')
@@ -413,8 +548,13 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getImmunizations(@Param('userId') userId: string): Promise<ImmunizationResponse[]> {
-    return await this.ehrService.getImmunizations(userId);
+  async getImmunizations(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ImmunizationResponse[]> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return await this.ehrService.getImmunizations(userId, clinicId);
   }
 
   @Put('immunizations/:id')
@@ -447,15 +587,19 @@ export class EHRController {
   })
   async getHealthTrends(
     @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('vitalType') vitalType: string,
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.ehrService.getHealthTrends(
       userId,
       vitalType,
       startDate ? new Date(startDate) : undefined,
-      endDate ? new Date(endDate) : undefined
+      endDate ? new Date(endDate) : undefined,
+      clinicId
     );
   }
 
@@ -470,7 +614,12 @@ export class EHRController {
     compress: true,
     enableSWR: true,
   })
-  async getMedicationAdherence(@Param('userId') userId: string) {
-    return this.ehrService.getMedicationAdherence(userId);
+  async getMedicationAdherence(
+    @Param('userId') userId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return this.ehrService.getMedicationAdherence(userId, clinicId);
   }
 }

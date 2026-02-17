@@ -288,6 +288,8 @@ export class ClinicController {
     try {
       const userId = req.user?.sub;
       const role = req.user?.role;
+      // Get clinic ID from context or header for filtering
+      const clinicId = req.clinicContext?.clinicId || (req.headers['x-clinic-id'] as string);
 
       if (!userId) {
         throw new BadRequestException('User ID is required');
@@ -297,9 +299,10 @@ export class ClinicController {
         page,
         limit,
         search,
+        clinicId,
       });
 
-      const result = await this.clinicService.getAllClinics(userId, role);
+      const result = await this.clinicService.getAllClinics(userId, role, clinicId);
 
       this.logger.log(
         `Retrieved ${Array.isArray(result) ? result.length : 0} clinics for user ${userId}`
@@ -418,6 +421,7 @@ export class ClinicController {
     try {
       const userId = req.user?.sub;
       const role = req.user?.role;
+      const clinicId = req.clinicContext?.clinicId || (req.headers['x-clinic-id'] as string);
 
       if (!userId) {
         throw new BadRequestException('User ID is required');
@@ -425,7 +429,7 @@ export class ClinicController {
 
       this.logger.log(`Getting clinic ${id} for user ${userId}`);
 
-      const result = await this.clinicService.getClinicById(id, false, userId, role);
+      const result = await this.clinicService.getClinicById(id, false, userId, role, clinicId);
 
       this.logger.log(`Retrieved clinic ${id} successfully`);
       return result;

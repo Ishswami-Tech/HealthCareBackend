@@ -1,19 +1,29 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  Query,
+  UseGuards,
+  Request,
+  ForbiddenException,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { EHRService } from '@services/ehr/ehr.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
+import { ClinicGuard } from '@core/guards/clinic.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { PatientCache, Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import type { ClinicEHRRecordFilters } from '@core/types/ehr.types';
 
 @ApiTags('ehr')
 @Controller('ehr/clinic')
-@UseGuards(JwtAuthGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
 export class EHRClinicController {
   constructor(private readonly ehrService: EHRService) {}
 
@@ -33,8 +43,10 @@ export class EHRClinicController {
   @RateLimitAPI()
   async getComprehensiveHealthRecordWithClinic(
     @Param('userId') userId: string,
-    @Query('clinicId') clinicId: string
+    @Request() req: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.ehrService.getComprehensiveHealthRecord(userId, clinicId);
   }
 
@@ -53,14 +65,25 @@ export class EHRClinicController {
   })
   @RateLimitAPI()
   async getClinicPatientsRecords(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId') paramClinicId: string,
     @Query('recordType') recordType?: string,
     @Query('hasCondition') hasCondition?: string,
     @Query('hasAllergy') hasAllergy?: string,
     @Query('onMedication') onMedication?: string,
     @Query('dateFrom') dateFrom?: string,
-    @Query('dateTo') dateTo?: string
+    @Query('dateTo') dateTo?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const validatedClinicId = req?.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    // Reject URL manipulation attempts
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot access EHR records from a different clinic');
+    }
+
     const filters: ClinicEHRRecordFilters = {};
     if (recordType) filters.recordType = recordType;
     if (hasCondition) filters.hasCondition = hasCondition;
@@ -70,7 +93,7 @@ export class EHRClinicController {
     if (dateTo) filters.dateTo = new Date(dateTo);
 
     return this.ehrService.getClinicPatientsRecords(
-      clinicId,
+      validatedClinicId,
       'DOCTOR', // Default role for clinic access
       filters
     );
@@ -86,8 +109,19 @@ export class EHRClinicController {
     enableSWR: true,
   })
   @RateLimitAPI()
-  async getClinicEHRAnalytics(@Param('clinicId') clinicId: string) {
-    return this.ehrService.getClinicEHRAnalytics(clinicId);
+  async getClinicEHRAnalytics(
+    @Param('clinicId') paramClinicId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const validatedClinicId = req.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot access analytics from a different clinic');
+    }
+    return this.ehrService.getClinicEHRAnalytics(validatedClinicId);
   }
 
   @Get(':clinicId/patients/summary')
@@ -101,8 +135,19 @@ export class EHRClinicController {
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getClinicPatientsSummary(@Param('clinicId') clinicId: string) {
-    return this.ehrService.getClinicPatientsSummary(clinicId);
+  async getClinicPatientsSummary(
+    @Param('clinicId') paramClinicId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const validatedClinicId = req.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot access patient summary from a different clinic');
+    }
+    return this.ehrService.getClinicPatientsSummary(validatedClinicId);
   }
 
   @Get(':clinicId/search')
@@ -117,12 +162,21 @@ export class EHRClinicController {
   })
   @RateLimitAPI()
   async searchClinicRecords(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId') paramClinicId: string,
     @Query('q') searchTerm: string,
-    @Query('types') types?: string
+    @Query('types') types?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const validatedClinicId = req?.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot search records from a different clinic');
+    }
     const searchTypes = types ? types.split(',') : undefined;
-    return this.ehrService.searchClinicRecords(clinicId, searchTerm, searchTypes);
+    return this.ehrService.searchClinicRecords(validatedClinicId, searchTerm, searchTypes);
   }
 
   @Get(':clinicId/alerts/critical')
@@ -135,7 +189,18 @@ export class EHRClinicController {
     enableSWR: true,
     containsPHI: true,
   })
-  async getClinicCriticalAlerts(@Param('clinicId') clinicId: string) {
-    return this.ehrService.getClinicCriticalAlerts(clinicId);
+  async getClinicCriticalAlerts(
+    @Param('clinicId') paramClinicId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const validatedClinicId = req.clinicContext?.clinicId;
+    if (!validatedClinicId) {
+      throw new ForbiddenException('Clinic context is required');
+    }
+    if (paramClinicId !== validatedClinicId) {
+      throw new ForbiddenException('Cannot access alerts from a different clinic');
+    }
+    return this.ehrService.getClinicCriticalAlerts(validatedClinicId);
   }
 }

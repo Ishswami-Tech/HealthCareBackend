@@ -95,15 +95,17 @@ export class EHRService {
 
   async getComprehensiveHealthRecord(
     userId: string,
-
-    _clinicId?: string
+    clinicId?: string
   ): Promise<HealthRecordSummaryDto> {
-    const cacheKey = `ehr:comprehensive:${userId}`;
+    const cacheKey = `ehr:comprehensive:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
       async () => {
         try {
+          const getWhere = (base: Record<string, unknown>) =>
+            clinicId ? { ...base, clinicId } : base;
+
           const results = (await Promise.all([
             // Use executeHealthcareRead for all queries with full optimization layers
             this.databaseService.executeHealthcareRead<unknown[]>(async client => {
@@ -111,7 +113,7 @@ export class EHRService {
                 medicalHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.medicalHistory.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { date: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -120,7 +122,7 @@ export class EHRService {
                 labReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.labReport.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { date: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -129,7 +131,7 @@ export class EHRService {
                 radiologyReport: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.radiologyReport.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { date: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -138,7 +140,7 @@ export class EHRService {
                 surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.surgicalRecord.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { date: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -147,7 +149,7 @@ export class EHRService {
                 vital: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.vital.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -156,7 +158,7 @@ export class EHRService {
                 allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.allergy.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -165,7 +167,7 @@ export class EHRService {
                 medication: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.medication.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -174,7 +176,7 @@ export class EHRService {
                 immunization: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.immunization.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
                 orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
@@ -183,7 +185,7 @@ export class EHRService {
                 familyHistory: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
               };
               return await typedClient.familyHistory.findMany({
-                where: { userId } as PrismaDelegateArgs,
+                where: getWhere({ userId }) as PrismaDelegateArgs,
               } as PrismaDelegateArgs);
             }),
             this.databaseService.executeHealthcareRead<LifestyleAssessmentBase | null>(
@@ -196,7 +198,7 @@ export class EHRService {
                   };
                 };
                 return await typedClient.lifestyleAssessment.findFirst({
-                  where: { userId } as PrismaDelegateArgs,
+                  where: getWhere({ userId }) as PrismaDelegateArgs,
                   orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
                 } as PrismaDelegateArgs);
               }
@@ -509,11 +511,28 @@ export class EHRService {
 
   async updateMedicalHistory(
     id: string,
-    data: UpdateMedicalHistoryDto
+    data: UpdateMedicalHistoryDto,
+    clinicId?: string
   ): Promise<MedicalHistoryResponse> {
     // Use executeHealthcareWrite for update with audit logging
     const record = await this.databaseService.executeHealthcareWrite(
       async client => {
+        // 🔒 TENANT ISOLATION: Validate record belongs to clinic before updating
+        if (clinicId) {
+          const typedClientCheck = client as unknown as PrismaTransactionClientWithDelegates & {
+            medicalHistory: {
+              findUnique: (
+                args: PrismaDelegateArgs
+              ) => Promise<{ clinicId?: string | null } | null>;
+            };
+          };
+          const existing = await typedClientCheck.medicalHistory.findUnique({
+            where: { id } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+          if (existing && existing.clinicId && existing.clinicId !== clinicId) {
+            throw new NotFoundException(`Medical history record with ID ${id} not found`);
+          }
+        }
         const updateData: {
           condition?: string;
           notes?: string;
@@ -556,7 +575,7 @@ export class EHRService {
     return this.transformMedicalHistory(typedRecord);
   }
 
-  async deleteMedicalHistory(id: string): Promise<void> {
+  async deleteMedicalHistory(id: string, clinicId?: string): Promise<void> {
     // Use executeHealthcareRead first to get record for cache invalidation
     const record = await this.databaseService.executeHealthcareRead<{
       userId: string;
@@ -576,6 +595,12 @@ export class EHRService {
     if (!record) throw new NotFoundException(`Medical history record with ID ${id} not found`);
 
     const typedRecord = record as { userId: string; clinicId?: string | null };
+
+    // 🔒 TENANT ISOLATION: Validate record belongs to clinic before deleting
+    if (clinicId && typedRecord.clinicId && typedRecord.clinicId !== clinicId) {
+      throw new NotFoundException(`Medical history record with ID ${id} not found`);
+    }
+
     // Use executeHealthcareWrite for delete with audit logging
     await this.databaseService.executeHealthcareWrite(
       async client => {
@@ -706,8 +731,8 @@ export class EHRService {
     return this.transformLabReport(typedReport);
   }
 
-  async getLabReports(userId: string): Promise<LabReportResponse[]> {
-    const cacheKey = `ehr:lab-reports:${userId}`;
+  async getLabReports(userId: string, clinicId?: string): Promise<LabReportResponse[]> {
+    const cacheKey = `ehr:lab-reports:${userId}:${clinicId || 'all'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -719,7 +744,7 @@ export class EHRService {
               labReport: { findMany: (args: PrismaDelegateArgs) => Promise<LabReportBase[]> };
             };
             return await typedClient.labReport.findMany({
-              where: { userId } as PrismaDelegateArgs,
+              where: { userId, ...(clinicId && { clinicId }) } as PrismaDelegateArgs,
               orderBy: { date: 'desc' } as PrismaDelegateArgs,
             } as PrismaDelegateArgs);
           }
@@ -915,7 +940,7 @@ export class EHRService {
     return this.transformRadiologyReport(typedReport);
   }
 
-  async getRadiologyReports(userId: string): Promise<RadiologyReportResponse[]> {
+  async getRadiologyReports(userId: string, clinicId?: string): Promise<RadiologyReportResponse[]> {
     // Use executeHealthcareRead for optimized query
     const records = await this.databaseService.executeHealthcareRead<RadiologyReportBase[]>(
       async client => {
@@ -925,7 +950,7 @@ export class EHRService {
           };
         };
         return await typedClient.radiologyReport.findMany({
-          where: { userId } as PrismaDelegateArgs,
+          where: { userId, ...(clinicId && { clinicId }) } as PrismaDelegateArgs,
           orderBy: { date: 'desc' } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       }
@@ -1089,7 +1114,7 @@ export class EHRService {
     return this.transformSurgicalRecord(typedRecord);
   }
 
-  async getSurgicalRecords(userId: string): Promise<SurgicalRecordResponse[]> {
+  async getSurgicalRecords(userId: string, clinicId?: string): Promise<SurgicalRecordResponse[]> {
     // Use executeHealthcareRead for optimized query
     const records = await this.databaseService.executeHealthcareRead<SurgicalRecordBase[]>(
       async client => {
@@ -1097,7 +1122,7 @@ export class EHRService {
           surgicalRecord: { findMany: (args: PrismaDelegateArgs) => Promise<SurgicalRecordBase[]> };
         };
         return await typedClient.surgicalRecord.findMany({
-          where: { userId } as PrismaDelegateArgs,
+          where: { userId, ...(clinicId && { clinicId }) } as PrismaDelegateArgs,
           orderBy: { date: 'desc' } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       }
@@ -1249,7 +1274,7 @@ export class EHRService {
     return this.transformVital(typedVital);
   }
 
-  async getVitals(userId: string, type?: string) {
+  async getVitals(userId: string, type?: string, clinicId?: string) {
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -1259,6 +1284,7 @@ export class EHRService {
         where: {
           userId,
           ...(type && { type }),
+          ...(clinicId && { clinicId }),
         } as PrismaDelegateArgs,
         orderBy: { recordedAt: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
@@ -1411,14 +1437,14 @@ export class EHRService {
     return this.transformAllergy(typedAllergy);
   }
 
-  async getAllergies(userId: string) {
+  async getAllergies(userId: string, clinicId?: string) {
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
         allergy: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
       };
       return await typedClient.allergy.findMany({
-        where: { userId } as PrismaDelegateArgs,
+        where: { userId, ...(clinicId && { clinicId }) } as PrismaDelegateArgs,
         orderBy: { diagnosedDate: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });
@@ -1588,7 +1614,7 @@ export class EHRService {
     return this.transformMedication(typedMedication);
   }
 
-  async getMedications(userId: string, activeOnly: boolean = false) {
+  async getMedications(userId: string, activeOnly: boolean = false, clinicId?: string) {
     // Use executeHealthcareRead for optimized query
     return await this.databaseService.executeHealthcareRead<unknown[]>(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -1598,6 +1624,7 @@ export class EHRService {
         where: {
           userId,
           ...(activeOnly && { isActive: true }),
+          ...(clinicId && { clinicId }),
         } as PrismaDelegateArgs,
         orderBy: { startDate: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
@@ -1786,7 +1813,7 @@ export class EHRService {
     return this.transformImmunization(typedImmunization);
   }
 
-  async getImmunizations(userId: string): Promise<ImmunizationResponse[]> {
+  async getImmunizations(userId: string, clinicId?: string): Promise<ImmunizationResponse[]> {
     // Use executeHealthcareRead for optimized query
     const records = (await this.databaseService.executeHealthcareRead<ImmunizationBase[]>(
       async client => {
@@ -1794,7 +1821,7 @@ export class EHRService {
           immunization: { findMany: (args: PrismaDelegateArgs) => Promise<ImmunizationBase[]> };
         };
         return await typedClient.immunization.findMany({
-          where: { userId } as PrismaDelegateArgs,
+          where: { userId, ...(clinicId && { clinicId }) } as PrismaDelegateArgs,
           orderBy: { dateAdministered: 'desc' } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       }
@@ -1917,11 +1944,13 @@ export class EHRService {
     userId: string,
     vitalType: string,
     startDate?: Date,
-    endDate?: Date
+    endDate?: Date,
+    clinicId?: string
   ): Promise<{ vitalType: string; data: VitalBase[]; count: number }> {
     const where: {
       userId: string;
       type: string;
+      clinicId?: string;
       recordedAt?: {
         gte?: Date;
         lte?: Date;
@@ -1930,6 +1959,8 @@ export class EHRService {
       userId,
       type: vitalType,
     };
+
+    if (clinicId) where.clinicId = clinicId;
 
     if (startDate || endDate) {
       where.recordedAt = {};
@@ -1956,7 +1987,8 @@ export class EHRService {
   }
 
   async getMedicationAdherence(
-    userId: string
+    userId: string,
+    clinicId?: string
   ): Promise<{ totalActive: number; medications: MedicationBase[] }> {
     // Use executeHealthcareRead for optimized query
     const medications = await this.databaseService.executeHealthcareRead<MedicationBase[]>(
@@ -1968,6 +2000,7 @@ export class EHRService {
           where: {
             userId,
             isActive: true,
+            ...(clinicId && { clinicId }),
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
       }

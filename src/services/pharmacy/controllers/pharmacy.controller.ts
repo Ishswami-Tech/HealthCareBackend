@@ -29,6 +29,7 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
+import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 @ApiTags('pharmacy')
 @Controller('pharmacy')
@@ -50,8 +51,10 @@ export class PharmacyController {
   @Cache({ ttl: 300, tags: ['pharmacy', 'inventory'], priority: 'normal' })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get all medicines in inventory' })
-  async getInventory() {
-    return this.pharmacyService.findAllMedicines();
+  async getInventory(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.findAllMedicines(clinicId);
   }
 
   /**
@@ -65,12 +68,9 @@ export class PharmacyController {
   @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
   @RequireResourcePermission('inventory', 'create')
   @ApiOperation({ summary: 'Add new medicine to inventory' })
-  async addMedicine(
-    @Body() dto: CreateMedicineDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
-  ) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+  async addMedicine(@Body() dto: CreateMedicineDto, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.addMedicine(dto, clinicId);
   }
 
@@ -89,10 +89,10 @@ export class PharmacyController {
   async updateInventory(
     @Param('id') id: string,
     @Body() dto: UpdateInventoryDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.updateInventory(id, dto, clinicId);
   }
 
@@ -106,9 +106,9 @@ export class PharmacyController {
   @RateLimitAPI()
   @RequireResourcePermission('inventory', 'read')
   @ApiOperation({ summary: 'Get medicines with low stock levels' })
-  async getLowStock(@Request() req: Request & { user?: { clinicId?: string } }) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+  async getLowStock(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.findLowStock(clinicId);
   }
 
@@ -125,8 +125,9 @@ export class PharmacyController {
   @Cache({ ttl: 300, tags: ['pharmacy', 'prescriptions'], priority: 'normal', containsPHI: true })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get all prescriptions' })
-  async getPrescriptions(@Request() req: Request & { user?: { clinicId?: string } }) {
-    const clinicId = req.user?.clinicId;
+  async getPrescriptions(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.findAllPrescriptions(clinicId);
   }
 
@@ -143,9 +144,10 @@ export class PharmacyController {
   @ApiOperation({ summary: 'Create a new prescription' })
   async createPrescription(
     @Body() dto: CreatePrescriptionDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    const clinicId = req.user?.clinicId;
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.createPrescription(dto, clinicId);
   }
 
@@ -161,9 +163,10 @@ export class PharmacyController {
   async updatePrescriptionStatus(
     @Param('id') id: string,
     @Body() dto: UpdatePrescriptionStatusDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    const clinicId = req.user?.clinicId;
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId);
   }
 
@@ -181,11 +184,9 @@ export class PharmacyController {
   @Cache({ ttl: 1800, tags: ['pharmacy', 'stats'], priority: 'low' })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get pharmacy statistical summary' })
-  async getStats(
-    @Request() req: Request & { user?: { clinicId?: string } }
-  ): Promise<PharmacyStatsDto> {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+  async getStats(@Request() req: ClinicAuthenticatedRequest): Promise<PharmacyStatsDto> {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.getStats(clinicId);
   }
 
@@ -197,9 +198,9 @@ export class PharmacyController {
   @Cache({ ttl: 3600, tags: ['pharmacy', 'suppliers'], priority: 'low' })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get all medicine suppliers' })
-  async getSuppliers(@Request() req: Request & { user?: { clinicId?: string } }) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+  async getSuppliers(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.findAllSuppliers(clinicId);
   }
 
@@ -207,12 +208,9 @@ export class PharmacyController {
   @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('inventory', 'create')
   @ApiOperation({ summary: 'Add a new supplier' })
-  async addSupplier(
-    @Body() dto: CreateSupplierDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
-  ) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+  async addSupplier(@Body() dto: CreateSupplierDto, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new ForbiddenException('Clinic context required');
     return this.pharmacyService.addSupplier(dto, clinicId);
   }
@@ -224,10 +222,10 @@ export class PharmacyController {
   async updateSupplier(
     @Param('id') id: string,
     @Body() dto: UpdateSupplierDto,
-    @Request() req: Request & { user?: { clinicId?: string } }
+    @Request() req: ClinicAuthenticatedRequest
   ) {
-    const headers = req.headers as unknown as Record<string, string | string[] | undefined>;
-    const clinicId = req.user?.clinicId || (headers['x-clinic-id'] as string | undefined);
+    // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) throw new ForbiddenException('Clinic context required');
     return this.pharmacyService.updateSupplier(id, dto, clinicId);
   }

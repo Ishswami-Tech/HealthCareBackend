@@ -54,7 +54,8 @@ export class AppointmentQueueService {
     const { appointmentId, doctorId, patientId, clinicId, appointmentType, notes, locationId } =
       checkInData;
     const date = new Date().toISOString().split('T')[0];
-    const cacheKey = `queue:${domain}:${doctorId}:${date}`;
+    // P1 FIX: Include clinicId in cache key for strict isolation
+    const cacheKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
       // Check if already in queue
@@ -133,12 +134,14 @@ export class AppointmentQueueService {
 
   async getDoctorQueue(
     doctorId: string,
+    clinicId: string,
     date: string,
     domain: string,
     locationId?: string
   ): Promise<DoctorQueueResponse> {
     const startTime = Date.now();
-    const cacheKey = `queue:doctor:${doctorId}:${date}:${domain}${locationId ? `:${locationId}` : ''}`;
+    // P1 FIX: Include clinicId in cache key
+    const cacheKey = `queue:doctor:${clinicId}:${doctorId}:${date}:${domain}${locationId ? `:${locationId}` : ''}`;
 
     try {
       // Try to get from cache first
@@ -154,8 +157,8 @@ export class AppointmentQueueService {
         return cached;
       }
 
-      // Get queue from Redis
-      const queueKey = `queue:${domain}:${doctorId}:${date}`;
+      // Get queue from Redis with clinic isolation
+      const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
       const queueEntries = await this.cacheService.lRange(queueKey, 0, -1);
 
       // Filter by locationId if provided
@@ -224,9 +227,10 @@ export class AppointmentQueueService {
 
   async getPatientQueuePosition(
     appointmentId: string,
+    clinicId: string,
     domain: string
   ): Promise<PatientQueuePositionResponse> {
-    const cacheKey = `queue:position:${appointmentId}:${domain}`;
+    const cacheKey = `queue:position:${clinicId}:${appointmentId}:${domain}`;
 
     try {
       // Try to get from cache first
@@ -235,8 +239,8 @@ export class AppointmentQueueService {
         return cached;
       }
 
-      // Find appointment in all doctor queues
-      const pattern = `queue:${domain}:*`;
+      // Find appointment in all doctor queues for this clinic
+      const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
       let position = -1;
@@ -252,7 +256,8 @@ export class AppointmentQueueService {
 
         if (entryIndex !== -1) {
           position = entryIndex + 1;
-          doctorId = key.split(':')[2] || '';
+          // Key format: queue:{domain}:{clinicId}:{doctorId}:{date}
+          doctorId = key.split(':')[3] || '';
           queueKey = key;
           break;
         }
@@ -338,12 +343,17 @@ export class AppointmentQueueService {
     }
   }
 
-  async confirmAppointment(appointmentId: string, domain: string): Promise<OperationResponse> {
+  async confirmAppointment(
+    appointmentId: string,
+    clinicId: string,
+    domain: string
+  ): Promise<OperationResponse> {
     const startTime = Date.now();
 
     try {
       // Find and update appointment in queue
-      const pattern = `queue:${domain}:*`;
+      // Strict isolation: only look in this clinic's queues
+      const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
       for (const key of queueKeys) {
@@ -397,12 +407,14 @@ export class AppointmentQueueService {
   async startConsultation(
     appointmentId: string,
     doctorId: string,
+    clinicId: string,
     domain: string
   ): Promise<OperationResponse> {
     const startTime = Date.now();
 
     try {
-      const queueKey = `queue:${domain}:${doctorId}:${new Date().toISOString().split('T')[0]}`;
+      // P1 FIX: Include clinicId in key
+      const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${new Date().toISOString().split('T')[0]}`;
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
       const entryIndex = entries.findIndex(entry => {
@@ -428,7 +440,7 @@ export class AppointmentQueueService {
 
       // Invalidate cache
       await this.cacheService.del(
-        `queue:doctor:${doctorId}:${new Date().toISOString().split('T')[0]}:${domain}`
+        `queue:doctor:${clinicId}:${doctorId}:${new Date().toISOString().split('T')[0]}:${domain}`
       );
 
       // Emit WebSocket event for queue update (consultation started)
@@ -504,6 +516,7 @@ export class AppointmentQueueService {
   async reorderQueue(
     reorderData: {
       doctorId: string;
+      clinicId: string;
       date: string;
       newOrder: string[];
     },
@@ -512,8 +525,9 @@ export class AppointmentQueueService {
     const startTime = Date.now();
 
     try {
-      const { doctorId, date, newOrder } = reorderData;
-      const queueKey = `queue:${domain}:${doctorId}:${date}`;
+      const { doctorId, clinicId, date, newOrder } = reorderData;
+      // P1 FIX: Include clinicId
+      const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
       // Get current queue
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
@@ -535,7 +549,7 @@ export class AppointmentQueueService {
       }
 
       // Invalidate cache
-      await this.cacheService.del(`queue:doctor:${doctorId}:${date}:${domain}`);
+      await this.cacheService.del(`queue:doctor:${clinicId}:${doctorId}:${date}:${domain}`);
 
       // Emit WebSocket event for queue reorder
       if (this.typedEventService) {
@@ -607,10 +621,12 @@ export class AppointmentQueueService {
 
   async getLocationQueueStats(
     locationId: string,
+    clinicId: string,
     domain: string
   ): Promise<LocationQueueStatsResponse> {
     const startTime = Date.now();
-    const cacheKey = `queue:stats:location:${locationId}:${domain}`;
+    // P1 FIX: Include clinicId in metrics cache
+    const cacheKey = `queue:stats:location:${clinicId}:${locationId}:${domain}`;
 
     try {
       // Try to get from cache first
@@ -619,8 +635,8 @@ export class AppointmentQueueService {
         return cached;
       }
 
-      // Get all queues for the location
-      const pattern = `queue:${domain}:*`;
+      // Get all queues for the location (scoped by clinic)
+      const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
       let totalWaiting = 0;
@@ -695,11 +711,12 @@ export class AppointmentQueueService {
 
   async getQueueMetrics(
     locationId: string,
+    clinicId: string,
     domain: string,
     period: string
   ): Promise<QueueMetricsResponse> {
     const startTime = Date.now();
-    const cacheKey = `queue:metrics:${locationId}:${domain}:${period}`;
+    const cacheKey = `queue:metrics:${clinicId}:${locationId}:${domain}:${period}`;
 
     try {
       // Try to get from cache first
@@ -709,7 +726,7 @@ export class AppointmentQueueService {
       }
 
       // Calculate metrics based on period
-      const statsResult = await this.getLocationQueueStats(locationId, domain);
+      const statsResult = await this.getLocationQueueStats(locationId, clinicId, domain);
 
       // Add period-specific calculations
       const metrics: QueueMetricsResponse = {
@@ -755,13 +772,14 @@ export class AppointmentQueueService {
   async handleEmergencyAppointment(
     appointmentId: string,
     priority: number,
+    clinicId: string,
     domain: string
   ): Promise<OperationResponse> {
     const startTime = Date.now();
 
     try {
-      // Find the appointment in queue and move it to the front
-      const pattern = `queue:${domain}:*`;
+      // Find the appointment in queue (scoped by clinic)
+      const pattern = `queue:${domain}:${clinicId}:*`;
       const queueKeys = await this.cacheService.keys(pattern);
 
       for (const key of queueKeys) {
@@ -864,10 +882,11 @@ export class AppointmentQueueService {
   async removePatientFromQueue(
     appointmentId: string,
     doctorId: string,
+    clinicId: string,
     domain: string
   ): Promise<OperationResponse> {
     const date = new Date().toISOString().split('T')[0];
-    const queueKey = `queue:${domain}:${doctorId}:${date}`;
+    const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
@@ -919,10 +938,12 @@ export class AppointmentQueueService {
 
   async callNext(
     doctorId: string,
+    clinicId: string,
     domain: string
   ): Promise<OperationResponse & { nextPatient?: QueueEntryData }> {
     const date = new Date().toISOString().split('T')[0];
-    const queueKey = `queue:${domain}:${doctorId}:${date}`;
+    // P1 FIX: Include clinicId
+    const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
@@ -951,7 +972,7 @@ export class AppointmentQueueService {
       }
 
       // Invalidate cache
-      await this.cacheService.del(`queue:doctor:${doctorId}:${date}:${domain}`);
+      await this.cacheService.del(`queue:doctor:${clinicId}:${doctorId}:${date}:${domain}`);
 
       // Emit Event
       if (this.typedEventService) {
@@ -986,9 +1007,13 @@ export class AppointmentQueueService {
     }
   }
 
-  async pauseQueue(doctorId: string, domain: string): Promise<OperationResponse> {
+  async pauseQueue(doctorId: string, clinicId: string, domain: string): Promise<OperationResponse> {
     const date = new Date().toISOString().split('T')[0];
-    await this.cacheService.set(`queue:status:${domain}:${doctorId}:${date}`, 'PAUSED', 3600);
+    await this.cacheService.set(
+      `queue:status:${domain}:${clinicId}:${doctorId}:${date}`,
+      'PAUSED',
+      3600
+    );
 
     if (this.typedEventService) {
       await this.typedEventService.emitEnterprise('appointment.queue.updated', {
@@ -1005,9 +1030,13 @@ export class AppointmentQueueService {
     return { success: true, message: 'Queue paused' };
   }
 
-  async resumeQueue(doctorId: string, domain: string): Promise<OperationResponse> {
+  async resumeQueue(
+    doctorId: string,
+    clinicId: string,
+    domain: string
+  ): Promise<OperationResponse> {
     const date = new Date().toISOString().split('T')[0];
-    await this.cacheService.del(`queue:status:${domain}:${doctorId}:${date}`);
+    await this.cacheService.del(`queue:status:${domain}:${clinicId}:${doctorId}:${date}`);
 
     if (this.typedEventService) {
       await this.typedEventService.emitEnterprise('appointment.queue.updated', {

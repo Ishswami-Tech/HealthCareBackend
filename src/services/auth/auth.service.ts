@@ -203,7 +203,31 @@ export class AuthService {
     clinicIdFromHeader?: string // NEW: Accept clinic ID from controller/headers
   ): Promise<AuthResponse> {
     try {
-      // 1. Get clinic ID from header (passed by controller) or DTO
+      // 1. SECURITY: Validate body clinicId doesn't mismatch header
+      if (
+        registerDto.clinicId &&
+        clinicIdFromHeader &&
+        registerDto.clinicId !== clinicIdFromHeader
+      ) {
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.ERROR,
+          `Registration attempt with mismatched clinicId: header=${clinicIdFromHeader}, body=${registerDto.clinicId}`,
+          'AuthService.register',
+          {
+            email: registerDto.email,
+            headerClinicId: clinicIdFromHeader,
+            bodyClinicId: registerDto.clinicId,
+          }
+        );
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID mismatch detected. Cannot register to a different clinic.',
+          'AuthService.register'
+        );
+      }
+
+      // 2. Get clinic ID from header (preferred) or DTO
       const clinicId = clinicIdFromHeader || registerDto.clinicId;
 
       if (!clinicId) {
@@ -457,8 +481,30 @@ export class AuthService {
       // ✅ SECURITY: Clear failed login attempts on successful login
       await this.cacheService.del(`failed_login:${loginDto.email}`);
 
-      // Get clinic ID from header or user's primary clinic
-      const clinicId = clinicIdFromHeader || loginDto.clinicId || user.primaryClinicId;
+      // SECURITY: Validate body clinicId doesn't mismatch header
+      if (loginDto.clinicId && clinicIdFromHeader && loginDto.clinicId !== clinicIdFromHeader) {
+        await this.logging.log(
+          LogType.SECURITY,
+          LogLevel.ERROR,
+          `Login attempt with mismatched clinicId: header=${clinicIdFromHeader}, body=${loginDto.clinicId}`,
+          'AuthService.login',
+          {
+            email: loginDto.email,
+            userId: user.id,
+            headerClinicId: clinicIdFromHeader,
+            bodyClinicId: loginDto.clinicId,
+          }
+        );
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID mismatch detected. Please login through the correct clinic portal.',
+          'AuthService.login'
+        );
+      }
+
+      // Get clinic ID: Priority order = header > user.primaryClinicId
+      // Body clinicId is only used if no header and no primaryClinicId (legacy support)
+      const clinicId = clinicIdFromHeader || user.primaryClinicId || loginDto.clinicId;
 
       if (!clinicId) {
         await this.logging.log(

@@ -24,7 +24,11 @@ export class StaffController {
   @ApiResponse({ status: 400, description: 'Bad request - Validation failed' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async createStaff(@Body() dto: CreateStaffDto, @Request() req: ClinicAuthenticatedRequest) {
-    const clinicId = dto.clinicId || req.clinicContext?.clinicId;
+    // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new Error('Clinic context is required');
+    }
 
     // Cast StaffRole enum to string literal union expected by service
     const role = dto.role as 'RECEPTIONIST' | 'CLINIC_ADMIN' | 'NURSE';
@@ -32,7 +36,7 @@ export class StaffController {
     return this.staffService.createOrUpdateStaff({
       userId: dto.userId,
       role,
-      ...(clinicId != null && { clinicId }),
+      clinicId,
       ...(dto.department != null && { department: dto.department }),
       ...(dto.employeeId != null && { employeeId: dto.employeeId }),
     });
@@ -43,10 +47,12 @@ export class StaffController {
   @ApiOperation({ summary: 'Get all staff members (Receptionists, Nurses, Clinic Admins)' })
   @ApiResponse({ status: 200, description: 'List of staff retrieved successfully' })
   async findAll(@Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Require clinicId from validated guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.staffService.getAllStaff({
-      ...(clinicId != null && { clinicId }),
-    });
+    if (!clinicId) {
+      throw new Error('Clinic context is required to list staff');
+    }
+    return this.staffService.getAllStaff({ clinicId });
   }
 
   @Get(':id')
@@ -54,7 +60,9 @@ export class StaffController {
   @ApiOperation({ summary: 'Get staff profile by ID (User ID)' })
   @ApiResponse({ status: 200, description: 'Staff profile retrieved successfully' })
   @ApiResponse({ status: 404, description: 'Staff member not found' })
-  async getStaff(@Param('id') id: string) {
-    return this.staffService.getStaffProfile(id);
+  async getStaff(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
+    // 🔒 TENANT ISOLATION: Pass clinicId for membership validation
+    const clinicId = req.clinicContext?.clinicId;
+    return this.staffService.getStaffProfile(id, clinicId);
   }
 }
