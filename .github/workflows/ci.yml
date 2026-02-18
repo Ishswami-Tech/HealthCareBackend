@@ -77,7 +77,7 @@ jobs:
 
       - name: Dependency Check
         run: |
-          npx audit-ci --moderate
+          npx audit-ci --moderate --config audit-ci.json
 
   # Docker Build & Push
   # Builds and pushes Docker image to GitHub Container Registry
