@@ -55,6 +55,8 @@ export interface UserBase {
   createdAt: Date;
   updatedAt: Date;
   passwordChangedAt?: Date | null;
+  isProfileComplete: boolean;
+  profileCompletedAt?: Date | null;
   googleId?: string | null;
   facebookId?: string | null;
   appleId?: string | null;

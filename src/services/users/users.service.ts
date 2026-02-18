@@ -14,6 +14,7 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
+import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -52,7 +53,9 @@ export class UsersService {
     eventService: unknown,
     private readonly rbacService: RbacService,
     private readonly authService: AuthService,
-    private readonly errors: HealthcareErrorsService
+    private readonly errors: HealthcareErrorsService,
+    @Inject(forwardRef(() => ProfileCompletionService))
+    private readonly profileCompletionService: ProfileCompletionService
   ) {
     // Type guard ensures type safety when using the service
     // This handles forwardRef circular dependency type resolution issues
@@ -2079,5 +2082,234 @@ export class UsersService {
         details: { count: documentsData.length },
       }
     );
+  }
+
+  /**
+   * Validate and complete user profile
+   * This is the authoritative method for marking a profile as complete
+   *
+   * @param userId - User ID to validate and complete
+   * @param profileData - Profile data to validate
+   * @returns Updated user with profile completion status
+   */
+  async completeUserProfile(
+    userId: string,
+    profileData: Record<string, unknown>
+  ): Promise<{ success: boolean; message: string; user?: UserResponseDto }> {
+    try {
+      // Get user with role
+      const user = await this.databaseService.findUserByIdSafe(userId);
+
+      if (!user) {
+        throw new BadRequestException('User not found');
+      }
+
+      const userRole = user.role as Role;
+
+      // Validate profile completion using ProfileCompletionService
+      const validation = this.profileCompletionService.validateProfileCompletion(
+        profileData,
+        userRole
+      );
+
+      if (!validation.isComplete) {
+        return {
+          success: false,
+          message: `Profile incomplete. Missing fields: ${validation.missingFields.join(', ')}`,
+        };
+      }
+
+      // All validations passed - mark profile as complete in database
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          await typedClient.user.update({
+            where: { id: userId } as PrismaDelegateArgs,
+            data: {
+              isProfileComplete: true,
+              profileCompletedAt: new Date(),
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId,
+          clinicId: String(user.primaryClinicId || ''),
+          resourceType: 'USER',
+          operation: 'UPDATE',
+          resourceId: userId,
+          userRole: userRole,
+          details: { action: 'profile_completed' },
+        }
+      );
+
+      // Emit profile completion event
+      if (isEventService(this.eventService)) {
+        await this.eventService.emit('profile.completed', {
+          userId,
+          role: userRole,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      // Invalidate cache
+      await this.cacheService.del(`user:${userId}`);
+      await this.cacheService.del(`user:${userId}:profile`);
+
+      await this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Profile completed for user ${userId}`,
+        'UsersService.completeUserProfile',
+        { userId, role: userRole }
+      );
+
+      // Fetch updated user
+      const updatedUser = await this.findOne(userId);
+      return {
+        success: true,
+        message: 'Profile completed successfully',
+        user: updatedUser,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to complete profile for user ${userId}`,
+        'UsersService.completeUserProfile',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+
+      if (error instanceof BadRequestException) {
+        throw error;
+      }
+
+      return {
+        success: false,
+        message: 'Failed to complete profile. Please try again.',
+      };
+    }
+  }
+
+  /**
+   * Check if user profile is complete (authoritative check)
+   * Uses database flag as primary source of truth
+   *
+   * @param userId - User ID to check
+   * @returns Profile completion status
+   */
+  async checkUserProfileCompletion(userId: string): Promise<{
+    isComplete: boolean;
+    profileCompletedAt: Date | null;
+    completionPercentage: number;
+  }> {
+    try {
+      const user = await this.databaseService.findUserByIdSafe(userId);
+
+      if (!user) {
+        throw new BadRequestException('User not found');
+      }
+
+      const isComplete = user.isProfileComplete || false;
+      const profileCompletedAt = user.profileCompletedAt || null;
+
+      // Calculate completion percentage using ProfileCompletionService
+      const completionPercentage = this.profileCompletionService.getCompletionPercentage(
+        user as unknown as Record<string, unknown>,
+        user.role as Role
+      );
+
+      return {
+        isComplete,
+        profileCompletedAt,
+        completionPercentage,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to check profile completion for user ${userId}`,
+        'UsersService.checkUserProfileCompletion',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+
+      // Return incomplete status on error (fail-safe)
+      return {
+        isComplete: false,
+        profileCompletedAt: null,
+        completionPercentage: 0,
+      };
+    }
+  }
+
+  /**
+   * Get required profile fields for a role
+   *
+   * @param role - User role
+   * @returns List of required fields
+   */
+  getRequiredProfileFields(role: Role): string[] {
+    return this.profileCompletionService.getRequiredFieldsForRole(role);
+  }
+
+  /**
+   * Update user profile with validation
+   * This method validates profile data before updating and auto-completes if all required fields are present
+   *
+   * @param userId - User ID to update
+   * @param profileData - Profile data to update
+   * @param operatorId - ID of user performing the update (for audit)
+   * @param clinicId - Clinic ID for tenant isolation
+   * @returns Updated user
+   */
+  async updateUserProfileWithValidation(
+    userId: string,
+    profileData: Record<string, unknown>,
+    operatorId?: string,
+    clinicId?: string
+  ): Promise<UserResponseDto> {
+    try {
+      // Get user
+      const user = await this.databaseService.findUserByIdSafe(userId);
+
+      if (!user) {
+        throw new BadRequestException('User not found');
+      }
+
+      const userRole = user.role as Role;
+
+      // Validate profile data (non-blocking validation)
+      const validation = this.profileCompletionService.validateProfileCompletion(
+        { ...(user as unknown as Record<string, unknown>), ...profileData },
+        userRole
+      );
+
+      // Update user with provided data
+      const updatedUser = await this.update(
+        userId,
+        profileData as UpdateUserDto,
+        operatorId,
+        clinicId
+      );
+
+      // If profile is now complete, mark it as such
+      if (validation.isComplete && !user.isProfileComplete) {
+        await this.completeUserProfile(userId, {
+          ...(user as unknown as Record<string, unknown>),
+          ...profileData,
+        });
+      }
+
+      return updatedUser;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to update profile for user ${userId}`,
+        'UsersService.updateUserProfileWithValidation',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+
+      throw error;
+    }
   }
 }

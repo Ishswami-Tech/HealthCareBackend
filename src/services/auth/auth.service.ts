@@ -34,6 +34,7 @@ import type { UserWithPassword, UserWithRelations } from '@core/types/user.types
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
+import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
 @Injectable()
 export class AuthService {
@@ -53,7 +54,8 @@ export class AuthService {
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService,
     private readonly socialAuthService: SocialAuthService,
-    private readonly otpService: OtpService
+    private readonly otpService: OtpService,
+    private readonly profileCompletionService: ProfileCompletionService
   ) {
     // Defensive check: ensure configService is available
     if (!this.configService) {
@@ -451,13 +453,16 @@ export class AuthService {
       const user: UserWithRelations & { password: string } = userResult;
 
       // Check if user has a password (required for password-based login)
-      if (!user.password) {
+      const hasPassword =
+        'password' in user && typeof user.password === 'string' && user.password.length > 0;
+
+      if (!hasPassword) {
         await this.logging.log(
           LogType.SECURITY,
           LogLevel.WARN,
           `Login attempt for user without password: ${loginDto.email}`,
           'AuthService.login',
-          { email: loginDto.email, userId: user.id }
+          { email: loginDto.email, userId: 'unknown' }
         );
         await this.trackFailedLogin(loginDto.email, sessionMetadata || {});
         throw this.errors.invalidCredentials('AuthService.login');
@@ -583,6 +588,8 @@ export class AuthService {
           role: user.role as Role,
           isVerified: user.isVerified,
           clinicId: user.primaryClinicId || undefined,
+          profileComplete: user.isProfileComplete,
+          requiresProfileCompletion: !user.isProfileComplete,
         },
       };
     } catch (_error) {
@@ -1269,6 +1276,8 @@ export class AuthService {
           role: user.role as Role,
           isVerified: user.isVerified,
           clinicId: user.primaryClinicId || undefined,
+          profileComplete: user.isProfileComplete,
+          requiresProfileCompletion: !user.isProfileComplete,
         },
       };
     } catch (_error) {
@@ -1337,16 +1346,127 @@ export class AuthService {
   }
 
   /**
-   * Check if user profile is complete
-   * Profile is complete if user has: dateOfBirth, gender, address, and phone
+   * Check user profile completion status using the ProfileCompletionService
+   * This is the authoritative source for profile completion status
    */
-  public isProfileComplete(user: {
-    dateOfBirth?: Date | string | null;
-    gender?: string | null;
-    address?: string | null;
-    phone?: string | null;
-  }): boolean {
-    return !!(user.dateOfBirth && user.gender && user.address && user.phone);
+  public async checkProfileCompletionStatus(
+    userId: string,
+    role: Role
+  ): Promise<{ isComplete: boolean; isProfileComplete?: boolean }> {
+    try {
+      const user = await this.databaseService.findUserByIdSafe(userId);
+
+      if (!user) {
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `User not found for profile completion check: ${userId}`,
+          'AuthService.checkProfileCompletionStatus'
+        );
+        return { isComplete: false };
+      }
+
+      // Check the database-level flag (authoritative)
+      const dbIsComplete = user.isProfileComplete;
+
+      // Also validate with ProfileCompletionService to ensure consistency
+      const validation = this.profileCompletionService.validateProfileCompletion(
+        user as unknown as Record<string, unknown>,
+        role
+      );
+
+      const serviceIsComplete = validation.isComplete;
+
+      // Log if there's a discrepancy
+      if (dbIsComplete !== serviceIsComplete) {
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Profile completion status mismatch for user ${userId}: DB=${dbIsComplete}, Validation=${serviceIsComplete}`,
+          'AuthService.checkProfileCompletionStatus'
+        );
+      }
+
+      // Return the database status as primary, but also include the validation result
+      return {
+        isComplete: dbIsComplete,
+        isProfileComplete: serviceIsComplete, // For backward compatibility
+      };
+    } catch (error) {
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to check profile completion for user ${userId}`,
+        'AuthService.checkProfileCompletionStatus',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return { isComplete: false };
+    }
+  }
+
+  /**
+   * Check if user profile is complete
+   * Wrapper around ProfileCompletionService for convenience checks
+   */
+  public isProfileComplete(user: object): boolean {
+    if (!user || typeof user !== 'object') return false;
+    // Cast to unknown then Record to satisfy the type requirement
+    const profileRecord = user as Record<string, unknown>;
+    const role = (profileRecord['role'] as Role) || Role.PATIENT;
+
+    return this.profileCompletionService.isProfileComplete(profileRecord, role);
+  }
+
+  /**
+   * Update user's profile completion status in database
+   * Should only be called after successful validation of all required fields
+   */
+  public async markProfileComplete(userId: string): Promise<boolean> {
+    try {
+      const user = await this.databaseService.findUserByIdSafe(userId);
+
+      if (!user) {
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `User not found for marking profile complete: ${userId}`,
+          'AuthService.markProfileComplete'
+        );
+        return false;
+      }
+
+      // Update the database flag
+      await this.databaseService.updateUserSafe(userId, {
+        isProfileComplete: true,
+        profileCompletedAt: new Date(),
+      } as never);
+
+      await this.logging.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Profile marked as complete for user: ${userId}`,
+        'AuthService.markProfileComplete'
+      );
+
+      await this.eventService.emit('profile.completed', {
+        userId,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Invalidate user cache
+      await this.invalidateUserCache(userId, user.primaryClinicId || undefined);
+
+      return true;
+    } catch (error) {
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to mark profile complete for user ${userId}`,
+        'AuthService.markProfileComplete',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+      return false;
+    }
   }
 
   /**
@@ -1448,7 +1568,8 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
-          profileComplete: this.isProfileComplete(user), // Will be false
+          profileComplete: false, // New users must complete profile
+          requiresProfileCompletion: true,
         },
       };
     } catch (error) {
@@ -1570,7 +1691,8 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
-          profileComplete: this.isProfileComplete(user), // Will be false
+          profileComplete: false, // New users must complete profile
+          requiresProfileCompletion: true,
         },
       };
     } catch (error) {
