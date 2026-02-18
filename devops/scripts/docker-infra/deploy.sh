@@ -2411,12 +2411,12 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         log_success "Migrations completed successfully"
         
         # Verify schema using base64 encoding to avoid shell escaping issues
-        # CRITICAL: Must cd to prisma directory (same as migrations) since prisma.config.js uses relative paths
-        local config_file_path=\"/app/src/libs/infrastructure/database/prisma/prisma.config.js\"
+        # CRITICAL: Run from /app root and use direct node call to avoid npx path resolution issues
+        # This matches how run-prisma.js executes the CLI
         if docker exec "${CONTAINER_PREFIX}api" sh -c "
             export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
             unset DIRECT_URL
-            cd /app/src/libs/infrastructure/database/prisma && npx prisma validate --schema './schema.prisma'
+            cd /app && node scripts/run-prisma.js validate
         " 2>&1; then
             log_success "Schema validation passed"
             return 0
