@@ -117,11 +117,25 @@ try {
     );
     log('✓ Database push completed successfully!', 'green');
     process.exit(0);
+  } else if (command === 'validate') {
+    log('Running Prisma schema validation...', 'cyan');
+    log(`  Schema: ${schemaPath}`, 'cyan');
+    execSync(
+      `node --max-old-space-size=8192 node_modules/prisma/build/index.js validate --schema=${schemaPath}`,
+      {
+        stdio: 'inherit',
+        cwd: path.join(__dirname, '..'),
+        env: env,
+      }
+    );
+    log('✓ Schema validation passed!', 'green');
+    process.exit(0);
   } else {
     log(`Unknown command: ${command}`, 'red');
-    log('Usage: node scripts/run-prisma.js [migrate|push]', 'yellow');
-    log('  migrate (default) - Run migrations (production)', 'yellow');
-    log('  push             - Push schema changes (development)', 'yellow');
+    log('Usage: node scripts/run-prisma.js [migrate|push|validate]', 'yellow');
+    log('  migrate  - Run migrations (production)', 'yellow');
+    log('  push     - Push schema changes (development)', 'yellow');
+    log('  validate - Validate schema syntax', 'yellow');
     process.exit(1);
   }
 } catch (error) {
