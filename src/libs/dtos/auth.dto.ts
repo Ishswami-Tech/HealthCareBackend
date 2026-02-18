@@ -98,6 +98,14 @@ export class UserProfileDto {
   @IsOptional()
   @IsBoolean()
   profileComplete?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Is profile completion required',
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresProfileCompletion?: boolean;
 }
 
 /**
@@ -786,6 +794,14 @@ export class AuthResponse {
   @IsOptional()
   @IsString()
   message?: string;
+
+  @ApiPropertyOptional({
+    description: 'Whether user must complete their profile before accessing the system',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresProfileCompletion?: boolean;
 }
 
 /**

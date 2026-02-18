@@ -32,6 +32,8 @@ model User {
   emergencyContact        String?
   isVerified              Boolean                   @default(false)
   isActive                Boolean                   @default(true)
+  isProfileComplete       Boolean                   @default(false)
+  profileCompletedAt      DateTime?
   lastLogin               DateTime?
   lastLoginIP             String?
   lastLoginDevice         String?
