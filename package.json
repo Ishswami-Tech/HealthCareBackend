@@ -23,7 +23,7 @@
     "validate:code": "node scripts/validate-code.js",
     "validate:code:strict": "node scripts/validate-code.js --strict",
     "check:forbidden-comments": "node scripts/validate-code.js --forbidden-only",
-    "security:audit": "npx audit-ci --moderate",
+    "security:audit": "yarn audit --groups dependencies",
     "security:fix": "node scripts/fix-vulnerabilities.js",
     "prisma:validate": "prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js --check",
     "env:validate": "ts-node -r tsconfig-paths/register scripts/validate-env.ts",
