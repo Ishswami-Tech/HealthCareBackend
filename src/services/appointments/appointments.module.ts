@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
@@ -76,6 +76,8 @@ import { AppointmentQueueService } from '@infrastructure/queue';
 
 // Video Module - Standalone service
 import { VideoModule } from '@services/video/video.module';
+import { VideoAppointmentSchedulerService } from './plugins/video/video-scheduler.service';
+import { BillingModule } from '@services/billing/billing.module';
 
 // Communication Modules
 import { CommunicationModule } from '@communication/communication.module';
@@ -114,12 +116,12 @@ import { CommunicationModule } from '@communication/communication.module';
     // RateLimitModule,
     GuardsModule,
     ClinicModule, // Provides ClinicLocationService for location data
-    // Communication Modules - Unified module
+    // Communication Modules
+    VideoModule,
+    forwardRef(() => BillingModule),
     CommunicationModule,
     // QR Code Module
     QrModule,
-    // Video Module (provides VideoService and video providers)
-    VideoModule,
     // QueueModule.forRoot() registers standard queues using BullMQ:
     // - APPOINTMENT_QUEUE (appointment-queue)
     // - NOTIFICATION_QUEUE (notification-queue)
@@ -130,7 +132,7 @@ import { CommunicationModule } from '@communication/communication.module';
     // All appointment services now use QueueService from @infrastructure/queue
     EventEmitterModule, // Already configured in AppModule with forRoot()
   ],
-  controllers: [AppointmentsController, AppointmentPluginController],
+  controllers: [AppointmentPluginController, AppointmentsController],
   providers: [
     // Core Services
     AppointmentsService,
@@ -183,6 +185,7 @@ import { CommunicationModule } from '@communication/communication.module';
     BusinessRulesDatabaseService,
     QrService,
     AppointmentQueueService,
+    VideoAppointmentSchedulerService,
   ],
   exports: [
     // Core Services

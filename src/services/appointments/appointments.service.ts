@@ -32,6 +32,7 @@ import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin'
 import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 
 // DTOs and Types
+import { Prisma } from '@infrastructure/database/prisma/generated/client';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -56,6 +57,7 @@ import { QrService } from '@utils/QR';
 
 // Auth Integration
 import { AuthService } from '@services/auth/auth.service';
+import { BillingService } from '@services/billing/billing.service';
 
 // Use centralized types
 import type { AppointmentWithRelations } from '@core/types/database.types';
@@ -150,7 +152,9 @@ export class AppointmentsService {
 
     // Error Handling & RBAC
     private readonly errors: HealthcareErrorsService,
-    private readonly rbacService: RbacService
+    private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => BillingService))
+    private readonly billingService: BillingService
   ) {}
 
   // Note: Use DatabaseService safe methods instead of direct Prisma access
@@ -390,6 +394,62 @@ export class AppointmentsService {
         'AppointmentsService.proposeVideoAppointment'
       );
     }
+    const minAdvanceMs = 48 * 60 * 60 * 1000;
+    const now = Date.now();
+    const uniqueDates = new Set<string>();
+
+    if (dto.proposedSlots.length < 3) {
+      throw this.errors.validationError(
+        'proposedSlots',
+        'At least 3 time slots must be proposed',
+        'AppointmentsService.proposeVideoAppointment'
+      );
+    }
+
+    // Pre-fetch availability for all dates to optimize performance
+    const availabilityMap = new Map<string, string[]>();
+    for (const slot of dto.proposedSlots) {
+      uniqueDates.add(slot.date);
+    }
+
+    for (const date of uniqueDates) {
+      const availability = (await this.coreAppointmentService.getDoctorAvailability(
+        doctorId,
+        date,
+        { clinicId, userId, role: 'USER' }
+      )) as { availableSlots: string[] };
+      availabilityMap.set(date, availability.availableSlots || []);
+    }
+
+    for (const slot of dto.proposedSlots) {
+      const slotDateTime = new Date(`${slot.date}T${slot.time}`);
+      if (isNaN(slotDateTime.getTime())) {
+        throw this.errors.validationError(
+          'proposedSlots',
+          `Invalid date/time format: ${slot.date} ${slot.time}`,
+          'AppointmentsService.proposeVideoAppointment'
+        );
+      }
+
+      // 1. Enforce 2-day advance rule
+      if (slotDateTime.getTime() - now < minAdvanceMs) {
+        throw this.errors.validationError(
+          'proposedSlots',
+          `Slot ${slot.date} ${slot.time} is too soon. Video appointments must be booked at least 2 days in advance.`,
+          'AppointmentsService.proposeVideoAppointment'
+        );
+      }
+
+      // 2. Check for conflicts / availability
+      const availableSlots = availabilityMap.get(slot.date);
+      if (!availableSlots || !availableSlots.includes(slot.time)) {
+        throw this.errors.appointmentSlotUnavailable(
+          `${slot.date} ${slot.time}`,
+          'AppointmentsService.proposeVideoAppointment'
+        );
+      }
+    }
+
     const { date: slotDate, time: slotTime } = firstSlot;
     const appointmentData = {
       patientId,
@@ -497,6 +557,36 @@ export class AppointmentsService {
       );
     }
     const { date: slotDate, time: slotTime } = slot;
+
+    const isAvailable = await this.databaseService.executeRead(async prisma => {
+      // Use raw query or logic to check overlap
+      // Assuming slots are 30 mins (or check duration)
+      // Ideally reuse ConflictResolutionService or just check for existing appointments
+      // Simple check:
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      const conflicts = await tx.appointment.findMany({
+        where: {
+          doctorId: appointment.doctorId,
+          date: new Date(slotDate),
+          time: slotTime,
+          status: {
+            in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+          },
+          id: {
+            not: appointmentId,
+          },
+        },
+      });
+      return conflicts.length === 0;
+    });
+
+    if (!isAvailable) {
+      throw this.errors.appointmentSlotUnavailable(
+        `${slotDate} ${slotTime}`,
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
+
     const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
       date: new Date(slotDate),
       time: slotTime,
@@ -533,7 +623,183 @@ export class AppointmentsService {
     return {
       success: true,
       data: updated as unknown as Record<string, unknown>,
-      message: 'Slot confirmed. Patient can now pay and join the video consultation.',
+      message: 'Slot confirmed. Video consultation room is ready. Patient will be notified.',
+    };
+  }
+
+  /**
+   * Reject a video appointment slot proposal (Doctor only).
+   * Triggers refund for the patient.
+   */
+  async rejectVideoAppointment(
+    appointmentId: string,
+    reason: string,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'delete',
+      resourceId: appointmentId,
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.rejectVideoAppointment');
+    }
+
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
+
+    if (!appointment) {
+      throw this.errors.notFound(
+        'Appointment',
+        appointmentId,
+        'AppointmentsService.rejectVideoAppointment'
+      );
+    }
+
+    if (appointment.type !== 'VIDEO_CALL') {
+      throw this.errors.validationError(
+        'type',
+        'Only video consultations can be rejected following this workflow.'
+      );
+    }
+
+    // Update appointment status to CANCELLED with rejection reason
+    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
+      status: AppointmentStatus.CANCELLED,
+      cancellationReason: `Doctor Rejected: ${reason}`,
+      cancelledBy: userId,
+      cancelledAt: new Date(),
+    });
+
+    // Trigger Refund for completed payments
+    await this.triggerAppointmentRefund(
+      appointmentId,
+      clinicId,
+      `Doctor rejected video appointment proposal: ${reason}`
+    );
+
+    await this.eventService.emit('appointment.cancelled', {
+      appointmentId,
+      clinicId,
+      status: AppointmentStatus.CANCELLED,
+      context: { userId, reason },
+    });
+
+    return {
+      success: true,
+      data: updated as unknown as Record<string, unknown>,
+      message: 'Video appointment proposal rejected and refund initiated.',
+    };
+  }
+
+  /**
+   * Reschedule appointment with policy enforcement (24h notice).
+   */
+  async rescheduleAppointment(
+    appointmentId: string,
+    newDate: string,
+    newTime: string,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'update',
+      resourceId: appointmentId,
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.rescheduleAppointment');
+    }
+
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
+
+    if (!appointment) {
+      throw this.errors.notFound(
+        'Appointment',
+        appointmentId,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    // Policy: Allow rescheduling up to 24h before
+    const appointmentDateTime = new Date(
+      `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+    );
+    const now = new Date();
+    const minNoticeMs = 24 * 60 * 60 * 1000;
+
+    if (appointmentDateTime.getTime() - now.getTime() < minNoticeMs) {
+      throw this.errors.validationError(
+        'date',
+        'Rescheduling is only allowed at least 24 hours in advance.',
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    // Policy: Limit number of reschedules (e.g. max 2 times)
+    const metadata = (appointment.metadata as Record<string, unknown>) || {};
+    const rescheduleCount = (metadata['rescheduleCount'] || 0) as number;
+    const MAX_RESCHEDULES = 2;
+
+    if (rescheduleCount >= MAX_RESCHEDULES) {
+      throw this.errors.validationError(
+        'metadata',
+        `Maximum reschedule limit (${MAX_RESCHEDULES}) reached for this appointment.`,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    // Check availability for new slot
+    const availability = (await this.coreAppointmentService.getDoctorAvailability(
+      appointment.doctorId,
+      newDate,
+      { clinicId, userId, role: 'USER' }
+    )) as { availableSlots: string[] };
+
+    if (!availability.availableSlots || !availability.availableSlots.includes(newTime)) {
+      throw this.errors.appointmentSlotUnavailable(
+        `${newDate} ${newTime}`,
+        'AppointmentsService.rescheduleAppointment'
+      );
+    }
+
+    // Update appointment
+    const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
+      date: new Date(newDate),
+      time: newTime,
+      status: AppointmentStatus.SCHEDULED, // Reset to scheduled
+      metadata: {
+        ...metadata,
+        rescheduleCount: rescheduleCount + 1,
+        lastRescheduledAt: new Date(),
+      },
+    });
+
+    // Notify
+    await this.eventService.emit('appointment.rescheduled', {
+      appointmentId,
+      clinicId,
+      oldDate: appointment.date,
+      oldTime: appointment.time,
+      newDate,
+      newTime,
+      context: { userId },
+    });
+
+    return {
+      success: true,
+      data: updated as unknown as Record<string, unknown>,
+      message: `Appointment rescheduled successfully (Count: ${rescheduleCount + 1}/${MAX_RESCHEDULES}).`,
     };
   }
 
@@ -615,16 +881,19 @@ export class AppointmentsService {
     role: string = 'USER'
   ): Promise<AppointmentResult> {
     // RBAC: Check permission to update appointments
-    const permissionCheck = await this.rbacService.checkPermission({
-      userId,
-      clinicId,
-      resource: 'appointments',
-      action: 'update',
-      resourceId: appointmentId,
-    });
+    // SYSTEM role bypass: automated schedulers (no-show detection, system events) skip RBAC
+    if (role !== 'SYSTEM') {
+      const permissionCheck = await this.rbacService.checkPermission({
+        userId,
+        clinicId,
+        resource: 'appointments',
+        action: 'update',
+        resourceId: appointmentId,
+      });
 
-    if (!permissionCheck.hasPermission) {
-      throw this.errors.insufficientPermissions('AppointmentsService.updateAppointment');
+      if (!permissionCheck.hasPermission) {
+        throw this.errors.insufficientPermissions('AppointmentsService.updateAppointment');
+      }
     }
 
     const context: AppointmentContext = {
@@ -777,6 +1046,25 @@ export class AppointmentsService {
         );
 
       case AppointmentStatus.CANCELLED:
+        // Enforce 4-hour cancellation policy
+        // If doctor cancels, no policy? "Doctor cancellation: Full refund".
+        // If patient cancels, check 4h.
+        // Role check:
+        if (role === 'PATIENT') {
+          const apptTime = new Date(
+            `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+          );
+          const nowTime = new Date();
+          const fourHoursMs = 4 * 60 * 60 * 1000;
+          if (apptTime.getTime() - nowTime.getTime() < fourHoursMs) {
+            // "Cancellation requires at least 4 hours notice"
+            throw this.errors.businessRuleViolation(
+              'Cancellation requires at least 4 hours notice.',
+              'AppointmentsService.updateStatus'
+            );
+          }
+        }
+
         if (!updateDto.reason) {
           throw this.errors.validationError(
             'reason',
@@ -784,9 +1072,37 @@ export class AppointmentsService {
             'AppointmentsService.updateStatus'
           );
         }
+
+        // Trigger refund for cancellation
+        await this.triggerAppointmentRefund(
+          appointmentId,
+          clinicId,
+          `Appointment cancelled: ${updateDto.reason}`
+        );
+
         return this.cancelAppointment(appointmentId, updateDto.reason, userId, clinicId, role);
 
-      // Handle other status updates generically (e.g., CONFIRMED, NO_SHOW)
+      case AppointmentStatus.NO_SHOW:
+        // Handle automated refund if it's a doctor no-show
+        if (updateDto.reason === 'Doctor failed to join within grace period.') {
+          await this.triggerAppointmentRefund(
+            appointmentId,
+            clinicId,
+            'Automated refund due to Doctor No-Show'
+          );
+        }
+        return this.updateAppointment(
+          appointmentId,
+          {
+            status: updateDto.status,
+            ...(updateDto.notes && { notes: updateDto.notes }),
+          },
+          userId,
+          clinicId,
+          role
+        );
+
+      // Handle other status updates generically (e.g., CONFIRMED)
       default:
         return this.updateAppointment(
           appointmentId,
@@ -812,16 +1128,19 @@ export class AppointmentsService {
     role: string = 'USER'
   ): Promise<AppointmentResult> {
     // RBAC: Check permission to cancel appointments (requires update permission)
-    const permissionCheck = await this.rbacService.checkPermission({
-      userId,
-      clinicId,
-      resource: 'appointments',
-      action: 'update',
-      resourceId: appointmentId,
-    });
+    // SYSTEM role bypass: automated schedulers (no-show detection, system events) skip RBAC
+    if (role !== 'SYSTEM') {
+      const permissionCheck = await this.rbacService.checkPermission({
+        userId,
+        clinicId,
+        resource: 'appointments',
+        action: 'update',
+        resourceId: appointmentId,
+      });
 
-    if (!permissionCheck.hasPermission) {
-      throw this.errors.insufficientPermissions('AppointmentsService.cancelAppointment');
+      if (!permissionCheck.hasPermission) {
+        throw this.errors.insufficientPermissions('AppointmentsService.cancelAppointment');
+      }
     }
 
     const context: AppointmentContext = {
@@ -893,6 +1212,58 @@ export class AppointmentsService {
         },
       });
     }
+
+    return result;
+  }
+
+  /**
+   * Reject video appointment proposal (Doctor rejects all slots).
+   */
+  async rejectVideoProposal(
+    appointmentId: string,
+    reason: string,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    // Check permissions
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'update',
+      resourceId: appointmentId,
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.rejectVideoProposal');
+    }
+
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
+    if (!appointment) {
+      throw this.errors.notFound(
+        'Appointment',
+        appointmentId,
+        'AppointmentsService.rejectVideoProposal'
+      );
+    }
+
+    if (String(appointment.status) !== 'AWAITING_SLOT_CONFIRMATION') {
+      throw this.errors.businessRuleViolation(
+        'Appointment is not in proposal stage',
+        'AppointmentsService.rejectVideoProposal'
+      );
+    }
+
+    // Reject -> CANCELLED
+    const result = await this.cancelAppointment(
+      appointmentId,
+      reason || 'Doctor rejected proposed slots',
+      userId,
+      clinicId,
+      'DOCTOR' // Assume doctor/staff role call
+    );
 
     return result;
   }
@@ -2821,6 +3192,38 @@ export class AppointmentsService {
         `Failed to log operation: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
         'AppointmentsService.logOperation',
         { error: _error instanceof Error ? _error.message : String(_error) }
+      );
+    }
+  }
+  /**
+   * Helper to trigger refund for an appointment if payments exist.
+   */
+  private async triggerAppointmentRefund(
+    appointmentId: string,
+    clinicId: string,
+    reason: string
+  ): Promise<void> {
+    try {
+      const payments = await this.databaseService.findPaymentsSafe({
+        appointmentId,
+        status: 'COMPLETED',
+      });
+
+      for (const payment of payments) {
+        await this.billingService.refundPayment(
+          clinicId,
+          payment.id,
+          undefined, // full refund
+          reason
+        );
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to trigger refund for appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsService.triggerAppointmentRefund',
+        { appointmentId }
       );
     }
   }

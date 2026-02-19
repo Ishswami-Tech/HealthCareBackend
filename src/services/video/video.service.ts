@@ -25,6 +25,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache';
+import { Prisma } from '@infrastructure/database/prisma/generated/client';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@queue/src/queue.service';
@@ -302,6 +303,144 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   ): Promise<VideoTokenResponse> {
     try {
+      // 1. Validate Appointment Status, Payment & Time
+      // Use executeRead to fetch appointment with necessary relations
+      const appointment = await this.databaseService.executeRead(async prisma => {
+        // Safe cast to access Prisma client features
+        const tx = prisma as unknown as Prisma.TransactionClient;
+        return await tx.appointment.findUnique({
+          where: { id: appointmentId },
+          include: {
+            payment: true,
+            patient: true,
+            doctor: true,
+          },
+        });
+      });
+      if (!appointment) {
+        throw new HealthcareError(
+          ErrorCode.APPOINTMENT_NOT_FOUND,
+          'Appointment not found',
+          undefined,
+          { appointmentId },
+          'VideoService.generateMeetingToken'
+        );
+      }
+
+      // 2. Validate User Authorization
+      // Ensure the requesting user is a participant in this appointment
+      const isPatient = userRole === 'patient';
+      const isDoctor = userRole === 'doctor'; // or 'assistant_doctor'
+
+      if (isPatient) {
+        // Match against userId passed (which corresponds to User.id)
+        // appointment.patient.userId is the User.id link
+        if (appointment.patient?.userId !== userId && appointment.patientId !== userId) {
+          throw new HealthcareError(
+            ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+            'You are not authorized to join this appointment.',
+            undefined,
+            { userId, appointmentId },
+            'VideoService.generateMeetingToken'
+          );
+        }
+      }
+
+      if (isDoctor) {
+        if (appointment.doctor?.userId !== userId && appointment.doctorId !== userId) {
+          throw new HealthcareError(
+            ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+            'You are not authorized to join this appointment.',
+            undefined,
+            { userId, appointmentId },
+            'VideoService.generateMeetingToken'
+          );
+        }
+      }
+
+      // 3. Validate Status
+      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED', 'IN_PROGRESS'];
+      // AWAITING_SLOT_CONFIRMATION is NOT allowed - doctor must confirm first
+      if (!allowedStatuses.includes(appointment.status)) {
+        throw new HealthcareError(
+          ErrorCode.OPERATION_NOT_ALLOWED,
+          `Cannot join session. Appointment status is ${appointment.status}. Wait for confirmation.`,
+          undefined,
+          { appointmentId, status: appointment.status },
+          'VideoService.generateMeetingToken'
+        );
+      }
+
+      // 4. Validate Payment
+      // Strict Prepaid Rule: Must be COMPLETED
+      // Only applies if it's a VIDEO_CALL (which it is)
+      if (appointment.type === 'VIDEO_CALL') {
+        const payment = appointment.payment;
+        // If no payment record or not completed
+        if (!payment || payment.status !== 'COMPLETED') {
+          // Exception: If status is already CONFIRMED/SCHEDULED, we assume it was paid (race condition check)
+          // But let's be strict. If database says PENDING, deny access.
+          // However, legacy data might not have payment linked?
+          // For "hardening", we enforce it.
+          if (process.env['NODE_ENV'] !== 'development' || payment?.status === 'PENDING') {
+            throw new HealthcareError(
+              ErrorCode.OPERATION_NOT_ALLOWED,
+              'Payment must be completed before joining the session.',
+              undefined,
+              { appointmentId, paymentStatus: payment?.status },
+              'VideoService.generateMeetingToken'
+            );
+          }
+        }
+      }
+
+      // 5. Validate Time Window
+      // "Allow join only within valid time window."
+      // "Hide join button outside valid window" (frontend), but backend must enforce.
+      if (isPatient) {
+        // Construct Start Time
+        const appointmentDate = new Date(appointment.date);
+        const [hours = '00', minutes = '00'] = (appointment.time || '00:00').split(':');
+        const appointmentStart = new Date(appointmentDate);
+        appointmentStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+        const now = new Date();
+        const msUntilStart = appointmentStart.getTime() - now.getTime();
+        const fifteenMinutesMs = 15 * 60 * 1000;
+
+        // Too early? (> 15 mins before)
+        if (msUntilStart > fifteenMinutesMs) {
+          throw new HealthcareError(
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            'You can only join the session 15 minutes before the scheduled time.',
+            undefined,
+            { appointmentId, minutesUntilStart: Math.round(msUntilStart / 60000) },
+            'VideoService.generateMeetingToken'
+          );
+        }
+
+        // Too late? (After end time)
+        const durationMs = (appointment.duration || 30) * 60 * 1000;
+        const appointmentEnd = new Date(appointmentStart.getTime() + durationMs);
+
+        // Allow joining a bit after end time? Maybe 5 mins grace?
+        // "Lock session UI after completion"
+        // If status is COMPLETED, it's blocked by Status check above.
+        // If status is IN_PROGRESS, allow.
+        // If status is SCHEDULED but time passed -> No-show logic should handle it.
+        // But strict time check:
+        if (now.getTime() > appointmentEnd.getTime() + 5 * 60 * 1000) {
+          // 5 mins leeway
+          throw new HealthcareError(
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            'This appointment time has passed.',
+            undefined,
+            { appointmentId, appointmentEnd },
+            'VideoService.generateMeetingToken'
+          );
+        }
+      }
+
       const provider: IVideoProvider = await this.getProvider();
       const tokenResponse: VideoTokenResponse = await provider.generateMeetingToken(
         appointmentId,
@@ -494,6 +633,27 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     } catch {
       // No fallback provider - OpenVidu only configuration
       return null;
+    }
+  }
+
+  /**
+   * List all active sessions (Super Admin)
+   */
+  async listAllActiveSessions(): Promise<VideoConsultationSession[]> {
+    try {
+      const provider = await this.getProvider();
+      if (provider.listActiveSessions) {
+        return await provider.listActiveSessions();
+      }
+      return [];
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to list all active sessions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.listAllActiveSessions'
+      );
+      return [];
     }
   }
 

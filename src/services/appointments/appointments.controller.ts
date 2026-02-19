@@ -42,7 +42,9 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { Roles } from '@core/decorators/roles.decorator';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
@@ -115,7 +117,8 @@ import type { AppointmentWithRelations } from '@core/types/database.types';
   description: 'Clinic identifier',
   required: true,
 })
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 @UsePipes(
   new ValidationPipe({
     transform: true,
@@ -2203,6 +2206,172 @@ export class AppointmentsController {
         }
       );
       throw _error;
+    }
+  }
+
+  @Post(':id/video/reject')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'delete', {
+    requireOwnership: true,
+  })
+  @ApiOperation({
+    summary: 'Reject video appointment proposal',
+    description:
+      'Doctor can reject a video appointment proposal. This initiates a refund for the patient.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        reason: {
+          type: 'string',
+          description: 'Reason for rejection',
+          example: 'Not available during proposed slots',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Appointment rejected successfully',
+    type: SuccessResponseDto,
+  })
+  async rejectVideoAppointment(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body('reason') reason: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<SuccessResponseDto> {
+    try {
+      const userId = req.user?.sub;
+      const clinicId = req.clinicContext?.clinicId;
+
+      if (!userId || !clinicId) {
+        throw new BadRequestException('User and Clinic context required');
+      }
+
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `Doctor ${userId} rejecting video appointment ${appointmentId}`,
+        'AppointmentsController',
+        { appointmentId, reason }
+      );
+
+      await this.appointmentService.rejectVideoAppointment(
+        appointmentId,
+        reason || 'Doctor rejected the proposal',
+        userId,
+        clinicId
+      );
+
+      return new SuccessResponseDto('Video appointment rejected and refund initiated');
+    } catch (_error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to reject video appointment ${appointmentId}`,
+        'AppointmentsController',
+        {
+          appointmentId,
+          error: _error instanceof Error ? _error.message : 'Unknown error',
+        }
+      );
+      throw _error;
+    }
+  }
+  // =============================================
+  // VIDEO APPOINTMENT RESCHEDULING
+  // =============================================
+
+  @Patch(':id/reschedule')
+  @RateLimitAPI({ points: 5, duration: 60 })
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:*', 'appointment:*'],
+    tags: ['appointments', 'appointment_data'],
+  })
+  @ApiOperation({
+    summary: 'Reschedule a video appointment',
+    description:
+      'Reschedule a video appointment to a new date/time. Must be done at least 24 hours before the original slot. Maximum 2 reschedules per appointment.',
+  })
+  @ApiParam({ name: 'id', description: 'Appointment ID (UUID)', type: 'string', format: 'uuid' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['newDate', 'newTime'],
+      properties: {
+        newDate: { type: 'string', format: 'date', example: '2025-03-15' },
+        newTime: { type: 'string', example: '14:00' },
+      },
+    },
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Appointment rescheduled successfully' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Reschedule policy violation or slot unavailable',
+  })
+  @ApiResponse({ status: HttpStatus.FORBIDDEN, description: 'Insufficient permissions' })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
+  async rescheduleAppointment(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body('newDate') newDate: string,
+    @Body('newTime') newTime: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub;
+
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and user ID are required');
+    }
+    if (!newDate || !newTime) {
+      throw new BadRequestException('newDate and newTime are required');
+    }
+
+    try {
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `User ${userId} requesting reschedule of appointment ${appointmentId} to ${newDate} ${newTime}`,
+        'AppointmentsController.rescheduleAppointment',
+        { appointmentId, newDate, newTime, userId, clinicId }
+      );
+
+      const result = await this.appointmentService.rescheduleAppointment(
+        appointmentId,
+        newDate,
+        newTime,
+        userId,
+        clinicId
+      );
+
+      return {
+        success: result.success,
+        data: result.data as unknown as AppointmentResponseDto,
+        message: result.message,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to reschedule appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsController.rescheduleAppointment',
+        { appointmentId, newDate, newTime, clinicId }
+      );
+      if (error instanceof HealthcareError) throw error;
+      throw this.errors.internalServerError('AppointmentsController.rescheduleAppointment');
     }
   }
 

@@ -3,18 +3,19 @@ import {
   Post,
   Get,
   Body,
-  Param,
   UseGuards,
   HttpCode,
   HttpStatus,
   BadRequestException,
   InternalServerErrorException,
+  Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { Role } from '@core/types/enums.types';
 import { UsersService } from '@services/users/users.service';
+import type { FastifyRequestWithUser } from '@core/types/guard.types';
 import {
   ProfileCompletionDto,
   ProfileCompletionStatusDto,
@@ -63,11 +64,15 @@ export class ProfileCompletionController {
     status: 401,
     description: 'Unauthorized',
   })
-  async getProfileCompletionStatus(): Promise<ProfileCompletionStatusDto> {
+  async getProfileCompletionStatus(
+    @Request() request: FastifyRequestWithUser
+  ): Promise<ProfileCompletionStatusDto> {
     try {
-      // Note: In a real implementation, we would get userId from the JWT payload
-      // For now, we'll use a placeholder or extract from context
-      const userId = 'current-user-id'; // This would come from request.user
+      const userId = request.user?.id || request.user?.sub || '';
+
+      if (!userId) {
+        throw new BadRequestException('User ID not found in request');
+      }
 
       const result = await this.usersService.checkUserProfileCompletion(userId);
 
@@ -110,11 +115,12 @@ export class ProfileCompletionController {
     status: 401,
     description: 'Unauthorized',
   })
-  async getRequiredFields(@Param('role') role?: string): Promise<ProfileCompletionFieldsDto> {
+  async getRequiredFields(
+    @Request() request: FastifyRequestWithUser
+  ): Promise<ProfileCompletionFieldsDto> {
     try {
-      // Note: In a real implementation, we would get user role from JWT
-      // For now, we'll use a placeholder or extract from context
-      const userRole = role ? (role.toUpperCase() as Role) : Role.PATIENT;
+      // Get user role from JWT payload, default to PATIENT if not specified
+      const userRole = (request.user?.role as Role) || Role.PATIENT;
 
       const requiredFields = this.usersService.getRequiredProfileFields(userRole);
 
@@ -162,13 +168,21 @@ export class ProfileCompletionController {
     description: 'Unauthorized',
   })
   async completeProfile(
+    @Request() request: FastifyRequestWithUser,
     @Body() requestDto: CompleteProfileRequestDto
   ): Promise<ProfileCompletionDto> {
     try {
-      const { userId, ...profileData } = requestDto;
+      const userId = request.user?.id || request.user?.sub || '';
+
+      if (!userId) {
+        throw new BadRequestException('User ID not found in request');
+      }
 
       // Validate profile completion
-      const result = await this.usersService.completeUserProfile(userId, profileData);
+      const result = await this.usersService.completeUserProfile(
+        userId,
+        requestDto as unknown as Record<string, unknown>
+      );
 
       if (!result.success) {
         throw new BadRequestException(result.message);
@@ -225,15 +239,20 @@ export class ProfileCompletionController {
     description: 'Unauthorized',
   })
   async updateProfile(
+    @Request() request: FastifyRequestWithUser,
     @Body() requestDto: CompleteProfileRequestDto
   ): Promise<ProfileCompletionDto> {
     try {
-      const { userId, ...profileData } = requestDto;
+      const userId = request.user?.id || request.user?.sub || '';
+
+      if (!userId) {
+        throw new BadRequestException('User ID not found in request');
+      }
 
       // Update profile with validation
       const updatedUser = await this.usersService.updateUserProfileWithValidation(
         userId,
-        profileData
+        requestDto as unknown as Record<string, unknown>
       );
 
       return {

@@ -36,9 +36,12 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
+
 import { Cache } from '@core/decorators';
 import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 import { Role } from '@core/types/enums.types';
@@ -48,7 +51,8 @@ import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 @ApiTags('billing')
 @Controller('billing')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,

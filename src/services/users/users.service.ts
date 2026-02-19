@@ -14,22 +14,25 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
-import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
+// Removed ProfileCompletionService import as logic is moved here
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
 import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
-import type {
-  Doctor,
-  Patient,
-  Receptionist,
-  ClinicAdmin,
-  SuperAdmin,
-  AuditLog,
-  Clinic,
-  LocationHead,
-} from '@core/types';
+import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
+import { AuditInfo } from '@core/types/database.types';
+
+export interface ProfileCompletionValidationResult {
+  isComplete: boolean;
+  missingFields: string[];
+  errors: Array<{ field: string; message: string }>;
+}
+
+export interface RoleBasedRequirements {
+  requiredFields: string[];
+  conditionalFields: Record<string, string[]>;
+}
 
 @Injectable()
 export class UsersService {
@@ -45,6 +48,96 @@ export class UsersService {
     return '';
   }
 
+  /**
+   * Role-based profile completion requirements
+   * Each role has specific mandatory fields for profile completion
+   */
+  private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
+    PATIENT: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    DOCTOR: {
+      requiredFields: [
+        'firstName',
+        'lastName',
+        'phone',
+        'dateOfBirth',
+        'gender',
+        'address',
+        'specialization',
+        'experience',
+      ],
+      conditionalFields: {},
+    },
+    ASSISTANT_DOCTOR: {
+      requiredFields: [
+        'firstName',
+        'lastName',
+        'phone',
+        'dateOfBirth',
+        'gender',
+        'address',
+        'specialization',
+        'experience',
+      ],
+      conditionalFields: {},
+    },
+    RECEPTIONIST: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    PHARMACIST: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    THERAPIST: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    LAB_TECHNICIAN: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    FINANCE_BILLING: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    SUPPORT_STAFF: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    NURSE: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    COUNSELOR: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    LOCATION_HEAD: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+    CLINIC_ADMIN: {
+      requiredFields: [
+        'firstName',
+        'lastName',
+        'phone',
+        'dateOfBirth',
+        'gender',
+        'address',
+        'clinicName',
+        'clinicAddress', // Changed from clinicAddress to match DB schema if needed or keep consistent
+      ],
+      conditionalFields: {},
+    },
+    SUPER_ADMIN: {
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      conditionalFields: {},
+    },
+  };
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
@@ -52,10 +145,9 @@ export class UsersService {
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
     private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
-    private readonly errors: HealthcareErrorsService,
-    @Inject(forwardRef(() => ProfileCompletionService))
-    private readonly profileCompletionService: ProfileCompletionService
+    private readonly errors: HealthcareErrorsService
   ) {
     // Type guard ensures type safety when using the service
     // This handles forwardRef circular dependency type resolution issues
@@ -1092,7 +1184,7 @@ export class UsersService {
       }
     }
 
-    // Delete old role-specific records using executeHealthcareWrite
+    // Unified audit info for role transition
     const auditInfo = {
       userId: id,
       clinicId: String((user as { primaryClinicId?: string | null })['primaryClinicId'] || ''),
@@ -1103,481 +1195,25 @@ export class UsersService {
       details: { oldRole: user.role, newRole: role },
     };
 
-    if (
-      ((user.role as Role) === Role.DOCTOR || (user.role as Role) === Role.ASSISTANT_DOCTOR) &&
-      user.doctor
-    ) {
-      await this.databaseService.executeHealthcareWrite<Doctor>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.doctor.delete({
-            where: { userId: id } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
-        { ...auditInfo, resourceType: 'DOCTOR' }
+    // Remove all existing role-specific records
+    await this.deleteOldRoleRecords(id, user, auditInfo);
+
+    // Get resolution for location and clinic
+    const { locationId: targetLocationId, clinicId: targetClinicId } =
+      await this.resolveLocationAndClinic(
+        createUserDto.locationId,
+        createUserDto.clinicId ||
+          clinicId ||
+          (user as { primaryClinicId?: string | null })['primaryClinicId'] ||
+          undefined
       );
-    }
-    if (
-      (user as { role?: string })['role'] === Role.PATIENT &&
-      (user as { patient?: unknown })['patient']
-    ) {
-      await this.databaseService.executeHealthcareWrite<Patient>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.patient.delete({
-            where: { userId: id } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
-        { ...auditInfo, resourceType: 'PATIENT' }
-      );
-    }
-    if (
-      (user.role as Role) === Role.RECEPTIONIST &&
-      user.receptionists &&
-      user.receptionists.length > 0
-    ) {
-      await this.databaseService.executeHealthcareWrite<Receptionist>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.receptionist.delete({
-            where: { userId: id } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
-        { ...auditInfo, resourceType: 'RECEPTIONIST' }
-      );
-    }
-    if (
-      (user.role as Role) === Role.CLINIC_ADMIN &&
-      user.clinicAdmins &&
-      user.clinicAdmins.length > 0
-    ) {
-      await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.clinicAdmin.delete({
-            where: { userId: id } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
-        { ...auditInfo, resourceType: 'CLINIC_ADMIN' }
-      );
-    }
-    if (
-      (user.role as Role) === Role.LOCATION_HEAD &&
-      (user as { locationHead?: unknown })['locationHead']
-    ) {
-      await this.databaseService.executeHealthcareWrite<LocationHead>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.locationHead.delete({
-            where: { userId: id },
-          });
-        },
-        { ...auditInfo, resourceType: 'LOCATION_HEAD' }
-      );
-    }
-    if (
-      (user as { role?: string })['role'] === Role.SUPER_ADMIN &&
-      (user as { superAdmin?: unknown })['superAdmin']
-    ) {
-      await this.databaseService.executeHealthcareWrite<SuperAdmin>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          return await typedClient.superAdmin.delete({
-            where: { userId: id } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-        },
-        { ...auditInfo, resourceType: 'SUPER_ADMIN' }
-      );
-    }
 
-    // Helper function to resolve locationId and clinicId
-    const resolveLocationAndClinic = async (
-      providedLocationId?: string,
-      providedClinicId?: string
-    ): Promise<{ locationId: string | null; clinicId: string | null }> => {
-      if (providedLocationId) {
-        // Fetch location to get clinicId
-        const location = await this.databaseService.executeHealthcareRead<{
-          id: string;
-          clinicId: string;
-        } | null>(async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          const result = await typedClient.clinicLocation.findFirst({
-            where: {
-              OR: [{ id: providedLocationId }, { locationId: providedLocationId }],
-            } as PrismaDelegateArgs,
-            select: { id: true, clinicId: true } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
-          return result as { id: string; clinicId: string } | null;
-        });
+    // Create the new role-specific record
+    await this.createNewRoleRecord(id, role, targetLocationId, targetClinicId, auditInfo, user);
 
-        if (location) {
-          return {
-            locationId: location.id,
-            clinicId: location.clinicId,
-          };
-        }
-      }
-
-      // Fallback to provided clinicId or null
-      return {
-        locationId: providedLocationId || null,
-        clinicId: providedClinicId || null,
-      };
-    };
-
-    // Create new role-specific records using executeHealthcareWrite
-    const createAuditInfo = {
-      userId: id,
-      clinicId: String((user as { primaryClinicId?: string | null })['primaryClinicId'] || ''),
-      resourceType: 'USER',
-      operation: 'CREATE',
-      resourceId: id,
-      userRole: 'system',
-      details: { newRole: role },
-    };
-
-    switch (role) {
-      case Role.PATIENT: {
-        // Get clinicId from context or user's primary clinic (for audit purposes only)
-        const targetClinicId = createUserDto.clinicId || clinicId || user.primaryClinicId;
-        // Patient model only has userId field, clinic association is through User model
-        await this.databaseService.executeHealthcareWrite<Patient>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.patient.create({
-              data: {
-                userId: id,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'PATIENT',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.DOCTOR:
-      case Role.ASSISTANT_DOCTOR:
-        await this.databaseService.executeHealthcareWrite<Doctor>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.doctor.create({
-              data: {
-                userId: id,
-                specialization: '',
-                experience: 0,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          { ...createAuditInfo, resourceType: 'DOCTOR' }
-        );
-        break;
-      case Role.RECEPTIONIST: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite<Receptionist>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.receptionist.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'RECEPTIONIST',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.CLINIC_ADMIN: {
-        const { locationId: targetLocationId, clinicId: resolvedClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-
-        // If no clinicId resolved from location, try to get from clinics
-        let targetClinicId = resolvedClinicId;
-        if (!targetClinicId) {
-          const clinics = await this.databaseService.executeHealthcareRead<Clinic[]>(
-            async client => {
-              const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-              return await typedClient.clinic.findMany({
-                take: 1,
-              } as PrismaDelegateArgs);
-            }
-          );
-          if (!clinics || clinics.length === 0) {
-            throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
-          }
-          targetClinicId = clinics[0]?.id ?? '';
-        }
-
-        if (!targetClinicId) {
-          throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
-        }
-
-        await this.databaseService.executeHealthcareWrite<ClinicAdmin>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.clinicAdmin.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'CLINIC_ADMIN',
-            clinicId: targetClinicId,
-          }
-        );
-        break;
-      }
-      case Role.SUPER_ADMIN:
-        await this.databaseService.executeHealthcareWrite<{
-          id: string;
-          userId: string;
-          [key: string]: unknown;
-        }>(
-          async client => {
-            const result = await (
-              client as {
-                superAdmin: {
-                  create: (
-                    args: unknown
-                  ) => Promise<{ id: string; userId: string; [key: string]: unknown }>;
-                };
-              }
-            )['superAdmin'].create({
-              data: { userId: id },
-            });
-            return result;
-          },
-          { ...createAuditInfo, resourceType: 'SUPER_ADMIN' }
-        );
-        break;
-      case Role.PHARMACIST: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.pharmacist.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'PHARMACIST',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.THERAPIST: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.therapist.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'THERAPIST',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.LAB_TECHNICIAN: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.labTechnician.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'LAB_TECHNICIAN',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.FINANCE_BILLING: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.financeBilling.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'FINANCE_BILLING',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.SUPPORT_STAFF: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.supportStaff.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'SUPPORT_STAFF',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.NURSE: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.nurse.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'NURSE',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.COUNSELOR: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.counselor.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'COUNSELOR',
-            clinicId: targetClinicId || '',
-          }
-        );
-        break;
-      }
-      case Role.LOCATION_HEAD: {
-        const { locationId: targetLocationId, clinicId: targetClinicId } =
-          await resolveLocationAndClinic(
-            createUserDto.locationId,
-            createUserDto.clinicId || clinicId
-          );
-        if (!targetClinicId) {
-          throw this.errors.clinicNotFound(undefined, 'UsersService.updateUserRole');
-        }
-        await this.databaseService.executeHealthcareWrite<LocationHead>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return await typedClient.locationHead.create({
-              data: {
-                userId: id,
-                clinicId: targetClinicId,
-                locationId: targetLocationId,
-                assignedBy: userId || 'SYSTEM',
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          },
-          {
-            ...createAuditInfo,
-            resourceType: 'LOCATION_HEAD',
-            clinicId: targetClinicId,
-          }
-        );
-        break;
-      }
-    }
-
-    // Update user role using updateUserSafe
+    // Update user role in DB
     await this.databaseService.updateUserSafe(id, { role } as never);
+
     // Fetch updated user with relations
     const updatedUser = await this.databaseService.executeHealthcareRead<UserWithRelations | null>(
       async client => {
@@ -2106,11 +1742,8 @@ export class UsersService {
 
       const userRole = user.role as Role;
 
-      // Validate profile completion using ProfileCompletionService
-      const validation = this.profileCompletionService.validateProfileCompletion(
-        profileData,
-        userRole
-      );
+      // Validate profile completion using local method
+      const validation = this.validateProfileCompletion(profileData, userRole);
 
       if (!validation.isComplete) {
         return {
@@ -2212,8 +1845,8 @@ export class UsersService {
       const isComplete = user.isProfileComplete || false;
       const profileCompletedAt = user.profileCompletedAt || null;
 
-      // Calculate completion percentage using ProfileCompletionService
-      const completionPercentage = this.profileCompletionService.getCompletionPercentage(
+      // Calculate completion percentage using local method
+      const completionPercentage = this.getCompletionPercentage(
         user as unknown as Record<string, unknown>,
         user.role as Role
       );
@@ -2242,13 +1875,176 @@ export class UsersService {
   }
 
   /**
+   * Helper to resolve locationId and clinicId
+   */
+  private async resolveLocationAndClinic(
+    providedLocationId?: string,
+    providedClinicId?: string
+  ): Promise<{ locationId: string | null; clinicId: string | null }> {
+    if (providedLocationId) {
+      const location = await this.databaseService.executeHealthcareRead<{
+        id: string;
+        clinicId: string;
+      } | null>(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        const result = await typedClient.clinicLocation.findFirst({
+          where: {
+            OR: [{ id: providedLocationId }, { locationId: providedLocationId }],
+          } as PrismaDelegateArgs,
+          select: { id: true, clinicId: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+        return result as { id: string; clinicId: string } | null;
+      });
+
+      if (location) {
+        return {
+          locationId: location.id,
+          clinicId: location.clinicId,
+        };
+      }
+    }
+
+    return {
+      locationId: providedLocationId || null,
+      clinicId: providedClinicId || null,
+    };
+  }
+
+  /**
+   * Delete old role-specific records
+   */
+  private async deleteOldRoleRecords(
+    id: string,
+    user: UserWithRelations,
+    auditInfo: AuditInfo
+  ): Promise<void> {
+    const rolesToRemove = [
+      {
+        cond: (user.role as Role) === Role.DOCTOR || (user.role as Role) === Role.ASSISTANT_DOCTOR,
+        type: 'doctor',
+      },
+      { cond: (user.role as Role) === Role.PATIENT, type: 'patient' },
+      { cond: (user.role as Role) === Role.RECEPTIONIST, type: 'receptionist' },
+      { cond: (user.role as Role) === Role.CLINIC_ADMIN, type: 'clinicAdmin' },
+      { cond: (user.role as Role) === Role.LOCATION_HEAD, type: 'locationHead' },
+      { cond: (user.role as Role) === Role.SUPER_ADMIN, type: 'superAdmin' },
+      { cond: (user.role as Role) === Role.PHARMACIST, type: 'pharmacist' },
+      { cond: (user.role as Role) === Role.THERAPIST, type: 'therapist' },
+      { cond: (user.role as Role) === Role.LAB_TECHNICIAN, type: 'labTechnician' },
+      { cond: (user.role as Role) === Role.FINANCE_BILLING, type: 'financeBilling' },
+      { cond: (user.role as Role) === Role.SUPPORT_STAFF, type: 'supportStaff' },
+      { cond: (user.role as Role) === Role.NURSE, type: 'nurse' },
+      { cond: (user.role as Role) === Role.COUNSELOR, type: 'counselor' },
+    ];
+
+    for (const role of rolesToRemove) {
+      if (role.cond && (user as unknown as Record<string, unknown>)[role.type]) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            interface GenericDelegate {
+              delete: (args: { where: { userId: string } }) => Promise<void>;
+            }
+            const delegate = (client as unknown as Record<string, GenericDelegate>)[role.type];
+            if (delegate) {
+              await delegate.delete({
+                where: { userId: id },
+              });
+            }
+          },
+          { ...auditInfo, resourceType: role.type.toUpperCase() }
+        );
+      }
+    }
+  }
+
+  /**
+   * Create new role-specific record
+   */
+  private async createNewRoleRecord(
+    id: string,
+    role: Role,
+    locationId: string | null,
+    clinicId: string | null,
+    auditInfo: AuditInfo,
+    _user: UserWithRelations
+  ): Promise<void> {
+    const data: Record<string, unknown> = { userId: id };
+    let resourceType = role.toString();
+
+    switch (role) {
+      case Role.DOCTOR:
+      case Role.ASSISTANT_DOCTOR:
+        data['specialization'] = '';
+        data['experience'] = 0;
+        resourceType = 'DOCTOR';
+        break;
+      case Role.RECEPTIONIST:
+      case Role.CLINIC_ADMIN:
+      case Role.PHARMACIST:
+      case Role.THERAPIST:
+      case Role.LAB_TECHNICIAN:
+      case Role.FINANCE_BILLING:
+      case Role.SUPPORT_STAFF:
+      case Role.NURSE:
+      case Role.COUNSELOR:
+        data['clinicId'] = clinicId;
+        data['locationId'] = locationId;
+        resourceType = role.toString();
+        break;
+      case Role.LOCATION_HEAD:
+        data['clinicId'] = clinicId;
+        data['locationId'] = locationId;
+        data['assignedBy'] = auditInfo.userId || 'SYSTEM';
+        resourceType = 'LOCATION_HEAD';
+        break;
+      case Role.PATIENT:
+      case Role.SUPER_ADMIN:
+        resourceType = role.toString();
+        break;
+    }
+
+    const prismaModelMap: Record<string, string> = {
+      [Role.DOCTOR]: 'doctor',
+      [Role.ASSISTANT_DOCTOR]: 'doctor',
+      [Role.PATIENT]: 'patient',
+      [Role.RECEPTIONIST]: 'receptionist',
+      [Role.CLINIC_ADMIN]: 'clinicAdmin',
+      [Role.SUPER_ADMIN]: 'superAdmin',
+      [Role.PHARMACIST]: 'pharmacist',
+      [Role.THERAPIST]: 'therapist',
+      [Role.LAB_TECHNICIAN]: 'labTechnician',
+      [Role.FINANCE_BILLING]: 'financeBilling',
+      [Role.SUPPORT_STAFF]: 'supportStaff',
+      [Role.NURSE]: 'nurse',
+      [Role.COUNSELOR]: 'counselor',
+      [Role.LOCATION_HEAD]: 'locationHead',
+    };
+
+    const modelName = prismaModelMap[role];
+    if (modelName) {
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          interface GenericDelegate {
+            create: (args: { data: unknown }) => Promise<void>;
+          }
+          const delegate = (client as unknown as Record<string, GenericDelegate>)[modelName];
+          if (delegate) {
+            await delegate.create({ data });
+          }
+        },
+        { ...auditInfo, resourceType: resourceType, operation: 'CREATE' }
+      );
+    }
+  }
+
+  /**
    * Get required profile fields for a role
    *
    * @param role - User role
    * @returns List of required fields
    */
   getRequiredProfileFields(role: Role): string[] {
-    return this.profileCompletionService.getRequiredFieldsForRole(role);
+    return this.getRequiredFieldsForRole(role);
   }
 
   /**
@@ -2278,7 +2074,7 @@ export class UsersService {
       const userRole = user.role as Role;
 
       // Validate profile data (non-blocking validation)
-      const validation = this.profileCompletionService.validateProfileCompletion(
+      const validation = this.validateProfileCompletion(
         { ...(user as unknown as Record<string, unknown>), ...profileData },
         userRole
       );
@@ -2311,5 +2107,233 @@ export class UsersService {
 
       throw error;
     }
+  }
+
+  /**
+   * Validate if a user's profile is complete based on their role
+   */
+  public validateProfileCompletion(
+    profile: Record<string, unknown>,
+    role: Role
+  ): ProfileCompletionValidationResult {
+    const requirements = this.ROLE_REQUIREMENTS[role];
+
+    if (!requirements) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Unknown role for profile validation: ${role}`,
+        'UsersService.validateProfileCompletion'
+      );
+
+      return {
+        isComplete: false,
+        missingFields: [],
+        errors: [{ field: 'role', message: 'Invalid role specified' }],
+      };
+    }
+
+    const missingFields: string[] = [];
+    const errors: Array<{ field: string; message: string }> = [];
+
+    // Check each required field
+    for (const field of requirements.requiredFields) {
+      const value = profile[field];
+
+      if (this.isFieldEmpty(value)) {
+        missingFields.push(field);
+        errors.push({
+          field,
+          message: `${this.formatFieldName(field)} is required for ${role} users`,
+        });
+      }
+    }
+
+    // Validate field formats
+    this.validateFieldFormats(profile, role, errors);
+
+    const isComplete = missingFields.length === 0 && errors.length === 0;
+
+    if (!isComplete) {
+      void this.loggingService.log(
+        LogType.AUDIT,
+        LogLevel.INFO,
+        `Profile incomplete for ${role}: missing ${missingFields.join(', ')}`,
+        'UsersService.validateProfileCompletion',
+        { role, missingFields, errorCount: errors.length }
+      );
+    }
+
+    return {
+      isComplete,
+      missingFields,
+      errors,
+    };
+  }
+
+  /**
+   * Check if a field is empty (null, undefined, empty string, etc.)
+   */
+  private isFieldEmpty(value: unknown): boolean {
+    if (value === null || value === undefined) {
+      return true;
+    }
+
+    if (typeof value === 'string') {
+      return value.trim().length === 0;
+    }
+
+    if (Array.isArray(value)) {
+      return value.length === 0;
+    }
+
+    return false;
+  }
+
+  /**
+   * Validate field formats (email, phone, dates, etc.)
+   */
+  private validateFieldFormats(
+    profile: Record<string, unknown>,
+    role: Role,
+    errors: Array<{ field: string; message: string }>
+  ): void {
+    // Validate phone format if present
+    const phone = profile['phone'] as string | undefined;
+    if (phone && phone.trim()) {
+      const phoneRegex = /^\+?[1-9]\d{1,14}$/;
+      if (!phoneRegex.test(phone.trim())) {
+        errors.push({
+          field: 'phone',
+          message: 'Phone number format is invalid',
+        });
+      }
+    }
+
+    // Validate date of birth if present
+    const dateOfBirth = profile['dateOfBirth'] as string | Date | undefined;
+    if (dateOfBirth) {
+      const dob = typeof dateOfBirth === 'string' ? new Date(dateOfBirth) : dateOfBirth;
+
+      if (isNaN(dob.getTime())) {
+        errors.push({
+          field: 'dateOfBirth',
+          message: 'Invalid date of birth format',
+        });
+      } else {
+        // Check age is reasonable (12-120 years)
+        const today = new Date();
+        let age = today.getFullYear() - dob.getFullYear();
+        const monthDiff = today.getMonth() - dob.getMonth();
+
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {
+          age--;
+        }
+
+        if (age < 12) {
+          errors.push({
+            field: 'dateOfBirth',
+            message: 'You must be at least 12 years old',
+          });
+        } else if (age > 120) {
+          errors.push({
+            field: 'dateOfBirth',
+            message: 'Invalid date of birth',
+          });
+        }
+      }
+    }
+
+    // Validate experience for medical staff
+    if (role === Role.DOCTOR || role === Role.ASSISTANT_DOCTOR) {
+      const experience = profile['experience'] as number | string | undefined;
+      if (experience !== undefined && experience !== '') {
+        const expValue = typeof experience === 'string' ? parseInt(experience, 10) : experience;
+
+        if (isNaN(expValue) || expValue < 0 || expValue > 60) {
+          errors.push({
+            field: 'experience',
+            message: 'Experience must be between 0 and 60 years',
+          });
+        }
+      }
+    }
+
+    // Validate gender value if present
+    const gender = profile['gender'] as string | undefined;
+    if (gender && gender.trim()) {
+      const validGenders = ['MALE', 'FEMALE', 'OTHER'];
+      if (!validGenders.includes(gender.toUpperCase())) {
+        errors.push({
+          field: 'gender',
+          message: 'Invalid gender value',
+        });
+      }
+    }
+  }
+
+  /**
+   * Format field name for display (camelCase to Title Case)
+   */
+  private formatFieldName(fieldName: string): string {
+    return fieldName
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, str => str.toUpperCase())
+      .replace(/[A-Z]/g, ' $&')
+      .trim()
+      .replace(/ /g, ' ');
+  }
+
+  /**
+   * Get required fields for a specific role
+   */
+  public getRequiredFieldsForRole(role: Role): string[] {
+    const requirements = this.ROLE_REQUIREMENTS[role];
+    return requirements?.requiredFields || [];
+  }
+
+  /**
+   * Check if profile should be considered complete (server-side logic)
+   * This is the single source of truth for profile completion status
+   */
+  public isProfileComplete(profile: Record<string, unknown>, role: Role): boolean {
+    const result = this.validateProfileCompletion(profile, role);
+    return result.isComplete;
+  }
+
+  /**
+   * Get profile completion percentage
+   */
+  public getCompletionPercentage(profile: Record<string, unknown>, role: Role): number {
+    const requirements = this.ROLE_REQUIREMENTS[role];
+
+    if (!requirements || requirements.requiredFields.length === 0) {
+      return 0;
+    }
+
+    const completedFields = requirements.requiredFields.filter(
+      field => !this.isFieldEmpty(profile[field])
+    ).length;
+
+    return Math.round((completedFields / requirements.requiredFields.length) * 100);
+  }
+
+  /**
+   * Check if emergency contact is complete
+   */
+  public isEmergencyContactComplete(
+    emergencyContact: Record<string, unknown> | null | undefined
+  ): boolean {
+    if (!emergencyContact) {
+      return false;
+    }
+
+    const contact = emergencyContact as {
+      name?: string;
+      phone?: string;
+      relationship?: string;
+    };
+
+    return !!(contact.name?.trim() && contact.phone?.trim() && contact.relationship?.trim());
   }
 }

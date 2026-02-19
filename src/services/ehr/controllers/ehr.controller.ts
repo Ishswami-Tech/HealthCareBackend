@@ -45,16 +45,20 @@ import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
+
 import { PatientCache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 
 @ApiTags('ehr')
 @Controller('ehr')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 export class EHRController {
   constructor(private readonly ehrService: EHRService) {}
 

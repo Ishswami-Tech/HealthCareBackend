@@ -13,14 +13,17 @@ import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { Roles } from '@core/decorators/roles.decorator';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
 
 @ApiTags('queue')
 @Controller('queue')
-@UseGuards(JwtAuthGuard, ClinicGuard, RolesGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, ClinicGuard, RolesGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 @ApiBearerAuth()
 export class QueueController {
   constructor(private readonly appointmentQueueService: AppointmentQueueService) {}
