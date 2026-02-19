@@ -163,7 +163,6 @@ export class InvoicePDFService {
 
     if (data.clinicEmail) {
       doc.text(`Email: ${data.clinicEmail}`, 50, currentY);
-      currentY += 15;
     }
 
     doc.moveDown(1);

@@ -1305,7 +1305,10 @@ async function bootstrap() {
             listenError instanceof Error ? listenError.constructor.name : typeof listenError,
         }
       );
-      throw new Error(`Server startup failed: ${errorMessage}`);
+      // Cast Error constructor to allow cause option (supported in Node 20+)
+      throw new (Error as unknown as {
+        new (message?: string, options?: { cause?: unknown }): Error;
+      })(`Server startup failed: ${errorMessage}`, { cause: listenError });
     }
 
     // Process error handlers are already set up via ProcessErrorHandlersService

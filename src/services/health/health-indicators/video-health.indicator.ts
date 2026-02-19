@@ -443,7 +443,7 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
     // PRIORITY 2: Use VideoService if direct check not possible
     if (this.videoService) {
       // Real-time health check using VideoService (which checks OpenVidu)
-      let isHealthy = false;
+      let isHealthy: boolean;
       let errorMessage: string | undefined;
 
       try {

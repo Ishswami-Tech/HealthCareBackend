@@ -81,8 +81,8 @@ export class ReadReplicaRouterService {
    */
   checkReplicaHealth(replicaId: string): ReplicaHealth {
     const startTime = Date.now();
-    let healthy = false;
-    let latency = 0;
+    let healthy: boolean;
+    let latency: number;
 
     try {
       // Simple health check - in production, this would ping the replica

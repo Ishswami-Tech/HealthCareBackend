@@ -143,10 +143,22 @@ if (!databaseUrl || databaseUrl.trim() === '') {
 // Note: The URL is evaluated at module load time, so process.env must be set before this file is required
 // CRITICAL: If databaseUrl is empty, Prisma will try to read from environment variables as fallback
 // This provides a safety net if the config file can't read the URL
+const path = require('path');
+
+// Helper to get absolute path based on environment
+const getAbsolutePath = (relativePath) => {
+  if (process.env.content === 'docker' || process.env.IS_DOCKER === 'true' || require('fs').existsSync('/.dockerenv')) {
+    return path.join('/app', relativePath);
+  }
+  return path.resolve(process.cwd(), relativePath);
+};
+
 module.exports = {
-  schema: 'src/libs/infrastructure/database/prisma/schema.prisma',
+  // Use absolute path for schema to avoid relative path issues in Docker
+  schema: getAbsolutePath('src/libs/infrastructure/database/prisma/schema.prisma'),
   migrations: {
-    path: './migrations',  // Relative to this config file (/app/src/libs/infrastructure/database/prisma/)
+    // Use absolute path for migrations
+    path: getAbsolutePath('src/libs/infrastructure/database/prisma/migrations'),
   },
   datasource: {
     // Use the cleaned URL, or let Prisma fall back to DATABASE_URL env var if empty

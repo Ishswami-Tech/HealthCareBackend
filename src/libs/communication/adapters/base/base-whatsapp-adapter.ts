@@ -139,9 +139,7 @@ export abstract class BaseWhatsAppAdapter implements WhatsAppProviderAdapter {
     }
 
     const startTime = Date.now();
-    let healthy = false;
-    let error: string | undefined;
-
+    let healthy: boolean;
     try {
       healthy = await this.verify();
       const latency = Date.now() - startTime;
@@ -155,7 +153,7 @@ export abstract class BaseWhatsAppAdapter implements WhatsAppProviderAdapter {
       this.lastHealthCheck = now;
       return this.healthCheckCache;
     } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
+      const error = err instanceof Error ? err.message : String(err);
       const latency = Date.now() - startTime;
 
       this.healthCheckCache = {
