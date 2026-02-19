@@ -100,7 +100,10 @@ function validateConfigEarly(): void {
     if (error instanceof Error) {
       throw error;
     }
-    throw new Error('Unknown configuration validation error');
+    // Cast Error constructor to allow cause option (supported in Node 20+)
+    throw new (Error as unknown as {
+      new (message?: string, options?: { cause?: unknown }): Error;
+    })('Unknown configuration validation error', { cause: error });
   }
 }
 

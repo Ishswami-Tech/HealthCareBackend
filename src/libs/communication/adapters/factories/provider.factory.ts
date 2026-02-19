@@ -76,7 +76,7 @@ export class ProviderFactory {
       return this.emailAdapterCache.get(cacheKey)!;
     }
 
-    let adapter: EmailProviderAdapter | null = null;
+    let adapter: EmailProviderAdapter | null;
 
     try {
       switch (providerType) {
@@ -203,7 +203,7 @@ export class ProviderFactory {
       return this.whatsappAdapterCache.get(cacheKey)!;
     }
 
-    let adapter: WhatsAppProviderAdapter | null = null;
+    let adapter: WhatsAppProviderAdapter | null;
 
     try {
       switch (providerType) {
