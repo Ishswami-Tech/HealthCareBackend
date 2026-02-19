@@ -42,7 +42,7 @@ permissions:
   actions: read # Required for CodeQL to access workflow run information
 
 env:
-  NODE_VERSION: "20"
+  NODE_VERSION: "22"
   YARN_VERSION: "1.22.22"
   REGISTRY: ghcr.io
   IMAGE_REPO: ${{ github.repository }}
