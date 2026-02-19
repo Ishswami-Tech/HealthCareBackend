@@ -71,22 +71,32 @@ export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
     where: {
       OR?: Array<{ roomId: string } | { appointmentId: string } | { id: string }>;
       id?: string;
+      appointmentId?: string;
     };
-    include?: { participants: boolean };
+    include?: { participants?: boolean; appointment?: boolean };
   }) => Promise<VideoConsultationWithParticipants | null>;
   findMany: (args: {
     where?: {
       clinicId?: string;
+      status?: string | { not?: string };
+      startTime?: { lt?: Date; gt?: Date };
+      appointment?: {
+        status?: { in?: string[] } | string;
+      };
       OR?: Array<
         | { patientId: string }
         | { doctorId: string }
         | { participants: { some: { userId: string } } }
       >;
     };
-    include?: { participants: boolean };
+    include?: { participants?: boolean; appointment?: boolean };
     orderBy?: { createdAt: 'desc' | 'asc' };
     take?: number;
   }) => Promise<VideoConsultationWithParticipants[]>;
+  updateMany: (args: {
+    where: { appointmentId?: string; status?: { not?: string } };
+    data: { status: string };
+  }) => Promise<{ count: number }>;
   create: (args: { data: unknown }) => Promise<VideoConsultationDbModel>;
   update: (args: { where: { id: string }; data: unknown }) => Promise<VideoConsultationDbModel>;
 } {
@@ -108,22 +118,32 @@ export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
           where: {
             OR?: Array<{ roomId: string } | { appointmentId: string } | { id: string }>;
             id?: string;
+            appointmentId?: string;
           };
-          include?: { participants: boolean };
+          include?: { participants?: boolean; appointment?: boolean };
         }) => Promise<VideoConsultationWithParticipants | null>;
         findMany: (args: {
           where?: {
             clinicId?: string;
+            status?: string | { not?: string };
+            startTime?: { lt?: Date; gt?: Date };
+            appointment?: {
+              status?: { in?: string[] } | string;
+            };
             OR?: Array<
               | { patientId: string }
               | { doctorId: string }
               | { participants: { some: { userId: string } } }
             >;
           };
-          include?: { participants: boolean };
+          include?: { participants?: boolean; appointment?: boolean };
           orderBy?: { createdAt: 'desc' | 'asc' };
           take?: number;
         }) => Promise<VideoConsultationWithParticipants[]>;
+        updateMany: (args: {
+          where: { appointmentId?: string; status?: { not?: string } };
+          data: { status: string };
+        }) => Promise<{ count: number }>;
         create: (args: { data: unknown }) => Promise<VideoConsultationDbModel>;
         update: (args: {
           where: { id: string };
