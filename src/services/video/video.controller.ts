@@ -41,10 +41,13 @@ import { EventService } from '@infrastructure/events';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
+import { ProfileCompletionGuard } from '@core/guards/profile-completion.guard';
 import { ClinicRoute } from '@core/decorators/clinic-route.decorator';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
+import { RequiresProfileCompletion } from '@core/decorators/profile-completion.decorator';
+
 import { Cache } from '@core/decorators';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { EventCategory, EventPriority } from '@core/types';
@@ -118,7 +121,8 @@ import { VideoService } from './video.service';
 
 @Controller('video')
 @ApiTags('video')
-@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
+@RequiresProfileCompletion()
 @UsePipes(new ValidationPipe(ValidationPipeConfig.getOptions()))
 @ApiBearerAuth()
 export class VideoController {
@@ -2072,6 +2076,50 @@ export class VideoController {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.getBackgroundPresets');
+    }
+  }
+
+  // ============================================================================
+  // SUPER ADMIN MONITORING & CONTROL
+  // ============================================================================
+
+  @Get('admin/sessions')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'List all active video sessions (Super Admin)',
+    description: 'Global monitoring of all active video consultations across all clinics.',
+  })
+  @ApiResponse({ status: 200, type: [VideoConsultationSessionDto] })
+  async listAllActiveSessions(): Promise<VideoConsultationSession[]> {
+    try {
+      return await this.videoService.listAllActiveSessions();
+    } catch (_error) {
+      throw this.errors.internalServerError('VideoController.listAllActiveSessions');
+    }
+  }
+
+  @Post('admin/sessions/:id/terminate')
+  @Roles(Role.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Force terminate session (Super Admin)',
+    description: 'Forcefully end any active video session for security or policy enforcement.',
+  })
+  @ApiParam({ name: 'id', description: 'Appointment ID' })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  async terminateSession(
+    @Param('id') appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<SuccessResponseDto> {
+    try {
+      await this.videoService.endConsultation(
+        appointmentId,
+        req.user?.sub || 'SUPER_ADMIN',
+        'clinic_admin' // Map SUPER_ADMIN to admin level for service
+      );
+      return new SuccessResponseDto('Session terminated successfully');
+    } catch (_error) {
+      throw this.errors.internalServerError('VideoController.terminateSession');
     }
   }
 }

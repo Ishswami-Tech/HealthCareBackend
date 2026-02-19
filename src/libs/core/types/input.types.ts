@@ -113,6 +113,10 @@ export type AppointmentCreateInput = {
   recurrenceEndDate?: Date;
   parentAppointmentId?: string;
   treatmentType?: string;
+  metadata?: unknown;
+  cancellationReason?: string;
+  cancelledBy?: string;
+  cancelledAt?: Date;
 };
 
 /**
@@ -139,6 +143,10 @@ export type AppointmentUpdateInput = {
   recurrenceEndDate?: Date;
   parentAppointmentId?: string;
   treatmentType?: string;
+  metadata?: unknown;
+  cancellationReason?: string;
+  cancelledBy?: string;
+  cancelledAt?: Date;
 };
 
 /**

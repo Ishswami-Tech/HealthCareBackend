@@ -114,6 +114,18 @@ export class ClinicGuard implements CanActivate {
     // Extract clinic ID from header
     const headerClinicId = this.extractClinicId(request);
 
+    // BYPASS for SUPER_ADMIN when no clinic header is provided (allows global context access)
+    if (!headerClinicId && user?.role === 'SUPER_ADMIN') {
+      void this.loggingService.log(
+        LogType.AUTH,
+        LogLevel.DEBUG,
+        `SUPER_ADMIN global context, skipping clinic validation`,
+        'ClinicGuard',
+        { userId: user?.id, path: request.url }
+      );
+      return true;
+    }
+
     // For public endpoints WITHOUT clinic ID, skip validation entirely
     // This allows other public endpoints to work without clinic context
     if (isPublic && !headerClinicId && !user) {

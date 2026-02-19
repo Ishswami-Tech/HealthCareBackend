@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database';
@@ -15,6 +15,7 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
+import { UsersService } from '@services/users/users.service';
 import {
   LoginDto,
   RegisterDto,
@@ -34,7 +35,7 @@ import type { UserWithPassword, UserWithRelations } from '@core/types/user.types
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
-import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
+// import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
 @Injectable()
 export class AuthService {
@@ -55,7 +56,8 @@ export class AuthService {
     private readonly jwtAuthService: JwtAuthService,
     private readonly socialAuthService: SocialAuthService,
     private readonly otpService: OtpService,
-    private readonly profileCompletionService: ProfileCompletionService
+    @Inject(forwardRef(() => UsersService))
+    private readonly usersService: UsersService
   ) {
     // Defensive check: ensure configService is available
     if (!this.configService) {
@@ -1369,8 +1371,8 @@ export class AuthService {
       // Check the database-level flag (authoritative)
       const dbIsComplete = user.isProfileComplete;
 
-      // Also validate with ProfileCompletionService to ensure consistency
-      const validation = this.profileCompletionService.validateProfileCompletion(
+      // Also validate with UsersService to ensure consistency
+      const validation = this.usersService.validateProfileCompletion(
         user as unknown as Record<string, unknown>,
         role
       );
@@ -1414,7 +1416,7 @@ export class AuthService {
     const profileRecord = user as Record<string, unknown>;
     const role = (profileRecord['role'] as Role) || Role.PATIENT;
 
-    return this.profileCompletionService.isProfileComplete(profileRecord, role);
+    return this.usersService.isProfileComplete(profileRecord, role);
   }
 
   /**

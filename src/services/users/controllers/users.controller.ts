@@ -254,52 +254,37 @@ export class UsersController {
     if (!id || id === 'undefined') {
       throw new BadRequestException('User ID is required in the URL');
     }
-    const loggedInUser = req.user;
-    // Use user.sub (JWT subject) as userId, fallback to user.id
-    const loggedInUserId = loggedInUser.sub || loggedInUser.id;
 
-    if (!loggedInUserId) {
+    const { user } = req;
+    const currentUserId = user.sub || user.id;
+
+    if (!currentUserId) {
       throw new ForbiddenException('User ID not found in token');
     }
 
-    // Allow Super Admin to update any user
-    if (loggedInUser.role === Role.SUPER_ADMIN) {
-      const updatedUser = await this.usersService.update(id, updateUserDto);
-      // If profile is complete, refresh session
-      if (this.authService.isProfileComplete(updatedUser)) {
-        const fullProfile = await this.authService.getUserProfile(id);
-        const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
-        const tokens = await this.authService.generateTokens(
-          fullProfile,
-          sessionId,
-          req.headers['x-device-fingerprint'] as string,
-          req.headers['user-agent'],
-          req.ip
-        );
-        this.authService.setAuthCookies(reply, tokens);
-      }
-      return updatedUser;
+    // RBAC: Super Admin can update any user, others can only update themselves
+    const hasPermission = user.role === Role.SUPER_ADMIN || currentUserId === id;
+    if (!hasPermission) {
+      throw new ForbiddenException('You do not have permission to update this user.');
     }
-    // Allow any user to update their own profile
-    if (loggedInUserId === id) {
-      const updatedUser = await this.usersService.update(id, updateUserDto);
-      // If profile is complete, refresh session
-      if (this.authService.isProfileComplete(updatedUser)) {
-        const fullProfile = await this.authService.getUserProfile(id);
-        const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
-        const tokens = await this.authService.generateTokens(
-          fullProfile,
-          sessionId,
-          req.headers['x-device-fingerprint'] as string,
-          req.headers['user-agent'],
-          req.ip
-        );
-        this.authService.setAuthCookies(reply, tokens);
-      }
-      return updatedUser;
+
+    const updatedUser = await this.usersService.update(id, updateUserDto);
+
+    // If profile is complete, refresh the session tokens to reflect new user data
+    if (this.authService.isProfileComplete(updatedUser)) {
+      const fullProfile = await this.authService.getUserProfile(id);
+      const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
+      const tokens = await this.authService.generateTokens(
+        fullProfile,
+        sessionId,
+        req.headers['x-device-fingerprint'] as string,
+        req.headers['user-agent'],
+        req.ip
+      );
+      this.authService.setAuthCookies(reply, tokens);
     }
-    // Otherwise, forbidden
-    throw new ForbiddenException('You do not have permission to update this user.');
+
+    return updatedUser;
   }
 
   @Delete(':id')
@@ -477,33 +462,29 @@ export class UsersController {
     @Request() req: ClinicAuthenticatedRequest,
     @OptionalClinicId() clinicId?: string
   ): Promise<UserResponseDto> {
-    const minimalCreateUserDto = {
-      email: 'placeholder@example.com',
-      password: 'placeholder',
-      firstName: 'placeholder',
-      lastName: 'placeholder',
-      phone: '0000000000',
-      role: updateUserRoleDto.role,
-      clinicId: updateUserRoleDto.clinicId ?? clinicId ?? '',
-    };
-    const createUserData = {
-      email: minimalCreateUserDto.email,
-      password: minimalCreateUserDto.password,
-      firstName: minimalCreateUserDto.firstName,
-      lastName: minimalCreateUserDto.lastName,
-      phone: minimalCreateUserDto.phone,
-      role: minimalCreateUserDto.role,
-      ...(minimalCreateUserDto.clinicId && {
-        clinicId: minimalCreateUserDto.clinicId,
-      }),
-    };
     const currentUserId = req.user?.sub || req.user?.id;
+    if (!currentUserId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+
+    const targetClinicId = updateUserRoleDto.clinicId || clinicId;
+
+    // We pass an empty Partial for CreateUserDto fields during role-only updates
+    // The service handles creating the role-specific records (Doctor, etc.)
     return this.usersService.updateUserRole(
       id,
       updateUserRoleDto.role,
-      createUserData,
+      {
+        email: '', // Not used for role update
+        password: '', // Not used for role update
+        firstName: '', // Not used for role update
+        lastName: '', // Not used for role update
+        phone: '', // Not used for role update
+        role: updateUserRoleDto.role,
+        clinicId: targetClinicId,
+      } as CreateUserDto,
       currentUserId,
-      clinicId
+      targetClinicId
     );
   }
 
@@ -551,7 +532,10 @@ export class UsersController {
     @ClinicId() clinicId: string,
     @Request() request: ClinicAuthenticatedRequest
   ): Promise<{ success: boolean; message: string }> {
-    const currentUserId = request.user?.id || request.user?.sub || '';
+    const currentUserId = request.user?.sub || request.user?.id;
+    if (!currentUserId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
 
     await this.locationManagementService.changeUserLocation(
       userId,

@@ -47,14 +47,6 @@ export class EmergencyContactDto {
  */
 export class CompleteProfileRequestDto {
   @ApiProperty({
-    description: 'User ID to complete profile for',
-    example: 'user-123',
-  })
-  @IsString()
-  @IsNotEmpty()
-  userId!: string;
-
-  @ApiProperty({
     description: 'First name',
     example: 'John',
   })

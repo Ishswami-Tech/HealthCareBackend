@@ -11,6 +11,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { HttpService } from '@infrastructure/http';
+import { AxiosError } from 'axios';
 import type { HttpRequestOptions } from '@core/types';
 import { ConfigService } from '@config';
 import { LogType, LogLevel } from '@core/types';
@@ -257,6 +258,68 @@ export class OpenViduVideoProvider implements IVideoProvider {
         );
       }
 
+      // Security: Validate Appointment Status
+      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'ACTIVE', 'IN_PROGRESS'];
+      if (!allowedStatuses.includes(appointment.status)) {
+        throw new HealthcareError(
+          ErrorCode.WORKFLOW_STATE_INVALID,
+          `Cannot join consultation. Appointment status is ${appointment.status}`,
+          undefined,
+          { appointmentId, status: appointment.status },
+          'OpenViduVideoProvider.generateMeetingToken'
+        );
+      }
+
+      // Security: Validate Time Window
+      // Allow joining 15 minutes before start and until completion
+      const appointmentDate = new Date(appointment.date);
+      // appointment.time is string "HH:mm"
+      const timeParts = appointment.time.split(':');
+      const hours = Number(timeParts[0]);
+      const minutes = timeParts.length > 1 ? Number(timeParts[1]) : 0;
+
+      if (isNaN(hours) || isNaN(minutes)) {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_TIME,
+          `Invalid appointment time format: ${appointment.time}`,
+          undefined,
+          { appointmentId, time: appointment.time },
+          'OpenViduVideoProvider.generateMeetingToken'
+        );
+      }
+
+      appointmentDate.setHours(hours, minutes, 0, 0);
+
+      const now = new Date();
+      const startTime = appointmentDate.getTime();
+      const gracePeriodBefore = 15 * 60 * 1000; // 15 mins before
+      const duration = (appointment.duration || 30) * 60 * 1000;
+      const gracePeriodAfter = 15 * 60 * 1000; // 15 mins after scheduled end (for connection)
+
+      if (now.getTime() < startTime - gracePeriodBefore) {
+        throw new HealthcareError(
+          ErrorCode.RESOURCE_LOCKED,
+          'Consultation has not started yet. You can join 15 minutes before the scheduled time.',
+          undefined,
+          { appointmentId, scheduledTime: appointmentDate.toISOString() },
+          'OpenViduVideoProvider.generateMeetingToken'
+        );
+      }
+
+      // If status is NOT active, check expiration
+      // If active, assume session is ongoing (handled by endConsultation)
+      if (appointment.status !== 'ACTIVE' && appointment.status !== 'IN_PROGRESS') {
+        if (now.getTime() > startTime + duration + gracePeriodAfter) {
+          throw new HealthcareError(
+            ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED,
+            'Consultation time has expired.',
+            undefined,
+            { appointmentId, scheduledTime: appointmentDate.toISOString() },
+            'OpenViduVideoProvider.generateMeetingToken'
+          );
+        }
+      }
+
       // Generate room name
       const roomName = this.generateSecureRoomName(appointmentId, appointment.clinicId);
       const roomId = roomName;
@@ -482,6 +545,30 @@ export class OpenViduVideoProvider implements IVideoProvider {
         );
       }
 
+      // 1. Terminate session in OpenVidu REST API
+      try {
+        await this.httpService.delete(`${this.apiUrl}/openvidu/api/sessions/${appointmentId}`, {
+          auth: {
+            username: 'OPENVIDUAPP',
+            password: this.secret,
+          },
+        });
+      } catch (ovError) {
+        // 404 means session already ended or doesn't exist in OpenVidu, which is fine
+        const axiosError = ovError as AxiosError;
+        const status = axiosError?.response?.status;
+        if (status !== 404) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to delete session in OpenVidu: ${ovError instanceof Error ? ovError.message : 'Unknown error'}`,
+            'OpenViduVideoProvider.endConsultation',
+            { appointmentId }
+          );
+        }
+      }
+
+      // 2. Update Database Record
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const delegate = getVideoConsultationDelegate(client);
@@ -598,6 +685,53 @@ export class OpenViduVideoProvider implements IVideoProvider {
         }
       );
       return null;
+    }
+  }
+
+  /**
+   * List all active sessions (Super Admin)
+   */
+  async listActiveSessions(): Promise<VideoConsultationSession[]> {
+    try {
+      interface OpenViduSessionContent {
+        sessionId: string;
+        [key: string]: unknown;
+      }
+      const response = await this.httpService.get<{ content?: OpenViduSessionContent[] }>(
+        `${this.apiUrl}/openvidu/api/sessions`,
+        {
+          auth: {
+            username: 'OPENVIDUAPP',
+            password: this.secret,
+          },
+        }
+      );
+
+      const sessions = response.data?.content || [];
+      const activeSessions: VideoConsultationSession[] = [];
+
+      for (const ovSession of sessions) {
+        // Our sessionId is the appointmentId
+        if (typeof ovSession === 'object' && ovSession !== null && 'sessionId' in ovSession) {
+          const appointmentId = ovSession.sessionId;
+          if (appointmentId) {
+            const session = await this.getConsultationSession(appointmentId);
+            if (session) {
+              activeSessions.push(session);
+            }
+          }
+        }
+      }
+
+      return activeSessions;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to list OpenVidu sessions: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'OpenViduVideoProvider.listActiveSessions'
+      );
+      return [];
     }
   }
 

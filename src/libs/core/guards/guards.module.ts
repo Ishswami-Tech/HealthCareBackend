@@ -7,6 +7,9 @@ import { JwtAuthGuard } from './jwt-auth.guard';
 import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
 import { IpWhitelistGuard } from './ip-whitelist.guard';
+import { ProfileCompletionGuard } from './profile-completion.guard';
+import { ProfileCompletionModule } from '@services/profile-completion/profile-completion.module';
+
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { RateLimitService } from '@security/rate-limit/rate-limit.service';
@@ -65,6 +68,8 @@ import { SignOptions } from 'jsonwebtoken';
     forwardRef(() => LoggingModule), // Use forwardRef to break potential circular dependency
     forwardRef(() => RbacModule), // Use forwardRef to break circular dependency with DatabaseModule
     forwardRef(() => SessionModule), // JwtAuthGuard requires SessionManagementService
+    forwardRef(() => ProfileCompletionModule), // ProfileCompletionGuard requires ProfileCompletionService
+
     // CacheModule is @Global() - no need to import it explicitly
   ],
   providers: [
@@ -73,6 +78,7 @@ import { SignOptions } from 'jsonwebtoken';
     RolesGuard,
     ClinicGuard,
     IpWhitelistGuard,
+    ProfileCompletionGuard,
     Reflector,
     // LoggingService is provided globally by LoggingModule (@Global()) - don't provide it here
     RateLimitService,
@@ -82,6 +88,8 @@ import { SignOptions } from 'jsonwebtoken';
     RolesGuard,
     ClinicGuard,
     IpWhitelistGuard,
+    ProfileCompletionGuard,
+
     // LoggingService is provided globally by LoggingModule (@Global()) - no need to export
     JwtModule, // Export JwtModule so other modules can use the configured JWT service
     RateLimitModule,

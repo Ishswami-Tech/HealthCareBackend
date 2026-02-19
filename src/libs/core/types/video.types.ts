@@ -125,6 +125,11 @@ export interface IVideoProvider {
   getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null>;
 
   /**
+   * List all active sessions (Super Admin)
+   */
+  listActiveSessions?(): Promise<VideoConsultationSession[]>;
+
+  /**
    * Check if provider is healthy
    */
   isHealthy(): Promise<boolean>;
