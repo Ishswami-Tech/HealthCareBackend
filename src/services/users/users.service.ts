@@ -37,6 +37,7 @@ export interface RoleBasedRequirements {
 @Injectable()
 export class UsersService {
   private readonly eventService: IEventService;
+  private readonly authService: AuthService;
 
   private formatDateToString(date: Date | string | null | undefined): string {
     if (date instanceof Date) {
@@ -146,7 +147,7 @@ export class UsersService {
     eventService: unknown,
     private readonly rbacService: RbacService,
     @Inject(forwardRef(() => AuthService))
-    private readonly authService: AuthService,
+    authService: unknown,
     private readonly errors: HealthcareErrorsService
   ) {
     // Type guard ensures type safety when using the service
@@ -155,6 +156,7 @@ export class UsersService {
       throw new Error('EventService is not available or invalid');
     }
     this.eventService = eventService;
+    this.authService = authService as AuthService;
   }
 
   async findAll(role?: Role, clinicId?: string): Promise<UserResponseDto[]> {
@@ -180,7 +182,7 @@ export class UsersService {
           }
           // 🔒 TENANT ISOLATION: Filter by clinic when clinicId is provided
           if (clinicId) {
-            where['userClinics'] = { some: { clinicId } };
+            where['clinics'] = { some: { clinicId } };
           }
           const result = await typedClient.user.findMany({
             where: where as PrismaDelegateArgs,

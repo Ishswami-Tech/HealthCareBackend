@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { UsersController } from './controllers/users.controller';
 import { ClinicContextService } from './core/clinic-context.service';
@@ -21,7 +21,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     RateLimitModule,
     EventsModule,
     RbacModule,
-    AuthModule,
+    forwardRef(() => AuthModule),
     ClinicModule,
     LoggingModule,
     ErrorsModule,
