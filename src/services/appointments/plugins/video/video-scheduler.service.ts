@@ -7,11 +7,14 @@ import { LogType, LogLevel } from '@core/types';
 import { AppointmentStatus, UpdateAppointmentStatusDto } from '@dtos/appointment.dto';
 import {
   VideoCallStatus,
-  Prisma,
   VideoParticipantRole,
 } from '@infrastructure/database/prisma/generated/client';
 import { AuditInfo } from '@core/types/database.types';
 import { Role as RoleType } from '@core/types/rbac.types';
+import {
+  getVideoConsultationDelegate,
+  VideoConsultationDbModel,
+} from '@core/types/video-database.types';
 import {
   VideoConsultationTracker,
   ConsultationMetrics,
@@ -25,10 +28,20 @@ interface ParticipationStatus {
   patientJoined: boolean;
 }
 
-/** Extended VideoConsultation type for internal use with joins */
-type VideoConsultationWithRelations = Prisma.VideoConsultationGetPayload<{
-  include: { appointment: true; participants: true };
-}>;
+/** Extended VideoConsultation with relations included from DB */
+interface VideoConsultationWithAppointment extends VideoConsultationDbModel {
+  appointment: {
+    clinicId: string;
+    doctorId: string;
+    patientId: string;
+    status: string;
+  };
+  participants: Array<{
+    userId: string;
+    role: string;
+    joinedAt: Date | null;
+  }>;
+}
 
 @Injectable()
 export class VideoAppointmentSchedulerService {
@@ -60,10 +73,9 @@ export class VideoAppointmentSchedulerService {
       const graceTime = this.getGraceTime();
       const audit = this.buildSystemAudit();
 
-      await this.databaseService.executeWrite(async prisma => {
-        const potentialNoShows = (await (
-          prisma as unknown as Prisma.TransactionClient
-        ).videoConsultation.findMany({
+      await this.databaseService.executeHealthcareWrite(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        const potentialNoShows = (await delegate.findMany({
           where: {
             status: VideoCallStatus.SCHEDULED,
             startTime: { lt: graceTime },
@@ -72,18 +84,17 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { appointment: true },
-        })) as unknown as VideoConsultationWithRelations[];
+        })) as unknown as VideoConsultationWithAppointment[];
 
         for (const consultation of potentialNoShows) {
           if (!consultation.appointment) continue;
 
-          // Resolve participation (Tracker -> DB fallback)
           const participation = await this.resolveParticipation(
             consultation.appointmentId,
             consultation.appointment.clinicId
           );
 
-          if (participation === null) continue; // Skip: session actually happened or handled
+          if (participation === null) continue;
 
           if (!participation.doctorJoined) {
             await this.markNoShow(
@@ -115,10 +126,9 @@ export class VideoAppointmentSchedulerService {
       const graceTime = this.getGraceTime();
       const audit = this.buildSystemAudit();
 
-      await this.databaseService.executeWrite(async prisma => {
-        const activeConsultations = (await (
-          prisma as unknown as Prisma.TransactionClient
-        ).videoConsultation.findMany({
+      await this.databaseService.executeHealthcareWrite(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        const activeConsultations = (await delegate.findMany({
           where: {
             status: VideoCallStatus.ACTIVE,
             startTime: { lt: graceTime },
@@ -133,12 +143,11 @@ export class VideoAppointmentSchedulerService {
             },
           },
           include: { participants: true, appointment: true },
-        })) as unknown as VideoConsultationWithRelations[];
+        })) as unknown as VideoConsultationWithAppointment[];
 
         for (const consultation of activeConsultations) {
           if (!consultation.appointment) continue;
 
-          // Resolve participation (Tracker -> DB fallback)
           const participation = await this.resolveParticipation(
             consultation.appointmentId,
             consultation.appointment.clinicId
@@ -210,23 +219,18 @@ export class VideoAppointmentSchedulerService {
     }
 
     // Fallback: Check DB VideoConsultation record status
-    const videoConsultation = (await this.databaseService.executeHealthcareRead(async prisma => {
-      return (prisma as unknown as Prisma.TransactionClient).videoConsultation.findFirst({
+    const videoConsultation = (await this.databaseService.executeHealthcareRead(async client => {
+      const delegate = getVideoConsultationDelegate(client);
+      return delegate.findFirst({
         where: { appointmentId },
         include: { participants: true, appointment: true },
       });
-    })) as unknown as
-      | (VideoConsultationWithRelations & { appointment: { doctorId: string; patientId: string } })
-      | null;
+    })) as unknown as VideoConsultationWithAppointment | null;
 
     if (
       videoConsultation?.status === VideoCallStatus.COMPLETED ||
       videoConsultation?.status === VideoCallStatus.ACTIVE
     ) {
-      // If it's already coded as active or completed, somebody must have been there.
-      // If it's COMPLETED but appointment is still SCHEDULED, fix it.
-      // If active, check if someone joined
-      // Map DB roles (HOST/PARTICIPANT) back to domain context based on appointment record
       const doctorJoined = videoConsultation.participants?.some(
         p =>
           (p.userId === videoConsultation.appointment.doctorId ||
@@ -265,8 +269,9 @@ export class VideoAppointmentSchedulerService {
     );
 
     // Also cancel the video session record
-    await this.databaseService.executeWrite(async prisma => {
-      await (prisma as unknown as Prisma.TransactionClient).videoConsultation.updateMany({
+    await this.databaseService.executeHealthcareWrite(async client => {
+      const delegate = getVideoConsultationDelegate(client);
+      await delegate.updateMany({
         where: { appointmentId, status: { not: VideoCallStatus.CANCELLED } },
         data: { status: VideoCallStatus.CANCELLED },
       });
