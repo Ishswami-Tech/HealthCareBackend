@@ -1,5 +1,6 @@
 import { Module, forwardRef, Global } from '@nestjs/common';
-import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
+import { JwtModule } from '@nestjs/jwt';
+import type { JwtModuleOptions } from '@nestjs/jwt';
 // Use direct import to avoid TDZ issues with barrel exports
 import { ConfigModule } from '@config/config.module';
 import { ConfigService } from '@config/config.service';
@@ -96,6 +97,7 @@ import { SignOptions } from 'jsonwebtoken';
     RateLimitService,
     JwtAuthService,
     RbacModule, // Export RbacModule so RbacGuard and RbacService are available
+    ProfileCompletionModule, // Export so ProfileCompletionService is available to all guard consumers
   ],
 })
 @Global() // Make GuardsModule global so JwtService is available to all modules
