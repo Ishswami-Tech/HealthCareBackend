@@ -8,6 +8,8 @@ import {
   HttpStatus,
   BadRequestException,
   InternalServerErrorException,
+  Inject,
+  forwardRef,
   Request,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
@@ -39,10 +41,15 @@ import { LogLevel, LogType } from '@core/types';
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth()
 export class ProfileCompletionController {
+  private readonly usersService: UsersService;
+
   constructor(
-    private readonly usersService: UsersService,
+    @Inject(forwardRef(() => UsersService))
+    usersService: unknown,
     private readonly logging: LoggingService
-  ) {}
+  ) {
+    this.usersService = usersService as UsersService;
+  }
 
   /**
    * Get current profile completion status

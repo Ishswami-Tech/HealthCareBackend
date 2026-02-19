@@ -40,6 +40,7 @@ import type { FastifyReply } from 'fastify';
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
+  private readonly usersService: UsersService;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -57,8 +58,9 @@ export class AuthService {
     private readonly socialAuthService: SocialAuthService,
     private readonly otpService: OtpService,
     @Inject(forwardRef(() => UsersService))
-    private readonly usersService: UsersService
+    usersService: unknown
   ) {
+    this.usersService = usersService as UsersService;
     // Defensive check: ensure configService is available
     if (!this.configService) {
       void this.logging.log(
