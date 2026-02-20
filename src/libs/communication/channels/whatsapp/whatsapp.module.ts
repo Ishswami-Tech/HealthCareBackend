@@ -3,7 +3,7 @@ import { HttpModule } from '@infrastructure/http';
 // Use direct import to avoid circular dependency with barrel exports
 import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
-import { DatabaseModule } from '@infrastructure/database';
+
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config';
 import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
@@ -32,7 +32,7 @@ import { WhatsAppSuppressionService } from '@communication/adapters/whatsapp/wha
     forwardRef(() => ConfigModule),
     HttpModule, // HTTP client for WhatsApp API calls
     LoggingModule,
-    DatabaseModule, // Optional: For message delivery logging/audit trails
+
     forwardRef(() => CommunicationAdaptersModule), // Provider adapters
     forwardRef(() => CommunicationConfigModule), // Communication config service (includes ClinicTemplateService)
     WhatsAppWebhookModule, // Webhook handlers

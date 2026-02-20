@@ -13,7 +13,7 @@ import { ListenersModule } from '@communication/listeners/listeners.module';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { EventsModule } from '@infrastructure/events/events.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
-import { DatabaseModule } from '@infrastructure/database/database.module';
+
 import { ResilienceModule } from '@core/resilience';
 import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
@@ -78,7 +78,7 @@ import { TemplateController } from './controllers/template.controller';
     forwardRef(() => EmailServicesModule), // Email services (suppression list, webhooks, rate monitoring)
     forwardRef(() => EventsModule), // Central event system
     forwardRef(() => CacheModule), // Cache for rate limiting and preferences
-    forwardRef(() => DatabaseModule), // Database for notification preferences and delivery tracking
+
     forwardRef(() => ResilienceModule), // Provides CircuitBreakerService
   ],
   controllers: [CommunicationController, TemplateController],
