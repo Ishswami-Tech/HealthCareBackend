@@ -14,6 +14,7 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
+import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
 
 @Injectable()
 export class ClinicLocationService {
@@ -33,6 +34,9 @@ export class ClinicLocationService {
     _userId: string
   ): Promise<ClinicLocationResponseDto> {
     try {
+      // Resolve clinic UUID from code if necessary
+      const resolvedClinicId = await resolveClinicUUID(this.databaseService, data.clinicId);
+
       // Use executeHealthcareWrite for clinic location creation with full optimization layers
       const clinicLocation = await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
@@ -40,6 +44,7 @@ export class ClinicLocationService {
           return await typedClient.clinicLocation.create({
             data: {
               ...data,
+              clinicId: resolvedClinicId,
               workingHours: data.workingHours || '9:00 AM - 5:00 PM',
               isActive: data.isActive ?? true,
             } as PrismaDelegateArgs,
@@ -47,12 +52,12 @@ export class ClinicLocationService {
         },
         {
           userId: _userId || 'system',
-          clinicId: data.clinicId || '',
+          clinicId: resolvedClinicId,
           resourceType: 'CLINIC_LOCATION',
           operation: 'CREATE',
           resourceId: '',
           userRole: 'system',
-          details: { name: data.name, clinicId: data.clinicId },
+          details: { name: data.name, clinicId: resolvedClinicId },
         }
       );
 
@@ -90,50 +95,64 @@ export class ClinicLocationService {
     clinicId: string,
     includeDoctors = false
   ): Promise<ClinicLocationResponseDto[]> {
+    // Resolve clinic UUID from code if necessary
+    const resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+
     // Use LocationCacheService for shared cache
     if (this.locationCacheService) {
-      const cached = await this.locationCacheService.getLocationsByClinic(clinicId, includeDoctors);
+      const cached = await this.locationCacheService.getLocationsByClinic(
+        resolvedClinicId,
+        includeDoctors
+      );
       if (cached) {
         return cached;
       }
     }
 
     // Fallback to direct cache or fetch
-    const cacheKey = `clinic_locations:${clinicId}:${includeDoctors}`;
+    const cacheKey = `clinic_locations:${resolvedClinicId}:${includeDoctors}`;
 
     if (this.cacheService) {
       const locations = await this.cacheService.cache(
         cacheKey,
         async () => {
-          return this.fetchLocations(clinicId, includeDoctors);
+          return this.fetchLocations(resolvedClinicId, includeDoctors);
         },
         {
           ttl: 1800, // 30 minutes
-          tags: ['clinic_locations', `clinic:${clinicId}`],
+          tags: ['clinic_locations', `clinic:${resolvedClinicId}`],
           enableSwr: true,
         }
       );
 
       // Also set in LocationCacheService for consistency
       if (this.locationCacheService) {
-        await this.locationCacheService.setLocationsByClinic(clinicId, locations, includeDoctors);
+        await this.locationCacheService.setLocationsByClinic(
+          resolvedClinicId,
+          locations,
+          includeDoctors
+        );
       }
 
       return locations;
     }
 
-    const locations = await this.fetchLocations(clinicId, includeDoctors);
+    const locations = await this.fetchLocations(resolvedClinicId, includeDoctors);
 
     // Set in LocationCacheService if available
     if (this.locationCacheService) {
-      await this.locationCacheService.setLocationsByClinic(clinicId, locations, includeDoctors);
+      await this.locationCacheService.setLocationsByClinic(
+        resolvedClinicId,
+        locations,
+        includeDoctors
+      );
     }
 
     return locations;
   }
 
   private async fetchLocations(
-    clinicId: string,
+    clinicId: string, // Assumed to be UUID here
     includeDoctors = false
   ): Promise<ClinicLocationResponseDto[]> {
     try {
@@ -299,22 +318,29 @@ export class ClinicLocationService {
     _userId: string
   ): Promise<ClinicLocationResponseDto> {
     try {
+      let resolvedClinicId = '';
+      if ('clinicId' in data && typeof data.clinicId === 'string' && data.clinicId) {
+        resolvedClinicId = await resolveClinicUUID(this.databaseService, data.clinicId);
+      }
+
       // Use executeHealthcareWrite for update with full optimization layers
       const location = await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          const updateData = {
+            ...data,
+            updatedAt: new Date(),
+            ...(resolvedClinicId ? { clinicId: resolvedClinicId } : {}),
+          };
+
           return await typedClient.clinicLocation.update({
             where: { id } as PrismaDelegateArgs,
-            data: {
-              ...data,
-              updatedAt: new Date(),
-            } as PrismaDelegateArgs,
+            data: updateData as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
         },
         {
           userId: _userId || 'system',
-          clinicId:
-            ('clinicId' in data && typeof data.clinicId === 'string' ? data.clinicId : '') || '',
+          clinicId: resolvedClinicId, // Might be empty if not updating clinicId, which is fine for audit
           resourceType: 'CLINIC_LOCATION',
           operation: 'UPDATE',
           resourceId: id,
@@ -410,12 +436,14 @@ export class ClinicLocationService {
 
   async getLocationCount(clinicId: string): Promise<number> {
     try {
+      const resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
+
       // Use executeHealthcareRead for count query
       const count = await this.databaseService.executeHealthcareRead<number>(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         return await typedClient.clinicLocation.count({
           where: {
-            clinicId,
+            clinicId: resolvedClinicId,
             isActive: true,
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
@@ -438,6 +466,7 @@ export class ClinicLocationService {
     clinicId: string
   ): Promise<Array<{ locationName: string; locationId: string; workingHours: string }>> {
     try {
+      // getLocations already resolves the UUID
       const locations = await this.getLocations(clinicId);
       return locations.map(loc => ({
         locationName: loc.name,

@@ -110,8 +110,16 @@ export async function resolveClinicUUID(
       return clinic.id;
     }
 
-    // Then try to find by UUID
-    clinic = await findClinicById(databaseService, { id: clinicIdOrUUID });
+    // Then try to find by UUID, but only if the string is a valid UUID
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      clinicIdOrUUID
+    );
+
+    if (isUuid) {
+      clinic = await findClinicById(databaseService, { id: clinicIdOrUUID });
+    } else {
+      clinic = null;
+    }
 
     if (clinic) {
       if (!clinic.isActive) {
