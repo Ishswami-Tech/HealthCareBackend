@@ -19,6 +19,7 @@ import type {
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
 import type { AuditInfo } from '@core/types/database.types';
+import type { ClinicLocationResponseDto } from '@core/types/clinic.types';
 
 /**
  * Location Management Service
@@ -72,7 +73,7 @@ export class LocationManagementService {
     }
 
     // Validate new location belongs to clinic using LocationCacheService (shared cache)
-    let location = null;
+    let location: ClinicLocationResponseDto | null = null;
     if (this.locationCacheService) {
       location = await this.locationCacheService.getLocation(newLocationId, false);
     }

@@ -55,7 +55,7 @@ export class UsersService {
    */
   private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
     PATIENT: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth'],
       conditionalFields: {},
     },
     DOCTOR: {

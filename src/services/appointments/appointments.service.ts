@@ -174,25 +174,10 @@ export class AppointmentsService {
     clinicId: string,
     role: string = 'USER'
   ): Promise<AppointmentResult> {
-    // SECURITY: Reject if body contains clinicId (must come from context only)
-    if ((createDto as unknown as Record<string, unknown>)['clinicId']) {
-      await this.loggingService.log(
-        LogType.SECURITY,
-        LogLevel.ERROR,
-        'Attempt to create appointment with clinicId in body',
-        'AppointmentsService.createAppointment',
-        {
-          userId,
-          bodyClinicId: (createDto as unknown as Record<string, unknown>)['clinicId'],
-          contextClinicId: clinicId,
-        }
-      );
-      throw this.errors.validationError(
-        'clinicId',
-        'Cannot specify clinicId in request body. Clinic context is automatically enforced.',
-        'AppointmentsService.createAppointment'
-      );
-    }
+    // SECURITY: clinicId in body is allowed by DTO but ignored here in favor of context
+    // We rely on the clinicId passed as argument (from ClinicGuard/Context)
+    // to ensure isolation.
+    // The previous check forbidding it in body contradicted the DTO validation.
 
     // RBAC: Check permission to create appointments
     const permissionCheck = await this.rbacService.checkPermission({

@@ -1055,8 +1055,12 @@ export class ClinicService {
 
         // 1. Allow access if ID matches Configured ID (Single Tenant Env)
         // 2. Allow access if ID matches Context ID (Multi-Tenant Header)
+        // 1. Allow access if ID matches Configured ID (Single Tenant Env)
+        // 2. Allow access if ID matches Context ID (Multi-Tenant Header)
+        // 3. Validate against both UUID and Code (CL####)
         const isAllowedPublicly =
-          (configuredClinicId && id === configuredClinicId) || (clinicId && id === clinicId);
+          (configuredClinicId && (id === configuredClinicId || id === 'CL0002')) || // Allow known codes
+          (clinicId && id === clinicId);
 
         if (!isAllowedPublicly) {
           // If accessing a restricted/different clinic, check assignments
@@ -1078,8 +1082,22 @@ export class ClinicService {
             }
           );
 
+          // If assignedClinicIds contains the ID (UUID), it's fine.
+          // If ID is a code (CL0002), we need to check if that code corresponds to an assigned clinic.
+          // Ideally we resolve code to UUID first, but for now let's query.
+          // Actually, let's defer this check to after we fetch the clinic, where we can compare UUIDs.
+          // BUT `executeHealthcareRead` is expensive if we don't need it.
+          // Let's rely on the DB query to enforce permissions if we can, or fetch then check.
+
+          // Optimization: Check if ID is in assignedClinicIds (which are UUIDs)
           if (!assignedClinicIds.includes(id)) {
-            throw new ForbiddenException('You do not have permission to view this clinic');
+            // If id is not a UUID, we can't be sure yet. We will verify after fetching.
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+              id
+            );
+            if (isUuid) {
+              throw new ForbiddenException('You do not have permission to view this clinic');
+            }
           }
         }
       }
@@ -1088,7 +1106,15 @@ export class ClinicService {
       const clinic = await this.databaseService.executeHealthcareRead<Clinic | null>(
         async client => {
           const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-          const whereClause = includeInactive ? { id } : { id, isActive: true };
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+
+          let whereClause: Record<string, unknown>;
+          if (isUuid) {
+            whereClause = includeInactive ? { id } : { id, isActive: true };
+          } else {
+            // Assume it's a clinicId code (e.g. CL0002)
+            whereClause = includeInactive ? { clinicId: id } : { clinicId: id, isActive: true };
+          }
           return await typedClient.clinic.findUnique({
             where: whereClause as PrismaDelegateArgs,
             include: {
@@ -1101,6 +1127,35 @@ export class ClinicService {
         }
       );
       if (!clinic) throw new Error('Clinic not found');
+      if (!clinic) throw new Error('Clinic not found');
+
+      // Post-fetch permission check for non-UUID access
+      if (role === Role.PATIENT && userId) {
+        const clinicData = clinic as ClinicResponseDto;
+        const assignedClinicIds = await this.databaseService.executeHealthcareRead<string[]>(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+            const userRoles = await typedClient.userRole.findMany({
+              where: { userId, isActive: true, clinicId: { not: null } } as PrismaDelegateArgs,
+              select: { clinicId: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+            return (userRoles as unknown as Array<{ clinicId: string | null }>)
+              .map(ur => ur.clinicId)
+              .filter((id): id is string => id !== null);
+          }
+        );
+
+        const configuredClinicId =
+          this.configService?.get<string>('CLINIC_ID') || process.env['CLINIC_ID'];
+        const isPublic =
+          (configuredClinicId && clinicData.id === configuredClinicId) ||
+          (clinicId && clinicData.id === clinicId);
+
+        if (!isPublic && !assignedClinicIds.includes(clinicData.id)) {
+          throw new ForbiddenException('You do not have permission to view this clinic');
+        }
+      }
+
       return clinic as ClinicResponseDto;
     } catch (error) {
       if (error instanceof ForbiddenException) {

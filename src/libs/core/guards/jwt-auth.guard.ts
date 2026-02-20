@@ -391,7 +391,7 @@ export class JwtAuthGuard implements CanActivate {
           enhancedError instanceof Error ? enhancedError : new Error('Unknown enhanced JWT error');
         void logger.log(
           LogType.AUTH,
-          LogLevel.ERROR,
+          LogLevel.DEBUG,
           'Enhanced JWT verification also failed',
           'JwtAuthGuard',
           { _error: lastError.message }
@@ -401,9 +401,14 @@ export class JwtAuthGuard implements CanActivate {
 
     // If both verifications failed, handle the error
     if (!payload && lastError) {
+      const isExpectedError =
+        lastError.name === 'TokenExpiredError' ||
+        lastError.name === 'JsonWebTokenError' ||
+        lastError.message?.includes('revoked');
+
       void logger.log(
         LogType.AUTH,
-        LogLevel.ERROR,
+        isExpectedError ? LogLevel.INFO : LogLevel.ERROR,
         `All token verification methods failed: ${lastError.name}`,
         'JwtAuthGuard',
         { _error: lastError.message }

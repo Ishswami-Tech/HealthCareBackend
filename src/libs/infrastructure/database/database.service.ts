@@ -1942,7 +1942,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     try {
       void this.loggingService.log(
         LogType.AUDIT,
-        LogLevel.INFO,
+        status === 'SUCCESS' ? LogLevel.DEBUG : LogLevel.INFO,
         `Audit trail: ${auditInfo.operation} - ${status}`,
         this.serviceName,
         {

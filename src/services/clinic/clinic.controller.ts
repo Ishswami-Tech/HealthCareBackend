@@ -414,10 +414,7 @@ export class ClinicController {
     status: HttpStatus.NOT_FOUND,
     description: 'Clinic not found.',
   })
-  async getClinicById(
-    @Param('id', ParseUUIDPipe) id: string,
-    @Req() req: ClinicAuthenticatedRequest
-  ) {
+  async getClinicById(@Param('id') id: string, @Req() req: ClinicAuthenticatedRequest) {
     try {
       const userId = req.user?.sub;
       const role = req.user?.role;

@@ -86,7 +86,7 @@ export class ProfileCompletionGuard implements CanActivate {
       if (!isProfileComplete) {
         await this.logging.log(
           LogType.AUDIT,
-          LogLevel.WARN,
+          LogLevel.DEBUG,
           `Access denied: User ${user.id} attempted to access protected resource with incomplete profile`,
           'ProfileCompletionGuard.canActivate',
           {

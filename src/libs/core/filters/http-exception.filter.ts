@@ -267,7 +267,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       const errorType = this.categorizeError(status);
       void this.loggingService.log(
         LogType.ERROR,
-        LogLevel.WARN,
+        LogLevel.INFO,
         `[${errorType}] [API] ${request.method} ${request.url} failed: ${errorMessage}`,
         'HttpExceptionFilter',
         {
