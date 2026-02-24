@@ -358,6 +358,7 @@ export class UpdateAppointmentDto {
   @ApiPropertyOptional({
     example: 'CONFIRMED',
     description: 'New appointment status',
+    enum: AppointmentStatus,
   })
   @IsOptional()
   @IsEnum(AppointmentStatus, {
@@ -368,6 +369,7 @@ export class UpdateAppointmentDto {
   @ApiPropertyOptional({
     example: 'HIGH',
     description: 'New appointment priority level',
+    enum: AppointmentPriority,
   })
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
@@ -492,6 +494,7 @@ export class AppointmentResponseDto {
   @ApiProperty({
     example: 'IN_PERSON',
     description: 'Type of appointment',
+    enum: AppointmentType,
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
   type!: AppointmentType;
@@ -499,6 +502,7 @@ export class AppointmentResponseDto {
   @ApiProperty({
     example: 'SCHEDULED',
     description: 'Current appointment status',
+    enum: AppointmentStatus,
   })
   @IsEnum(AppointmentStatus, {
     message: 'Status must be a valid appointment status',
@@ -517,6 +521,7 @@ export class AppointmentResponseDto {
   @ApiProperty({
     example: 'MEDIUM',
     description: 'Appointment priority level',
+    enum: AppointmentPriority,
   })
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
