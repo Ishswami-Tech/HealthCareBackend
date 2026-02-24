@@ -53,6 +53,7 @@ export class UserProfileDto {
   @ApiPropertyOptional({
     description: 'User Role',
     enum: Role,
+    enumName: 'Role',
     example: Role.PATIENT,
   })
   @IsOptional()

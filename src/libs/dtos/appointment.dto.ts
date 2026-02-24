@@ -262,6 +262,7 @@ export class CreateAppointmentDto {
     example: 'IN_PERSON',
     description: 'Type of appointment (Mode)',
     enum: AppointmentType,
+    enumName: 'AppointmentType',
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
   @IsNotEmpty({ message: 'Appointment type is required' })
@@ -271,6 +272,7 @@ export class CreateAppointmentDto {
     example: 'GENERAL_CONSULTATION',
     description: 'Clinical intent of the appointment',
     enum: TreatmentType,
+    enumName: 'TreatmentType',
     default: TreatmentType.GENERAL_CONSULTATION,
   })
   @IsOptional()
@@ -281,6 +283,7 @@ export class CreateAppointmentDto {
     example: 'MEDIUM',
     description: 'Appointment priority level',
     enum: AppointmentPriority,
+    enumName: 'AppointmentPriority',
     default: AppointmentPriority.MEDIUM,
   })
   @IsOptional()
@@ -359,6 +362,7 @@ export class UpdateAppointmentDto {
     example: 'CONFIRMED',
     description: 'New appointment status',
     enum: AppointmentStatus,
+    enumName: 'AppointmentStatus',
   })
   @IsOptional()
   @IsEnum(AppointmentStatus, {
@@ -370,6 +374,7 @@ export class UpdateAppointmentDto {
     example: 'HIGH',
     description: 'New appointment priority level',
     enum: AppointmentPriority,
+    enumName: 'AppointmentPriority',
   })
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
@@ -380,6 +385,7 @@ export class UpdateAppointmentDto {
     example: 'GENERAL_CONSULTATION',
     description: 'New treatment type',
     enum: TreatmentType,
+    enumName: 'TreatmentType',
   })
   @IsOptional()
   @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
@@ -495,6 +501,7 @@ export class AppointmentResponseDto {
     example: 'IN_PERSON',
     description: 'Type of appointment',
     enum: AppointmentType,
+    enumName: 'AppointmentType',
   })
   @IsEnum(AppointmentType, { message: 'Appointment type must be a valid type' })
   type!: AppointmentType;
@@ -503,6 +510,7 @@ export class AppointmentResponseDto {
     example: 'SCHEDULED',
     description: 'Current appointment status',
     enum: AppointmentStatus,
+    enumName: 'AppointmentStatus',
   })
   @IsEnum(AppointmentStatus, {
     message: 'Status must be a valid appointment status',
@@ -513,6 +521,7 @@ export class AppointmentResponseDto {
     example: 'GENERAL_CONSULTATION',
     description: 'Clinical intent of the appointment',
     enum: TreatmentType,
+    enumName: 'TreatmentType',
   })
   @IsOptional()
   @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
@@ -522,6 +531,7 @@ export class AppointmentResponseDto {
     example: 'MEDIUM',
     description: 'Appointment priority level',
     enum: AppointmentPriority,
+    enumName: 'AppointmentPriority',
   })
   @IsEnum(AppointmentPriority, {
     message: 'Priority must be a valid priority level',
@@ -623,6 +633,7 @@ export class AppointmentSearchDto {
     example: 'SCHEDULED',
     description: 'Filter by appointment status',
     enum: AppointmentStatus,
+    enumName: 'AppointmentStatus',
   })
   @IsOptional()
   @IsEnum(AppointmentStatus, {
@@ -634,6 +645,7 @@ export class AppointmentSearchDto {
     example: 'CONSULTATION',
     description: 'Filter by appointment type',
     enum: AppointmentType,
+    enumName: 'AppointmentType',
   })
   @IsOptional()
   @IsEnum(AppointmentType, { message: 'Type must be a valid appointment type' })
@@ -643,6 +655,7 @@ export class AppointmentSearchDto {
     example: 'MEDIUM',
     description: 'Filter by appointment priority',
     enum: AppointmentPriority,
+    enumName: 'AppointmentPriority',
   })
   @IsOptional()
   @IsEnum(AppointmentPriority, {
@@ -1208,6 +1221,7 @@ export class AppointmentFilterDto {
   @ApiPropertyOptional({
     description: 'Status filter',
     enum: AppointmentStatus,
+    enumName: 'AppointmentStatus',
     required: false,
   })
   @IsOptional()
@@ -1217,6 +1231,7 @@ export class AppointmentFilterDto {
   @ApiPropertyOptional({
     description: 'Type filter',
     enum: AppointmentType,
+    enumName: 'AppointmentType',
     required: false,
   })
   @IsOptional()
@@ -1226,6 +1241,7 @@ export class AppointmentFilterDto {
   @ApiPropertyOptional({
     description: 'Priority filter',
     enum: AppointmentPriority,
+    enumName: 'AppointmentPriority',
     required: false,
   })
   @IsOptional()
@@ -1684,6 +1700,7 @@ export class UpdateAppointmentStatusDto {
   @ApiProperty({
     description: 'New status for the appointment',
     enum: AppointmentStatus,
+    enumName: 'AppointmentStatus',
     example: 'CHECKED_IN',
   })
   @IsEnum(AppointmentStatus, { message: 'Status must be a valid appointment status' })

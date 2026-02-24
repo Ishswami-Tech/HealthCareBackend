@@ -110,6 +110,7 @@ export class CreateClinicDto {
     example: 'GENERAL',
     description: 'Type of clinic',
     enum: ClinicType,
+    enumName: 'ClinicType',
   })
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
   @IsNotEmpty({ message: 'Clinic type is required' })
@@ -455,6 +456,8 @@ export class UpdateClinicDto {
   @ApiPropertyOptional({
     example: 'SPECIALTY',
     description: 'New clinic type',
+    enum: ClinicType,
+    enumName: 'ClinicType',
   })
   @IsOptional()
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
@@ -706,6 +709,8 @@ export class ClinicResponseDto {
   @ApiProperty({
     example: 'GENERAL',
     description: 'Type of clinic',
+    enum: ClinicType,
+    enumName: 'ClinicType',
   })
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
   type!: ClinicType;
@@ -778,6 +783,8 @@ export class ClinicResponseDto {
   @ApiProperty({
     example: 'ACTIVE',
     description: 'Current clinic status',
+    enum: ClinicStatus,
+    enumName: 'ClinicStatus',
   })
   @IsEnum(ClinicStatus, { message: 'Status must be a valid clinic status' })
   status!: ClinicStatus;
@@ -830,6 +837,7 @@ export class ClinicSearchDto {
     example: 'GENERAL',
     description: 'Filter by clinic type',
     enum: ClinicType,
+    enumName: 'ClinicType',
   })
   @IsOptional()
   @IsEnum(ClinicType, { message: 'Clinic type must be a valid type' })
@@ -839,6 +847,7 @@ export class ClinicSearchDto {
     example: 'ACTIVE',
     description: 'Filter by clinic status',
     enum: ClinicStatus,
+    enumName: 'ClinicStatus',
   })
   @IsOptional()
   @IsEnum(ClinicStatus, { message: 'Status must be a valid clinic status' })
