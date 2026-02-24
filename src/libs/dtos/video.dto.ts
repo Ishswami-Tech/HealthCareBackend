@@ -364,6 +364,7 @@ export class VideoCallResponseDto {
     example: 'scheduled',
     description: 'Video call status',
     enum: VideoCallStatus,
+    enumName: 'VideoCallStatus',
   })
   @IsEnum(VideoCallStatus, {
     message: 'Status must be a valid video call status',
@@ -971,6 +972,7 @@ export class SendChatMessageDto {
 
   @ApiPropertyOptional({
     enum: VideoMessageType,
+    enumName: 'VideoMessageType',
     description: 'Message type',
     default: VideoMessageType.TEXT,
   })
@@ -1033,7 +1035,7 @@ export class ChatMessageResponseDto {
   @ApiProperty({ example: 'Hello, how can I help you?' })
   message!: string;
 
-  @ApiProperty({ enum: VideoMessageType })
+  @ApiProperty({ enum: VideoMessageType, enumName: 'VideoMessageType' })
   messageType!: VideoMessageType;
 
   @ApiPropertyOptional()
@@ -1138,7 +1140,7 @@ export class WaitingRoomEntryResponseDto {
   @ApiProperty()
   userId!: string;
 
-  @ApiProperty({ enum: WaitingRoomStatus })
+  @ApiProperty({ enum: WaitingRoomStatus, enumName: 'WaitingRoomStatus' })
   status!: WaitingRoomStatus;
 
   @ApiProperty()
@@ -1270,7 +1272,7 @@ export class CreateMedicalNoteDto {
   @IsNotEmpty()
   userId!: string;
 
-  @ApiProperty({ enum: VideoNoteType })
+  @ApiProperty({ enum: VideoNoteType, enumName: 'VideoNoteType' })
   @IsEnum(VideoNoteType)
   @IsNotEmpty()
   noteType!: VideoNoteType;
@@ -1356,7 +1358,7 @@ export class MedicalNoteResponseDto {
   @ApiProperty()
   userId!: string;
 
-  @ApiProperty({ enum: VideoNoteType })
+  @ApiProperty({ enum: VideoNoteType, enumName: 'VideoNoteType' })
   noteType!: VideoNoteType;
 
   @ApiPropertyOptional()
@@ -1438,7 +1440,7 @@ export class CreateAnnotationDto {
   @IsNotEmpty()
   userId!: string;
 
-  @ApiProperty({ enum: VideoAnnotationType })
+  @ApiProperty({ enum: VideoAnnotationType, enumName: 'VideoAnnotationType' })
   @IsEnum(VideoAnnotationType)
   @IsNotEmpty()
   annotationType!: VideoAnnotationType;
@@ -1481,7 +1483,7 @@ export class AnnotationResponseDto {
   @ApiProperty()
   userId!: string;
 
-  @ApiProperty({ enum: VideoAnnotationType })
+  @ApiProperty({ enum: VideoAnnotationType, enumName: 'VideoAnnotationType' })
   annotationType!: VideoAnnotationType;
 
   @ApiProperty()

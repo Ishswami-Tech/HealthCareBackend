@@ -54,6 +54,7 @@ export class HealthCheckResponseDto {
     example: 'healthy',
     description: 'Overall health status of the system',
     enum: HealthStatus,
+    enumName: 'HealthStatus',
   })
   @IsEnum(HealthStatus, { message: 'Status must be a valid health status' })
   status!: HealthStatus;
@@ -204,6 +205,7 @@ export class ServiceHealthDto {
     example: 'up',
     description: 'Status of the individual service',
     enum: ServiceStatus,
+    enumName: 'ServiceStatus',
   })
   @IsEnum(ServiceStatus, { message: 'Service status must be a valid status' })
   status!: ServiceStatus;
@@ -298,6 +300,7 @@ export class ServiceHealthUpdateDto {
     example: 'up',
     description: 'New status of the service',
     enum: ServiceStatus,
+    enumName: 'ServiceStatus',
   })
   @IsEnum(ServiceStatus, { message: 'Service status must be a valid status' })
   @IsNotEmpty({ message: 'Service status is required' })
@@ -401,6 +404,7 @@ export class HealthCheckSummaryDto {
     example: 'healthy',
     description: 'Overall system health status',
     enum: HealthStatus,
+    enumName: 'HealthStatus',
   })
   @IsEnum(HealthStatus, {
     message: 'Overall status must be a valid health status',

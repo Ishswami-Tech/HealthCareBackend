@@ -34,6 +34,7 @@ export class CreateStaffDto {
     example: 'RECEPTIONIST',
     description: 'Staff role',
     enum: StaffRole,
+    enumName: 'StaffRole',
   })
   @IsEnum(StaffRole, { message: 'Role must be RECEPTIONIST, CLINIC_ADMIN, or NURSE' })
   @IsNotEmpty({ message: 'Role is required' })

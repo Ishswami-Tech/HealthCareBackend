@@ -28,6 +28,7 @@ export class GetLogsQueryDto {
   @ApiPropertyOptional({
     description: 'Filter logs by type',
     enum: LogType,
+    enumName: 'LogType',
     example: LogType.ERROR,
   })
   @IsOptional()
@@ -37,6 +38,7 @@ export class GetLogsQueryDto {
   @ApiPropertyOptional({
     description: 'Filter logs by level',
     enum: LogLevel,
+    enumName: 'LogLevel',
     example: LogLevel.ERROR,
   })
   @IsOptional()

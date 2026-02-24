@@ -319,6 +319,7 @@ export class SimpleCreateUserDto {
     example: 'MALE',
     description: 'User gender',
     enum: Gender,
+    enumName: 'Gender',
   })
   @IsEnum(Gender, { message: 'Gender must be one of: MALE, FEMALE, OTHER' })
   @IsOptional()
@@ -432,6 +433,7 @@ export class CreateUserDto extends SimpleCreateUserDto {
     example: 'DOCTOR',
     description: 'User role in the system',
     enum: Role,
+    enumName: 'Role',
   })
   @IsOptional()
   @IsEnum(Role, { message: 'Role must be a valid system role' })
@@ -691,6 +693,7 @@ export class UserSearchDto {
     example: 'DOCTOR',
     description: 'Filter by role',
     enum: Role,
+    enumName: 'Role',
   })
   @IsOptional()
   @IsEnum(Role, { message: 'Role must be a valid system role' })
@@ -936,6 +939,7 @@ export class UpdateUserProfileDto {
 export class UpdateUserRoleDto {
   @ApiProperty({
     enum: Role,
+    enumName: 'Role',
     example: Role.DOCTOR,
     description: 'New role to assign to the user',
   })

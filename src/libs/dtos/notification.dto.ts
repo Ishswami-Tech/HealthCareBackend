@@ -57,7 +57,7 @@ export class SendPushNotificationDto {
   @IsObject()
   data?: Record<string, string>;
 
-  @ApiPropertyOptional({ description: 'Device platform', enum: Platform })
+  @ApiPropertyOptional({ description: 'Device platform', enum: Platform, enumName: 'Platform' })
   @IsOptional()
   @IsEnum(Platform)
   platform?: Platform;
@@ -263,7 +263,7 @@ export class ChatBackupDto {
   @Type(() => Number)
   timestamp!: number;
 
-  @ApiProperty({ description: 'Message type', enum: MessageType })
+  @ApiProperty({ description: 'Message type', enum: MessageType, enumName: 'MessageType' })
   @IsEnum(MessageType)
   type!: MessageType;
 
@@ -286,6 +286,7 @@ export class UnifiedNotificationDto {
   @ApiProperty({
     description: 'Type of notification to send',
     enum: NotificationType,
+    enumName: 'NotificationType',
   })
   @IsEnum(NotificationType)
   type!: NotificationType;
@@ -354,6 +355,7 @@ export class RegisterDeviceTokenDto {
   @ApiProperty({
     description: 'Device platform',
     enum: Platform,
+    enumName: 'Platform',
     default: Platform.WEB,
   })
   @IsEnum(Platform)
@@ -762,7 +764,11 @@ export class SendTestEmailDto {
   @IsEmail()
   to!: string;
 
-  @ApiPropertyOptional({ description: 'Template to use for testing', enum: EmailTemplate })
+  @ApiPropertyOptional({
+    description: 'Template to use for testing',
+    enum: EmailTemplate,
+    enumName: 'EmailTemplate',
+  })
   @IsOptional()
   @IsEnum(EmailTemplate)
   template?: EmailTemplate;

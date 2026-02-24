@@ -172,6 +172,7 @@ export class ProfileCompletionFieldsDto {
   @ApiProperty({
     description: 'User role',
     enum: Role,
+    enumName: 'Role',
     example: Role.PATIENT,
   })
   @IsEnum(Role)

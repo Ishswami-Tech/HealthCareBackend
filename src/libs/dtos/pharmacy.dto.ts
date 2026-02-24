@@ -45,7 +45,7 @@ export class CreateMedicineDto {
   @IsString()
   description?: string;
 
-  @ApiProperty({ enum: MedicineType, example: MedicineType.TABLET })
+  @ApiProperty({ enum: MedicineType, enumName: 'MedicineType', example: MedicineType.TABLET })
   @IsEnum(MedicineType)
   type!: MedicineType;
 
@@ -192,7 +192,11 @@ export class CreatePrescriptionDto {
 }
 
 export class UpdatePrescriptionStatusDto {
-  @ApiProperty({ enum: PrescriptionStatus, example: PrescriptionStatus.FILLED })
+  @ApiProperty({
+    enum: PrescriptionStatus,
+    enumName: 'PrescriptionStatus',
+    example: PrescriptionStatus.FILLED,
+  })
   @IsEnum(PrescriptionStatus)
   status!: PrescriptionStatus;
 }

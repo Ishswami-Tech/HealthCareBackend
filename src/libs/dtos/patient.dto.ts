@@ -115,6 +115,7 @@ export class CreatePatientDto {
     example: 'MALE',
     description: 'Patient gender',
     enum: PatientGender,
+    enumName: 'PatientGender',
   })
   @IsOptional()
   @IsEnum(PatientGender, { message: 'Gender must be MALE, FEMALE, or OTHER' })
@@ -199,7 +200,7 @@ export class UpdatePatientDto {
   @IsString()
   dateOfBirth?: string;
 
-  @ApiPropertyOptional({ example: 'MALE', enum: PatientGender })
+  @ApiPropertyOptional({ example: 'MALE', enum: PatientGender, enumName: 'PatientGender' })
   @IsOptional()
   @IsEnum(PatientGender)
   gender?: PatientGender;
