@@ -1093,10 +1093,6 @@ export class CoreAppointmentService {
     _context?: AppointmentContext
   ): Promise<unknown> {
     try {
-      const _startDate = new Date(date);
-      const endDate = new Date(date);
-      endDate.setDate(endDate.getDate() + 1);
-
       const workingHours = {
         start: '09:00',
         end: '18:00',
@@ -1156,9 +1152,18 @@ export class CoreAppointmentService {
         }
       }
 
+      // Build a precise day-boundary filter so only appointments on THIS date count
+      const dayStart = new Date(date);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(date);
+      dayEnd.setHours(23, 59, 59, 999);
+
       const appointmentsResult = await this.databaseService.findAppointmentsSafe({
         doctorId,
-        status: 'SCHEDULED',
+        // Filter to only active appointments on the requested date
+        // Cancelled/Completed/No-show appointments free up the slot
+        date: { gte: dayStart, lte: dayEnd },
+        status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW'] },
       });
 
       // Ensure appointments is an array

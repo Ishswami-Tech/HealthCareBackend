@@ -158,9 +158,11 @@ export type AppointmentWhereInput = {
   doctorId?: string;
   clinicId?: string;
   locationId?: string;
-  date?: Date;
+  /** Supports exact date OR Prisma range operators e.g. { gte: Date, lte: Date } */
+  date?: Date | { gte?: Date; lte?: Date; gt?: Date; lt?: Date };
   time?: string;
-  status?: string;
+  /** Supports exact status string OR Prisma set operators e.g. { notIn: string[] } */
+  status?: string | { in?: string[]; notIn?: string[] };
   priority?: string;
   isRecurring?: boolean;
   parentAppointmentId?: string;
