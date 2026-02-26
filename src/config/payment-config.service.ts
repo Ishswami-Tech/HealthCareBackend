@@ -133,21 +133,51 @@ export class PaymentConfigService implements OnModuleInit {
    * Get default configuration (fallback)
    */
   private getDefaultConfig(clinicId: string): ClinicPaymentConfig {
+    // Read Cashfree credentials from environment variables as a global fallback
+    const cashfreeAppId = this.configService.getEnv('CASHFREE_APP_ID') || '';
+    const cashfreeSecretKey = this.configService.getEnv('CASHFREE_SECRET_KEY') || '';
+    const cashfreeEnv = this.configService.getEnv('CASHFREE_ENVIRONMENT', 'sandbox');
+    const cashfreeEnabled = cashfreeAppId.length > 0 && cashfreeSecretKey.length > 0;
+
+    // Read Razorpay credentials from env as primary fallback
+    const razorpayKeyId = this.configService.getEnv('RAZORPAY_KEY_ID') || '';
+    const razorpayKeySecret = this.configService.getEnv('RAZORPAY_KEY_SECRET') || '';
+    const razorpayEnabled = razorpayKeyId.length > 0 && razorpayKeySecret.length > 0;
+
     return {
       clinicId,
       payment: {
         primary: {
-          provider: PaymentProvider.RAZORPAY,
-          enabled: true,
-          credentials: {},
+          provider: PaymentProvider.CASHFREE,
+          enabled: cashfreeEnabled,
+          credentials: cashfreeEnabled
+            ? {
+                appId: cashfreeAppId,
+                secretKey: cashfreeSecretKey,
+                environment: cashfreeEnv || 'sandbox',
+                baseUrl:
+                  cashfreeEnv === 'production'
+                    ? 'https://api.cashfree.com/pg'
+                    : 'https://sandbox.cashfree.com/pg',
+                apiVersion:
+                  this.configService.getEnv('CASHFREE_API_VERSION', '2025-01-01') || '2025-01-01',
+              }
+            : {},
           priority: 1,
         },
         fallback: [
-          { provider: PaymentProvider.CASHFREE, enabled: true, credentials: {}, priority: 2 },
-          { provider: PaymentProvider.PHONEPE, enabled: true, credentials: {}, priority: 3 },
+          {
+            provider: PaymentProvider.RAZORPAY,
+            enabled: razorpayEnabled,
+            credentials: razorpayEnabled
+              ? { keyId: razorpayKeyId, keySecret: razorpayKeySecret }
+              : {},
+            priority: 2,
+          },
+          { provider: PaymentProvider.PHONEPE, enabled: false, credentials: {}, priority: 3 },
         ],
-        defaultCurrency: 'INR',
-        defaultProvider: PaymentProvider.RAZORPAY,
+        defaultCurrency: this.configService.getEnv('PAYMENT_DEFAULT_CURRENCY', 'INR') || 'INR',
+        defaultProvider: PaymentProvider.CASHFREE,
       },
       createdAt: new Date(),
       updatedAt: new Date(),

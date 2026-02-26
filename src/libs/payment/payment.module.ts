@@ -17,8 +17,6 @@ import { EventsModule } from '@infrastructure/events';
 import { PaymentService } from './payment.service';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentController } from './payment.controller';
-import { RazorpayPaymentAdapter } from './adapters/razorpay/razorpay-payment.adapter';
-import { PhonePePaymentAdapter } from './adapters/phonepe/phonepe-payment.adapter';
 // BillingModule is imported with forwardRef to break circular dependency (BillingModule imports PaymentModule)
 import { BillingModule } from '@services/billing/billing.module';
 
@@ -37,8 +35,9 @@ import { BillingModule } from '@services/billing/billing.module';
     PaymentService,
     // PaymentConfigService is now provided by ConfigModule (Global)
     PaymentProviderFactory,
-    RazorpayPaymentAdapter,
-    PhonePePaymentAdapter,
+    // Note: CashfreePaymentAdapter, RazorpayPaymentAdapter, PhonePePaymentAdapter are
+    // created via manual `new` in PaymentProviderFactory.createAdapterWithHttpService()
+    // (dynamic imports + manual construction) — NOT registered as NestJS providers.
   ],
   exports: [PaymentService, PaymentProviderFactory],
 })

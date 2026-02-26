@@ -5,6 +5,7 @@ import { EmailQueueService } from '@communication/channels/email/email-queue.ser
 import { SESEmailService } from '@communication/channels/email/ses-email.service';
 // Use direct import to avoid circular dependency with barrel exports
 import { ConfigModule } from '@config/config.module';
+import { HttpModule } from '@infrastructure/http';
 // LoggingModule is @Global() - LoggingService is available without explicit import
 import { BullModule } from '@nestjs/bullmq';
 import { QueueService } from '@infrastructure/queue';
@@ -39,6 +40,7 @@ function isCacheEnabledSafe(): boolean {
   imports: [
     // Use forwardRef to break circular dependency with ConfigModule
     forwardRef(() => ConfigModule),
+    HttpModule, // Required for ZeptoMail direct API calls in EmailService
     forwardRef(() => CommunicationAdaptersModule),
     forwardRef(() => CommunicationConfigModule),
     forwardRef(() => EmailServicesModule),
@@ -50,6 +52,7 @@ function isCacheEnabledSafe(): boolean {
         ]
       : []),
   ],
+
   controllers: [],
   providers: [EmailService, EmailTemplatesService, EmailQueueService, SESEmailService],
   exports: [EmailService, EmailTemplatesService, EmailQueueService, SESEmailService],

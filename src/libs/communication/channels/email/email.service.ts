@@ -17,6 +17,7 @@ import * as nodemailer from 'nodemailer';
 import { MailtrapClient } from 'mailtrap';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
+import { HttpService } from '@infrastructure/http';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -66,6 +67,12 @@ interface EmailConfig {
 export class EmailService implements OnModuleInit {
   private transporter!: nodemailer.Transporter;
   private mailtrap!: MailtrapClient;
+  /** Cleaned ZeptoMail token (prefix stripped). Set during initAPI when token is present. */
+  private zeptoMailToken: string | null = null;
+  /** From-email for ZeptoMail legacy path */
+  private zeptoMailFromEmail: string | null = null;
+  /** From-name for ZeptoMail legacy path */
+  private zeptoMailFromName: string | null = null;
   private isInitialized = false;
   private provider!: 'smtp' | 'api';
 
@@ -77,6 +84,8 @@ export class EmailService implements OnModuleInit {
     @Inject(ConfigService) private readonly configService: ConfigService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => HttpService))
+    private readonly httpService: HttpService,
     @Inject(forwardRef(() => ProviderFactory))
     private readonly providerFactory: ProviderFactory,
     @Inject(forwardRef(() => CommunicationConfigService))
@@ -221,20 +230,29 @@ export class EmailService implements OnModuleInit {
   private initAPI(): void {
     try {
       // Check for ZeptoMail token first (primary API provider)
-      // Use ConfigService (which uses dotenv) for environment variable access
-      const zeptoMailToken = this.configService.getEnv('ZEPTOMAIL_SEND_MAIL_TOKEN');
+      const rawZeptoToken = this.configService.getEnv('ZEPTOMAIL_SEND_MAIL_TOKEN');
       const mailtrapToken = this.configService.getEnv('MAILTRAP_API_TOKEN');
 
-      // ZeptoMail is the primary API provider - if token exists, mark as initialized
-      // The actual sending will be handled by ZeptoMailEmailAdapter via ProviderFactory
-      // This legacy EmailService is mainly for backward compatibility
-      if (zeptoMailToken) {
+      if (rawZeptoToken) {
+        // Strip the "Zoho-enczapikey" prefix if present — the adapter adds it back on each request
+        this.zeptoMailToken = rawZeptoToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
+        this.zeptoMailFromEmail =
+          this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+          this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+          this.configService.getEnv('EMAIL_FROM') ||
+          null;
+        this.zeptoMailFromName =
+          this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
+          this.configService.getEnv('DEFAULT_FROM_NAME') ||
+          this.configService.getEnv('APP_NAME') ||
+          'Healthcare App';
         this.isInitialized = true;
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'ZeptoMail API configured - email service initialized (using ZeptoMail adapter)',
-          'EmailService'
+          'ZeptoMail API configured — email service initialized',
+          'EmailService',
+          { fromEmail: this.zeptoMailFromEmail }
         );
         return;
       }
@@ -676,25 +694,127 @@ export class EmailService implements OnModuleInit {
    * @private
    */
   private async sendViaAPI(options: EmailOptions): Promise<boolean> {
+    const extendedOptions = options as EmailOptions & {
+      from?: string;
+      fromName?: string;
+      category?: string;
+    };
+
+    const fromEmail =
+      extendedOptions.from ||
+      this.zeptoMailFromEmail ||
+      this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+      this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+      this.configService.getEnv('EMAIL_FROM') ||
+      'noreply@healthcare.com';
+
+    const fromName =
+      extendedOptions.fromName ||
+      this.zeptoMailFromName ||
+      this.configService.getEnv('DEFAULT_FROM_NAME') ||
+      this.configService.getEnv('APP_NAME') ||
+      'Healthcare App';
+
+    const emailBody = options.html || this.getEmailTemplate(options.template, options.context);
+
+    // -----------------------------------------------------------------------
+    // ZeptoMail path (primary) — used when ZEPTOMAIL_SEND_MAIL_TOKEN is set
+    // -----------------------------------------------------------------------
+    if (this.zeptoMailToken) {
+      try {
+        const payload = {
+          from: { address: fromEmail, name: fromName },
+          to: [{ email_address: { address: options.to } }],
+          subject: options.subject,
+          htmlbody: emailBody,
+          ...(options.text && { textbody: options.text }),
+          ...(this.configService.getEnv('ZEPTOMAIL_BOUNCE_ADDRESS') && {
+            bounce_address: this.configService.getEnv('ZEPTOMAIL_BOUNCE_ADDRESS'),
+          }),
+          track_opens: true,
+          track_clicks: true,
+        };
+
+        const response = await this.httpService.post<{
+          data?: { message_id?: string };
+          error?: { code?: string; message?: string };
+          status?: string;
+        }>('https://api.zeptomail.com/v1.1/email', payload, {
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            Authorization: `Zoho-enczapikey ${this.zeptoMailToken}`,
+            'User-Agent': 'HealthcareApp/1.0',
+          },
+          timeout: 30000,
+        });
+
+        const responseData = response.data;
+        if (responseData?.error) {
+          const errMsg = responseData.error.message || 'ZeptoMail API error';
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.ERROR,
+            `ZeptoMail send failed: ${errMsg}`,
+            'EmailService',
+            { errorCode: responseData.error.code, to: options.to }
+          );
+
+          // 401/authentication errors — disable to prevent further calls
+          if (responseData.error.code === 'TM_3001' || errMsg.toLowerCase().includes('auth')) {
+            this.isInitialized = false;
+          }
+          return false;
+        }
+
+        const messageId = responseData?.data?.message_id;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `ZeptoMail email sent to ${options.to}`,
+          'EmailService',
+          { messageId }
+        );
+        return true;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+        if (errorMessage.includes('401') || errorMessage.toLowerCase().includes('unauthorized')) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `ZeptoMail authentication failed. Disabling email service. Error: ${errorMessage}`,
+            'EmailService'
+          );
+          this.isInitialized = false;
+          return false;
+        }
+
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Failed to send ZeptoMail email: ${errorMessage}`,
+          'EmailService',
+          { stack: (error as Error)?.stack, to: options.to }
+        );
+        return false;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Mailtrap fallback — used when only MAILTRAP_API_TOKEN is set
+    // -----------------------------------------------------------------------
+    if (!this.mailtrap) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        'sendViaAPI called but neither ZeptoMail nor Mailtrap is configured',
+        'EmailService'
+      );
+      return false;
+    }
+
     try {
-      // Use defaults if not present in options
-      const extendedOptions = options as EmailOptions & {
-        from?: string;
-        fromName?: string;
-        category?: string;
-      };
-      const fromEmail =
-        extendedOptions.from ||
-        this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
-        this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
-        this.configService.getEnv('EMAIL_FROM') ||
-        'noreply@healthcare.com';
-      const fromName =
-        extendedOptions.fromName ||
-        this.configService.getEnv('DEFAULT_FROM_NAME') ||
-        this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
-        this.configService.getEnv('APP_NAME') ||
-        'Healthcare App';
       const category =
         extendedOptions.category || this.configService.getEnv('EMAIL_CATEGORY', 'Notification');
       const mailOptions: {
@@ -708,31 +828,27 @@ export class EmailService implements OnModuleInit {
         from: { email: fromEmail, name: fromName },
         to: [{ email: options.to }],
         subject: options.subject,
-        html: options.html || this.getEmailTemplate(options.template, options.context),
+        html: emailBody,
       };
-      if (options.text) {
-        mailOptions.text = options.text;
-      }
-      if (category) {
-        mailOptions.category = category;
-      }
+      if (options.text) mailOptions.text = options.text;
+      if (category) mailOptions.category = category;
+
       await this.mailtrap.send(mailOptions);
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
-        `API Email sent to ${options.to}`,
+        `Mailtrap email sent to ${options.to}`,
         'EmailService'
       );
       return true;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
 
-      // If unauthorized, disable the service to prevent further errors
       if (errorMessage.includes('Unauthorized') || errorMessage.includes('401')) {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
-          `Email service authentication failed (Unauthorized). Disabling email service. Error: ${errorMessage}`,
+          `Mailtrap authentication failed. Disabling email service. Error: ${errorMessage}`,
           'EmailService'
         );
         this.isInitialized = false;
@@ -742,7 +858,7 @@ export class EmailService implements OnModuleInit {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to send API email: ${errorMessage}`,
+        `Failed to send Mailtrap email: ${errorMessage}`,
         'EmailService',
         { stack: (error as Error)?.stack }
       );
