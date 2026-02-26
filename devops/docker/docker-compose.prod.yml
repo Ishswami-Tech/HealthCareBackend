@@ -2,8 +2,8 @@
 services:
   # Infrastructure Services (Profile: infrastructure)
   postgres:
-    profiles: ["infrastructure"]
-    image: postgres:18  # PostgreSQL 18 — do not downgrade to 16
+    profiles: [ "infrastructure" ]
+    image: postgres:18 # PostgreSQL 18 — do not downgrade to 16
     container_name: postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure
@@ -25,7 +25,7 @@ services:
       app-network:
         ipv4_address: 172.18.0.2
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d userdb" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,42 +35,16 @@ services:
         # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
         # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for PostgreSQL)
-          memory: 10G      # Target: 24GB server (10GB for PostgreSQL)
+          cpus: "3.0" # Target: 8 vCPU server (3 CPU for PostgreSQL)
+          memory: 10G # Target: 24GB server (10GB for PostgreSQL)
         reservations:
-          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 3G       # Minimum guaranteed (works on 12GB server)
+          cpus: "1.5" # Minimum guaranteed (works on 6 vCPU server)
+          memory: 3G # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
-    shm_size: 256mb  # Shared memory for PostgreSQL
+    shm_size: 256mb # Shared memory for PostgreSQL
     stop_grace_period: 1m
     command: >
-      postgres 
-      -c max_connections=120 
-      -c shared_buffers=2GB 
-      -c effective_cache_size=12GB 
-      -c maintenance_work_mem=256MB 
-      -c checkpoint_completion_target=0.9 
-      -c wal_buffers=32MB 
-      -c default_statistics_target=100 
-      -c random_page_cost=1.1 
-      -c effective_io_concurrency=200 
-      -c work_mem=16MB 
-      -c min_wal_size=2GB 
-      -c max_wal_size=8GB 
-      -c max_worker_processes=8 
-      -c max_parallel_workers_per_gather=4 
-      -c max_parallel_workers=8 
-      -c max_parallel_maintenance_workers=4 
-      -c idle_in_transaction_session_timeout=60000 
-      -c statement_timeout=60000 
-      -c lock_timeout=60000 
-      -c listen_addresses='*' 
-      -c log_connections=on 
-      -c log_disconnections=on 
-      -c tcp_keepalives_idle=60 
-      -c tcp_keepalives_interval=10 
-      -c tcp_keepalives_count=3 
-      -c client_min_messages=warning
+      postgres  -c max_connections=120  -c shared_buffers=2GB  -c effective_cache_size=12GB  -c maintenance_work_mem=256MB  -c checkpoint_completion_target=0.9  -c wal_buffers=32MB  -c default_statistics_target=100  -c random_page_cost=1.1  -c effective_io_concurrency=200  -c work_mem=16MB  -c min_wal_size=2GB  -c max_wal_size=8GB  -c max_worker_processes=8  -c max_parallel_workers_per_gather=4  -c max_parallel_workers=8  -c max_parallel_maintenance_workers=4  -c idle_in_transaction_session_timeout=60000  -c statement_timeout=60000  -c lock_timeout=60000  -c listen_addresses='*'  -c log_connections=on  -c log_disconnections=on  -c tcp_keepalives_idle=60  -c tcp_keepalives_interval=10  -c tcp_keepalives_count=3  -c client_min_messages=warning
     labels:
       - "com.docker.compose.service=postgres"
       - "app.component=database"
@@ -79,26 +53,21 @@ services:
       - "app.persist=true"
 
   dragonfly:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: docker.dragonflydb.io/dragonflydb/dragonfly:latest
     container_name: dragonfly
     hostname: dragonfly
     command: >
-      --alsologtostderr
-      --cache_mode=false
-      --maxmemory=4gb
-      --proactor_threads=6
-      --logtostderr
-      --default_lua_flags=allow-undeclared-keys
-    ports:
-      - "6380:6379"
+      --alsologtostderr --cache_mode=false --maxmemory=4gb --proactor_threads=6 --logtostderr --default_lua_flags=allow-undeclared-keys
+    # SECURITY: Port 6379 NOT exposed on host — only accessible inside Docker network (app-network)
+    # expose: ["6379"]  # Only used by internal services via Docker DNS
     volumes:
       - dragonfly_data:/data
     networks:
       app-network:
         ipv4_address: 172.18.0.4
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
+      test: [ "CMD-SHELL", "redis-cli -p 6379 ping || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -108,14 +77,14 @@ services:
         # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
         # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "1.5"      # Target: 8 vCPU server (1.5 CPU for Dragonfly)
-          memory: 4G       # Target: 24GB server (4GB for Dragonfly cache)
+          cpus: "1.5" # Target: 8 vCPU server (1.5 CPU for Dragonfly)
+          memory: 4G # Target: 24GB server (4GB for Dragonfly cache)
         reservations:
-          cpus: "0.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 1G       # Minimum guaranteed (works on 12GB server)
+          cpus: "0.5" # Minimum guaranteed (works on 6 vCPU server)
+          memory: 1G # Minimum guaranteed (works on 12GB server)
     restart: unless-stopped
     sysctls:
-      net.core.somaxconn: 2048  # Increased from 1024 for more connections
+      net.core.somaxconn: 2048 # Increased from 1024 for more connections
     ulimits:
       nproc: 65535
       nofile:
@@ -128,7 +97,7 @@ services:
       - "app.healthcheck=enabled"
 
   openvidu-server:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: openvidu/openvidu-server-kms:latest
     container_name: openvidu-server
     hostname: openvidu-server
@@ -137,8 +106,8 @@ services:
       - "50000-50050:50000-50050/udp"
       - "50000-50050:50000-50050/tcp"
     environment:
-      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
+      - OPENVIDU_SECRET=${OPENVIDU_SECRET}
+      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET}
       - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
       - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - OPENVIDU_EDITION=ce
@@ -181,7 +150,7 @@ services:
       # OpenVidu container doesn't have curl/wget, so we check supervisor status instead
       # Supervisor manages both OpenVidu server and KMS, so if it's running, services are up
       # OpenVidu can take 60-120 seconds to fully start, so we give it more time
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
+      test: [ "CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -196,7 +165,7 @@ services:
           memory: 2G
 
   coturn:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: coturn/coturn:latest
     container_name: coturn
     hostname: coturn
@@ -218,13 +187,13 @@ services:
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt:ro
     # Use shell entrypoint to conditionally enable TLS based on certificate availability
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: [ "/bin/sh", "-c" ]
     command:
       - |
         # Check if TLS certificates exist and TLS is enabled
         CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
         KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
-        
+
         # Base TURN server arguments (always used)
         TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
         TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
@@ -234,7 +203,7 @@ services:
         TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
         TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
         TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
-        
+
         # Conditionally add TLS configuration if certificates exist
         if [ "$${COTURN_TLS_ENABLED}" = "true" ] && [ -f "$${CERT_PATH}" ] && [ -f "$${KEY_PATH}" ]; then
           echo "[COTURN] TLS enabled - certificates found at $${CERT_PATH}"
@@ -245,7 +214,7 @@ services:
           echo "[COTURN] TLS disabled - certificates not found or TLS not enabled"
           echo "[COTURN] Running in non-TLS mode (STUN/TURN on port 3478 only)"
         fi
-        
+
         echo "[COTURN] Starting turnserver with args: $${TURN_ARGS}"
         exec turnserver $${TURN_ARGS}
     networks:
@@ -256,7 +225,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # Health check using STUN client test on port 3478 (always available)
-      test: ["CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1"]
+      test: [ "CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -273,7 +242,7 @@ services:
 
   # Application Services (Profile: app)
   api:
-    profiles: ["app"]
+    profiles: [ "app" ]
     # Use image from GitHub Container Registry (for CI/CD deployments)
     # DOCKER_IMAGE is set by deploy.sh script
     # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
@@ -317,13 +286,13 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       # Cache Provider Configuration (Dragonfly is the only cache provider in production)
       CACHE_PROVIDER: dragonfly
-      
+
       # Dragonfly Configuration (primary cache provider)
       DRAGONFLY_ENABLED: "true"
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       DRAGONFLY_KEY_PREFIX: "healthcare:"
-      
+
       TRUST_PROXY: 1
       PRISMA_SCHEMA_PATH: ${PRISMA_SCHEMA_PATH:-/app/src/libs/infrastructure/database/prisma/schema.prisma}
       HOST: ${HOST:-0.0.0.0}
@@ -343,16 +312,16 @@ services:
       MAIN_DOMAIN: ${MAIN_DOMAIN:-viddhakarma.com}
       API_DOMAIN: ${API_DOMAIN:-backend-service-v1.ishswami.in}
       FRONTEND_DOMAIN: ${FRONTEND_DOMAIN:-viddhakarma.com}
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
+      JWT_SECRET: ${JWT_SECRET}
       JWT_EXPIRATION: 24h
-      
+
       # Session Configuration (Fastify Session with CacheService/Dragonfly)
-      SESSION_SECRET: ${SESSION_SECRET:-your-session-secret-change-in-production-min-32-chars-long}
+      SESSION_SECRET: ${SESSION_SECRET}
       SESSION_TIMEOUT: ${SESSION_TIMEOUT:-86400}
       SESSION_SECURE_COOKIES: ${SESSION_SECURE_COOKIES:-true}
       SESSION_SAME_SITE: ${SESSION_SAME_SITE:-strict}
-      COOKIE_SECRET: ${COOKIE_SECRET:-your-cookie-secret-change-in-production-min-32-chars}
-      
+      COOKIE_SECRET: ${COOKIE_SECRET}
+
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
       SECURITY_RATE_LIMIT: "true"
@@ -377,7 +346,7 @@ services:
       # OPENVIDU_URL must be set in .env.production or environment variables
       # Do NOT hardcode - use environment variable to allow proper configuration
       OPENVIDU_URL: ${OPENVIDU_URL}
-      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
+      OPENVIDU_SECRET: ${OPENVIDU_SECRET}
     expose:
       - "${PORT:-8088}"
     networks:
@@ -404,7 +373,7 @@ services:
         required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health"]
+      test: [ "CMD", "wget", "-q", "--spider", "http://localhost:${PORT:-8088}/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -416,11 +385,11 @@ services:
         # NOTE: Prisma migrations can be memory-intensive. If migrations fail with OOM (exit code 137),
         # adjusted memory limit for 11GB system (leaves ~1GB overhead for OS and other containers)
         limits:
-          cpus: "3.0"      # Target: 8 vCPU server (3 CPU for API)
-          memory: 10G      # Reduced from 12G to fit 11GB system with overhead buffer
+          cpus: "3.0" # Target: 8 vCPU server (3 CPU for API)
+          memory: 10G # Reduced from 12G to fit 11GB system with overhead buffer
         reservations:
-          cpus: "1.5"      # Minimum guaranteed (works on 6 vCPU server)
-          memory: 2G       # Minimum guaranteed (works on 12GB server)
+          cpus: "1.5" # Minimum guaranteed (works on 6 vCPU server)
+          memory: 2G # Minimum guaranteed (works on 12GB server)
     # Migrations run automatically via CMD in Dockerfile before starting the app
     # No need to override command - Dockerfile CMD handles migrations + app start
     # Prisma Client is generated during Docker build, entrypoint verifies it exists
@@ -430,7 +399,7 @@ services:
       - "app.type=api"
 
   worker:
-    profiles: ["app"]
+    profiles: [ "app" ]
     # Use same image as API (worker runs from same codebase)
     # DOCKER_IMAGE is set by deploy.sh script
     # Prisma Client is generated during Docker build in CI/CD (see Dockerfile line 34)
@@ -451,14 +420,14 @@ services:
       SERVICE_NAME: worker
       DEV_MODE: "false"
       DOCKER_ENV: "true"
-      
+
       # Database Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
       # SECURITY: DATABASE_URL must be set via GitHub Actions (environment variable) or .env.production
       # No hardcoded default for security - prevents credential exposure
       # Worker uses smaller connection pool (adjust connection_limit in DATABASE_URL if needed)
       DATABASE_URL: ${DATABASE_URL}
       PRISMA_SCHEMA_PATH: /app/src/libs/infrastructure/database/prisma/schema.prisma
-      
+
       # Cache Provider Configuration (Dragonfly is the only cache provider in production)
       CACHE_PROVIDER: dragonfly
       CACHE_ENABLED: "true"
@@ -466,23 +435,23 @@ services:
       DRAGONFLY_HOST: dragonfly
       DRAGONFLY_PORT: 6379
       DRAGONFLY_KEY_PREFIX: "healthcare:"
-      
+
       # JWT Configuration (for queue operations)
-      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-change-in-production}
-      
+      JWT_SECRET: ${JWT_SECRET}
+
       # BullMQ Worker Configuration - Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
       BULL_WORKER_CONCURRENCY: "10"
       BULL_MAX_JOBS_PER_WORKER: "100"
-      
+
       # Logging Configuration
       LOG_LEVEL: info
       ENABLE_AUDIT_LOGS: "true"
-      
+
       # Email Configuration (for queue jobs)
       AWS_REGION: ${AWS_REGION:-}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      
+
       # Firebase Configuration (for notifications)
       FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
       FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY:-}
@@ -510,7 +479,7 @@ services:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "process.exit(0)"]
+      test: [ "CMD-SHELL", "pgrep -f 'node dist/worker-bootstrap.js' | head -1 || exit 1" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -520,13 +489,13 @@ services:
         # Optimized for 8 vCPU/24GB RAM: 700-900 concurrent users
         # Can run on 6 vCPU/12GB RAM initially (Docker enforces limits)
         limits:
-          cpus: "1.0"      # Target: 8 vCPU server (1 CPU for Worker)
-          memory: 2G        # Target: 24GB server (2GB for Worker)
+          cpus: "1.0" # Target: 8 vCPU server (1 CPU for Worker)
+          memory: 2G # Target: 24GB server (2GB for Worker)
         reservations:
-          cpus: "0.5"       # Minimum guaranteed (works on 6 vCPU server)
-          memory: 512M      # Minimum guaranteed (works on 12GB server)
+          cpus: "0.5" # Minimum guaranteed (works on 6 vCPU server)
+          memory: 512M # Minimum guaranteed (works on 12GB server)
     # Worker doesn't need migrations - only API container runs them
-    command: ["node", "dist/worker-bootstrap.js"]
+    command: [ "node", "dist/worker-bootstrap.js" ]
     labels:
       - "com.docker.compose.service=worker"
       - "app.component=worker"
@@ -537,12 +506,12 @@ services:
   # Access at: http://localhost:9000 (or https://your-domain:9000 in production)
   # Optimized for minimal disk usage: limited logs, no snapshots, strict resource limits
   portainer:
-    profiles: ["infrastructure"]
+    profiles: [ "infrastructure" ]
     image: portainer/portainer-ce:latest
     container_name: portainer
     ports:
       - "9000:9000"
-      - "9443:9443"  # HTTPS port (optional)
+      - "9443:9443" # HTTPS port (optional)
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portainer_data:/data
@@ -552,18 +521,17 @@ services:
     restart: unless-stopped
     # Optimized command: minimal logging, no analytics
     command: >
-      -H unix:///var/run/docker.sock
-      --no-analytics
+      -H unix:///var/run/docker.sock --no-analytics
     environment:
       # Minimize disk usage: reduce logging, disable telemetry
-      - PORTAINER_LOG_LEVEL=WARN  # Only WARN and ERROR logs (reduces log file size)
-      - PORTAINER_TELEMETRY=false  # Disable telemetry data collection
+      - PORTAINER_LOG_LEVEL=WARN # Only WARN and ERROR logs (reduces log file size)
+      - PORTAINER_TELEMETRY=false # Disable telemetry data collection
     # Strict resource limits to prevent excessive disk usage
     deploy:
       resources:
         limits:
           cpus: "0.5"
-          memory: 256M  # Minimal memory allocation
+          memory: 256M # Minimal memory allocation
         reservations:
           cpus: "0.1"
           memory: 128M
@@ -571,7 +539,7 @@ services:
       # Use /api/status endpoint (doesn't require auth, returns version info)
       # NOTE: Portainer CE image is based on scratch/minimal image without /bin/sh
       # So we use CMD format with wget directly instead of CMD-SHELL
-      test: ["CMD", "wget", "-q", "--spider", "--timeout=3", "http://localhost:9000/api/status"]
+      test: [ "CMD", "wget", "-q", "--spider", "--timeout=3", "http://localhost:9000/api/status" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -603,4 +571,3 @@ networks:
     ipam:
       config:
         - subnet: 172.18.0.0/16
-
