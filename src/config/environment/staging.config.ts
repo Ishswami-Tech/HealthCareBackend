@@ -200,7 +200,7 @@ export default function createStagingConfig(): Config {
     whatsapp: {
       // Use helper functions (which use dotenv) for environment variable access
       enabled: getEnvBoolean(ENV_VARS.WHATSAPP_ENABLED, false),
-      apiUrl: getEnvWithDefault('WHATSAPP_API_URL', 'https://graph.facebook.com/v17.0'),
+      apiUrl: getEnvWithDefault('WHATSAPP_API_URL', 'https://graph.facebook.com/v25.0'),
       apiKey: getEnvWithDefault(ENV_VARS.WHATSAPP_API_KEY, ''),
       phoneNumberId: getEnvWithDefault('WHATSAPP_PHONE_NUMBER_ID', ''),
       businessAccountId: getEnvWithDefault('WHATSAPP_BUSINESS_ACCOUNT_ID', ''),

@@ -26,7 +26,7 @@ export class WhatsAppConfig {
   }
 
   get apiUrl(): string {
-    return this.getConfig<string>('WHATSAPP_API_URL', 'https://graph.facebook.com/v17.0');
+    return this.getConfig<string>('WHATSAPP_API_URL', 'https://graph.facebook.com/v25.0');
   }
 
   get apiKey(): string {

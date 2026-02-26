@@ -46,7 +46,7 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
     }
 
     const credentials = config.credentials as Record<string, string>;
-    this.apiUrl = credentials['apiUrl'] || 'https://graph.facebook.com/v18.0';
+    this.apiUrl = credentials['apiUrl'] || 'https://graph.facebook.com/v25.0';
     this.apiKey = credentials['apiKey'] || credentials['accessToken'] || '';
     this.phoneNumberId = credentials['phoneNumberId'] || '';
     this.businessAccountId = credentials['businessAccountId'] || '';
