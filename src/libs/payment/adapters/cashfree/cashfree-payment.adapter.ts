@@ -187,6 +187,16 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       const orderId =
         options.orderId || `order_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+      // Accept all URL key variants sent by BillingService
+      // BillingService uses: redirectUrl, callbackUrl
+      // Legacy/direct callers may use: returnUrl, notifyUrl
+      const returnUrl =
+        (options.metadata?.['returnUrl'] as string | undefined) ||
+        (options.metadata?.['redirectUrl'] as string | undefined);
+      const notifyUrl =
+        (options.metadata?.['notifyUrl'] as string | undefined) ||
+        (options.metadata?.['callbackUrl'] as string | undefined);
+
       const body: CashfreeOrderRequest = {
         order_amount: amountInUnits,
         order_currency: options.currency.toUpperCase(),
@@ -197,12 +207,10 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
           ...(options.customerEmail && { customer_email: options.customerEmail }),
           ...(options.customerName && { customer_name: options.customerName }),
         },
-        ...(options.metadata?.['returnUrl'] && {
+        ...(returnUrl && {
           order_meta: {
-            return_url: options.metadata['returnUrl'] as string,
-            ...(options.metadata['notifyUrl'] && {
-              notify_url: options.metadata['notifyUrl'] as string,
-            }),
+            return_url: returnUrl,
+            ...(notifyUrl && { notify_url: notifyUrl }),
           },
         }),
         ...(options.description && { order_note: options.description }),
