@@ -503,7 +503,8 @@ export class AppointmentsController {
     Role.RECEPTIONIST,
     Role.THERAPIST,
     Role.COUNSELOR,
-    Role.SUPPORT_STAFF
+    Role.SUPPORT_STAFF,
+    Role.PATIENT
   )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
@@ -598,6 +599,12 @@ export class AppointmentsController {
 
       if (!clinicId) {
         throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      // Patients can only access their own appointments
+      if (req.user?.role === Role.PATIENT) {
+        // Override userId to current user's ID to prevent accessing other users' appointments
+        userId = currentUserId;
       }
 
       // Log the operation with proper structure
@@ -737,6 +744,105 @@ export class AppointmentsController {
       const healthcareError = this.errors.internalServerError(context);
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
+    }
+  }
+
+  /**
+   * Get current user's upcoming appointments
+   * GET /appointments/upcoming
+   */
+  @Get('upcoming')
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.SUPPORT_STAFF
+  )
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @PatientCache({
+    keyTemplate: 'appointments:upcoming:{userId}',
+    ttl: 600,
+    tags: ['appointments', 'upcoming_appointments'],
+    priority: 'high',
+    enableSWR: true,
+    containsPHI: true,
+    compress: true,
+  })
+  @ApiOperation({
+    summary: 'Get current user upcoming appointments',
+    description:
+      'Get upcoming appointments for the currently authenticated user. Patients can only access their own upcoming appointments.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Return current user upcoming appointments',
+    type: [AppointmentResponseDto],
+  })
+  @ApiResponse({
+    status: HttpStatus.UNAUTHORIZED,
+    description: 'User not authenticated',
+  })
+  @ApiResponse({
+    status: HttpStatus.FORBIDDEN,
+    description: 'Cannot access upcoming appointments',
+  })
+  async getMyUpcomingAppointments(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<AppointmentResponseDto[]> {
+    try {
+      const currentUserId = req.user?.sub;
+      const clinicId = req.clinicContext?.clinicId;
+
+      if (!currentUserId) {
+        throw new BadRequestException('User ID is required');
+      }
+
+      if (!clinicId) {
+        throw new BadRequestException('Clinic context is required');
+      }
+
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `Getting upcoming appointments for current user ${currentUserId}`,
+        'AppointmentsController',
+        { userId: currentUserId }
+      );
+
+      const result = (await this.appointmentService.getUserUpcomingAppointments(
+        currentUserId,
+        clinicId,
+        req.user?.role || Role.PATIENT
+      )) as AppointmentResponseDto[];
+
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `Retrieved ${result?.length || 0} upcoming appointments for user ${currentUserId}`,
+        'AppointmentsController',
+        { userId: currentUserId, count: result?.length || 0 }
+      );
+      return result;
+    } catch (_error) {
+      const errorUserId = req.user?.sub || '';
+      const errorClinicId = req.clinicContext?.clinicId || '';
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to retrieve upcoming appointments: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
+        'AppointmentsController',
+        {
+          userId: errorUserId,
+          clinicId: errorClinicId,
+          error: _error instanceof Error ? _error.stack : String(_error),
+        }
+      );
+      throw _error;
     }
   }
 

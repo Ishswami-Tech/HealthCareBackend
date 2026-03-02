@@ -10,7 +10,6 @@ import {
   Req,
   HttpStatus,
   HttpCode,
-  ParseUUIDPipe,
   ValidationPipe,
   UsePipes,
   BadRequestException,
@@ -18,6 +17,7 @@ import {
   Logger,
   ForbiddenException,
 } from '@nestjs/common';
+import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
 import { ClinicService } from './clinic.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -463,7 +463,7 @@ export class ClinicController {
     description: 'Returns clinic statistics.',
     type: ClinicStatsResponseDto,
   })
-  async getClinicStats(@Param('id', ParseUUIDPipe) id: string): Promise<ClinicStatsResponseDto> {
+  async getClinicStats(@Param('id', ClinicIdPipe) id: string): Promise<ClinicStatsResponseDto> {
     try {
       this.logger.log(`Getting stats for clinic ${id}`);
       return await this.clinicService.getClinicStats(id);
@@ -493,7 +493,7 @@ export class ClinicController {
     type: [ClinicOperatingHoursResponseDto],
   })
   async getClinicOperatingHours(
-    @Param('id', ParseUUIDPipe) id: string
+    @Param('id', ClinicIdPipe) id: string
   ): Promise<ClinicOperatingHoursResponseDto[]> {
     try {
       this.logger.log(`Getting operating hours for clinic ${id}`);
@@ -543,7 +543,7 @@ export class ClinicController {
     description: 'Clinic not found.',
   })
   async updateClinic(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ClinicIdPipe) id: string,
     @Body() updateClinicDto: UpdateClinicDto,
     @Req() req: ClinicAuthenticatedRequest
   ) {
@@ -602,7 +602,7 @@ export class ClinicController {
     description: 'Clinic not found.',
   })
   async deleteClinic(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
   ) {
     try {
@@ -768,7 +768,7 @@ export class ClinicController {
     description: 'Clinic not found.',
   })
   async getClinicDoctors(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
   ) {
     try {
@@ -805,7 +805,7 @@ export class ClinicController {
   @ApiParam({ name: 'id', description: 'Clinic ID', type: 'string' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Returns an array of staff members.' })
   async getClinicStaff(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
   ) {
     try {
@@ -860,7 +860,7 @@ export class ClinicController {
     description: 'Clinic not found.',
   })
   async getClinicPatients(
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
   ) {
     try {

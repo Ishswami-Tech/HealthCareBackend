@@ -19,6 +19,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { ClinicIdPipe } from '@core/pipes/clinic-id.pipe';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards';
 import { RbacGuard } from '@core/rbac/rbac.guard';
@@ -132,7 +133,9 @@ export class ClinicCommunicationController {
     status: 404,
     description: 'Clinic not found',
   })
-  async getConfig(@Param('clinicId') clinicId: string): Promise<ClinicCommunicationConfig | null> {
+  async getConfig(
+    @Param('clinicId', ClinicIdPipe) clinicId: string
+  ): Promise<ClinicCommunicationConfig | null> {
     return await this.communicationConfigService.getClinicConfig(clinicId);
   }
 
@@ -158,7 +161,7 @@ export class ClinicCommunicationController {
     description: 'Invalid configuration',
   })
   async updateConfig(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() dto: UpdateCommunicationConfigDto
   ): Promise<{ success: boolean; message: string }> {
     try {
@@ -282,7 +285,7 @@ export class ClinicCommunicationController {
     description: 'Invalid SES configuration',
   })
   async updateSESConfig(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() dto: UpdateSESConfigDto
   ): Promise<{ success: boolean; message: string }> {
     try {
@@ -377,7 +380,7 @@ export class ClinicCommunicationController {
     description: 'Test email failed',
   })
   async testEmailConfig(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() dto: TestEmailConfigDto
   ): Promise<{ success: boolean; message: string; error?: string }> {
     return await this.communicationConfigService.testEmailConfig(clinicId, dto.testEmail);
@@ -405,7 +408,7 @@ export class ClinicCommunicationController {
     description: 'Test WhatsApp message failed',
   })
   async testWhatsAppConfig(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() dto: { phoneNumber: string }
   ): Promise<{ success: boolean; message: string; error?: string }> {
     return await this.communicationConfigService.testWhatsAppConfig(clinicId, dto.phoneNumber);
@@ -432,7 +435,7 @@ export class ClinicCommunicationController {
     description: 'Test SMS failed',
   })
   async testSMSConfig(
-    @Param('clinicId') clinicId: string,
+    @Param('clinicId', ClinicIdPipe) clinicId: string,
     @Body() dto: { phoneNumber: string }
   ): Promise<{ success: boolean; message: string; error?: string }> {
     const result = await this.communicationConfigService.testSMSConfig(clinicId, dto.phoneNumber);

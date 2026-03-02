@@ -91,6 +91,7 @@ export class ClinicGuard implements CanActivate {
       '/socket-test',
       '/docs',
       '/api-docs',
+      '/appointments/doctor', // Doctor availability endpoint
     ];
     const isPublicModule = publicModules.some(module => request.url.startsWith(module));
 
