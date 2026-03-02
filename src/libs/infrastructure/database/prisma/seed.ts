@@ -418,8 +418,8 @@ async function quickSeed() {
           doctorId: demoDoctor.id,
           clinicId: clinic.id,
           locationId: clinicLocation.id,
-          startTime: new Date(),
-          endTime: new Date(),
+          startTime: new Date(new Date().setUTCHours(9, 0, 0, 0)),
+          endTime: new Date(new Date().setUTCHours(18, 0, 0, 0)),
         },
       });
       // Assign RBAC role to doctor
@@ -486,8 +486,8 @@ async function quickSeed() {
             doctorId: demoDoctor.id,
             clinicId: clinic.id,
             locationId: clinicLocation.id,
-            startTime: new Date(),
-            endTime: new Date(),
+            startTime: new Date(new Date().setUTCHours(9, 0, 0, 0)),
+            endTime: new Date(new Date().setUTCHours(18, 0, 0, 0)),
           },
         });
         console.log('✓ Doctor-clinic relationship created');
@@ -1181,8 +1181,8 @@ async function main() {
         doctorId: demoDoctor.id,
         clinicId: clinic1.id,
         locationId: clinic1Locations[0]?.id ?? clinic1.id,
-        startTime: new Date(),
-        endTime: new Date(),
+        startTime: new Date(new Date().setUTCHours(9, 0, 0, 0)),
+        endTime: new Date(new Date().setUTCHours(18, 0, 0, 0)),
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
     (await (prisma.doctorClinic.create({
@@ -1190,8 +1190,8 @@ async function main() {
         doctorId: demoDoctor.id,
         clinicId: clinic2.id,
         locationId: clinic2Locations[0]?.id ?? clinic2.id,
-        startTime: new Date(),
-        endTime: new Date(),
+        startTime: new Date(new Date().setUTCHours(9, 0, 0, 0)),
+        endTime: new Date(new Date().setUTCHours(18, 0, 0, 0)),
       },
     }) as unknown as Promise<{ id: string }>)) as unknown as { id: string };
 

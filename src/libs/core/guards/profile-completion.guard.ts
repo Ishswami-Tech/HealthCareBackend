@@ -46,7 +46,7 @@ export class ProfileCompletionGuard implements CanActivate {
   ) {}
 
   /**
-   * Determines if the current request can proceed based on profile completion status
+   * Determines if current request can proceed based on profile completion status
    *
    * @param context - The execution context containing request information
    * @returns Promise<boolean> - True if profile is complete or completion is not required
@@ -80,10 +80,15 @@ export class ProfileCompletionGuard implements CanActivate {
         throw new UnauthorizedException('User not found');
       }
 
-      // Check database-level flag (authoritative)
-      const isProfileComplete = dbUser.isProfileComplete;
+      // Validate profile directly (authoritative check)
+      // This is more reliable than checking DB flag which might be stale
+      const validation = this.profileCompletionService.validateProfileCompletion(
+        dbUser as unknown as Record<string, unknown>,
+        (user.role as Role) || Role.PATIENT
+      );
 
-      if (!isProfileComplete) {
+      // If validation fails, deny access
+      if (!validation.isComplete) {
         await this.logging.log(
           LogType.AUDIT,
           LogLevel.DEBUG,
@@ -100,45 +105,13 @@ export class ProfileCompletionGuard implements CanActivate {
 
         throw new ForbiddenException({
           error: 'Profile Incomplete',
-          message: 'Please complete your profile to access this feature',
+          message: `Please complete your profile to access this feature. Missing: ${validation.missingFields.join(', ')}`,
           requiresProfileCompletion: true,
           redirectUrl: '/profile/complete',
         });
       }
 
-      // Optionally validate with ProfileCompletionService to ensure consistency
-      const validation = this.profileCompletionService.validateProfileCompletion(
-        dbUser as unknown as Record<string, unknown>,
-        (user.role as Role) || Role.PATIENT
-      );
-
-      if (!validation.isComplete) {
-        await this.logging.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Profile completion status mismatch for user ${user.id}: DB flag=true, Validation=false`,
-          'ProfileCompletionGuard.canActivate',
-          {
-            userId: user.id,
-            missingFields: validation.missingFields,
-            errorCount: validation.errors.length,
-          }
-        );
-
-        // Update database flag to reflect actual completion status
-        await this.databaseService.updateUserSafe(user.id, {
-          isProfileComplete: false,
-        } as never);
-
-        throw new ForbiddenException({
-          error: 'Profile Incomplete',
-          message: 'Please complete your profile to access this feature',
-          requiresProfileCompletion: true,
-          redirectUrl: '/profile/complete',
-          missingFields: validation.missingFields,
-        });
-      }
-
+      // Profile is validated and complete - allow access
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.DEBUG,

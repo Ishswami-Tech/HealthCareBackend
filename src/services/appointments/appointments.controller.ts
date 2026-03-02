@@ -54,6 +54,7 @@ import {
   PatientCache,
   InvalidatePatientCache,
   InvalidateAppointmentCache,
+  Public,
 } from '@core/decorators';
 import {
   CreateAppointmentDto,
@@ -741,16 +742,7 @@ export class AppointmentsController {
 
   @Get('doctor/:doctorId/availability')
   @HttpCode(HttpStatus.OK)
-  @Roles(
-    Role.PATIENT,
-    Role.RECEPTIONIST,
-    Role.DOCTOR,
-    Role.CLINIC_ADMIN,
-    Role.THERAPIST,
-    Role.COUNSELOR,
-    Role.SUPPORT_STAFF
-  )
-  @RequireResourcePermission('appointments', 'read')
+  @Public()
   @Cache({
     keyTemplate: 'appointments:availability:{doctorId}:{date}',
     ttl: 180,

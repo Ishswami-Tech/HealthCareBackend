@@ -273,7 +273,7 @@ export class CoreAppointmentService {
       // Extract date and time from appointmentDate
       const appointmentDateTime = new Date(createDto.appointmentDate);
       const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
-      const timeStr = appointmentDateTime.toTimeString().slice(0, 5); // HH:mm format
+      const timeStr = appointmentDateTime.toISOString().substring(11, 16); // HH:mm format
 
       const appointmentData: Record<string, unknown> = {
         ...createDto,
@@ -404,6 +404,29 @@ export class CoreAppointmentService {
     const startTime = Date.now();
 
     try {
+      // For PATIENT and related roles, check if profile is complete before querying appointments
+      if (context.role === 'PATIENT') {
+        const user = await this.databaseService.findUserByIdSafe(context.userId);
+        if (user && !user.isProfileComplete) {
+          await this.loggingService.log(
+            LogType.AUDIT,
+            LogLevel.DEBUG,
+            `Access denied: User ${context.userId} attempted to view appointments with incomplete profile`,
+            'CoreAppointmentService.getAppointments',
+            {
+              userId: context.userId,
+              role: context.role,
+            }
+          );
+          return {
+            success: false,
+            error: 'Profile Incomplete',
+            message: 'Please complete your profile to access this feature',
+            metadata: { requiresProfileCompletion: true },
+          } as unknown as AppointmentResult<Record<string, unknown>>;
+        }
+      }
+
       // Build where clause with role-based access control (uses indexed fields)
       const where = this.buildAppointmentWhereClause(filters, context);
 
@@ -565,7 +588,7 @@ export class CoreAppointmentService {
       if (updateDto.appointmentDate) {
         const appointmentDateTime = new Date(updateDto.appointmentDate);
         const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
-        const timeStr = appointmentDateTime.toTimeString().slice(0, 5); // HH:mm format
+        const timeStr = appointmentDateTime.toISOString().substring(11, 16); // HH:mm format
         updateData['date'] = new Date(dateStr);
         updateData['time'] = timeStr;
         // Remove appointmentDate as it's not part of AppointmentUpdateInput
@@ -1135,10 +1158,10 @@ export class CoreAppointmentService {
 
             // Update working hours if defined
             if (doctorClinic.startTime) {
-              workingHours.start = new Date(doctorClinic.startTime).toTimeString().slice(0, 5);
+              workingHours.start = new Date(doctorClinic.startTime).toISOString().substring(11, 16);
             }
             if (doctorClinic.endTime) {
-              workingHours.end = new Date(doctorClinic.endTime).toTimeString().slice(0, 5);
+              workingHours.end = new Date(doctorClinic.endTime).toISOString().substring(11, 16);
             }
           }
         } catch (e) {
