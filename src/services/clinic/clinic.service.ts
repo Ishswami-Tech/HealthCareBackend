@@ -1,4 +1,11 @@
-import { Injectable, Optional, Inject, forwardRef, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  Optional,
+  Inject,
+  forwardRef,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Role } from '@core/types/enums.types';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
@@ -938,7 +945,7 @@ export class ClinicService {
         // Enforce single-tenant view if CLINIC_ID is configured or passed in context
         // Patients should only see the specific clinic they are accessing
         const contextClinicId =
-          clinicId || this.configService?.get<string>('CLINIC_ID') || process.env['CLINIC_ID'];
+          clinicId || this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
 
         if (contextClinicId) {
           whereClause = {
@@ -1051,7 +1058,7 @@ export class ClinicService {
       // Enforce isolation for patients
       if (role === Role.PATIENT && userId) {
         const configuredClinicId =
-          this.configService?.get<string>('CLINIC_ID') || process.env['CLINIC_ID'];
+          this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
 
         // 1. Allow access if ID matches Configured ID (Single Tenant Env)
         // 2. Allow access if ID matches Context ID (Multi-Tenant Header)
@@ -1126,8 +1133,7 @@ export class ClinicService {
           } as PrismaDelegateArgs);
         }
       );
-      if (!clinic) throw new Error('Clinic not found');
-      if (!clinic) throw new Error('Clinic not found');
+      if (!clinic) throw new NotFoundException('Clinic not found');
 
       // Post-fetch permission check for non-UUID access
       if (role === Role.PATIENT && userId) {
@@ -1146,7 +1152,7 @@ export class ClinicService {
         );
 
         const configuredClinicId =
-          this.configService?.get<string>('CLINIC_ID') || process.env['CLINIC_ID'];
+          this.configService?.get<string>('CLINIC_ID', '') || process.env['CLINIC_ID'];
         const isPublic =
           (configuredClinicId && clinicData.id === configuredClinicId) ||
           (clinicId && clinicData.id === clinicId);
@@ -1685,11 +1691,14 @@ export class ClinicService {
       });
 
       if (!userRole || !userRole.clinicId) {
-        throw new Error('No clinic association found for user');
+        throw new NotFoundException('No clinic association found for user');
       }
 
       return await this.getClinicById(userRole.clinicId);
     } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,

@@ -11,8 +11,6 @@ import {
   Request,
   ForbiddenException,
   BadRequestException,
-  UseInterceptors,
-  UploadedFile,
 } from '@nestjs/common';
 import {
   ApiOperation,
@@ -22,8 +20,6 @@ import {
   ApiResponse,
   ApiConsumes,
 } from '@nestjs/swagger';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { PatientsService } from '../patients.service';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
 import { ClinicGuard } from '@core/guards/clinic.guard';
@@ -33,6 +29,8 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { CreatePatientDto, UpdatePatientDto } from '@dtos/patient.dto';
+import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { PatientsService } from '../patients.service';
 
 interface MulterFile {
   buffer: Buffer;
@@ -40,6 +38,58 @@ interface MulterFile {
   originalname: string;
   size: number;
 }
+
+interface MultipartItem {
+  _buf?: Buffer;
+  data?: Buffer;
+  value?: Buffer | string;
+  mimetype?: string;
+  filename?: string;
+  length?: number;
+}
+
+export const FastifyFile = createParamDecorator(
+  (data: string | undefined, ctx: ExecutionContext) => {
+    const req = ctx.switchToHttp().getRequest<import('fastify').FastifyRequest>();
+    const fieldName = data || 'file';
+    const body = (req.body || {}) as Record<string, unknown>;
+    const field = body[fieldName];
+    const item = (Array.isArray(field) ? field[0] : field) as
+      | MultipartItem
+      | Buffer
+      | string
+      | undefined;
+
+    if (!item) return null;
+    if (typeof item === 'string') {
+      return null; // Not a file
+    }
+
+    if (Buffer.isBuffer(item)) {
+      return {
+        buffer: item,
+        mimetype: 'application/octet-stream',
+        originalname: 'upload',
+        size: item.length,
+      };
+    }
+
+    const buffer = Buffer.isBuffer(item._buf)
+      ? item._buf
+      : Buffer.isBuffer(item.data)
+        ? item.data
+        : Buffer.isBuffer(item.value)
+          ? item.value
+          : Buffer.from('');
+
+    return {
+      buffer,
+      mimetype: item.mimetype ?? 'application/octet-stream',
+      originalname: item.filename ?? 'upload',
+      size: buffer.length || 0,
+    };
+  }
+);
 
 @Controller('patients')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
@@ -75,7 +125,6 @@ export class PatientsController {
 
   @Post(':id/documents')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
-  @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ summary: 'Upload patient document' })
   @ApiBody({
@@ -92,7 +141,7 @@ export class PatientsController {
   @ApiResponse({ status: 201, description: 'Document uploaded successfully' })
   async uploadDocument(
     @Param('id') patientId: string,
-    @UploadedFile() file: MulterFile,
+    @FastifyFile() file: MulterFile,
     @Request() req: ClinicAuthenticatedRequest
   ) {
     if (!file) {

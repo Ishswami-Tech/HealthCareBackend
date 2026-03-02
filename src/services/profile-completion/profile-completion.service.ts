@@ -29,7 +29,7 @@ export class ProfileCompletionService {
    */
   private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
     PATIENT: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
       conditionalFields: {},
     },
     DOCTOR: {

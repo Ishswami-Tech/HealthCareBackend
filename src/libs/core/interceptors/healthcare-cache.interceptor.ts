@@ -134,8 +134,8 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
             void this.setCacheValue(cacheKey, result, options, context);
           }
         }),
-        catchError(async error => {
-          await this.loggingService.log(
+        catchError(error => {
+          void this.loggingService.log(
             LogType.ERROR,
             LogLevel.ERROR,
             'Error in healthcare cache operation',
@@ -146,7 +146,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
               stack: error instanceof Error ? error.stack : undefined,
             }
           );
-          return throwError(() => error as Error) as Observable<unknown>;
+          return throwError(() => error as Error);
         })
       );
     } catch (error) {
@@ -196,22 +196,20 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
       catchError(error => {
         // Even if the operation fails, we might want to invalidate cache
         // to prevent serving stale data
-        void this.performCacheInvalidation(context, null, options).catch(
-          async invalidationError => {
-            await this.loggingService.log(
-              LogType.ERROR,
-              LogLevel.ERROR,
-              'Error in error-case cache invalidation',
-              'HealthcareCacheInterceptor',
-              {
-                error:
-                  invalidationError instanceof Error ? invalidationError.message : 'Unknown error',
-                stack: invalidationError instanceof Error ? invalidationError.stack : undefined,
-              }
-            );
-          }
-        );
-        return throwError(() => error as Error) as Observable<unknown>;
+        void this.performCacheInvalidation(context, null, options).catch(invalidationError => {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Error in error-case cache invalidation',
+            'HealthcareCacheInterceptor',
+            {
+              error:
+                invalidationError instanceof Error ? invalidationError.message : 'Unknown error',
+              stack: invalidationError instanceof Error ? invalidationError.stack : undefined,
+            }
+          );
+        });
+        return throwError(() => error as Error);
       })
     );
   }
