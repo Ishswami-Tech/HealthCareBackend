@@ -1176,10 +1176,9 @@ export class CoreAppointmentService {
       }
 
       // Build a precise day-boundary filter so only appointments on THIS date count
-      const dayStart = new Date(date);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(date);
-      dayEnd.setHours(23, 59, 59, 999);
+      // Use UTC explicitly to avoid timezone mismatches with database (appointments stored in UTC)
+      const dayStart = new Date(`${date}T00:00:00.000Z`);
+      const dayEnd = new Date(`${date}T23:59:59.999Z`);
 
       const appointmentsResult = await this.databaseService.findAppointmentsSafe({
         doctorId,
@@ -1218,14 +1217,40 @@ export class CoreAppointmentService {
         const minute = currentMinutes % 60;
 
         const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-        const isBooked = appointments.some(
-          (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
-        );
+
+        // Check if slot is booked - account for appointment duration (default 30 min)
+        // A slot is unavailable if it falls within any existing appointment's time range
+        const isBooked = appointments.some((apt: AppointmentItem) => {
+          const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
+          if (!aptTime) return false;
+          const aptDuration =
+            ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
+          // Extract time parts - using non-null assertion on split result
+          const timeParts = (aptTime || '').split(':');
+          const aptHour = parseInt(timeParts[0] || '0', 10);
+          const aptMin = parseInt(timeParts[1] || '0', 10);
+          const aptStartMinutes = aptHour * 60 + aptMin;
+          const aptEndMinutes = aptStartMinutes + aptDuration;
+
+          // Slot is booked if it's within the appointment's time range
+          return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
+        });
 
         const bookedAppointment = isBooked
-          ? appointments.find(
-              (apt: AppointmentItem) => (apt as Record<string, unknown>)['time'] === time
-            )
+          ? appointments.find((apt: AppointmentItem) => {
+              const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
+              if (!aptTime) return false;
+              const aptDuration =
+                ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
+              // Extract time parts - using non-null assertion on split result
+              const timeParts = (aptTime || '').split(':');
+              const aptHour = parseInt(timeParts[0] || '0', 10);
+              const aptMin = parseInt(timeParts[1] || '0', 10);
+              const aptStartMinutes = aptHour * 60 + aptMin;
+              const aptEndMinutes = aptStartMinutes + aptDuration;
+
+              return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
+            })
           : null;
 
         timeSlots.push({
