@@ -1674,6 +1674,7 @@ export class ClinicService {
   async getCurrentUserClinic(userId: string): Promise<ClinicResponseDto> {
     try {
       // Use executeHealthcareRead for optimized query - get clinic via UserRole
+      let clinicIdToUse: string | null = null;
       const userRole = await this.databaseService.executeHealthcareRead<{
         clinicId: string | null;
       } | null>(async client => {
@@ -1690,11 +1691,29 @@ export class ClinicService {
         } as PrismaDelegateArgs);
       });
 
-      if (!userRole || !userRole.clinicId) {
+      if (userRole && userRole.clinicId) {
+        clinicIdToUse = userRole.clinicId;
+      } else {
+        const user = await this.databaseService.executeHealthcareRead<{
+          primaryClinicId?: string | null;
+        } | null>(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return await typedClient.user.findUnique({
+            where: { id: userId } as PrismaDelegateArgs,
+            select: { primaryClinicId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        });
+
+        if (user && user.primaryClinicId) {
+          clinicIdToUse = user.primaryClinicId;
+        }
+      }
+
+      if (!clinicIdToUse) {
         throw new NotFoundException('No clinic association found for user');
       }
 
-      return await this.getClinicById(userRole.clinicId);
+      return await this.getClinicById(clinicIdToUse);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw error;
