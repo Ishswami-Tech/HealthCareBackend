@@ -530,8 +530,32 @@ export class AuthService {
         );
       }
 
-      // Validate clinic access BEFORE creating session
-      const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
+      // Validate clinic access BEFORE creating session.
+      // Priority: header > body > user.primaryClinicId
+      // If user's primaryClinicId is stale (clinic deleted/migrated), fall back to header clinicId.
+      let clinicUUID: string;
+      try {
+        clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
+      } catch (clinicErr) {
+        // If the stored primaryClinicId is stale, try header-provided clinicId as fallback
+        if (clinicIdFromHeader && clinicIdFromHeader !== clinicId) {
+          await this.logging.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            `Stored clinicId ${clinicId} is invalid for user ${user.id}, trying header clinicId ${clinicIdFromHeader}`,
+            'AuthService.login',
+            {
+              userId: user.id,
+              email: loginDto.email,
+              storedClinicId: clinicId,
+              headerClinicId: clinicIdFromHeader,
+            }
+          );
+          clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicIdFromHeader, 'login');
+        } else {
+          throw clinicErr;
+        }
+      }
 
       // Create session with validated clinic UUID
       const session = await this.sessionService.createSession({
@@ -1331,8 +1355,36 @@ export class AuthService {
       throw this.errors.clinicNotFound(clinicId, `AuthService.${operation}`);
     }
 
-    // 2. Validate user has access to this clinic
+    // 2. Look up user role and clinic isolation service
     const clinicIsolationService = this.databaseService['clinicIsolationService'];
+    const userRecord = await this.databaseService.findUserByIdSafe(userId);
+    const userRole = userRecord?.role as Role | undefined;
+
+    // 3. For PATIENT role: any valid active clinic is accessible.
+    // Patients are not staff-locked; they can log into any clinic portal.
+    // If their primaryClinicId is stale, update it to the current valid clinic.
+    if (userRole === Role.PATIENT) {
+      if (userRecord && userRecord.primaryClinicId !== clinicUUID) {
+        // Auto-heal: update the stale primaryClinicId
+        await this.databaseService
+          .updateUserSafe(userId, {
+            primaryClinicId: clinicUUID,
+          } as never)
+          .catch(() => {
+            // Non-fatal: best effort update
+          });
+        await this.logging.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Auto-updated stale primaryClinicId for patient ${userId}: ${userRecord.primaryClinicId} → ${clinicUUID}`,
+          `AuthService.${operation}`,
+          { userId, oldClinicId: userRecord.primaryClinicId, newClinicId: clinicUUID }
+        );
+      }
+      return clinicUUID;
+    }
+
+    // 4. For staff roles: validate user has an active association with this clinic
     const accessResult = await clinicIsolationService.validateClinicAccess(userId, clinicUUID);
 
     if (!accessResult.success) {

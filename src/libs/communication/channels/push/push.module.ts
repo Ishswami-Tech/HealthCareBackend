@@ -2,7 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 // Use direct import to avoid circular dependency with barrel exports
 import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { PushNotificationService } from '@communication/channels/push/push.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';

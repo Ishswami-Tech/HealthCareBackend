@@ -1386,57 +1386,30 @@ export class ClinicService {
         }>
       >(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-        const staffRoles = [
-          Role.CLINIC_ADMIN,
-          Role.DOCTOR,
-          Role.ASSISTANT_DOCTOR,
-          Role.RECEPTIONIST,
-          Role.PHARMACIST,
-          Role.NURSE,
-          Role.THERAPIST,
-          Role.LAB_TECHNICIAN,
-          Role.FINANCE_BILLING,
-          Role.SUPPORT_STAFF,
-          Role.COUNSELOR,
-        ];
         const result = await typedClient.user.findMany({
           where: {
             OR: [
-              { role: { in: staffRoles } },
-              {
-                userRoles: {
-                  some: { clinicId: id, role: { name: { in: staffRoles } }, isActive: true },
-                },
-              },
-            ],
-            AND: [
-              {
-                OR: [
-                  { primaryClinicId: id },
-                  { doctor: { clinics: { some: { clinicId: id } } } },
-                  { receptionists: { clinicId: id } },
-                  { clinicAdmins: { clinicId: id } },
-                  { pharmacist: { clinicId: id } },
-                  { nurse: { clinicId: id } },
-                  { therapist: { clinicId: id } },
-                  { labTechnician: { clinicId: id } },
-                  { counselor: { clinicId: id } },
-                  { supportStaff: { clinicId: id } },
-                  { financeBilling: { clinicId: id } },
-                  { clinics: { some: { id } } },
-                  { userRoles: { some: { clinicId: id, isActive: true } } },
-                ],
-              },
+              // Users associated via their primary clinic assignment
+              { primaryClinicId: id },
+              // Doctors linked via the DoctorClinic join table
+              { doctor: { clinics: { some: { clinicId: id } } } },
+              // Profile-based staff associations
+              { receptionists: { clinicId: id } },
+              { clinicAdmins: { clinicId: id } },
+              { pharmacist: { clinicId: id } },
+              { nurse: { clinicId: id } },
+              { therapist: { clinicId: id } },
+              { labTechnician: { clinicId: id } },
+              { counselor: { clinicId: id } },
+              { supportStaff: { clinicId: id } },
+              { financeBilling: { clinicId: id } },
+              // Many-to-many clinic relation
+              { clinics: { some: { id } } },
+              // RBAC UserRole assignments
+              { userRoles: { some: { clinicId: id, isActive: true } } },
             ],
           } as PrismaDelegateArgs,
-          include: {
-            doctor: {
-              select: {
-                specialization: true,
-                experience: true,
-              },
-            },
-          } as PrismaDelegateArgs,
+          // NOTE: Use ONLY `select` (never mix with `include`). Nest doctor inside select.
           select: {
             id: true,
             name: true,
@@ -1448,6 +1421,12 @@ export class ClinicService {
             isActive: true,
             profilePicture: true,
             createdAt: true,
+            doctor: {
+              select: {
+                specialization: true,
+                experience: true,
+              },
+            },
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
         return result as unknown as Array<{

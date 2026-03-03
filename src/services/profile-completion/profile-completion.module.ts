@@ -9,7 +9,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { CacheModule } from '@infrastructure/cache';
 import { LoggingModule } from '@infrastructure/logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { ErrorsModule } from '@core/errors/errors.module';
 import { ProfileCompletionController } from './profile-completion.controller';
 import { ProfileCompletionService } from './profile-completion.service';

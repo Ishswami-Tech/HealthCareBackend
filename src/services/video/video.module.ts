@@ -12,7 +12,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config';
 import { CacheModule } from '@infrastructure/cache';
 import { LoggingModule } from '@infrastructure/logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { HttpModule } from '@infrastructure/http';
 import { SocketModule } from '@communication/channels/socket/socket.module';
 import { EventsModule } from '@infrastructure/events';

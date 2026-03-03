@@ -19,7 +19,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config/config.module';
 import { EventsModule } from '@infrastructure/events';
 import { ResilienceModule } from '@core/resilience';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
 import { getEnvWithDefault } from '@config/environment/utils';

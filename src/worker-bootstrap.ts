@@ -14,7 +14,7 @@ import type { INestApplication } from '@nestjs/common';
 import { Module, forwardRef, type DynamicModule, Logger } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { ConfigModule } from '@config';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { CacheModule } from '@infrastructure/cache';
 import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
