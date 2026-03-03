@@ -1298,16 +1298,42 @@ export class ClinicService {
             >;
           };
         };
-        return (await typedClient.doctorClinic.findMany({
-          where: { clinicId: id } as PrismaDelegateArgs,
+        // Fetch users who have DOCTOR role at this clinic
+        const users = await typedClient.user.findMany({
+          where: {
+            OR: [
+              { role: Role.DOCTOR },
+              { role: 'DOCTOR' },
+              {
+                userRoles: { some: { clinicId: id, role: { name: Role.DOCTOR }, isActive: true } },
+              },
+            ],
+            AND: [
+              {
+                OR: [
+                  { doctor: { clinics: { some: { clinicId: id } } } },
+                  { primaryClinicId: id },
+                  { clinics: { some: { id } } },
+                  { userRoles: { some: { clinicId: id, isActive: true } } },
+                ],
+              },
+            ],
+          } as PrismaDelegateArgs,
           include: {
             doctor: {
-              include: { user: true } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs,
+              include: { user: true },
+            },
           } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs)) as unknown as Array<{
-          doctor: Doctor & { user: { id: string; name: string; email: string } };
-        }>;
+        });
+
+        // Filter out those without doctor profile and format
+        return users
+          .filter(u => u.doctor)
+          .map(u => ({
+            doctor: u.doctor as unknown as Doctor & {
+              user: { id: string; name: string; email: string };
+            },
+          }));
       });
       return doctors;
     } catch (error) {
@@ -1355,6 +1381,8 @@ export class ClinicService {
           isActive: boolean;
           profilePicture: string | null;
           createdAt: Date;
+          doctor?: { specialization: string; experience: number } | null;
+          specialization?: string;
         }>
       >(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -1373,21 +1401,41 @@ export class ClinicService {
         ];
         const result = await typedClient.user.findMany({
           where: {
-            role: { in: staffRoles },
             OR: [
-              { primaryClinicId: id },
-              { doctor: { clinics: { some: { clinicId: id } } } },
-              { receptionists: { clinicId: id } },
-              { clinicAdmins: { clinicId: id } },
-              { pharmacist: { clinicId: id } },
-              { nurse: { clinicId: id } },
-              { therapist: { clinicId: id } },
-              { labTechnician: { clinicId: id } },
-              { counselor: { clinicId: id } },
-              { supportStaff: { clinicId: id } },
-              { financeBilling: { clinicId: id } },
-              { clinics: { some: { id } } },
+              { role: { in: staffRoles } },
+              {
+                userRoles: {
+                  some: { clinicId: id, role: { name: { in: staffRoles } }, isActive: true },
+                },
+              },
             ],
+            AND: [
+              {
+                OR: [
+                  { primaryClinicId: id },
+                  { doctor: { clinics: { some: { clinicId: id } } } },
+                  { receptionists: { clinicId: id } },
+                  { clinicAdmins: { clinicId: id } },
+                  { pharmacist: { clinicId: id } },
+                  { nurse: { clinicId: id } },
+                  { therapist: { clinicId: id } },
+                  { labTechnician: { clinicId: id } },
+                  { counselor: { clinicId: id } },
+                  { supportStaff: { clinicId: id } },
+                  { financeBilling: { clinicId: id } },
+                  { clinics: { some: { id } } },
+                  { userRoles: { some: { clinicId: id, isActive: true } } },
+                ],
+              },
+            ],
+          } as PrismaDelegateArgs,
+          include: {
+            doctor: {
+              select: {
+                specialization: true,
+                experience: true,
+              },
+            },
           } as PrismaDelegateArgs,
           select: {
             id: true,
@@ -1449,6 +1497,8 @@ export class ClinicService {
               OR: [
                 ...(patientIds.length > 0 ? [{ id: { in: patientIds } }] : []),
                 { user: { primaryClinicId: id } },
+                { user: { clinics: { some: { id } } } },
+                { user: { userRoles: { some: { clinicId: id } } } },
               ],
             } as PrismaDelegateArgs,
             include: { user: true } as PrismaDelegateArgs,

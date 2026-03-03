@@ -39,7 +39,17 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
       ] = await Promise.all([
         // Total patients count (cached, long TTL)
         this.executeRead(
-          async prisma => prisma.patient.count({ where: { clinicId } }),
+          async prisma =>
+            prisma.patient.count({
+              where: {
+                OR: [
+                  { appointments: { some: { clinicId } } },
+                  { user: { primaryClinicId: clinicId } },
+                  { user: { clinics: { some: { id: clinicId } } } },
+                  { user: { userRoles: { some: { clinicId } } } },
+                ],
+              },
+            }),
           this.queryOptionsBuilder
             .clinicId(clinicId)
             .useCache(true)
@@ -69,7 +79,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
           return prisma.appointment.count({
             where: {
               clinicId,
-              appointmentDate: { gte: today, lt: tomorrow },
+              date: { gte: today, lt: tomorrow },
             },
           });
         }, this.queryOptionsBuilder.clinicId(clinicId).useCache(true).cacheStrategy('short').priority('normal').build()),
@@ -84,7 +94,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
           return prisma.appointment.count({
             where: {
               clinicId,
-              appointmentDate: { gte: today, lte: nextWeek },
+              date: { gte: today, lte: nextWeek },
               status: { notIn: ['CANCELLED', 'COMPLETED'] },
             },
           });
@@ -206,18 +216,25 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
       const skip = (page - 1) * limit;
 
       // Build optimized where clause
+      // Note: Patient doesn't have clinicId directly, it's linked via appointments or user relations
       const where = {
-        clinicId,
-        ...(options?.locationId && { locationId: options.locationId }),
+        OR: [
+          { appointments: { some: { clinicId } } },
+          { user: { primaryClinicId: clinicId } },
+          { user: { clinics: { some: { id: clinicId } } } },
+          { user: { userRoles: { some: { clinicId } } } },
+        ],
         ...(options?.searchTerm && {
-          OR: [
-            { firstName: { contains: options.searchTerm, mode: 'insensitive' } },
-            { lastName: { contains: options.searchTerm, mode: 'insensitive' } },
-            { email: { contains: options.searchTerm, mode: 'insensitive' } },
-            { phone: { contains: options.searchTerm, mode: 'insensitive' } },
-          ],
+          user: {
+            OR: [
+              { firstName: { contains: options.searchTerm, mode: 'insensitive' } },
+              { lastName: { contains: options.searchTerm, mode: 'insensitive' } },
+              { email: { contains: options.searchTerm, mode: 'insensitive' } },
+              { name: { contains: options.searchTerm, mode: 'insensitive' } },
+              { phone: { contains: options.searchTerm, mode: 'insensitive' } },
+            ],
+          },
         }),
-        ...(options?.includeInactive === false && { isActive: true }),
       };
 
       // Parallel queries for optimal performance
@@ -232,20 +249,21 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
               orderBy: { createdAt: 'desc' },
               select: {
                 id: true,
-                firstName: true,
-                lastName: true,
-                email: true,
-                phone: true,
-                dateOfBirth: true,
-                gender: true,
-                address: true,
-                isActive: true,
                 createdAt: true,
-                updatedAt: true,
-                clinicId: true,
-                locationId: true,
                 user: {
-                  select: { id: true, email: true, name: true, role: true },
+                  select: {
+                    id: true,
+                    email: true,
+                    name: true,
+                    firstName: true,
+                    lastName: true,
+                    phone: true,
+                    role: true,
+                    isActive: true,
+                    dateOfBirth: true,
+                    gender: true,
+                    address: true,
+                  },
                 },
               },
             }),
@@ -273,42 +291,35 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
       const mappedPatients: PatientWithUser[] = patients.map(p => {
         const patientData = p as unknown as {
           id: string;
-          firstName: string | null;
-          lastName: string | null;
-          email: string | null;
-          phone: string | null;
-          dateOfBirth: Date | null;
-          gender: string | null;
-          address: string | null;
-          isActive: boolean;
           createdAt: Date;
-          updatedAt: Date;
-          clinicId: string;
-          locationId: string | null;
           user: {
             id: string;
             email: string;
             name: string | null;
+            firstName: string | null;
+            lastName: string | null;
+            phone: string | null;
             role: string;
-          } | null;
+            isActive: boolean;
+            dateOfBirth: Date | null;
+            gender: string | null;
+            address: string | null;
+          };
         };
 
         return {
-          ...patientData,
-          userId: patientData.user?.id || '',
-          user: patientData.user || {
-            id: '',
-            email: patientData.email || '',
-            name: `${patientData.firstName || ''} ${patientData.lastName || ''}`.trim() || null,
-            firstName: patientData.firstName || undefined,
-            lastName: patientData.lastName || undefined,
-            phone: patientData.phone || undefined,
-            dateOfBirth: patientData.dateOfBirth || undefined,
-            gender: patientData.gender || undefined,
-            address: patientData.address || undefined,
-            emergencyContact: undefined as string | undefined,
-            isVerified: false,
-          },
+          id: patientData.id,
+          userId: patientData.user.id,
+          firstName: patientData.user.firstName,
+          lastName: patientData.user.lastName,
+          email: patientData.user.email,
+          phone: patientData.user.phone,
+          dateOfBirth: patientData.user.dateOfBirth,
+          gender: patientData.user.gender,
+          address: patientData.user.address,
+          isActive: patientData.user.isActive,
+          createdAt: patientData.createdAt,
+          user: patientData.user,
         } as unknown as PatientWithUser;
       });
 
@@ -351,7 +362,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
         ...(options?.doctorId && { doctorId: options.doctorId }),
         ...(options?.status && { status: options.status }),
         ...((options?.dateFrom || options?.dateTo) && {
-          appointmentDate: {
+          date: {
             ...(options.dateFrom && { gte: options.dateFrom }),
             ...(options.dateTo && {
               lte: (() => {
@@ -373,7 +384,7 @@ export class ClinicMetricsMethods extends DatabaseMethodsBase {
               where: where as never,
               skip,
               take: limit,
-              orderBy: { appointmentDate: 'asc' },
+              orderBy: { date: 'asc' },
               include: {
                 patient: {
                   select: { id: true, firstName: true, lastName: true, email: true, phone: true },

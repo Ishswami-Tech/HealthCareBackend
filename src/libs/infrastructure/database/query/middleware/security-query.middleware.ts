@@ -12,7 +12,10 @@ import { BaseQueryMiddleware, type QueryMiddlewareContext } from './base-query.m
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { SQLInjectionPreventionService } from '@database/internal/sql-injection-prevention.service';
-import { RowLevelSecurityService } from '@database/internal/row-level-security.service';
+import {
+  RowLevelSecurityService,
+  type RLSContext,
+} from '@database/internal/row-level-security.service';
 
 /**
  * Security query middleware - SQL injection check, RLS enforcement
@@ -62,11 +65,21 @@ export class SecurityQueryMiddleware extends BaseQueryMiddleware {
 
     // Enforce row-level security if enabled
     if (context.options.rowLevelSecurity !== false && context.clinicId) {
-      // RLS will be enforced by RowLevelSecurityService
+      // Modify where clause to include RLS filters
+      const originalWhere = context.options.where || {};
+      const modelName = context.operation.split('.')[0];
+
+      const rlsContext: RLSContext = {
+        clinicId: context.clinicId,
+      };
+      if (modelName) rlsContext.modelName = modelName;
+
+      context.options.where = this.rowLevelSecurity.applyRLSFilter(originalWhere, rlsContext);
+
       void this.loggingService.log(
         LogType.DATABASE,
         LogLevel.DEBUG,
-        `RLS enforcement enabled for clinic: ${context.clinicId}`,
+        `RLS enforcement applied for clinic: ${context.clinicId}, model: ${modelName}`,
         'SecurityQueryMiddleware'
       );
     }
