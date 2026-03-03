@@ -104,7 +104,6 @@ export class LocationManagementService {
       Role.SUPPORT_STAFF,
       Role.NURSE,
       Role.COUNSELOR,
-      Role.LOCATION_HEAD,
     ];
 
     if (!staffRoles.includes(user.role as Role)) {
@@ -306,25 +305,6 @@ export class LocationManagementService {
         );
         break;
       }
-      case Role.LOCATION_HEAD:
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              locationHead: {
-                updateMany: (args: {
-                  where: { userId: string; clinicId: string };
-                  data: { locationId: string };
-                }) => Promise<unknown>;
-              };
-            };
-            await typedClient.locationHead.updateMany({
-              where: { userId, clinicId },
-              data: { locationId },
-            });
-          },
-          { ...auditInfo, resourceType: 'LOCATION_HEAD' }
-        );
-        break;
       case Role.RECEPTIONIST:
         await this.databaseService.executeHealthcareWrite(
           async client => {

@@ -116,17 +116,17 @@ export class StaffService {
         // Assuming ClinicAdmin/Receptionist/Nurse has clinicId relation
         const role = filters.role;
         if (role === 'RECEPTIONIST') {
-          where['receptionists'] = { some: { clinicId: filters.clinicId } };
+          where['receptionists'] = { clinicId: filters.clinicId };
         } else if (role === 'CLINIC_ADMIN') {
-          where['clinicAdmins'] = { some: { clinicId: filters.clinicId } };
+          where['clinicAdmins'] = { clinicId: filters.clinicId };
         } else if (role === 'NURSE') {
-          where['nurse'] = { some: { clinicId: filters.clinicId } };
+          where['nurse'] = { clinicId: filters.clinicId };
         } else {
           // If role not specified but clinicId is, search all relations
           where['OR'] = [
-            { receptionists: { some: { clinicId: filters.clinicId } } },
-            { clinicAdmins: { some: { clinicId: filters.clinicId } } },
-            { nurse: { some: { clinicId: filters.clinicId } } },
+            { receptionists: { clinicId: filters.clinicId } },
+            { clinicAdmins: { clinicId: filters.clinicId } },
+            { nurse: { clinicId: filters.clinicId } },
           ];
         }
       }
@@ -151,7 +151,7 @@ export class StaffService {
       // 🔒 TENANT ISOLATION: Build where clause with clinic scoping
       const where: Record<string, unknown> = { id: userId };
       if (clinicId) {
-        where['userClinics'] = { some: { clinicId } };
+        where['clinics'] = { some: { id: clinicId } };
       }
 
       return await typedClient.user.findUnique({

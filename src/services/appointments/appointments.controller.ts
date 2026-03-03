@@ -814,18 +814,27 @@ export class AppointmentsController {
         { userId: currentUserId }
       );
 
-      const result = (await this.appointmentService.getUserUpcomingAppointments(
+      const response = (await this.appointmentService.getUserUpcomingAppointments(
         currentUserId,
         clinicId,
         req.user?.role || Role.PATIENT
-      )) as AppointmentResponseDto[];
+      )) as { data?: { appointments?: AppointmentResponseDto[] } | AppointmentResponseDto[] };
+
+      let result: AppointmentResponseDto[] = [];
+      if (Array.isArray(response.data)) {
+        result = response.data;
+      } else if (response.data && 'appointments' in response.data) {
+        result = response.data.appointments || [];
+      } else if (Array.isArray(response)) {
+        result = response as unknown as AppointmentResponseDto[];
+      }
 
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        `Retrieved ${result?.length || 0} upcoming appointments for user ${currentUserId}`,
+        `Retrieved ${result.length || 0} upcoming appointments for user ${currentUserId}`,
         'AppointmentsController',
-        { userId: currentUserId, count: result?.length || 0 }
+        { userId: currentUserId, count: result.length || 0 }
       );
       return result;
     } catch (_error) {
@@ -1112,18 +1121,27 @@ export class AppointmentsController {
         { userId, currentUserId }
       );
 
-      const result = (await this.appointmentService.getUserUpcomingAppointments(
+      const response = (await this.appointmentService.getUserUpcomingAppointments(
         userId,
         clinicId,
         req.user?.role || Role.PATIENT
-      )) as AppointmentResponseDto[];
+      )) as { data?: { appointments?: AppointmentResponseDto[] } | AppointmentResponseDto[] };
+
+      let result: AppointmentResponseDto[] = [];
+      if (Array.isArray(response.data)) {
+        result = response.data;
+      } else if (response.data && 'appointments' in response.data) {
+        result = response.data.appointments || [];
+      } else if (Array.isArray(response)) {
+        result = response as unknown as AppointmentResponseDto[];
+      }
 
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        `Retrieved ${result?.length || 0} upcoming appointments for user ${userId}`,
+        `Retrieved ${result.length || 0} upcoming appointments for user ${userId}`,
         'AppointmentsController',
-        { userId, count: result?.length || 0 }
+        { userId, count: result.length || 0 }
       );
       return result;
     } catch (_error) {

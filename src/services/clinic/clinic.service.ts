@@ -1359,18 +1359,17 @@ export class ClinicService {
       >(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
         const staffRoles = [
-          'CLINIC_ADMIN',
-          'DOCTOR',
-          'ASSISTANT_DOCTOR',
-          'RECEPTIONIST',
-          'PHARMACIST',
-          'NURSE',
-          'THERAPIST',
-          'LAB_TECHNICIAN',
-          'FINANCE_BILLING',
-          'SUPPORT_STAFF',
-          'COUNSELOR',
-          'LOCATION_HEAD',
+          Role.CLINIC_ADMIN,
+          Role.DOCTOR,
+          Role.ASSISTANT_DOCTOR,
+          Role.RECEPTIONIST,
+          Role.PHARMACIST,
+          Role.NURSE,
+          Role.THERAPIST,
+          Role.LAB_TECHNICIAN,
+          Role.FINANCE_BILLING,
+          Role.SUPPORT_STAFF,
+          Role.COUNSELOR,
         ];
         const result = await typedClient.user.findMany({
           where: {
@@ -1379,8 +1378,15 @@ export class ClinicService {
               { primaryClinicId: id },
               { doctor: { clinics: { some: { clinicId: id } } } },
               { receptionists: { clinicId: id } },
-              { clinicAdmins: { some: { clinicId: id } } },
+              { clinicAdmins: { clinicId: id } },
               { pharmacist: { clinicId: id } },
+              { nurse: { clinicId: id } },
+              { therapist: { clinicId: id } },
+              { labTechnician: { clinicId: id } },
+              { counselor: { clinicId: id } },
+              { supportStaff: { clinicId: id } },
+              { financeBilling: { clinicId: id } },
+              { clinics: { some: { id } } },
             ],
           } as PrismaDelegateArgs,
           select: {
@@ -1438,13 +1444,12 @@ export class ClinicService {
           const typedAppointments = appointments as Array<{ patientId: string }>;
           const patientIds = typedAppointments.map((a: { patientId: string }) => a.patientId);
 
-          if (patientIds.length === 0) {
-            return [];
-          }
-
           const result = await typedClient.patient.findMany({
             where: {
-              id: { in: patientIds },
+              OR: [
+                ...(patientIds.length > 0 ? [{ id: { in: patientIds } }] : []),
+                { user: { primaryClinicId: id } },
+              ],
             } as PrismaDelegateArgs,
             include: { user: true } as PrismaDelegateArgs,
           } as PrismaDelegateArgs);
