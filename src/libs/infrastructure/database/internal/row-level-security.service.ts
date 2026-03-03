@@ -64,6 +64,19 @@ export class RowLevelSecurityService {
         } as T;
       }
 
+      // Patient model doesn't have clinicId directly
+      if (context.modelName === 'patient' || context.modelName === 'Patient') {
+        return {
+          ...where,
+          OR: [
+            { appointments: { some: { clinicId: context.clinicId } } },
+            { user: { primaryClinicId: context.clinicId } },
+            { user: { clinics: { some: { id: context.clinicId } } } },
+            { user: { userRoles: { some: { clinicId: context.clinicId } } } },
+          ],
+        } as unknown as T;
+      }
+
       // Other models use direct clinicId
       return {
         ...where,

@@ -1180,13 +1180,16 @@ export class CoreAppointmentService {
       const dayStart = new Date(`${date}T00:00:00.000Z`);
       const dayEnd = new Date(`${date}T23:59:59.999Z`);
 
-      const appointmentsResult = await this.databaseService.findAppointmentsSafe({
-        doctorId,
-        // Filter to only active appointments on the requested date
-        // Cancelled/Completed/No-show appointments free up the slot
-        date: { gte: dayStart, lte: dayEnd },
-        status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW'] },
-      });
+      const appointmentsResult = await this.databaseService.findAppointmentsSafe(
+        {
+          doctorId,
+          // Filter to only active appointments on the requested date
+          // Cancelled/Completed/No-show appointments free up the slot
+          date: { gte: dayStart, lte: dayEnd },
+          status: { notIn: ['CANCELLED', 'COMPLETED', 'NO_SHOW'] },
+        },
+        { rowLevelSecurity: false }
+      );
 
       // Ensure appointments is an array
       // findAppointmentsSafe should return AppointmentWithRelations[], but handle edge cases
@@ -1230,11 +1233,36 @@ export class CoreAppointmentService {
           const aptHour = parseInt(timeParts[0] || '0', 10);
           const aptMin = parseInt(timeParts[1] || '0', 10);
           const aptStartMinutes = aptHour * 60 + aptMin;
+
+          // Slot overlaps with appointment if:
+          // Appointment start is before slot end AND Appointment end is after slot start
+          const slotDuration = 30;
+          const slotEndMinutes = currentMinutes + slotDuration;
           const aptEndMinutes = aptStartMinutes + aptDuration;
 
-          // Slot is booked if it's within the appointment's time range
-          return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
+          return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
         });
+
+        // 3. For today's availability, filter out slots that have already passed
+        const requestedDate = new Date(date);
+        const today = new Date();
+        const isToday = requestedDate.toDateString() === today.toDateString();
+
+        if (isToday) {
+          const currentHour = today.getHours();
+          const currentMinute = today.getMinutes();
+          const totalCurrentMinutes = currentHour * 60 + currentMinute;
+
+          // If slot has already started or is too close to start (e.g. within 15 mins), mark as unavailable
+          if (currentMinutes < totalCurrentMinutes + 15) {
+            timeSlots.push({
+              time,
+              available: false,
+              message: 'Slot has already passed or is too soon',
+            });
+            continue;
+          }
+        }
 
         const bookedAppointment = isBooked
           ? appointments.find((apt: AppointmentItem) => {

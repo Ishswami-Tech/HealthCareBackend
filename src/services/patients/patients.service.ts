@@ -391,10 +391,14 @@ export class PatientsService {
         } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
         patientIds = appointments.map(a => a.patientId);
 
-        // 2. ALSO get patients whose primary clinic is this one
+        // 2. ALSO get patients linked via various relations
         const usersInClinic = (await typedClient.user.findMany({
           where: {
-            primaryClinicId: clinicId,
+            OR: [
+              { primaryClinicId: clinicId },
+              { clinics: { some: { id: clinicId } } },
+              { userRoles: { some: { clinicId, isActive: true } } },
+            ],
             role: 'PATIENT',
           } as PrismaDelegateArgs,
           select: {
@@ -402,10 +406,10 @@ export class PatientsService {
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs)) as Array<{ patient: { id: string } | null }>;
 
-        const primaryPatientIds = usersInClinic.filter(u => u.patient).map(u => u.patient!.id);
+        const relatedPatientIds = usersInClinic.filter(u => u.patient).map(u => u.patient!.id);
 
         // Combine and deduplicate
-        patientIds = Array.from(new Set([...patientIds, ...primaryPatientIds]));
+        patientIds = Array.from(new Set([...patientIds, ...relatedPatientIds]));
       }
 
       if (patientIds.length === 0) return [];

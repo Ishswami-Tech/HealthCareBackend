@@ -66,6 +66,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       skip?: number;
       take?: number;
       orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
+      rowLevelSecurity?: boolean;
     }
   ): Promise<AppointmentWithRelations[]> {
     return await this.executeRead<AppointmentWithRelations[]>(
@@ -103,7 +104,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         .cacheStrategy('short')
         .priority('normal')
         .hipaaCompliant(true)
-        .rowLevelSecurity(true)
+        .rowLevelSecurity(options?.rowLevelSecurity !== undefined ? options.rowLevelSecurity : true)
         .build()
     );
   }
