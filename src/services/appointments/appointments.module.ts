@@ -4,7 +4,7 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
 
 // Infrastructure Services
 import { LoggingModule } from '@infrastructure/logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { EventsModule } from '@infrastructure/events';
 import { CacheModule } from '@infrastructure/cache';
 import { RbacModule } from '@core/rbac/rbac.module';

@@ -3,7 +3,7 @@ import { UsersService } from './users.service';
 import { UsersController } from './controllers/users.controller';
 import { ClinicContextService } from './core/clinic-context.service';
 import { LocationManagementService } from './services/location-management.service';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { GuardsModule } from '@core/guards/guards.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { EventsModule } from '@infrastructure/events/events.module';

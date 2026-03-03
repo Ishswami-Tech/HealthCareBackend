@@ -9,7 +9,7 @@
 
 import { Module } from '@nestjs/common';
 import { LoggingModule } from '@infrastructure/logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { SearchService } from './search.service';
 
 @Module({

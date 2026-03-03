@@ -3,8 +3,8 @@ import { JwtModule, type JwtModuleOptions } from '@nestjs/jwt';
 import { ConfigModule } from '@config/config.module';
 import { ConfigService } from '@config/config.service';
 
-// Core modules
-import { DatabaseModule } from '@infrastructure/database';
+// Use direct import (not barrel) to avoid TDZ circular dependency at startup
+import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { EventsModule } from '@infrastructure/events';
 import { RbacModule } from '@core/rbac/rbac.module';

@@ -2,7 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LoggingModule } from '@infrastructure/logging';
-import { DatabaseModule } from '@infrastructure/database';
+import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { CacheModule } from '@infrastructure/cache';
 import { EventsModule } from '@infrastructure/events';
 import { NotificationPreferenceController } from './notification-preference.controller';
