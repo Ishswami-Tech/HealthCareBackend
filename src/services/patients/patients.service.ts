@@ -366,20 +366,23 @@ export class PatientsService {
         doctor: { findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null> };
       };
 
-      let patientIds: string[];
+      let patientIds: string[] = [];
 
+      // 1. Get patients who have appointments in this clinic
       if (doctorUserId) {
         const doctor = (await typedClient.doctor.findUnique({
           where: { userId: doctorUserId } as PrismaDelegateArgs,
           select: { id: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs)) as { id: string } | null;
-        if (!doctor) return [];
-        const appointments = (await typedClient.appointment.findMany({
-          where: { clinicId, doctorId: doctor.id } as PrismaDelegateArgs,
-          select: { patientId: true } as PrismaDelegateArgs,
-          distinct: ['patientId'] as unknown as PrismaDelegateArgs,
-        } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
-        patientIds = appointments.map(a => a.patientId);
+
+        if (doctor) {
+          const appointments = (await typedClient.appointment.findMany({
+            where: { clinicId, doctorId: doctor.id } as PrismaDelegateArgs,
+            select: { patientId: true } as PrismaDelegateArgs,
+            distinct: ['patientId'] as unknown as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
+          patientIds = appointments.map(a => a.patientId);
+        }
       } else {
         const appointments = (await typedClient.appointment.findMany({
           where: { clinicId } as PrismaDelegateArgs,
@@ -387,6 +390,22 @@ export class PatientsService {
           distinct: ['patientId'] as unknown as PrismaDelegateArgs,
         } as PrismaDelegateArgs)) as Array<{ patientId: string }>;
         patientIds = appointments.map(a => a.patientId);
+
+        // 2. ALSO get patients whose primary clinic is this one
+        const usersInClinic = (await typedClient.user.findMany({
+          where: {
+            primaryClinicId: clinicId,
+            role: 'PATIENT',
+          } as PrismaDelegateArgs,
+          select: {
+            patient: { select: { id: true } },
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs)) as Array<{ patient: { id: string } | null }>;
+
+        const primaryPatientIds = usersInClinic.filter(u => u.patient).map(u => u.patient!.id);
+
+        // Combine and deduplicate
+        patientIds = Array.from(new Set([...patientIds, ...primaryPatientIds]));
       }
 
       if (patientIds.length === 0) return [];

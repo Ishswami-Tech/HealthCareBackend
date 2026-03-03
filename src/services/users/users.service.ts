@@ -182,7 +182,7 @@ export class UsersService {
           }
           // 🔒 TENANT ISOLATION: Filter by clinic when clinicId is provided
           if (clinicId) {
-            where['clinics'] = { some: { clinicId } };
+            where['clinics'] = { some: { id: clinicId } };
           }
           const result = await typedClient.user.findMany({
             where: where as PrismaDelegateArgs,
@@ -1108,8 +1108,7 @@ export class UsersService {
         ?.clinics;
       const belongsToClinic =
         targetPrimaryClinic === clinicId ||
-        (Array.isArray(user.clinicAdmins) &&
-          user.clinicAdmins.some((ca: { clinicId: string }) => ca.clinicId === clinicId)) ||
+        (user.clinicAdmins as { clinicId?: string } | null)?.clinicId === clinicId ||
         (user.receptionists as { clinicId?: string } | null)?.clinicId === clinicId ||
         docClinics?.some((c: { clinicId: string }) => c.clinicId === clinicId);
       if (!belongsToClinic) {
@@ -1139,7 +1138,6 @@ export class UsersService {
       Role.SUPPORT_STAFF,
       Role.NURSE,
       Role.COUNSELOR,
-      Role.LOCATION_HEAD,
     ];
 
     // Validate location belongs to clinic if locationId is provided (optional for clinic admin)
@@ -1233,7 +1231,6 @@ export class UsersService {
             labTechnician: true,
             financeBilling: true,
             supportStaff: true,
-            locationHead: true,
             nurse: true,
             counselor: true,
           } as PrismaDelegateArgs,
@@ -1315,15 +1312,53 @@ export class UsersService {
         },
         {
           receptionists: {
-            some: {
-              clinicId: clinicId,
-            },
+            clinicId: clinicId,
           },
         },
         {
           clinicAdmins: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          nurse: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          pharmacist: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          therapist: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          labTechnician: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          counselor: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          supportStaff: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          financeBilling: {
+            clinicId: clinicId,
+          },
+        },
+        {
+          clinics: {
             some: {
-              clinicId: clinicId,
+              id: clinicId,
             },
           },
         },
@@ -1928,7 +1963,6 @@ export class UsersService {
       { cond: (user.role as Role) === Role.PATIENT, type: 'patient' },
       { cond: (user.role as Role) === Role.RECEPTIONIST, type: 'receptionist' },
       { cond: (user.role as Role) === Role.CLINIC_ADMIN, type: 'clinicAdmin' },
-      { cond: (user.role as Role) === Role.LOCATION_HEAD, type: 'locationHead' },
       { cond: (user.role as Role) === Role.SUPER_ADMIN, type: 'superAdmin' },
       { cond: (user.role as Role) === Role.PHARMACIST, type: 'pharmacist' },
       { cond: (user.role as Role) === Role.THERAPIST, type: 'therapist' },
@@ -1993,12 +2027,6 @@ export class UsersService {
         data['locationId'] = locationId;
         resourceType = role.toString();
         break;
-      case Role.LOCATION_HEAD:
-        data['clinicId'] = clinicId;
-        data['locationId'] = locationId;
-        data['assignedBy'] = auditInfo.userId || 'SYSTEM';
-        resourceType = 'LOCATION_HEAD';
-        break;
       case Role.PATIENT:
       case Role.SUPER_ADMIN:
         resourceType = role.toString();
@@ -2019,7 +2047,6 @@ export class UsersService {
       [Role.SUPPORT_STAFF]: 'supportStaff',
       [Role.NURSE]: 'nurse',
       [Role.COUNSELOR]: 'counselor',
-      [Role.LOCATION_HEAD]: 'locationHead',
     };
 
     const modelName = prismaModelMap[role];
