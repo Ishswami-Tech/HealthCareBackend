@@ -921,10 +921,19 @@ export class AppointmentsController {
       }
 
       const doctorId = doctorIdParam;
-      const clinicId = req.clinicContext?.clinicId;
+
+      // Resolve clinicId from multiple sources:
+      // 1. req.clinicContext set by ClinicGuard (authenticated + validated)
+      // 2. X-Clinic-ID header directly (for @Public() endpoint where guard skips full validation)
+      const clinicId =
+        req.clinicContext?.clinicId ||
+        (req.headers['x-clinic-id'] as string) ||
+        (req.headers['clinic-id'] as string);
 
       if (!clinicId) {
-        throw new BadRequestException('Clinic context is required');
+        throw new BadRequestException(
+          'Clinic ID is required. Please provide via X-Clinic-ID header.'
+        );
       }
 
       if (!date) {

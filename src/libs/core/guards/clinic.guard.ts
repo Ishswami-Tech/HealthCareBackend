@@ -83,6 +83,9 @@ export class ClinicGuard implements CanActivate {
 
     // Skip clinic validation for specific public modules
     // These modules don't require clinic context
+    // NOTE: /appointments/doctor (availability) is intentionally NOT in this list —
+    // although it is @Public(), it still needs req.clinicContext populated so the
+    // controller can look up availability for the correct clinic.
     const publicModules = [
       '/health',
       '/dashboard',
@@ -91,7 +94,6 @@ export class ClinicGuard implements CanActivate {
       '/socket-test',
       '/docs',
       '/api-docs',
-      '/appointments/doctor', // Doctor availability endpoint
     ];
     const isPublicModule = publicModules.some(module => request.url.startsWith(module));
 
