@@ -937,12 +937,30 @@ export class AppointmentsController {
         throw new BadRequestException('Date must be in YYYY-MM-DD format');
       }
 
-      // Check if date is not in the past
-      const requestedDate = new Date(date);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      // Fix: Interpret the requested date string carefully in local time
+      const dateParts = date.split('-');
+      const yearStr = dateParts[0] || '2000';
+      const monthStr = dateParts[1] || '01';
+      const dayStr = dateParts[2] || '01';
 
-      if (requestedDate < today) {
+      // Enforce Indian Standard Time (IST) exactly for calculating "today"
+      const now = new Date();
+      const istOptions = {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      } as const;
+      const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
+      const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
+      const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
+      const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
+
+      const requestedDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, parseInt(dayStr));
+      const todayIST = new Date(istYear, istMonth - 1, istDay);
+      todayIST.setHours(0, 0, 0, 0);
+
+      if (requestedDate.getTime() < todayIST.getTime()) {
         throw new BadRequestException('Cannot check availability for past dates');
       }
 

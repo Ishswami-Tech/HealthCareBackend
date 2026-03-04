@@ -1244,13 +1244,40 @@ export class CoreAppointmentService {
         });
 
         // 3. For today's availability, filter out slots that have already passed
-        const requestedDate = new Date(date);
-        const today = new Date();
-        const isToday = requestedDate.toDateString() === today.toDateString();
+        const dateParts = date.split('-');
+        // Enforce IST time exactly
+        const now = new Date();
+        const istOptions = {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        } as const;
+        const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
+        const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
+        const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
+        const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
+
+        const requestedDate = new Date(
+          parseInt(dateParts[0] || '2000'),
+          parseInt(dateParts[1] || '01') - 1,
+          parseInt(dateParts[2] || '01')
+        );
+        const todayIST = new Date(istYear, istMonth - 1, istDay);
+        const isToday = requestedDate.toDateString() === todayIST.toDateString();
 
         if (isToday) {
-          const currentHour = today.getHours();
-          const currentMinute = today.getMinutes();
+          // Calculate current minutes in IST explicitly
+          const istTimeOptions = {
+            timeZone: 'Asia/Kolkata',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          } as const;
+          const istTimeParts = new Intl.DateTimeFormat('en-US', istTimeOptions).format(now);
+          const [currentHourStr, currentMinuteStr] = istTimeParts.split(':');
+          const currentHour = parseInt(currentHourStr || '0', 10);
+          const currentMinute = parseInt(currentMinuteStr || '0', 10);
           const totalCurrentMinutes = currentHour * 60 + currentMinute;
 
           // If slot has already started or is too close to start (e.g. within 15 mins), mark as unavailable
