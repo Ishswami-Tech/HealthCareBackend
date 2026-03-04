@@ -15,6 +15,7 @@ import { LogLevel, LogType } from '@core/types';
 import { Role } from '@core/types/enums.types';
 import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 import { REQUIRES_PROFILE_COMPLETION_KEY } from '@core/decorators/profile-completion.decorator';
+import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 
 /**
  * Profile Completion Guard
@@ -62,6 +63,16 @@ export class ProfileCompletionGuard implements CanActivate {
 
       // If profile completion is not required for this endpoint, allow access
       if (!requiresProfileCompletion) {
+        return true;
+      }
+
+      // Allow public endpoints to bypass profile completion (prevents 401 for guests)
+      const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+
+      if (isPublic) {
         return true;
       }
 
