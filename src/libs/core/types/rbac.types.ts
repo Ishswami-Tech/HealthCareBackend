@@ -28,7 +28,7 @@ export const RolesList = [
   'SUPPORT_STAFF',
   'NURSE',
   'COUNSELOR',
-  'LOCATION_HEAD',
+  'CLINIC_LOCATION_HEAD',
 ] as const;
 
 export type Role = (typeof RolesList)[number];

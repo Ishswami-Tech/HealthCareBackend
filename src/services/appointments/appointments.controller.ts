@@ -858,15 +858,6 @@ export class AppointmentsController {
   @Get('doctor/:doctorId/availability')
   @HttpCode(HttpStatus.OK)
   @Public()
-  @Cache({
-    keyTemplate: 'appointments:availability:{doctorId}:{date}',
-    ttl: 180,
-    tags: ['appointments', 'doctor_availability'],
-    priority: 'high',
-    enableSWR: true,
-    containsPHI: false,
-    compress: false,
-  })
   @ApiOperation({
     summary: 'Get doctor availability',
     description:

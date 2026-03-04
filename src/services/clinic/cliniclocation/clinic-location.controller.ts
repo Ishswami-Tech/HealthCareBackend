@@ -42,7 +42,7 @@ export class ClinicLocationController {
   constructor(private readonly locationService: ClinicLocationService) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @RequireResourcePermission('clinics', 'create')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}'],
@@ -82,6 +82,7 @@ export class ClinicLocationController {
   @Roles(
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
+    Role.CLINIC_LOCATION_HEAD,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
@@ -111,6 +112,7 @@ export class ClinicLocationController {
   @Roles(
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
+    Role.CLINIC_LOCATION_HEAD,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
     Role.RECEPTIONIST,
@@ -140,7 +142,7 @@ export class ClinicLocationController {
   }
 
   @Put(':id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @RequireResourcePermission('clinics', 'update')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
@@ -190,7 +192,7 @@ export class ClinicLocationController {
   }
 
   @Delete(':id')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @RequireResourcePermission('clinics', 'delete')
   @InvalidateClinicCache({
     tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
