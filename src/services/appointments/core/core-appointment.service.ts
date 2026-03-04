@@ -1000,7 +1000,8 @@ export class CoreAppointmentService {
       const patterns = [
         `appointments:${clinicId}:*`,
         `metrics:${clinicId}:*`,
-        `doctor:availability:${clinicId}:*`,
+        `doctor:*:clinic:${clinicId}:*availability*`, // Matches enhanced key pattern
+        `availability:${clinicId}:*`,
       ];
 
       for (const pattern of patterns) {
@@ -1156,12 +1157,22 @@ export class CoreAppointmentService {
               };
             }
 
-            // Update working hours if defined
+            // Update working hours if defined - extract HH:mm using IST to avoid UTC shifts
+            const timeFormatOptions = {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            } as const;
             if (doctorClinic.startTime) {
-              workingHours.start = new Date(doctorClinic.startTime).toISOString().substring(11, 16);
+              workingHours.start = new Intl.DateTimeFormat('en-US', timeFormatOptions).format(
+                new Date(doctorClinic.startTime)
+              );
             }
             if (doctorClinic.endTime) {
-              workingHours.end = new Date(doctorClinic.endTime).toISOString().substring(11, 16);
+              workingHours.end = new Intl.DateTimeFormat('en-US', timeFormatOptions).format(
+                new Date(doctorClinic.endTime)
+              );
             }
           }
         } catch (e) {
@@ -1175,10 +1186,10 @@ export class CoreAppointmentService {
         }
       }
 
-      // Build a precise day-boundary filter so only appointments on THIS date count
-      // Use UTC explicitly to avoid timezone mismatches with database (appointments stored in UTC)
-      const dayStart = new Date(`${date}T00:00:00.000Z`);
-      const dayEnd = new Date(`${date}T23:59:59.999Z`);
+      // Build a precise day-boundary filter so only appointments on THIS date in IST count
+      // Use IST offset (+05:30) to define the exact start and end of the day in that timezone
+      const dayStart = new Date(`${date}T00:00:00.000+05:30`);
+      const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
 
       const appointmentsResult = await this.databaseService.findAppointmentsSafe(
         {
