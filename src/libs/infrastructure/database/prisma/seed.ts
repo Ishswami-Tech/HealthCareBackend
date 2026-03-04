@@ -51,7 +51,7 @@ const RoleValues = {
   SUPPORT_STAFF: 'SUPPORT_STAFF' as const,
   NURSE: 'NURSE' as const,
   COUNSELOR: 'COUNSELOR' as const,
-  LOCATION_HEAD: 'LOCATION_HEAD' as const,
+  CLINIC_LOCATION_HEAD: 'CLINIC_LOCATION_HEAD' as const,
   ASSISTANT_DOCTOR: 'ASSISTANT_DOCTOR' as const,
 } satisfies Record<string, Role>;
 
@@ -1371,7 +1371,7 @@ async function main() {
             firstName: 'Location',
             lastName: `Head ${index + 1}`,
             phone: faker.phone.number(),
-            role: 'CLINIC_ADMIN' as Role, // Using CLINIC_ADMIN temporarily until LOCATION_HEAD is added to Role enum
+            role: RoleValues.CLINIC_LOCATION_HEAD as Role,
             gender: faker.helpers.arrayElement(Object.values(Gender)),
             isVerified: true,
             userid: generateUserId(),
@@ -1415,8 +1415,8 @@ async function main() {
 
     // Assign RBAC roles to LocationHead users
     await Promise.all(
-      locationHeadUsers.map(
-        ({ user, clinicId }) => assignRoleToUser(user.id, RoleValues.CLINIC_ADMIN, clinicId) // Using CLINIC_ADMIN temporarily until LOCATION_HEAD is added to Role enum
+      locationHeadUsers.map(({ user, clinicId }) =>
+        assignRoleToUser(user.id, RoleValues.CLINIC_LOCATION_HEAD, clinicId)
       )
     );
     console.log(`✓ Created ${locationHeadUsers.length} LocationHead users`);

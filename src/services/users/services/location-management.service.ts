@@ -92,9 +92,10 @@ export class LocationManagementService {
       throw new BadRequestException('Location does not belong to clinic');
     }
 
-    // Define staff roles that can have locations (including LOCATION_HEAD)
+    // Define staff roles that can have locations (including CLINIC_LOCATION_HEAD)
     const staffRoles = [
       Role.DOCTOR,
+      Role.CLINIC_LOCATION_HEAD,
       Role.RECEPTIONIST,
       Role.CLINIC_ADMIN,
       Role.PHARMACIST,

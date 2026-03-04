@@ -29,7 +29,13 @@ export class QueueController {
   constructor(private readonly appointmentQueueService: AppointmentQueueService) {}
 
   @Post('call-next')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.CLINIC_LOCATION_HEAD
+  )
   @ApiOperation({ summary: 'Call next patient from queue' })
   @ApiResponse({ status: 200, description: 'Next patient called successfully' })
   async callNext(
@@ -46,7 +52,13 @@ export class QueueController {
   }
 
   @Post('reorder')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.CLINIC_LOCATION_HEAD
+  )
   @ApiOperation({ summary: 'Reorder queue' })
   @ApiBody({
     schema: {
@@ -84,7 +96,14 @@ export class QueueController {
   }
 
   @Get('stats')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.SUPER_ADMIN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.SUPER_ADMIN,
+    Role.CLINIC_LOCATION_HEAD
+  )
   @ApiOperation({ summary: 'Get queue statistics' })
   async getQueueStats(
     @Query('locationId') locationId: string,
@@ -105,7 +124,7 @@ export class QueueController {
   }
 
   @Post('pause')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @ApiOperation({ summary: 'Pause queue' })
   async pauseQueue(
     @Body() body: { doctorId: string; domain?: string },
@@ -121,7 +140,7 @@ export class QueueController {
   }
 
   @Post('resume')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @ApiOperation({ summary: 'Resume queue' })
   async resumeQueue(
     @Body() body: { doctorId: string; domain?: string },

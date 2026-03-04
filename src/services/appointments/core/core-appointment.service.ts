@@ -237,7 +237,7 @@ export class CoreAppointmentService {
       const appointmentDate = new Date(createDto.appointmentDate);
       const existingAppointments = await this.getExistingTimeSlots(
         resolvedIds.doctorId,
-        createDto.clinicId,
+        context.clinicId,
         appointmentDate
       );
 
@@ -245,14 +245,14 @@ export class CoreAppointmentService {
         {
           patientId: resolvedIds.patientId,
           doctorId: resolvedIds.doctorId,
-          clinicId: createDto.clinicId,
+          clinicId: context.clinicId,
           requestedTime: appointmentDate,
           duration: createDto.duration,
           priority: this.mapPriority(createDto.priority || AppointmentPriority.NORMAL),
           serviceType: createDto.type,
           ...(createDto.notes && { notes: createDto.notes }),
         },
-        this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, createDto.clinicId),
+        this.convertToTimeSlots(existingAppointments, resolvedIds.doctorId, context.clinicId),
         { allowOverlap: false, suggestAlternatives: true }
       );
 
@@ -272,8 +272,7 @@ export class CoreAppointmentService {
       // 4. Create appointment with enhanced metadata
       // Extract date and time from appointmentDate
       const appointmentDateTime = new Date(createDto.appointmentDate);
-      const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
-      const timeStr = appointmentDateTime.toISOString().substring(11, 16); // HH:mm format
+      const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
       const appointmentData: Record<string, unknown> = {
         ...createDto,
@@ -284,7 +283,7 @@ export class CoreAppointmentService {
         clinicId: context.clinicId, // Enforce context clinic ID
         status: AppointmentStatus.SCHEDULED,
         priority: createDto.priority || AppointmentPriority.NORMAL,
-        date: new Date(dateStr),
+        date: new Date(`${dateStr}T00:00:00.000+05:30`),
         time: timeStr,
       };
       // Remove appointmentDate as it's not part of AppointmentCreateInput
@@ -539,12 +538,12 @@ export class CoreAppointmentService {
       // 3. Check for scheduling conflicts if date/time is being changed
       if (updateDto.appointmentDate && existingAppointment.doctorId) {
         const newAppointmentDate = new Date(updateDto.appointmentDate);
-        const newDateStr = newAppointmentDate.toISOString().split('T')[0] || '';
+        const { date: newDateStr } = this.getISTDateAndTime(newAppointmentDate);
 
         const existingAppointments = await this.getExistingTimeSlots(
           existingAppointment.doctorId,
           existingAppointment.clinicId,
-          new Date(newDateStr)
+          new Date(`${newDateStr}T00:00:00.000+05:30`)
         );
 
         const updateDtoWithNotes = updateDto as Record<string, unknown>;
@@ -587,9 +586,8 @@ export class CoreAppointmentService {
       const updateData: Record<string, unknown> = { ...updateDto };
       if (updateDto.appointmentDate) {
         const appointmentDateTime = new Date(updateDto.appointmentDate);
-        const dateStr = appointmentDateTime.toISOString().split('T')[0] || '';
-        const timeStr = appointmentDateTime.toISOString().substring(11, 16); // HH:mm format
-        updateData['date'] = new Date(dateStr);
+        const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
+        updateData['date'] = new Date(`${dateStr}T00:00:00.000+05:30`);
         updateData['time'] = timeStr;
         // Remove appointmentDate as it's not part of AppointmentUpdateInput
         delete updateData['appointmentDate'];
@@ -1019,6 +1017,24 @@ export class CoreAppointmentService {
     }
   }
 
+  private getISTDateAndTime(date: Date): { date: string; time: string } {
+    const istDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+
+    const istTime = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(date);
+
+    return { date: istDate, time: istTime };
+  }
+
   private calculateAppointmentMetrics(
     appointments: AppointmentData[],
     _dateRange: { from: Date; to: Date }
@@ -1194,6 +1210,7 @@ export class CoreAppointmentService {
       const appointmentsResult = await this.databaseService.findAppointmentsSafe(
         {
           doctorId,
+          ...(_context?.clinicId && { clinicId: _context.clinicId }),
           // Filter to only active appointments on the requested date
           // Cancelled/Completed/No-show appointments free up the slot
           date: { gte: dayStart, lte: dayEnd },

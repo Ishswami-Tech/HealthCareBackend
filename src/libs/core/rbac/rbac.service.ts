@@ -695,7 +695,7 @@ export class RbacService {
         'profile:read',
         'profile:update',
       ],
-      LOCATION_HEAD: [
+      CLINIC_LOCATION_HEAD: [
         'locations:read',
         'locations:update',
         'appointments:read',

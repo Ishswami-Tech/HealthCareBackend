@@ -90,7 +90,7 @@ export class ProfileCompletionService {
       requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
       conditionalFields: {},
     },
-    LOCATION_HEAD: {
+    CLINIC_LOCATION_HEAD: {
       requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
       conditionalFields: {},
     },
