@@ -1,11 +1,11 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 
-import { CacheService } from '@infrastructure/cache';
-import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { EventService } from '@infrastructure/events/event.service';
 import { HealthcareErrorsService } from '@core/errors';
 import { LogType, LogLevel } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';

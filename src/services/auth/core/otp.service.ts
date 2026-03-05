@@ -3,7 +3,7 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
 
