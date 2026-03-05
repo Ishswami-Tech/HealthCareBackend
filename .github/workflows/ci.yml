@@ -92,6 +92,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -100,6 +102,12 @@ jobs:
 
       - name: Install Yarn
         run: npm install -g yarn@${{ env.YARN_VERSION }} --force
+
+      - name: Validate Prisma schema and migrations are in sync
+        run: |
+          echo "🔍 Checking Prisma schema/migration sync..."
+          node scripts/validate-prisma-generated.js --check-migration-sync
+          echo "✅ Prisma schema/migration sync check passed"
 
       - name: Validate Prisma configuration
         run: |
@@ -110,7 +118,7 @@ jobs:
           echo ""
           echo "🔍 Validating Prisma schema syntax..."
           yarn install --frozen-lockfile --ignore-scripts --silent
-          export DATABASE_URL="postgresql://user:password@localhost:5432/dbname"
+          export DATABASE_URL="${{ secrets.DATABASE_URL }}"
           yarn prisma format --schema=./src/libs/infrastructure/database/prisma/schema.prisma --config=./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "❌ Prisma schema validation failed!" && exit 1)
           echo "✅ Prisma schema is valid"
 

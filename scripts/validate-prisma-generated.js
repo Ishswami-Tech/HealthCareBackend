@@ -199,15 +199,8 @@ function validateGeneratedFiles() {
     fs.existsSync(path.join(GENERATED_PATH, 'client.js'));
 
   // Check standard location for JavaScript files
-  const standardLocation = path.join(
-    process.cwd(),
-    'node_modules',
-    '.prisma',
-    'client'
-  );
-  const hasStandardLocationFiles = fs.existsSync(
-    path.join(standardLocation, 'index.js')
-  );
+  const standardLocation = path.join(process.cwd(), 'node_modules', '.prisma', 'client');
+  const hasStandardLocationFiles = fs.existsSync(path.join(standardLocation, 'index.js'));
 
   if (!hasTypeScriptFiles && !hasJavaScriptFiles && !hasStandardLocationFiles) {
     logError(
@@ -309,12 +302,102 @@ function compareWithCommitted() {
 }
 
 /**
+ * Check Prisma schema/migration sync in outgoing commits.
+ * Fails when schema.prisma changed but no migration files changed.
+ */
+function checkMigrationSyncInOutgoingCommits() {
+  const repoRoot = path.join(__dirname, '..');
+  const schemaPath = 'src/libs/infrastructure/database/prisma/schema.prisma';
+  const migrationsDir = 'src/libs/infrastructure/database/prisma/migrations/';
+
+  const run = cmd =>
+    execSync(cmd, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+
+  const tryRun = cmd => {
+    try {
+      return run(cmd);
+    } catch {
+      return '';
+    }
+  };
+
+  const getRange = () => {
+    const upstream = tryRun('git rev-parse --abbrev-ref --symbolic-full-name @{u}');
+    if (upstream) return `${upstream}..HEAD`;
+
+    const mainBase = tryRun('git merge-base HEAD origin/main');
+    if (mainBase) return `${mainBase}..HEAD`;
+
+    const hasParent = tryRun('git rev-parse --verify HEAD~1');
+    if (hasParent) return 'HEAD~1..HEAD';
+
+    return '';
+  };
+
+  try {
+    const inRepo = tryRun('git rev-parse --is-inside-work-tree');
+    if (inRepo !== 'true') {
+      return { ok: true, reason: 'Not a git repository; skipping migration sync check.' };
+    }
+
+    const range = getRange();
+    if (!range) {
+      return { ok: true, reason: 'No comparable git range found; skipping migration sync check.' };
+    }
+
+    const diffOutput = tryRun(`git diff --name-only ${range}`);
+    const changedFiles = diffOutput
+      .split('\n')
+      .map(f => f.trim().replace(/\\/g, '/'))
+      .filter(Boolean);
+
+    if (changedFiles.length === 0) {
+      return { ok: true, reason: 'No changed files in outgoing range.' };
+    }
+
+    const schemaChanged = changedFiles.includes(schemaPath);
+    const migrationChanged = changedFiles.some(f => f.startsWith(migrationsDir));
+
+    if (schemaChanged && !migrationChanged) {
+      return {
+        ok: false,
+        reason: 'Prisma schema changed but no migration files were found in outgoing commits.',
+      };
+    }
+
+    return { ok: true, reason: 'Prisma schema/migration sync check passed.' };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: `Could not run migration sync check (${error.message}).`,
+    };
+  }
+}
+
+/**
  * Main validation function
  */
 function main() {
   const args = process.argv.slice(2);
   const shouldRegenerate = args.includes('--regenerate');
   const skipComparison = args.includes('--skip-comparison');
+  const checkMigrationSyncOnly = args.includes('--check-migration-sync');
+
+  if (checkMigrationSyncOnly) {
+    const result = checkMigrationSyncInOutgoingCommits();
+    if (!result.ok) {
+      logError(result.reason);
+      logError('If schema.prisma changed, create and commit a migration before pushing.');
+      logInfo('Example: yarn prisma:migrate:dev --name <meaningful_name>');
+      process.exit(1);
+    }
+    logSuccess(result.reason);
+    process.exit(0);
+  }
 
   logInfo('Validating Prisma generated files...\n');
 
@@ -391,4 +474,5 @@ module.exports = {
   regeneratePrismaClient,
   hasSchemaChanged,
   compareWithCommitted,
+  checkMigrationSyncInOutgoingCommits,
 };
