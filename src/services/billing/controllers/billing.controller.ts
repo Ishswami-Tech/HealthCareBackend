@@ -13,7 +13,10 @@ import {
   HttpStatus,
   Res,
   NotFoundException,
+  BadRequestException,
   Request,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { FastifyReply } from 'fastify';
 import * as fs from 'fs';
@@ -31,6 +34,7 @@ import {
   CreateClinicExpenseDto,
   CreateInsuranceClaimDto,
   UpdateInsuranceClaimDto,
+  CreateInPersonSubscriptionAppointmentDto,
 } from '@dtos/billing.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
@@ -48,6 +52,8 @@ import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+import { AppointmentsService } from '@services/appointments/appointments.service';
+import { AppointmentType } from '@dtos/appointment.dto';
 
 @ApiTags('billing')
 @Controller('billing')
@@ -56,7 +62,9 @@ import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 export class BillingController {
   constructor(
     private readonly billingService: BillingService,
-    private readonly invoicePDFService: InvoicePDFService
+    private readonly invoicePDFService: InvoicePDFService,
+    @Inject(forwardRef(() => AppointmentsService))
+    private readonly appointmentsService: AppointmentsService
   ) {}
 
   // ============ Billing Plans ============
@@ -469,13 +477,86 @@ export class BillingController {
   }
 
   @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
-  @RequireResourcePermission('subscriptions', 'update')
+  @RequireResourcePermission('subscriptions', 'create')
   async bookAppointmentWithSubscription(
     @Param('subscriptionId') subscriptionId: string,
-    @Param('appointmentId') appointmentId: string
+    @Param('appointmentId') appointmentId: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
-    await this.billingService.bookAppointmentWithSubscription(subscriptionId, appointmentId);
+    const requester = {
+      ...(req?.user?.['sub'] ? { userId: req.user['sub'] } : {}),
+      ...(req?.user?.['role'] ? { role: req.user['role'] } : {}),
+      ...(req?.clinicContext?.clinicId ? { clinicId: req.clinicContext.clinicId } : {}),
+    };
+    await this.billingService.bookAppointmentWithSubscription(
+      subscriptionId,
+      appointmentId,
+      requester
+    );
     return { message: 'Appointment booked with subscription' };
+  }
+
+  @Post('subscriptions/:subscriptionId/book-inperson')
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('subscriptions', 'create')
+  async bookInPersonAppointmentWithSubscription(
+    @Param('subscriptionId') subscriptionId: string,
+    @Body() body: CreateInPersonSubscriptionAppointmentDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.['sub'];
+    const role = req.user?.['role'] || Role.PATIENT;
+
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and authenticated user are required');
+    }
+
+    if ((body.type || AppointmentType.IN_PERSON) !== AppointmentType.IN_PERSON) {
+      throw new BadRequestException('This endpoint only supports IN_PERSON appointments');
+    }
+
+    const result = await this.appointmentsService.createAppointment(
+      {
+        ...body,
+        type: AppointmentType.IN_PERSON,
+      },
+      userId,
+      clinicId,
+      role
+    );
+
+    if (!result.success || !result.data) {
+      throw new BadRequestException(result.error || 'Failed to create appointment');
+    }
+
+    const appointmentId = result.data['id'] as string;
+    if (!appointmentId) {
+      throw new BadRequestException('Created appointment missing ID');
+    }
+
+    try {
+      await this.billingService.bookAppointmentWithSubscription(subscriptionId, appointmentId, {
+        userId,
+        role,
+        clinicId,
+      });
+      return {
+        success: true,
+        appointment: result.data,
+        message: 'In-person appointment booked and linked to subscription',
+      };
+    } catch (linkError) {
+      // Compensating rollback: cancel appointment if subscription link fails
+      await this.appointmentsService.cancelAppointment(
+        appointmentId,
+        'Auto-cancelled: failed to link active subscription',
+        userId,
+        clinicId,
+        role
+      );
+      throw linkError;
+    }
   }
 
   @Post('appointments/:appointmentId/cancel-subscription')

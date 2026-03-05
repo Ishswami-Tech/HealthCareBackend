@@ -12,8 +12,11 @@ import {
   IsPositive,
   IsString,
   IsDateString,
+  IsEnum,
+  IsUUID,
 } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import { AppointmentPriority, AppointmentType, TreatmentType } from '@dtos/appointment.dto';
 
 export class CreateBillingPlanDto {
   name!: string;
@@ -188,6 +191,49 @@ export class UpdateInsuranceClaimDto {
   @IsOptional()
   @IsString()
   notes?: string;
+}
+
+export class CreateInPersonSubscriptionAppointmentDto {
+  @IsNotEmpty({ message: 'Patient ID is required' })
+  @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
+  patientId!: string;
+
+  @IsNotEmpty({ message: 'Doctor ID is required' })
+  @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
+  doctorId!: string;
+
+  @IsNotEmpty({ message: 'Clinic ID is required' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
+  clinicId!: string;
+
+  @IsNotEmpty({ message: 'Location ID is required for in-person appointments' })
+  @IsUUID('4', { message: 'Location ID must be a valid UUID' })
+  locationId!: string;
+
+  @IsNotEmpty({ message: 'Appointment date is required' })
+  @IsDateString({}, { message: 'Appointment date must be a valid date-time string' })
+  appointmentDate!: string;
+
+  @IsNotEmpty({ message: 'Duration is required' })
+  @IsNumber({}, { message: 'Duration must be a number' })
+  @IsPositive({ message: 'Duration must be positive' })
+  duration!: number;
+
+  @IsOptional()
+  @IsEnum(TreatmentType, { message: 'Treatment type must be valid' })
+  treatmentType?: TreatmentType;
+
+  @IsOptional()
+  @IsEnum(AppointmentPriority, { message: 'Priority must be valid' })
+  priority?: AppointmentPriority;
+
+  @IsOptional()
+  @IsString({ message: 'Notes must be a string' })
+  notes?: string;
+
+  @IsOptional()
+  @IsEnum(AppointmentType, { message: 'Type must be a valid appointment type' })
+  type?: AppointmentType;
 }
 
 export class BillingPlanResponseDto {

@@ -1133,34 +1133,169 @@ export class CoreAppointmentService {
     _context?: AppointmentContext
   ): Promise<unknown> {
     try {
-      const workingHours = {
-        start: '09:00',
-        end: '18:00',
+      type SessionWindow = { start: string; end: string };
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && !Array.isArray(value);
+      const normalizeTime = (value: unknown): string | null => {
+        if (typeof value !== 'string') return null;
+        const trimmed = value.trim();
+        const match = /^(\d{1,2}):(\d{2})$/.exec(trimmed);
+        if (!match) return null;
+        const h = Number(match[1]);
+        const m = Number(match[2]);
+        if (!Number.isFinite(h) || !Number.isFinite(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+          return null;
+        }
+        return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
       };
+      const extractSessions = (value: unknown): SessionWindow[] => {
+        if (!value) return [];
+        if (Array.isArray(value)) {
+          return value
+            .map(item => {
+              if (!isRecord(item)) return null;
+              const start = normalizeTime(item['start']);
+              const end = normalizeTime(item['end']);
+              if (!start || !end) return null;
+              return { start, end };
+            })
+            .filter((x): x is SessionWindow => !!x);
+        }
+        if (isRecord(value)) {
+          const start = normalizeTime(value['start']);
+          const end = normalizeTime(value['end']);
+          if (start && end) return [{ start, end }];
+        }
+        return [];
+      };
+      const extractDaySessions = (value: unknown, dayName: string): SessionWindow[] => {
+        if (!value) return [];
+        if (isRecord(value) && dayName in value) {
+          return extractSessions(value[dayName]);
+        }
+        return extractSessions(value);
+      };
+
+      const defaultWorkingHours = {
+        start: '11:00',
+        end: '23:59',
+      };
+      const workingHours = { ...defaultWorkingHours };
+      let sessionWindows: SessionWindow[] = [];
+      let slotDuration = 30;
+      let clinicPaused = false;
+      let doctorPaused = false;
+      let emergencyOnly = false;
+      let generalConsultationEnabled = true;
+      let videoConsultationEnabled = true;
+      let pauseReason = '';
+      const dayName = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata',
+        weekday: 'long',
+      })
+        .format(new Date(`${date}T00:00:00.000+05:30`))
+        .toLowerCase();
 
       // Check doctor-clinic association and specific location availability
       if (_context?.clinicId) {
         try {
-          const doctorClinic = (await this.databaseService.executeHealthcareRead(async client => {
+          const doctorClinic = await this.databaseService.executeHealthcareRead(async client => {
             const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
               doctorClinic: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
+              clinic: { findUnique: (args: PrismaDelegateArgs) => Promise<unknown> };
             };
-            return await typedClient.doctorClinic.findUnique({
+            const association = await typedClient.doctorClinic.findUnique({
               where: {
                 doctorId_clinicId: {
                   doctorId,
                   clinicId: _context.clinicId,
                 },
               } as PrismaDelegateArgs,
+              include: {
+                doctor: { select: { workingHours: true, isAvailable: true } },
+                location: { select: { id: true, workingHours: true } },
+              } as PrismaDelegateArgs,
             } as PrismaDelegateArgs);
-          })) as { locationId: string | null; startTime: Date | null; endTime: Date | null } | null;
 
-          if (doctorClinic) {
+            const clinic = await typedClient.clinic.findUnique({
+              where: { id: _context.clinicId } as PrismaDelegateArgs,
+              select: { settings: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+
+            return { association, clinic };
+          });
+
+          const associationData = doctorClinic as {
+            association?: {
+              locationId: string | null;
+              startTime: Date | null;
+              endTime: Date | null;
+              doctor?: { workingHours?: unknown; isAvailable?: boolean } | null;
+              location?: { workingHours?: unknown } | null;
+            } | null;
+            clinic?: { settings?: unknown } | null;
+          } | null;
+
+          const association = associationData?.association;
+          const clinicSettings = isRecord(associationData?.clinic?.settings)
+            ? associationData?.clinic?.settings
+            : {};
+          const appointmentSettings = isRecord(clinicSettings['appointmentSettings'])
+            ? clinicSettings['appointmentSettings']
+            : {};
+          const clinicOpdControls = isRecord(appointmentSettings['opdControls'])
+            ? appointmentSettings['opdControls']
+            : isRecord(appointmentSettings['opdControl'])
+              ? appointmentSettings['opdControl']
+              : {};
+          const doctorControlMap = isRecord(appointmentSettings['doctorConsultationControls'])
+            ? appointmentSettings['doctorConsultationControls']
+            : {};
+          const doctorControl = isRecord(doctorControlMap[doctorId])
+            ? doctorControlMap[doctorId]
+            : {};
+
+          slotDuration = Math.max(
+            5,
+            Number.isFinite(Number(appointmentSettings['appointmentDuration']))
+              ? Number(appointmentSettings['appointmentDuration'])
+              : 30
+          );
+          clinicPaused = Boolean(
+            clinicOpdControls['isOpdPaused'] ?? clinicOpdControls['clinicPaused'] ?? false
+          );
+          doctorPaused = Boolean(doctorControl['isPaused'] ?? doctorControl['paused'] ?? false);
+          emergencyOnly = Boolean(
+            clinicOpdControls['emergencyOnly'] ?? doctorControl['emergencyOnly'] ?? false
+          );
+          generalConsultationEnabled = Boolean(
+            doctorControl['generalConsultationEnabled'] ??
+            clinicOpdControls['generalConsultationEnabled'] ??
+            true
+          );
+          videoConsultationEnabled = Boolean(
+            doctorControl['videoConsultationEnabled'] ??
+            clinicOpdControls['videoConsultationEnabled'] ??
+            true
+          );
+          pauseReason =
+            (typeof doctorControl['pauseReason'] === 'string'
+              ? doctorControl['pauseReason']
+              : '') ||
+            (typeof clinicOpdControls['pauseReason'] === 'string'
+              ? clinicOpdControls['pauseReason']
+              : '');
+
+          if (association?.doctor?.isAvailable === false) {
+            doctorPaused = true;
+          }
+
+          if (association) {
             // If doctor is assigned to a specific location, satisfy strict location requirement
             if (
               _context.locationId &&
-              doctorClinic.locationId &&
-              doctorClinic.locationId !== _context.locationId
+              association.locationId &&
+              association.locationId !== _context.locationId
             ) {
               return {
                 doctorId,
@@ -1169,9 +1304,57 @@ export class CoreAppointmentService {
                 availableSlots: [],
                 bookedSlots: [],
                 workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused: true,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: 'Doctor is not available at this location',
+                },
                 message: 'Doctor is not available at this location',
               };
             }
+
+            if (
+              clinicPaused ||
+              doctorPaused ||
+              (!generalConsultationEnabled && !videoConsultationEnabled)
+            ) {
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: pauseReason || 'Consultation is currently paused',
+                },
+                message:
+                  pauseReason ||
+                  (clinicPaused
+                    ? 'Clinic OPD is temporarily paused'
+                    : doctorPaused
+                      ? 'Doctor consultation is temporarily paused'
+                      : 'Consultation is currently disabled'),
+              };
+            }
+
+            const locationSessions = extractDaySessions(
+              association.location?.workingHours,
+              dayName
+            );
+            const doctorSessions = extractDaySessions(association.doctor?.workingHours, dayName);
+            const clinicSessions = extractDaySessions(
+              appointmentSettings['operatingWindowsByDay'],
+              dayName
+            );
 
             // Update working hours if defined - extract HH:mm using IST to avoid UTC shifts
             const timeFormatOptions = {
@@ -1180,16 +1363,26 @@ export class CoreAppointmentService {
               minute: '2-digit',
               hour12: false,
             } as const;
-            if (doctorClinic.startTime) {
+            if (association.startTime) {
               workingHours.start = new Intl.DateTimeFormat('en-US', timeFormatOptions).format(
-                new Date(doctorClinic.startTime)
+                new Date(association.startTime)
               );
             }
-            if (doctorClinic.endTime) {
+            if (association.endTime) {
               workingHours.end = new Intl.DateTimeFormat('en-US', timeFormatOptions).format(
-                new Date(doctorClinic.endTime)
+                new Date(association.endTime)
               );
             }
+
+            const legacySession = [{ start: workingHours.start, end: workingHours.end }];
+            sessionWindows =
+              locationSessions.length > 0
+                ? locationSessions
+                : doctorSessions.length > 0
+                  ? doctorSessions
+                  : clinicSessions.length > 0
+                    ? clinicSessions
+                    : legacySession;
           }
         } catch (e) {
           // Fallback to defaults if check fails
@@ -1200,6 +1393,10 @@ export class CoreAppointmentService {
             'CoreAppointmentService.getDoctorAvailability'
           );
         }
+      }
+
+      if (sessionWindows.length === 0) {
+        sessionWindows = [{ start: defaultWorkingHours.start, end: defaultWorkingHours.end }];
       }
 
       // Build a precise day-boundary filter so only appointments on THIS date in IST count
@@ -1236,112 +1433,152 @@ export class CoreAppointmentService {
 
       // Generate time slots based on working hours
       const timeSlots = [];
-      const [startHour, startMinute] = workingHours.start.split(':').map(Number);
-      const [endHour, endMinute] = workingHours.end.split(':').map(Number);
-
-      const startMinutes = (startHour || 9) * 60 + (startMinute || 0);
-      const endMinutes = (endHour || 18) * 60 + (endMinute || 0);
-
-      // Interval 30 mins
-      for (let currentMinutes = startMinutes; currentMinutes < endMinutes; currentMinutes += 30) {
-        const hour = Math.floor(currentMinutes / 60);
-        const minute = currentMinutes % 60;
-
-        const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-
-        // Check if slot is booked - account for appointment duration (default 30 min)
-        // A slot is unavailable if it falls within any existing appointment's time range
-        const isBooked = appointments.some((apt: AppointmentItem) => {
-          const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
-          if (!aptTime) return false;
-          const aptDuration =
-            ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
-          // Extract time parts - using non-null assertion on split result
-          const timeParts = (aptTime || '').split(':');
-          const aptHour = parseInt(timeParts[0] || '0', 10);
-          const aptMin = parseInt(timeParts[1] || '0', 10);
-          const aptStartMinutes = aptHour * 60 + aptMin;
-
-          // Slot overlaps with appointment if:
-          // Appointment start is before slot end AND Appointment end is after slot start
-          const slotDuration = 30;
-          const slotEndMinutes = currentMinutes + slotDuration;
-          const aptEndMinutes = aptStartMinutes + aptDuration;
-
-          return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
-        });
-
-        // 3. For today's availability, filter out slots that have already passed
-        const dateParts = date.split('-');
-        // Enforce IST time exactly
-        const now = new Date();
-        const istOptions = {
-          timeZone: 'Asia/Kolkata',
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        } as const;
-        const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
-        const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
-        const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
-        const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
-
-        const requestedDate = new Date(
-          parseInt(dateParts[0] || '2000'),
-          parseInt(dateParts[1] || '01') - 1,
-          parseInt(dateParts[2] || '01')
-        );
-        const todayIST = new Date(istYear, istMonth - 1, istDay);
-        const isToday = requestedDate.toDateString() === todayIST.toDateString();
-
-        if (isToday) {
-          // Calculate current minutes in IST explicitly
-          const istTimeOptions = {
-            timeZone: 'Asia/Kolkata',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: false,
-          } as const;
-          const istTimeParts = new Intl.DateTimeFormat('en-US', istTimeOptions).format(now);
-          const [currentHourStr, currentMinuteStr] = istTimeParts.split(':');
-          const currentHour = parseInt(currentHourStr || '0', 10);
-          const currentMinute = parseInt(currentMinuteStr || '0', 10);
-          const totalCurrentMinutes = currentHour * 60 + currentMinute;
-
-          // If slot has already started or is too close to start (e.g. within 15 mins), mark as unavailable
-          if (currentMinutes < totalCurrentMinutes + 15) {
-            timeSlots.push({
-              time,
-              available: false,
-              message: 'Slot has already passed or is too soon',
-            });
-            continue;
+      const slotsByTime = new Map<
+        string,
+        { time: string; available: boolean; appointmentId?: string | null }
+      >();
+      const validSessions = sessionWindows
+        .map(window => {
+          const [startHour, startMinute] = window.start.split(':').map(Number);
+          const [endHour, endMinute] = window.end.split(':').map(Number);
+          const startMinutes = (startHour || 0) * 60 + (startMinute || 0);
+          const endMinutes = (endHour || 0) * 60 + (endMinute || 0);
+          if (
+            !Number.isFinite(startMinutes) ||
+            !Number.isFinite(endMinutes) ||
+            endMinutes <= startMinutes
+          ) {
+            return null;
           }
-        }
+          return { ...window, startMinutes, endMinutes };
+        })
+        .filter((w): w is SessionWindow & { startMinutes: number; endMinutes: number } => !!w);
 
-        const bookedAppointment = isBooked
-          ? appointments.find((apt: AppointmentItem) => {
-              const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
-              if (!aptTime) return false;
-              const aptDuration =
-                ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
-              // Extract time parts - using non-null assertion on split result
-              const timeParts = (aptTime || '').split(':');
-              const aptHour = parseInt(timeParts[0] || '0', 10);
-              const aptMin = parseInt(timeParts[1] || '0', 10);
-              const aptStartMinutes = aptHour * 60 + aptMin;
-              const aptEndMinutes = aptStartMinutes + aptDuration;
-
-              return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
-            })
-          : null;
-
-        timeSlots.push({
-          time,
-          available: !isBooked,
-          appointmentId: bookedAppointment?.id ?? null,
+      if (validSessions.length === 0) {
+        validSessions.push({
+          start: defaultWorkingHours.start,
+          end: defaultWorkingHours.end,
+          startMinutes: 11 * 60,
+          endMinutes: 23 * 60 + 59,
         });
       }
+
+      const earliestStart = Math.min(...validSessions.map(x => x.startMinutes));
+      const latestEnd = Math.max(...validSessions.map(x => x.endMinutes));
+      workingHours.start = `${Math.floor(earliestStart / 60)
+        .toString()
+        .padStart(2, '0')}:${(earliestStart % 60).toString().padStart(2, '0')}`;
+      workingHours.end = `${Math.floor(latestEnd / 60)
+        .toString()
+        .padStart(2, '0')}:${(latestEnd % 60).toString().padStart(2, '0')}`;
+
+      for (const window of validSessions) {
+        for (
+          let currentMinutes = window.startMinutes;
+          currentMinutes < window.endMinutes;
+          currentMinutes += slotDuration
+        ) {
+          const hour = Math.floor(currentMinutes / 60);
+          const minute = currentMinutes % 60;
+
+          const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+
+          // Check if slot is booked - account for appointment duration (default 30 min)
+          // A slot is unavailable if it falls within any existing appointment's time range
+          const isBooked = appointments.some((apt: AppointmentItem) => {
+            const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
+            if (!aptTime) return false;
+            const aptDuration =
+              ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
+            // Extract time parts - using non-null assertion on split result
+            const timeParts = (aptTime || '').split(':');
+            const aptHour = parseInt(timeParts[0] || '0', 10);
+            const aptMin = parseInt(timeParts[1] || '0', 10);
+            const aptStartMinutes = aptHour * 60 + aptMin;
+
+            // Slot overlaps with appointment if:
+            // Appointment start is before slot end AND Appointment end is after slot start
+            const slotEndMinutes = currentMinutes + slotDuration;
+            const aptEndMinutes = aptStartMinutes + aptDuration;
+
+            return aptStartMinutes < slotEndMinutes && aptEndMinutes > currentMinutes;
+          });
+
+          // 3. For today's availability, filter out slots that have already passed
+          const dateParts = date.split('-');
+          // Enforce IST time exactly
+          const now = new Date();
+          const istOptions = {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          } as const;
+          const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
+          const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
+          const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
+          const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
+
+          const requestedDate = new Date(
+            parseInt(dateParts[0] || '2000'),
+            parseInt(dateParts[1] || '01') - 1,
+            parseInt(dateParts[2] || '01')
+          );
+          const todayIST = new Date(istYear, istMonth - 1, istDay);
+          const isToday = requestedDate.toDateString() === todayIST.toDateString();
+
+          if (isToday) {
+            // Calculate current minutes in IST explicitly
+            const istTimeOptions = {
+              timeZone: 'Asia/Kolkata',
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: false,
+            } as const;
+            const istTimeParts = new Intl.DateTimeFormat('en-US', istTimeOptions).format(now);
+            const [currentHourStr, currentMinuteStr] = istTimeParts.split(':');
+            const currentHour = parseInt(currentHourStr || '0', 10);
+            const currentMinute = parseInt(currentMinuteStr || '0', 10);
+            const totalCurrentMinutes = currentHour * 60 + currentMinute;
+
+            // If slot has already started or is too close to start (e.g. within 15 mins), mark as unavailable
+            if (currentMinutes < totalCurrentMinutes + 15) {
+              slotsByTime.set(time, {
+                time,
+                available: false,
+                appointmentId: null,
+              });
+              continue;
+            }
+          }
+
+          const bookedAppointment = isBooked
+            ? appointments.find((apt: AppointmentItem) => {
+                const aptTime = (apt as Record<string, unknown>)['time'] as string | undefined;
+                if (!aptTime) return false;
+                const aptDuration =
+                  ((apt as Record<string, unknown>)['duration'] as number | undefined) || 30;
+                // Extract time parts - using non-null assertion on split result
+                const timeParts = (aptTime || '').split(':');
+                const aptHour = parseInt(timeParts[0] || '0', 10);
+                const aptMin = parseInt(timeParts[1] || '0', 10);
+                const aptStartMinutes = aptHour * 60 + aptMin;
+                const aptEndMinutes = aptStartMinutes + aptDuration;
+
+                return currentMinutes >= aptStartMinutes && currentMinutes < aptEndMinutes;
+              })
+            : null;
+
+          slotsByTime.set(time, {
+            time,
+            available: !isBooked,
+            appointmentId: bookedAppointment?.id ?? null,
+          });
+        }
+      }
+      timeSlots.push(
+        ...Array.from(slotsByTime.values()).sort((a, b) => a.time.localeCompare(b.time))
+      );
 
       return {
         doctorId,
@@ -1350,6 +1587,15 @@ export class CoreAppointmentService {
         availableSlots: timeSlots.filter(slot => slot.available).map(slot => slot.time),
         bookedSlots: timeSlots.filter(slot => !slot.available).map(slot => slot.time),
         workingHours,
+        workingSessions: validSessions.map(({ start, end }) => ({ start, end })),
+        restrictions: {
+          clinicPaused,
+          doctorPaused,
+          emergencyOnly,
+          generalConsultationEnabled,
+          videoConsultationEnabled,
+          reason: pauseReason || '',
+        },
         message: timeSlots.some(slot => slot.available)
           ? 'Doctor has available slots'
           : 'Doctor is fully booked for this date',

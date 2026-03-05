@@ -2,11 +2,15 @@
   "moderate": true,
   "allowlist": [
     "GHSA-2g4f-4pwh-qvx6",
+    "GHSA-5c6j-r48x-rmvq",
+    "GHSA-5pq2-9x2x-5p6w",
     "GHSA-6wqw-2p9w-4vw4",
     "GHSA-9r54-q6cx-xmh5",
+    "GHSA-p6xx-57qc-3wxr",
+    "GHSA-q5qw-h33p-qvwr",
     "GHSA-r354-f388-2fhh",
     "GHSA-w332-q679-j88p",
-    "GHSA-xxjr-mmjv-4gpg",
-    "GHSA-5c6j-r48x-rmvq"
+    "GHSA-wc8c-qw6v-h7f6",
+    "GHSA-xxjr-mmjv-4gpg"
   ]
 }

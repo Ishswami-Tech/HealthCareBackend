@@ -48,11 +48,16 @@ interface CashfreeOrderRequest {
 interface CashfreeOrderResponse {
   cf_order_id: number;
   order_id: string;
+  payment_session_id?: string;
   entity: string;
   order_currency: string;
   order_amount: number;
   order_status: string;
   order_expiry_time: string;
+  order_meta?: {
+    payment_link?: string;
+  };
+  payment_link?: string;
   order_note?: string;
   created_at: string;
 }
@@ -195,7 +200,12 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         (options.metadata?.['redirectUrl'] as string | undefined);
       const notifyUrl =
         (options.metadata?.['notifyUrl'] as string | undefined) ||
-        (options.metadata?.['callbackUrl'] as string | undefined);
+        (options.metadata?.['callbackUrl'] as string | undefined) ||
+        (() => {
+          const baseUrl = options.metadata?.['baseUrl'] as string | undefined;
+          if (!baseUrl || !options.clinicId) return undefined;
+          return `${baseUrl}/api/v1/payments/cashfree/webhook?clinicId=${encodeURIComponent(options.clinicId)}`;
+        })();
 
       const body: CashfreeOrderRequest = {
         order_amount: amountInUnits,
@@ -241,12 +251,25 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         }
       );
 
-      return this.createPendingResult(
+      const pendingResult = this.createPendingResult(
         data.order_id,
         options.amount,
         options.currency,
         data.order_id
       );
+      const redirectUrl =
+        (data.order_meta &&
+        typeof data.order_meta === 'object' &&
+        typeof data.order_meta.payment_link === 'string'
+          ? data.order_meta.payment_link
+          : undefined) || (typeof data.payment_link === 'string' ? data.payment_link : undefined);
+      pendingResult.metadata = {
+        ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
+        ...(redirectUrl ? { redirectUrl } : {}),
+        orderStatus: data.order_status,
+      };
+      pendingResult.providerResponse = data;
+      return pendingResult;
     } catch (error) {
       await this.logger.log(
         LogType.PAYMENT,

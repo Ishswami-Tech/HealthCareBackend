@@ -506,7 +506,7 @@ export class ClinicController {
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('clinics', 'update', { requireOwnership: true })
   @ApiOperation({
     summary: 'Update a clinic',
