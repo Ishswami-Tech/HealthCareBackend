@@ -1038,8 +1038,12 @@ export class BillingService {
     };
   }
 
-  async bookAppointmentWithSubscription(subscriptionId: string, appointmentId: string) {
-    const canBook = await this.canBookAppointment(subscriptionId);
+  async bookAppointmentWithSubscription(
+    subscriptionId: string,
+    appointmentId: string,
+    requester?: { userId?: string; role?: string; clinicId?: string }
+  ) {
+    const canBook = await this.canBookAppointment(subscriptionId, 'IN_PERSON');
 
     if (!canBook.allowed) {
       throw new BadRequestException(canBook.reason);
@@ -1049,6 +1053,18 @@ export class BillingService {
 
     if (!subscription) {
       throw new NotFoundException('Subscription not found');
+    }
+
+    if (requester?.clinicId && subscription.clinicId !== requester.clinicId) {
+      throw new BadRequestException('Subscription does not belong to current clinic');
+    }
+
+    if (
+      requester?.role === 'PATIENT' &&
+      requester.userId &&
+      subscription.userId !== requester.userId
+    ) {
+      throw new BadRequestException('Patients can only use their own subscription');
     }
 
     // Update appointment to link with subscription using executeHealthcareWrite
@@ -1187,7 +1203,6 @@ export class BillingService {
         planId: subscription.planId,
         baseUrl,
         redirectUrl: `${baseUrl}/payment/callback`,
-        callbackUrl: `${baseUrl}/api/v1/payments/webhook`,
       },
     };
 
@@ -1328,7 +1343,6 @@ export class BillingService {
         appointmentType,
         baseUrl,
         redirectUrl: `${baseUrl}/payment/callback`,
-        callbackUrl: `${baseUrl}/api/v1/payments/webhook`,
       },
     };
 
