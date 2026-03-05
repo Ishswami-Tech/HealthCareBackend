@@ -2007,6 +2007,19 @@ run_migrations_safely() {
         if [[ ! "$url" =~ @ ]] || [[ ! "$url" =~ :// ]]; then
             return 1
         fi
+        # Extract host and reject loopback hosts for Dockerized production deployment.
+        # Inside API/worker containers, localhost/127.0.0.1 points to the container itself,
+        # not the PostgreSQL container. This causes connection failures.
+        local db_host
+        db_host=$(echo "$url" | sed -E 's#^postgres(ql)?://[^@]+@([^:/?]+).*#\2#' || echo "")
+        if [[ -z "$db_host" ]]; then
+            return 1
+        fi
+        if [[ "$db_host" == "localhost" ]] || [[ "$db_host" == "127.0.0.1" ]] || [[ "$db_host" == "::1" ]]; then
+            log_error "DATABASE_URL uses loopback host (${db_host}), which is invalid for Dockerized production."
+            log_error "Use PostgreSQL service host 'postgres' (e.g. postgresql://...@postgres:5432/userdb?schema=public)."
+            return 1
+        fi
         return 0
     }
     
