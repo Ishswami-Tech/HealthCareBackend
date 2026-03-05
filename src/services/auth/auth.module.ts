@@ -6,13 +6,13 @@ import { ConfigService } from '@config/config.service';
 // Use direct import (not barrel) to avoid TDZ circular dependency at startup
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { SessionModule } from '@core/session/session.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@infrastructure/logging/logging.module';
 
 // Core modules
 import { UsersModule } from '@services/users/users.module';
@@ -48,7 +48,7 @@ import { SignOptions } from 'jsonwebtoken';
       },
       inject: [ConfigService],
     }),
-    DatabaseModule,
+    forwardRef(() => DatabaseModule),
     CacheModule,
     EventsModule,
     RbacModule,

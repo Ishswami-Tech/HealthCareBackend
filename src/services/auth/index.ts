@@ -18,10 +18,11 @@ export { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 export { RbacGuard } from '@core/rbac/rbac.guard';
 
 // Caching and session management
-export { LoggingModule } from '@infrastructure/logging';
+export { LoggingModule } from '@infrastructure/logging/logging.module';
 
 // Database and resilience
-export { DatabaseModule } from '@infrastructure/database';
+// Use direct module export path to avoid barrel-based TDZ circular dependency
+export { DatabaseModule } from '@infrastructure/database/database.module';
 // export { CircuitBreakerService } from '../../libs/core/resilience';
 
 // =============================================

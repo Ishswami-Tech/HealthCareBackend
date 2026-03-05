@@ -1,10 +1,10 @@
 import { Injectable, Logger, INestApplication, Inject, forwardRef } from '@nestjs/common';
-import { LoggingService } from '@infrastructure/logging';
+import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { DatabaseService } from '@infrastructure/database';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import type { RedisClient } from '@core/types/common.types';
 import { IoAdapter } from '@nestjs/platform-socket.io';
-import { createFrameworkAdapter } from '@infrastructure/framework';
+import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
 
 /**
  * Graceful Shutdown Service
