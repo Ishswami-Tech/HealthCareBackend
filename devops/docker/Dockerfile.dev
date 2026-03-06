@@ -35,7 +35,7 @@ RUN test -f .swcrc && test -f nest-cli.json || (echo "[ERROR] SWC config files m
     test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo "[ERROR] Schema file not found!" && exit 1) && \
     test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "[ERROR] Config file not found!" && exit 1) && \
     echo "[INFO] Generating Prisma Client..." && \
-    (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
+    (export DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:placeholder@db:5432/placeholder?schema=public}" && \
      yarn prisma:generate || (echo "[ERROR] Prisma generate failed! Exit code: $?" && exit 1)) && \
     if [ ! -d /app/src/libs/infrastructure/database/prisma/generated ]; then \
     echo "[ERROR] Prisma Client generation failed - src/libs/infrastructure/database/prisma/generated not found!" && \

@@ -38,7 +38,8 @@ export const healthcareConfig = registerAs('healthcare', () => ({
 
   // Enterprise Database configuration for 1M+ users
   database: {
-    url: getEnvWithDefault('DATABASE_URL', 'postgresql://localhost:5432/healthcare'),
+    // Do not hardcode runtime DB URLs. Must come from environment.
+    url: getEnvWithDefault('DATABASE_URL', ''),
     schema: 'healthcare',
     ssl: getEnvBoolean('DATABASE_SSL', false),
     connectionPool: {
@@ -412,10 +413,7 @@ export const validateHealthcareConfig = (config: unknown) => {
   if (!databaseUrl || databaseUrl.trim().length === 0) {
     errors.push('DATABASE_URL must be set');
   } else if (prodEnv && databaseUrl.includes('localhost')) {
-    // Relaxed validation: Log warning instead of blocking deployment
-    console.warn(
-      'WARNING: DATABASE_URL contains localhost in production. This is discouraged but allowed for deployment diagnosis.'
-    );
+    errors.push('DATABASE_URL must not use localhost in production');
   }
 
   // Validate security settings (only in production)
