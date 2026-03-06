@@ -7,7 +7,11 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  // URL is configured in prisma.config.js (Prisma 7 requirement)
+  // url is a safety-net fallback. At runtime, all connections go through the
+  // @prisma/adapter-pg in PrismaService (which uses this env var via poolConfig).
+  // CLI tools (migrate, studio) read from prisma.config.js instead.
+  // Required here for: prisma validate, prisma studio fallback, and schema introspection.
+  url      = env("DATABASE_URL")
 }
 
 model User {

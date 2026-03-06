@@ -15,7 +15,9 @@ import type { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
 // Import PrismaClient type from @prisma/client for static properties and type annotations
 import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
+// Pool import removed: @prisma/adapter-pg@7.x takes a pool config directly and
+// creates its own pg.Pool internally. Passing a Pool instance was the root cause
+// of the "Can't reach database server at 127.0.0.1:5432" error.
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types/logging.types';
 import { HealthcareError } from '@core/errors/healthcare-error.class';
@@ -796,6 +798,33 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       return match.startsWith('?') ? '?' : '';
     });
 
+    // CRITICAL FIX: Strip Prisma-specific query parameters that `pg` does NOT understand.
+    // When `pg.Pool` receives an unknown parameter (e.g. ?schema=public), it silently
+    // fails to parse the entire connection string and falls back to its default host
+    // of `localhost` (127.0.0.1:5432) — which is NOT reachable inside a Docker container.
+    // Prisma-only parameters must be removed before passing the URL to pg.Pool.
+    const prismaOnlyParams = [
+      'schema',
+      'connection_limit',
+      'pool_timeout',
+      'statement_timeout',
+      'idle_in_transaction_session_timeout',
+      'connect_timeout',
+      'pool_size',
+      'max_connections',
+      'pgbouncer',
+      'socket_path',
+    ];
+    const prismaParamRegex = new RegExp(
+      `[?&](${prismaOnlyParams.join('|')})=[^&]*`,
+      'g'
+    );
+    connectionString = connectionString.replace(prismaParamRegex, match => {
+      return match.startsWith('?') ? '?' : '';
+    });
+    // Clean up any trailing ? or & left after parameter removal
+    connectionString = connectionString.replace(/[?&]$/, '');
+
     // Create pg Pool with SSL configuration for Supabase
     // Handle self-signed certificates in development
     // Get connection timeout from env or use defaults (longer for dev, shorter for prod)
@@ -824,8 +853,13 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         : { rejectUnauthorized: false };
     }
 
-    const pool = new Pool(poolConfig);
-    const adapter = new PrismaPg(pool);
+    // FIXED: @prisma/adapter-pg@7.x changed API — PrismaPg now takes a pool CONFIG
+    // object directly (not a pg.Pool instance). When a Pool instance was passed,
+    // PrismaPg treated it as a config object, lost the connectionString (which is
+    // stored inside pool.options, not as a direct property), and defaulted to
+    // localhost:5432 → "Can't reach database server at 127.0.0.1:5432".
+    // PrismaPg creates and manages its own pg.Pool internally from the config.
+    const adapter = new PrismaPg(poolConfig);
 
     const prismaConstructorArgs: PrismaClientConstructorArgs = {
       log: logConfiguration,
@@ -1123,8 +1157,8 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           : { rejectUnauthorized: false };
       }
 
-      const healthCheckPool = new Pool(healthCheckPoolConfig);
-      const healthCheckAdapter = new PrismaPg(healthCheckPool);
+      // FIXED: Same as main client — PrismaPg@7.x takes a config object, not a Pool instance.
+      const healthCheckAdapter = new PrismaPg(healthCheckPoolConfig);
 
       const prismaConstructorArgs: PrismaClientConstructorArgs = {
         log: logConfiguration,

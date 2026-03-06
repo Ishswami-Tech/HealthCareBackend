@@ -40,7 +40,7 @@ RUN echo "[INFO] Generating Prisma Client..." && \
   echo "[INFO] Config path: ./src/libs/infrastructure/database/prisma/prisma.config.js" && \
   test -f ./src/libs/infrastructure/database/prisma/schema.prisma || (echo "[ERROR] Schema file not found!" && exit 1) && \
   test -f ./src/libs/infrastructure/database/prisma/prisma.config.js || (echo "[ERROR] Config file not found!" && exit 1) && \
-  (export DATABASE_URL="${DATABASE_URL:-postgresql://user:password@localhost:5432/dbname}" && \
+  (export DATABASE_URL="${DATABASE_URL:-postgresql://placeholder:placeholder@db:5432/placeholder?schema=public}" && \
    yarn prisma:generate || (echo "[ERROR] Prisma generate failed! Exit code: $?" && exit 1)) && \
   echo "[OK] Prisma generate command completed"
 

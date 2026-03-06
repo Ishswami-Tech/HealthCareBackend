@@ -356,7 +356,6 @@ services:
         ipv4_address: 172.18.0.5
         aliases:
           - backend-service-v1.ishswami.in
-    dns: []
     extra_hosts:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
@@ -430,7 +429,6 @@ services:
         ipv4_address: 172.18.0.6
         aliases:
           - worker.ishswami.in
-    dns: []
     extra_hosts:
       - "worker:172.18.0.6"
       - "postgres:172.18.0.2"
