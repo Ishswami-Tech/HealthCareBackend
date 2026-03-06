@@ -12,9 +12,24 @@ import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import type { CacheHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
-import type { CacheService } from '@cache/cache.service';
 import { CacheProviderFactory } from '@cache/providers/cache-provider.factory';
 import type { LoggerLike } from '@core/types';
+
+type CacheHealthMonitorServiceCacheLike = {
+  ping: () => Promise<string>;
+  getCacheMetricsAsync: () => Promise<{
+    hitRate?: number;
+    keys?: number;
+    memory?: { used: number; peak?: number };
+  }>;
+  getCacheStats: () => Promise<{ hits: number; misses: number }>;
+  getProviderHealthStatus: () => Promise<{
+    healthy: boolean;
+    connected: boolean;
+    provider: string;
+    error?: string;
+  }>;
+};
 
 @Injectable()
 export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -41,7 +56,7 @@ export class CacheHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggerLike,
     @Inject('CACHE_SERVICE')
-    private readonly cacheService: CacheService,
+    private readonly cacheService: CacheHealthMonitorServiceCacheLike,
     @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,
     private readonly circuitBreakerService: CircuitBreakerService

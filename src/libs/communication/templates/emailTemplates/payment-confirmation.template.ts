@@ -3,8 +3,8 @@
  * @module EmailTemplates
  */
 
-import type { PaymentTemplateData } from '@communication/channels/email/email-templates.service';
 import { generateUnsubscribeFooter } from './unsubscribe-footer';
+import type { PaymentTemplateData } from '@core/types/communication.types';
 
 /**
  * Generates payment confirmation email template

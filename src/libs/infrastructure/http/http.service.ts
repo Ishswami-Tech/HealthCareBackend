@@ -32,12 +32,13 @@ import { retryWhen, scan, mergeMap } from 'rxjs/operators';
 import type { AxiosRequestConfig, AxiosResponse } from 'axios';
 import * as https from 'https';
 
-import { LoggingService } from '@infrastructure/logging';
-import { HealthcareError, ErrorCode } from '@core/errors';
-import { LogType, LogLevel } from '@core/types';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
+import { ErrorCode } from '@core/errors/error-codes.enum';
+import { LogType, LogLevel } from '@core/types/logging.types';
 
-import type { HttpRequestOptions, HttpResponse, RetryConfig } from '@core/types';
-import { DEFAULT_RETRY_CONFIG } from '@core/types';
+import type { HttpRequestOptions, HttpResponse, RetryConfig } from '@core/types/http.types';
+import { DEFAULT_RETRY_CONFIG } from '@core/types/http.types';
 
 /**
  * Centralized HTTP Service for making HTTP requests

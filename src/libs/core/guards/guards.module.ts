@@ -9,7 +9,6 @@ import { RolesGuard } from './roles.guard';
 import { ClinicGuard } from './clinic.guard';
 import { IpWhitelistGuard } from './ip-whitelist.guard';
 import { ProfileCompletionGuard } from './profile-completion.guard';
-import { ProfileCompletionModule } from '@services/profile-completion/profile-completion.module';
 
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
 import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
@@ -17,7 +16,6 @@ import { RateLimitService } from '@security/rate-limit/rate-limit.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { RbacModule } from '@core/rbac/rbac.module';
-import { SessionModule } from '@core/session/session.module';
 import { Reflector } from '@nestjs/core';
 import { LoggingModule } from '@infrastructure/logging';
 import { JwtAuthService } from '@services/auth/core/jwt.service';
@@ -68,8 +66,6 @@ import { SignOptions } from 'jsonwebtoken';
     forwardRef(() => DatabaseModule),
     forwardRef(() => LoggingModule), // Use forwardRef to break potential circular dependency
     forwardRef(() => RbacModule), // Use forwardRef to break circular dependency with DatabaseModule
-    forwardRef(() => SessionModule), // JwtAuthGuard requires SessionManagementService
-    forwardRef(() => ProfileCompletionModule), // ProfileCompletionGuard requires ProfileCompletionService
 
     // CacheModule is @Global() - no need to import it explicitly
   ],
@@ -97,7 +93,6 @@ import { SignOptions } from 'jsonwebtoken';
     RateLimitService,
     JwtAuthService,
     RbacModule, // Export RbacModule so RbacGuard and RbacService are available
-    ProfileCompletionModule, // Export so ProfileCompletionService is available to all guard consumers
   ],
 })
 @Global() // Make GuardsModule global so JwtService is available to all modules

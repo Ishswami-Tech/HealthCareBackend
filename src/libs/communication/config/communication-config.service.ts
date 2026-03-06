@@ -19,82 +19,13 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 import { LogType, LogLevel } from '@core/types';
 import type { EmailResult } from '@communication/adapters/interfaces/email-provider.adapter';
-
-/**
- * Communication Provider Type
- */
-export enum CommunicationProviderType {
-  EMAIL = 'email',
-  WHATSAPP = 'whatsapp',
-  SMS = 'sms',
-}
-
-/**
- * Email Provider
- */
-export enum EmailProvider {
-  SMTP = 'smtp',
-  AWS_SES = 'aws_ses',
-  MAILGUN = 'mailgun',
-  MAILTRAP = 'mailtrap', // Dev/Staging only
-  ZEPTOMAIL = 'zeptomail',
-}
-
-/**
- * WhatsApp Provider
- */
-export enum WhatsAppProvider {
-  META_BUSINESS = 'meta_business',
-  TWILIO = 'twilio',
-  MESSAGEBIRD = 'messagebird',
-  VONAGE = 'vonage',
-}
-
-/**
- * SMS Provider
- */
-export enum SMSProvider {
-  TWILIO = 'twilio',
-  AWS_SNS = 'aws_sns',
-  MESSAGEBIRD = 'messagebird',
-  VONAGE = 'vonage',
-}
-
-/**
- * Provider Configuration
- */
-export interface ProviderConfig {
-  provider: EmailProvider | WhatsAppProvider | SMSProvider;
-  enabled: boolean;
-  credentials: Record<string, string> | { encrypted: string }; // Encrypted or plain
-  settings?: Record<string, unknown>;
-  priority?: number; // Lower number = higher priority
-}
-
-/**
- * Clinic Communication Configuration
- */
-export interface ClinicCommunicationConfig {
-  clinicId: string;
-  email: {
-    primary?: ProviderConfig;
-    fallback?: ProviderConfig[];
-    defaultFrom?: string;
-    defaultFromName?: string;
-  };
-  whatsapp: {
-    primary?: ProviderConfig;
-    fallback?: ProviderConfig[];
-    defaultNumber?: string;
-  };
-  sms: {
-    primary?: ProviderConfig;
-    fallback?: ProviderConfig[];
-    defaultNumber?: string;
-  };
-  createdAt: Date;
-  updatedAt: Date;
-}
+import {
+  EmailProvider,
+  WhatsAppProvider,
+  SMSProvider,
+  type ProviderConfig,
+  type ClinicCommunicationConfig,
+} from '@core/types/communication.types';
 
 /**
  * Communication Config Service

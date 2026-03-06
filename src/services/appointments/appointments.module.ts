@@ -1,12 +1,12 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
 // Infrastructure Services
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
-import { EventsModule } from '@infrastructure/events';
-import { CacheModule } from '@infrastructure/cache';
+import { EventsModule } from '@infrastructure/events/events.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 // import { QueueModule } from '@infrastructure/queue';
 import { AuthModule } from '@services/auth/auth.module';
@@ -136,6 +136,10 @@ import { CommunicationModule } from '@communication/communication.module';
   providers: [
     // Core Services
     AppointmentsService,
+    {
+      provide: 'APPOINTMENTS_SERVICE',
+      useExisting: AppointmentsService,
+    },
     CoreAppointmentService,
     ConflictResolutionService,
     AppointmentWorkflowEngine,
@@ -190,6 +194,7 @@ import { CommunicationModule } from '@communication/communication.module';
   exports: [
     // Core Services
     AppointmentsService,
+    'APPOINTMENTS_SERVICE',
     CoreAppointmentService,
     ConflictResolutionService,
     AppointmentWorkflowEngine,

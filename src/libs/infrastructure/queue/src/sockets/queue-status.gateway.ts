@@ -17,7 +17,7 @@ import {
 import { Injectable, OnModuleInit, Inject, forwardRef, Optional } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { QueueService } from '@queue/src/queue.service';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 
 // Internal imports - Infrastructure
 import { LoggingService, safeLog, safeLogError } from '@infrastructure/logging';

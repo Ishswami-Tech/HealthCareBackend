@@ -5,7 +5,7 @@
 
 import { PrismaService } from '@database/prisma/prisma.service';
 import { LoggingService } from '@infrastructure/logging';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { QueryOptionsBuilder } from '@database/query/builders/query-options.builder';
 import { QueryKeyFactory } from '@database/query/factories/query-key.factory';
 import type { QueryOptions, AuditInfo } from '@core/types/database.types';

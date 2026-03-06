@@ -3,8 +3,8 @@
  * @module EmailTemplates
  */
 
-import type { AppointmentTemplateData } from '@communication/channels/email/email-templates.service';
 import { generateUnsubscribeFooter } from './unsubscribe-footer';
+import type { AppointmentTemplateData } from '@core/types/communication.types';
 
 /**
  * Generates appointment reminder email template

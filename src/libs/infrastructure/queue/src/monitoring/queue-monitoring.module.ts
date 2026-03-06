@@ -1,6 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 // LoggingModule is @Global() so LoggingService is available without explicit import
 import { QueueMonitoringService } from './queue-monitoring.service';
 

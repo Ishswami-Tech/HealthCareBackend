@@ -48,7 +48,7 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import {
   Cache,
   PatientCache,

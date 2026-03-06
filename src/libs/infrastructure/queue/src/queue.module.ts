@@ -22,7 +22,7 @@ import { FastifyAdapter } from '@bull-board/fastify';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
-import { ResilienceModule } from '@core/resilience';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
 import {
   APPOINTMENT_QUEUE,

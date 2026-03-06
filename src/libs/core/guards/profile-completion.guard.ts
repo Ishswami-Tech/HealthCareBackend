@@ -12,8 +12,6 @@ import type { FastifyRequestWithUser, JwtGuardUser } from '@core/types/guard.typ
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
-import { Role } from '@core/types/enums.types';
-import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 import { REQUIRES_PROFILE_COMPLETION_KEY } from '@core/decorators/profile-completion.decorator';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 
@@ -41,9 +39,7 @@ export class ProfileCompletionGuard implements CanActivate {
     private readonly reflector: Reflector,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
-    private readonly logging: LoggingService,
-    @Inject(forwardRef(() => ProfileCompletionService))
-    private readonly profileCompletionService: ProfileCompletionService
+    private readonly logging: LoggingService
   ) {}
 
   /**
@@ -91,15 +87,8 @@ export class ProfileCompletionGuard implements CanActivate {
         throw new UnauthorizedException('User not found');
       }
 
-      // Validate profile directly (authoritative check)
-      // This is more reliable than checking DB flag which might be stale
-      const validation = this.profileCompletionService.validateProfileCompletion(
-        dbUser as unknown as Record<string, unknown>,
-        (user.role as Role) || Role.PATIENT
-      );
-
-      // If validation fails, deny access
-      if (!validation.isComplete) {
+      // Database flag is the authoritative source for profile completion in auth flows.
+      if (!dbUser.isProfileComplete) {
         await this.logging.log(
           LogType.AUDIT,
           LogLevel.DEBUG,
@@ -116,7 +105,7 @@ export class ProfileCompletionGuard implements CanActivate {
 
         throw new ForbiddenException({
           error: 'Profile Incomplete',
-          message: `Please complete your profile to access this feature. Missing: ${validation.missingFields.join(', ')}`,
+          message: 'Please complete your profile to access this feature.',
           requiresProfileCompletion: true,
           redirectUrl: '/profile/complete',
         });

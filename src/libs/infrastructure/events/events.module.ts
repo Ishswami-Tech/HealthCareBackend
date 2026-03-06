@@ -3,7 +3,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 
 // Internal imports - Core
-import { ResilienceModule } from '@core/resilience';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 
 // Internal imports - Local
 import { EventService } from './event.service';
@@ -55,7 +55,7 @@ import { EventService } from './event.service';
  *
  * **Usage:**
  * ```typescript
- * import { EventService } from '@infrastructure/events';
+ * import { EventService } from '@infrastructure/events/event.service';
  *
  * constructor(private readonly eventService: EventService) {}
  *

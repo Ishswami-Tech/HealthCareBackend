@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { DatabaseService } from '@infrastructure/database';
 import type {
   AppointmentTemplate,

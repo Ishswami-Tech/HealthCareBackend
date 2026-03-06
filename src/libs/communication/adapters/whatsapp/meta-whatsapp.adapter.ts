@@ -15,7 +15,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { BaseWhatsAppAdapter } from '@communication/adapters/base/base-whatsapp-adapter';
 import type { WhatsAppOptions, WhatsAppResult } from '@communication/adapters/interfaces';
-import type { ProviderConfig } from '@communication/config';
+import type { ProviderConfig } from '@core/types/communication.types';
 
 /**
  * Meta WhatsApp Business API Adapter

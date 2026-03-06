@@ -10,7 +10,7 @@
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database/database.service';
-import { CommunicationConfigService } from '@communication/config';
+import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache/cache.service';

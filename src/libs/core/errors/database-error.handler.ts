@@ -6,9 +6,9 @@
  */
 
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
-import { HealthcareError } from '@core/errors';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '@core/types/logging.types';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 
 export enum DatabaseErrorType {

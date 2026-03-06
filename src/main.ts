@@ -40,13 +40,14 @@ import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
 } from '@core/resilience/graceful-shutdown.service';
-import {
-  createFrameworkAdapter,
+import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
+import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
+import { ServerConfigurator } from '@infrastructure/framework/wrappers/server-configurator';
+import type {
   IFrameworkAdapter,
-  ApplicationLifecycleManager,
-  ServerConfigurator,
-} from '@infrastructure/framework';
-import type { ApplicationConfig, MiddlewareConfig } from '@core/types/framework.types';
+  ApplicationConfig,
+  MiddlewareConfig,
+} from '@core/types/framework.types';
 import { spawn, ChildProcess } from 'child_process';
 import * as path from 'path';
 

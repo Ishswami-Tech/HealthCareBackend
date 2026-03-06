@@ -7,7 +7,7 @@ import { ClinicLocationController } from './cliniclocation/clinic-location.contr
 import { ClinicCommunicationModule } from './communication/clinic-communication.module';
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
-import { GuardsModule } from '@core/guards';
+import { GuardsModule } from '@core/guards/guards.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';

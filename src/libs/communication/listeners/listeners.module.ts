@@ -8,11 +8,10 @@
  * @description Event-driven communication integration via CommunicationService
  */
 
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { LoggingModule } from '@logging';
-import { CommunicationModule } from '@communication/communication.module';
 import { NotificationEventListener } from './notification-event.listener';
 
 /**
@@ -40,7 +39,6 @@ import { NotificationEventListener } from './notification-event.listener';
     EventEmitterModule,
     EventsModule, // Central event system
     LoggingModule,
-    forwardRef(() => CommunicationModule), // Unified communication service
   ],
   providers: [NotificationEventListener],
   exports: [NotificationEventListener],

@@ -6,8 +6,8 @@
  */
 
 import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@config';
-import { CacheModule } from '@infrastructure/cache';
+import { ConfigModule } from '@config/config.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { ErrorsModule } from '@core/errors/errors.module';

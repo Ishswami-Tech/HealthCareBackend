@@ -8,9 +8,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { QueueService } from '@queue/src/queue.service';
 import {
   LogLevel,

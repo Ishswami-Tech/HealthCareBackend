@@ -5,7 +5,7 @@ import { RepositoryResult } from '@core/types/database.types';
 import { Inject, forwardRef } from '@nestjs/common';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 
 // Re-export types
 export { RepositoryResult };

@@ -12,7 +12,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthAggregatorService } from './health-aggregator.service';

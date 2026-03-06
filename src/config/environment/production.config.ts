@@ -1,4 +1,4 @@
-import type { ProductionConfig } from '@core/types';
+import type { ProductionConfig } from '@core/types/config.types';
 import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
 import {
   parseInteger,

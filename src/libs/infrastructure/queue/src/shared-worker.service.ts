@@ -9,7 +9,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@
 
 import { Worker, Job } from 'bullmq';
 import { ConfigService } from '@config/config.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';

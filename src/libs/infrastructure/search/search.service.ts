@@ -11,7 +11,7 @@
 import { Injectable } from '@nestjs/common';
 import { DatabaseService } from '@database/database.service';
 import { LoggingService } from '@infrastructure/logging';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LogType, LogLevel } from '@core/types';
 
 /**

@@ -189,6 +189,13 @@ function main() {
     stepTimes['Prettier Verification'] = formatCheckResult.time;
     validationCount++;
 
+    const circularCheckResult = runCommand(
+      'yarn run deps:cycles:all',
+      'Circular dependency check (strict)'
+    );
+    stepTimes['Circular Dependency Check'] = circularCheckResult.time;
+    validationCount++;
+
     // Security and dependency checks
     log('\nSecurity & Dependency Checks', 'blue');
     log('-'.repeat(60), 'blue');

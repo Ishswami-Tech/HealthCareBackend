@@ -3,8 +3,8 @@
  * @module EmailTemplates
  */
 
-import type { PrescriptionTemplateData } from '@communication/channels/email/email-templates.service';
 import { generateUnsubscribeFooter } from './unsubscribe-footer';
+import type { PrescriptionTemplateData } from '@core/types/communication.types';
 
 /**
  * Generates prescription ready email template

@@ -1,13 +1,12 @@
-import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@config/config.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
-import { CacheModule } from '@infrastructure/cache';
-import { EventsModule } from '@infrastructure/events';
+import { CacheModule } from '@infrastructure/cache/cache.module';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { NotificationPreferenceController } from './notification-preference.controller';
 import { NotificationPreferenceService } from './notification-preference.service';
-import { CommunicationModule } from '@communication/communication.module';
 import { PushModule } from '@communication/channels/push';
 import { EmailModule } from '@communication/channels/email';
 import { ChatModule } from '@communication/channels/chat';
@@ -45,7 +44,6 @@ import { ChatModule } from '@communication/channels/chat';
     EmailModule,
     PushModule,
     ChatModule, // Chat backup service
-    forwardRef(() => CommunicationModule), // Unified communication service
   ],
   controllers: [NotificationPreferenceController],
   providers: [NotificationPreferenceService],

@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, Optional, Inject, forwardRef } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

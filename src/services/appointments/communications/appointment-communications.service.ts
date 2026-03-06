@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { SocketService } from '@communication/channels/socket/socket.service';
 // SocketEventData type not used in this file
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 

@@ -13,7 +13,7 @@
  *
  * Usage:
  * ```typescript
- * import { ConfigService } from '@config';
+ * import { ConfigService } from '@config/config.service';
  *
  * constructor(private readonly config: ConfigService) {}
  *

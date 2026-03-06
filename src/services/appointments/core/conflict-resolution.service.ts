@@ -1,5 +1,5 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import type {
   TimeSlot,
   ConflictResolutionOptions,

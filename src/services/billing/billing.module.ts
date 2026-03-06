@@ -1,4 +1,4 @@
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { BillingService } from './billing.service';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { BillingEventsListener } from './billing.events';
@@ -14,7 +14,6 @@ import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 import { PaymentModule } from '@payment/payment.module';
 import { QueueModule } from '@queue/src/queue.module';
-import { AppointmentsModule } from '@services/appointments/appointments.module';
 
 @Module({
   imports: [
@@ -29,7 +28,6 @@ import { AppointmentsModule } from '@services/appointments/appointments.module';
     CacheModule,
     PaymentModule,
     QueueModule, // Queue processing for invoice PDF generation, bulk operations
-    forwardRef(() => AppointmentsModule),
   ],
   controllers: [BillingController],
   providers: [
@@ -40,7 +38,11 @@ import { AppointmentsModule } from '@services/appointments/appointments.module';
       provide: 'InvoicePDFService',
       useExisting: InvoicePDFService,
     },
+    {
+      provide: 'BILLING_SERVICE',
+      useExisting: BillingService,
+    },
   ],
-  exports: [BillingService, InvoicePDFService],
+  exports: [BillingService, 'BILLING_SERVICE', InvoicePDFService],
 })
 export class BillingModule {}

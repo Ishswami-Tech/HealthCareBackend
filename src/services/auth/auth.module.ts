@@ -5,7 +5,6 @@ import { ConfigService } from '@config/config.service';
 
 // Use direct import (not barrel) to avoid TDZ circular dependency at startup
 import { DatabaseModule } from '@infrastructure/database/database.module';
-import { CacheModule } from '@infrastructure/cache/cache.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { SessionModule } from '@core/session/session.module';
@@ -13,9 +12,6 @@ import { GuardsModule } from '@core/guards/guards.module';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
-
-// Core modules
-import { UsersModule } from '@services/users/users.module';
 
 // Auth services
 import { AuthService } from './auth.service';
@@ -49,7 +45,6 @@ import { SignOptions } from 'jsonwebtoken';
       inject: [ConfigService],
     }),
     forwardRef(() => DatabaseModule),
-    CacheModule,
     EventsModule,
     RbacModule,
     SessionModule,
@@ -57,12 +52,15 @@ import { SignOptions } from 'jsonwebtoken';
     GuardsModule,
     EmailModule,
     WhatsAppModule, // WhatsApp OTP support
-    forwardRef(() => UsersModule),
   ],
   controllers: [AuthController],
   providers: [
     // Main auth service
     AuthService,
+    {
+      provide: 'AUTH_SERVICE',
+      useExisting: AuthService,
+    },
 
     // Core auth services
     JwtAuthService,
@@ -74,6 +72,7 @@ import { SignOptions } from 'jsonwebtoken';
   ],
   exports: [
     AuthService,
+    'AUTH_SERVICE',
     JwtAuthService,
     OtpService,
     PasswordService,

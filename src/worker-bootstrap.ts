@@ -13,23 +13,24 @@
 import type { INestApplication } from '@nestjs/common';
 import { Module, forwardRef, type DynamicModule, Logger } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
-import { CacheModule } from '@infrastructure/cache';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue';
 import { LoggingModule } from '@infrastructure/logging';
 import type { LoggingService } from '@infrastructure/logging';
-import { ResilienceModule } from '@core/resilience';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { SessionModule } from '@core/session/session.module';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ErrorsModule } from '@core/errors';
 import {
   GracefulShutdownService,
   ProcessErrorHandlersService,
 } from '@core/resilience/graceful-shutdown.service';
-import { createFrameworkAdapter, ApplicationLifecycleManager } from '@infrastructure/framework';
+import { createFrameworkAdapter } from '@infrastructure/framework/adapters/fastify.adapter';
+import { ApplicationLifecycleManager } from '@infrastructure/framework/wrappers/application-lifecycle.manager';
 import type { ApplicationConfig } from '@core/types/framework.types';
 
 @Module({

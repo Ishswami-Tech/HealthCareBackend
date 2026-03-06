@@ -2,7 +2,7 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '@database/prisma/prisma.service';
 import { RepositoryResult } from '@core/types/database.types';
 import type { PatientWithUser, PatientWithUserOrNull } from '@core/types/database.types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 

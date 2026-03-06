@@ -1,7 +1,10 @@
 import type { INestApplication } from '@nestjs/common';
 import type { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
-import { createFrameworkAdapter, FastifyFrameworkAdapter } from '@infrastructure/framework';
+import {
+  createFrameworkAdapter,
+  FastifyFrameworkAdapter,
+} from '@infrastructure/framework/adapters/fastify.adapter';
 
 type FastifyInstance = ReturnType<FastifyFrameworkAdapter['getHttpServer']>;
 

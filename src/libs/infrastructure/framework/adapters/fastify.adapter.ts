@@ -440,9 +440,7 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
 
       try {
         // Register cookie plugin only if not already registered
-        await fastifyInstance.register(fastifyCookie, {
-          secret: cookieSecret,
-        });
+        await this.registerCookie(app, { secret: cookieSecret });
       } catch (cookieError) {
         // If cookie registration fails, check if it's because it's already registered
         // Fastify may throw various errors for duplicate registrations

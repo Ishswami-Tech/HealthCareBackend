@@ -16,9 +16,9 @@ import type { PrismaClient as GeneratedPrismaClient } from '@prisma/client';
 import type { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
-import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
-import { HealthcareError } from '@core/errors';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '@core/types/logging.types';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { getEnv, getEnvNumber, isProduction } from '@config/environment/utils';
 import * as fs from 'fs';
@@ -34,36 +34,14 @@ export type { PrismaClient } from '@prisma/client';
 type PrismaClientConstructor = new (args?: PrismaClientConstructorArgs) => GeneratedPrismaClient;
 
 // Import types from centralized locations
+import type { UserWithRelations } from '@core/types/user.types';
 import type {
-  PermissionEntity,
-  RbacRoleEntity,
-  RolePermissionEntity,
-  UserRoleEntity,
-  UserWithRelations,
   AppointmentWithRelations,
   AppointmentTimeSlot,
-  UserCreateInput,
-  UserUpdateInput,
-  UserWhereInput,
-  AppointmentCreateInput,
-  AppointmentUpdateInput,
-  AppointmentWhereInput,
   BillingPlanWithRelations,
   SubscriptionWithRelations,
   InvoiceWithRelations,
   PaymentWithRelations,
-  BillingPlanCreateInput,
-  BillingPlanUpdateInput,
-  BillingPlanWhereInput,
-  SubscriptionCreateInput,
-  SubscriptionUpdateInput,
-  SubscriptionWhereInput,
-  InvoiceCreateInput,
-  InvoiceUpdateInput,
-  InvoiceWhereInput,
-  PaymentCreateInput,
-  PaymentUpdateInput,
-  PaymentWhereInput,
   Doctor,
   Patient,
   Receptionist,
@@ -78,6 +56,32 @@ import type {
   Counselor,
   Clinic,
   AuditLog,
+  PermissionEntity,
+  RbacRoleEntity,
+  RolePermissionEntity,
+  UserRoleEntity,
+} from '@core/types/database.types';
+import type {
+  UserCreateInput,
+  UserUpdateInput,
+  UserWhereInput,
+  AppointmentCreateInput,
+  AppointmentUpdateInput,
+  AppointmentWhereInput,
+  BillingPlanCreateInput,
+  BillingPlanUpdateInput,
+  BillingPlanWhereInput,
+  SubscriptionCreateInput,
+  SubscriptionUpdateInput,
+  SubscriptionWhereInput,
+  InvoiceCreateInput,
+  InvoiceUpdateInput,
+  InvoiceWhereInput,
+  PaymentCreateInput,
+  PaymentUpdateInput,
+  PaymentWhereInput,
+} from '@core/types/input.types';
+import type {
   PrismaDelegateArgs,
   PrismaClientConstructorArgs,
   PrismaExtendArgs,
@@ -107,7 +111,7 @@ import type {
   ClinicDelegate,
   AuditLogDelegate,
   TransactionDelegate,
-} from '@core/types';
+} from '@core/types/prisma.types';
 
 // Comprehensive type-safe validators using direct Prisma types
 const userIncludeValidator = {
@@ -153,9 +157,15 @@ const appointmentTimeSlotSelectValidator = {
 
 // Re-export types from centralized locations
 export type {
-  UserWithRelations,
   AppointmentWithRelations,
   AppointmentTimeSlot,
+  BillingPlanWithRelations,
+  SubscriptionWithRelations,
+  InvoiceWithRelations,
+  PaymentWithRelations,
+} from '@core/types/database.types';
+export type { UserWithRelations } from '@core/types/user.types';
+export type {
   UserCreateInput,
   UserUpdateInput,
   UserWhereInput,
@@ -164,10 +174,6 @@ export type {
   AppointmentUpdateInput,
   AppointmentWhereInput,
   AppointmentWhereUniqueInput,
-  BillingPlanWithRelations,
-  SubscriptionWithRelations,
-  InvoiceWithRelations,
-  PaymentWithRelations,
   BillingPlanCreateInput,
   BillingPlanUpdateInput,
   BillingPlanWhereInput,
@@ -180,7 +186,7 @@ export type {
   PaymentCreateInput,
   PaymentUpdateInput,
   PaymentWhereInput,
-} from '@core/types';
+} from '@core/types/input.types';
 
 // Type-safe operation results
 // Note: These are type aliases for convenience, but methods should use explicit return types

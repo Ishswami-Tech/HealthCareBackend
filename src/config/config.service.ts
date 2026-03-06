@@ -18,7 +18,7 @@ import type {
   EnhancedRateLimitConfig,
   CacheConfig,
   VideoProviderConfig,
-} from '@core/types';
+} from '@core/types/config.types';
 import {
   isCacheEnabled as checkCacheEnabled,
   getCacheProvider as getCacheProviderType,

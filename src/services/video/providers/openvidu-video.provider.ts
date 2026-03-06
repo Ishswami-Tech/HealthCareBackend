@@ -13,7 +13,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { HttpService } from '@infrastructure/http';
 import { AxiosError } from 'axios';
 import type { HttpRequestOptions } from '@core/types';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';

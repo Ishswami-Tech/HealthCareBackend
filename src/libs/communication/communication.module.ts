@@ -14,7 +14,7 @@ import { ListenersModule } from '@communication/listeners/listeners.module';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
 
-import { ResilienceModule } from '@core/resilience';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 import { CommunicationService } from './communication.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
 import { CommunicationController } from './communication.controller';

@@ -10,7 +10,7 @@
 
 // Prisma 7: Import from @prisma/client (resolved via symlink or path mapping)
 import type { PrismaClient } from '@prisma/client';
-import { HealthcareError } from '@core/errors';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { HttpStatus } from '@nestjs/common';
 
@@ -27,10 +27,7 @@ import { HttpStatus } from '@nestjs/common';
  * These are type aliases for Prisma-generated entities
  */
 
-// Re-export UserWithRelations type from user.types.ts for use in this file
-import type { UserWithRelations } from './user.types';
 import type { ClinicLocation } from './clinic.types';
-export type { UserWithRelations };
 
 // Use explicit interface definitions to avoid 'any' in union types from Prisma
 // These types match Prisma entities but avoid using Prisma's generated types directly in union types
@@ -1802,7 +1799,14 @@ export type PrismaTransactionClient = Omit<
  * Prisma Service type (for dependency injection)
  * Import from @infrastructure/database/prisma/prisma.service
  */
-export type PrismaService = import('@infrastructure/database/prisma/prisma.service').PrismaService;
+export type PrismaService = unknown;
+export type UserRecord = {
+  id: string;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+};
 
 /**
  * Base database client interface for enterprise database operations
@@ -1866,7 +1870,7 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
       counselor: true;
       clinics: true;
     }>
-  ): Promise<UserWithRelations | null>;
+  ): Promise<UserRecord | null>;
 
   /**
    * Find user by phone with selective relation loading
@@ -1888,7 +1892,7 @@ export interface IHealthcareDatabaseClient extends IDatabaseClient {
       counselor: true;
       clinics: true;
     }>
-  ): Promise<UserWithRelations | null>;
+  ): Promise<UserRecord | null>;
 
   /**
    * Execute healthcare-specific read operations with HIPAA compliance

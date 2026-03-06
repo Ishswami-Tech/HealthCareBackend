@@ -1,8 +1,7 @@
 # Core Library
 
 **Purpose:** Enterprise core utilities, business logic, and shared types
-**Location:** `src/libs/core`
-**Status:** ✅ Production-ready
+**Location:** `src/libs/core` **Status:** ✅ Production-ready
 
 ---
 
@@ -59,7 +58,8 @@ import type { User, Appointment, RequestContext } from '@core/types';
 - ✅ **Business Rules Engine** - Rule-based validation and workflow automation
 - ✅ **RBAC System** - 12 healthcare roles, 140+ permissions
 - ✅ **Session Management** - Multi-device session tracking (max 5 per user)
-- ✅ **Plugin Interface** - Extensible plugin architecture (14 appointment plugins)
+- ✅ **Plugin Interface** - Extensible plugin architecture (14 appointment
+  plugins)
 - ✅ **Error Handling** - HealthcareError with error codes
 - ✅ **Guards** - JWT, Roles, Clinic isolation, RBAC, IP whitelist
 - ✅ **Decorators** - @Roles, @Public, @Clinic, @Permissions, @Cache, @RateLimit
@@ -107,13 +107,13 @@ const rule: BusinessRule = {
       type: 'custom',
       value: null,
       operator: 'AND',
-    }
+    },
   ],
   actions: [
     {
       type: 'block',
       message: 'Weekend appointments are not allowed',
-    }
+    },
   ],
 };
 
@@ -128,13 +128,15 @@ if (!result.valid) {
 ```
 
 **Rule Categories:**
+
 - `appointment_creation`
 - `appointment_update`
 - `appointment_cancellation`
 - `user_access`
 - `data_integrity`
 
-**Condition Types:** equals, not_equals, greater_than, less_than, contains, not_contains, is_empty, is_not_empty, custom
+**Condition Types:** equals, not_equals, greater_than, less_than, contains,
+not_contains, is_empty, is_not_empty, custom
 
 **Action Types:** block, warn, allow, log, notify, require_approval
 
@@ -176,10 +178,14 @@ await this.rbacService.revokeRole(userId, roleId, clinicId, revokedBy);
 const roles = await this.rbacService.getUserRoles(userId, clinicId);
 
 // Get permissions summary
-const summary = await this.rbacService.getUserPermissionsSummary(userId, clinicId);
+const summary = await this.rbacService.getUserPermissionsSummary(
+  userId,
+  clinicId
+);
 ```
 
 **12 Healthcare Roles:**
+
 - SUPER_ADMIN - Full system access
 - CLINIC_ADMIN - Clinic management
 - DOCTOR - Medical operations
@@ -194,10 +200,13 @@ const summary = await this.rbacService.getUserPermissionsSummary(userId, clinicI
 - COUNSELOR - Counseling services
 
 **Permission Format:** `resource:action`
+
 - Examples: `appointments:create`, `patients:read`, `medical-records:*`, `*`
 
 **Ownership-Based Access:**
-- Automatic ownership checks for: profile, user, appointments, medical-records, patients
+
+- Automatic ownership checks for: profile, user, appointments, medical-records,
+  patients
 - Patients can update their own appointments
 - Users can read/update their own profile
 
@@ -237,10 +246,14 @@ const sessions = await this.sessionManagementService.getUserSessions(userId);
 await this.sessionManagementService.revokeSession(sessionId, userId);
 
 // Revoke all sessions (except current)
-await this.sessionManagementService.revokeAllUserSessions(userId, currentSessionId);
+await this.sessionManagementService.revokeAllUserSessions(
+  userId,
+  currentSessionId
+);
 ```
 
 **Session Features:**
+
 - **Max 5 sessions** per user (oldest auto-revoked)
 - **16 Redis partitions** for distributed storage
 - **Suspicious activity detection** every 30 minutes
@@ -286,12 +299,14 @@ registry.register(new MyPlugin());
 ```
 
 **Plugin Lifecycle Hooks:**
+
 - `beforeCreate`, `afterCreate`
 - `beforeUpdate`, `afterUpdate`
 - `beforeDelete`, `afterDelete`
 - `onValidate`, `onError`
 
 **14 Appointment Plugins:**
+
 - DoctorAvailability, PatientAvailability
 - ConflictCheck, SlotManagement
 - Notification, Reminder
@@ -492,6 +507,7 @@ app.useGlobalFilters(new HttpExceptionFilter());
 ```
 
 **Features:**
+
 - HIPAA-compliant error messages (no PHI exposure)
 - Structured error responses
 - Automatic logging
@@ -504,7 +520,7 @@ app.useGlobalFilters(new HttpExceptionFilter());
 Healthcare cache interceptor:
 
 ```typescript
-import { HealthcareCacheInterceptor } from '@core/interceptors';
+import { HealthcareCacheInterceptor } from '@core/interceptors/healthcare-cache.interceptor';
 
 @Controller('data')
 @UseInterceptors(HealthcareCacheInterceptor)
@@ -525,7 +541,8 @@ export class DataController {
 Circuit breaker and graceful shutdown:
 
 ```typescript
-import { CircuitBreakerService, GracefulShutdownService } from '@core/resilience';
+import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
+import { GracefulShutdownService } from '@core/resilience/graceful-shutdown.service';
 
 // Circuit breaker
 const result = await this.circuitBreaker.execute(
@@ -534,8 +551,8 @@ const result = await this.circuitBreaker.execute(
     return await this.externalApi.call();
   },
   {
-    threshold: 5,        // Failures before open
-    timeout: 30000,      // 30 seconds
+    threshold: 5, // Failures before open
+    timeout: 30000, // 30 seconds
     resetTimeout: 60000, // 1 minute
   }
 );
@@ -547,6 +564,7 @@ await this.gracefulShutdown.shutdown(() => {
 ```
 
 **Circuit Breaker States:**
+
 - CLOSED - Normal operation
 - OPEN - Failing, reject requests
 - HALF_OPEN - Testing recovery
@@ -579,6 +597,7 @@ import type {
 ```
 
 **Type Categories:**
+
 - **User & Auth:** User, Role, Permission, SessionData
 - **Clinic:** Clinic, ClinicConfig
 - **Appointments:** Appointment, AppointmentStatus, RecurringAppointment

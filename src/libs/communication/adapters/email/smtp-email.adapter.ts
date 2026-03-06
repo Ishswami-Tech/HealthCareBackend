@@ -17,7 +17,7 @@ import { LogType, LogLevel } from '@core/types';
 import { BaseEmailAdapter } from '@communication/adapters/base/base-email-adapter';
 import { SuppressionListService } from './suppression-list.service';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
-import type { ProviderConfig } from '@communication/config';
+import type { ProviderConfig } from '@core/types/communication.types';
 
 /**
  * Helper function to call nodemailer sendMail with proper type isolation

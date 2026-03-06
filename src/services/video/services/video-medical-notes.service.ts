@@ -7,10 +7,10 @@
 
 import { Injectable, Inject, forwardRef, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { SocketService } from '@communication/channels/socket/socket.service';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { EHRService } from '@services/ehr/ehr.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { HealthcareError } from '@core/errors';

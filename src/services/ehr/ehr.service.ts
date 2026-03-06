@@ -7,9 +7,9 @@ import {
   ClinicEHRRecordFilters,
   GetClinicRecordsByFilterResult,
 } from '@core/types/ehr.types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { QueueService } from '@queue/src/queue.service';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 import { LAB_REPORT_QUEUE, IMAGING_QUEUE } from '@queue/src/queue.constants';
