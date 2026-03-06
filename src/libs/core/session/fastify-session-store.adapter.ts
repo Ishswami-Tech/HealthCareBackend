@@ -10,7 +10,7 @@
  */
 
 import { Injectable, Optional } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 
 /**
  * Session store interface compatible with @fastify/session

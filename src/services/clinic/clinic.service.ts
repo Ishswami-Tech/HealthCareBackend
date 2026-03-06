@@ -9,9 +9,9 @@ import {
 import { Role } from '@core/types/enums.types';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
-import { CacheService } from '@infrastructure/cache';
-import { EventService } from '@infrastructure/events';
-import { ConfigService } from '@config';
+import { CacheService } from '@infrastructure/cache/cache.service';
+import { EventService } from '@infrastructure/events/event.service';
+import { ConfigService } from '@config/config.service';
 import {
   LogType,
   LogLevel,
@@ -32,12 +32,12 @@ import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
+import { CommunicationConfigService } from '@communication/config';
 import {
-  CommunicationConfigService,
   type ClinicCommunicationConfig,
   EmailProvider,
   type ProviderConfig,
-} from '@communication/config';
+} from '@core/types/communication.types';
 
 @Injectable()
 export class ClinicService {

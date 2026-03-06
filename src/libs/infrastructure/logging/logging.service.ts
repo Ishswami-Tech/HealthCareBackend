@@ -3,12 +3,8 @@ import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
 import { ConfigService } from '@config/config.service';
 
-// Internal imports - Infrastructure
-import type { DatabaseService } from '@infrastructure/database/database.service';
-import type { CacheService } from '@infrastructure/cache/cache.service';
-
 // Internal imports - Core
-import { HealthcareError } from '@core/errors';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { HttpStatus } from '@nestjs/common';
 
@@ -21,12 +17,44 @@ import {
   type EventEntry,
   type PaginatedLogsResult,
   type PaginatedEventsResult,
-} from '@core/types';
+} from '@core/types/logging.types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
 
 import { AsyncLocalStorage } from 'async_hooks';
 import { PaginationMetaDto } from '@dtos/common-response.dto';
 import { calculatePagination } from '@infrastructure/database/query/query.utils';
+
+type LoggingDatabaseClientLike = {
+  log: {
+    create: (args: unknown) => Promise<unknown>;
+  };
+  auditLog: {
+    findMany: (args: unknown) => Promise<unknown[]>;
+    deleteMany: (args: unknown) => Promise<{ count: number }>;
+  };
+};
+
+type LoggingDatabaseServiceLike = {
+  findUserByEmailSafe: (email: string) => Promise<{ id: string } | null>;
+  executeHealthcareRead: <T>(
+    operation: (client: LoggingDatabaseClientLike) => Promise<T>
+  ) => Promise<T>;
+  executeHealthcareWrite: (
+    operation: (client: LoggingDatabaseClientLike) => Promise<unknown>,
+    auditInfo: unknown
+  ) => Promise<unknown>;
+};
+
+type LoggingCacheServiceLike = {
+  get: <T = string>(key: string) => Promise<T | null>;
+  set: (key: string, value: unknown, ttlSeconds?: number) => Promise<unknown>;
+  del: (...keys: string[]) => Promise<number>;
+  ping: () => Promise<string>;
+  lLen: (key: string) => Promise<number>;
+  rPush: (key: string, ...values: string[]) => Promise<number>;
+  lTrim: (key: string, start: number, stop: number) => Promise<unknown>;
+  lRange: (key: string, start: number, stop: number) => Promise<string[]>;
+};
 
 /**
  * ===================================================================
@@ -135,10 +163,10 @@ export class LoggingService {
     private readonly configService: ConfigService,
     @Optional()
     @Inject('DATABASE_SERVICE')
-    private readonly databaseService?: DatabaseService,
+    private readonly databaseService?: LoggingDatabaseServiceLike,
     @Optional()
     @Inject('CACHE_SERVICE')
-    private readonly cacheService?: CacheService
+    private readonly cacheService?: LoggingCacheServiceLike
   ) {
     // Use ConfigService (which uses dotenv) for all environment variable access
     this.serviceName = this.configService.getEnv('SERVICE_NAME', 'healthcare') || 'healthcare';

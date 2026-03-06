@@ -12,7 +12,7 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { SocketService, type SocketEventData } from '@communication/channels/socket/socket.service';
 import * as crypto from 'crypto';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';

@@ -28,6 +28,30 @@ export interface NotificationDeliveryResult {
   }>;
 }
 
+export interface PushNotificationData {
+  title: string;
+  body: string;
+  imageUrl?: string;
+  data?: Record<string, string>;
+  initiatorId?: string;
+  initiatorRole?: string;
+}
+
+export interface PushNotificationResult {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+  provider?: string;
+  usedFallback?: boolean;
+  successCount?: number;
+  failureCount?: number;
+  results?: Array<{
+    success: boolean;
+    messageId?: string;
+    error?: string;
+  }>;
+}
+
 /**
  * Notification metrics
  * @interface NotificationMetrics

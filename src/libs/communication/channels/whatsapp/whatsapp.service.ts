@@ -6,7 +6,7 @@ import { WhatsAppConfig } from '@communication/channels/whatsapp/whatsapp.config
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
-import { CommunicationConfigService } from '@communication/config';
+import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 
 /**

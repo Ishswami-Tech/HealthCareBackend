@@ -9,13 +9,13 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
-import { ConfigModule } from '@config';
-import { CacheModule } from '@infrastructure/cache';
+import { ConfigModule } from '@config/config.module';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 import { HttpModule } from '@infrastructure/http';
 import { SocketModule } from '@communication/channels/socket/socket.module';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { GuardsModule } from '@core/guards/guards.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { ErrorsModule } from '@core/errors/errors.module';
@@ -23,9 +23,6 @@ import { RateLimitModule } from '@security/rate-limit/rate-limit.module';
 import { CommunicationModule } from '@communication/communication.module';
 import { QueueModule } from '@queue/src/queue.module';
 import { StorageModule } from '@infrastructure/storage';
-// Note: HealthModule is imported with forwardRef to break circular dependency
-// since HealthModule also imports VideoModule with forwardRef
-import { HealthModule } from '@services/health/health.module';
 import { EHRModule } from '@services/ehr/ehr.module';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
@@ -45,10 +42,6 @@ import { VideoAnnotationService } from './services/video-annotation.service';
 import { VideoTranscriptionService } from './services/video-transcription.service';
 import { VideoQualityService } from './services/video-quality.service';
 import { VideoVirtualBackgroundService } from './services/video-virtual-background.service';
-// Note: HealthModule and VideoModule have a circular dependency.
-// Both use forwardRef to break the cycle. HealthModule provides VideoHealthIndicator
-// which is injected into VideoController for health check endpoints.
-
 @Module({
   imports: [
     ConfigModule,
@@ -60,9 +53,6 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     LoggingModule,
     DatabaseModule, // Required for database operations
     CommunicationModule, // Required for CommunicationHealthIndicator
-    // HealthModule imported with forwardRef to break circular dependency
-    // Provides VideoHealthIndicator and other health indicators for VideoController
-    forwardRef(() => HealthModule),
     SocketModule,
     GuardsModule,
     RbacModule,

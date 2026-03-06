@@ -33,7 +33,7 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { HealthIndicatorResult } from './types';
 import { VideoService } from '@services/video/video.service';
 import { BaseHealthIndicator } from './base-health.indicator';
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

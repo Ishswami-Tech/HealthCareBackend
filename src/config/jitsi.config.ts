@@ -1,4 +1,4 @@
-import type { JitsiConfig } from '@core/types';
+import type { JitsiConfig } from '@core/types/config.types';
 import { getEnv, getEnvWithDefault, getEnvBoolean } from './environment/utils';
 
 /**

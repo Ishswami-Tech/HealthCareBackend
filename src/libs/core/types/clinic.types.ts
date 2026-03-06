@@ -1,4 +1,4 @@
-import { Role } from '@core/types';
+import type { Role } from './rbac.types';
 import { FastifyRequest } from 'fastify';
 
 /**
@@ -274,7 +274,14 @@ export interface ClinicContext {
  */
 export interface ClinicAuthenticatedRequest extends FastifyRequest {
   /** Authenticated user information */
-  readonly user: import('./guard.types').AuthenticatedUser;
+  readonly user: {
+    readonly id?: string;
+    readonly sub?: string;
+    readonly role?: string;
+    readonly clinicId?: string;
+    readonly locationId?: string;
+    readonly [key: string]: unknown;
+  };
   /** Optional clinic context */
   readonly clinicContext?: ClinicContext;
 }

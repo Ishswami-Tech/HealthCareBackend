@@ -13,7 +13,7 @@
  */
 
 import { Logger } from '@nestjs/common';
-import type { ConfigService } from '@config';
+import type { ConfigService } from '@config/config.service';
 import type { ServerConfig, ApplicationConfig } from '@core/types/framework.types';
 import type { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

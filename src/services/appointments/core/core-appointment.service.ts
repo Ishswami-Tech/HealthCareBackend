@@ -4,9 +4,9 @@ import { ConfigService } from '@config/config.service';
 // Infrastructure Services
 // Using unified DatabaseService for all database operations
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel } from '@core/types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { QueueService } from '@infrastructure/queue';
 import { DatabaseService } from '@infrastructure/database';
 import { HealthcareErrorsService } from '@core/errors';

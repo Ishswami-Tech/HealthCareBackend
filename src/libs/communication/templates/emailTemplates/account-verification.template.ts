@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { AccountVerificationTemplateData } from '@communication/channels/email/email-templates.service';
+import type { AccountVerificationTemplateData } from '@core/types/communication.types';
 
 /**
  * Generates account verification email template

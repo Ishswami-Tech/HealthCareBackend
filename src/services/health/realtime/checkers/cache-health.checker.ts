@@ -4,7 +4,7 @@
  */
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { RealtimeHealthCheckResult } from '@core/types';

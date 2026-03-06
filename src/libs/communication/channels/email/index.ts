@@ -21,4 +21,4 @@ export type {
   PaymentTemplateData,
   AccountVerificationTemplateData,
   PasswordResetTemplateData,
-} from '@communication/channels/email/email-templates.service';
+} from '@core/types/communication.types';

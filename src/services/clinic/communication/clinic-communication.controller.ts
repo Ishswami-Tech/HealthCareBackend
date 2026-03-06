@@ -24,12 +24,12 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiParam } from '@ne
 import { JwtAuthGuard } from '@core/guards';
 import { RbacGuard } from '@core/rbac/rbac.guard';
 import { Roles } from '@core/decorators/roles.decorator';
+import { CommunicationConfigService } from '@communication/config';
 import {
-  CommunicationConfigService,
   ClinicCommunicationConfig,
   EmailProvider,
   ProviderConfig,
-} from '@communication/config';
+} from '@core/types/communication.types';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 

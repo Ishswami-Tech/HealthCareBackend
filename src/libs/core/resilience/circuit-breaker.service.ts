@@ -1,7 +1,7 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { LoggingService } from '@infrastructure/logging/logging.service';
+import { Injectable, Inject } from '@nestjs/common';
 import { LogType, LogLevel } from '@core/types';
 import type { CircuitBreakerState } from '@core/types';
+import type { LoggerLike } from '@core/types';
 
 /**
  * Configuration options for circuit breaker
@@ -79,8 +79,8 @@ export class CircuitBreakerService {
   private readonly STARTUP_GRACE_PERIOD = 90000; // 90 seconds grace period during startup
 
   constructor(
-    @Inject(forwardRef(() => LoggingService))
-    private readonly loggingService: LoggingService
+    @Inject('LOGGING_SERVICE')
+    private readonly loggingService: LoggerLike
   ) {}
 
   private circuitStates = new Map<string, InternalCircuitState>();

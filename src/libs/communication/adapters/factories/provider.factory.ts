@@ -15,12 +15,8 @@ import {
   WhatsAppProviderAdapter,
   SMSProviderAdapter,
 } from '@communication/adapters/interfaces';
-import {
-  CommunicationConfigService,
-  EmailProvider,
-  WhatsAppProvider,
-  SMSProvider,
-} from '@communication/config';
+import { CommunicationConfigService } from '@communication/config/communication-config.service';
+import { EmailProvider, WhatsAppProvider, SMSProvider } from '@core/types/communication.types';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';

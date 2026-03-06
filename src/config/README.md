@@ -1,15 +1,14 @@
 # Config Module
 
 **Purpose:** Type-safe configuration management with environment validation
-**Location:** `src/config`
-**Status:** ✅ Production-ready
+**Location:** `src/config` **Status:** ✅ Production-ready
 
 ---
 
 ## Quick Start
 
 ```typescript
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class MyService {
@@ -69,6 +68,7 @@ Environment variables are loaded in this order (later files override earlier):
 ```
 
 **Example:**
+
 ```env
 # .env (base)
 DATABASE_URL=postgresql://localhost/healthcare
@@ -264,6 +264,7 @@ const requiredProduction = [
 ```
 
 **Validation Levels:**
+
 - **Production/Staging:** Strict - throws error if required vars missing
 - **Development:** Warnings only for missing recommended vars
 - **Test:** No validation (allows minimal config)
@@ -275,7 +276,7 @@ const requiredProduction = [
 ### Payment Configuration
 
 ```typescript
-import { PaymentConfigService } from '@config';
+import { PaymentConfigService } from '@config/payment-config.service';
 
 // Get clinic payment configuration
 const config = await this.paymentConfigService.getClinicConfig(clinicId);
@@ -349,7 +350,7 @@ src/config/
 ### Basic Configuration Access
 
 ```typescript
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class DatabaseService {
@@ -363,7 +364,7 @@ export class DatabaseService {
 ### Environment-Specific Logic
 
 ```typescript
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class LoggingService {
@@ -383,7 +384,7 @@ export class LoggingService {
 ### Multi-Provider Support
 
 ```typescript
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class CacheService {
@@ -411,7 +412,7 @@ export class CacheService {
 ### Feature Flags
 
 ```typescript
-import { ConfigService } from '@config';
+import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class FeatureService {
@@ -479,6 +480,7 @@ WHATSAPP_PROVIDER=meta        # meta | twilio
 ## Troubleshooting
 
 **Issue: Configuration value is undefined**
+
 ```typescript
 // 1. Check environment file priority
 // Make sure variable is in correct .env file
@@ -497,6 +499,7 @@ const port = this.config.get<number>('app.port'); // Over this
 ```
 
 **Issue: Type errors in configuration**
+
 ```typescript
 // 1. Use typed getter methods
 const dbConfig = this.config.getDatabaseConfig();
@@ -508,6 +511,7 @@ const dbConfig = this.config.getDatabaseConfig();
 ```
 
 **Issue: Environment validation fails**
+
 ```typescript
 // 1. Check required variables for your environment
 // Production/staging require all critical variables
@@ -519,6 +523,7 @@ DATABASE_URL=postgresql://localhost/healthcare
 ```
 
 **Issue: Multi-provider config not working**
+
 ```typescript
 // 1. Check provider setting
 const provider = this.config.getCacheProvider();
@@ -537,6 +542,7 @@ const host = this.config.getCacheHost(); // Works for both
 ## Best Practices
 
 1. **Always use typed getter methods**
+
    ```typescript
    // GOOD
    const appConfig = this.config.getAppConfig();
@@ -546,11 +552,13 @@ const host = this.config.getCacheHost(); // Works for both
    ```
 
 2. **Provide defaults for optional variables**
+
    ```typescript
    const timeout = this.config.getEnvNumber('TIMEOUT', 5000);
    ```
 
 3. **Use environment checks for conditional logic**
+
    ```typescript
    if (this.config.isDevelopment()) {
      // Development-only code
@@ -558,6 +566,7 @@ const host = this.config.getCacheHost(); // Works for both
    ```
 
 4. **Validate critical configuration on boot**
+
    ```typescript
    if (!this.config.hasEnv('JWT_SECRET')) {
      throw new Error('JWT_SECRET is required');
@@ -598,6 +607,7 @@ ConfigModule (@Global)
 ```
 
 **Flow:**
+
 1. loadEnvironmentVariables() loads .env files (priority order)
 2. getConfigFactory() selects environment config
 3. validateConfigEarly() validates required variables

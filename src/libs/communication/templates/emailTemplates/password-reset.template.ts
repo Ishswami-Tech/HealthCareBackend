@@ -3,7 +3,7 @@
  * @module EmailTemplates
  */
 
-import type { PasswordResetTemplateData } from '@communication/channels/email/email-templates.service';
+import type { PasswordResetTemplateData } from '@core/types/communication.types';
 
 /**
  * Generates password reset email template

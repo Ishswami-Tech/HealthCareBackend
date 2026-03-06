@@ -1,5 +1,5 @@
 import { registerAs } from '@nestjs/config';
-import type { EnhancedRateLimitConfig } from '@core/types';
+import type { EnhancedRateLimitConfig } from '@core/types/config.types';
 import { parseInteger, getEnv, getEnvBoolean } from './environment/utils';
 
 /**

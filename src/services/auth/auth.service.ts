@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -15,7 +15,6 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { JwtAuthService } from './core/jwt.service';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
-import { UsersService } from '@services/users/users.service';
 import {
   LoginDto,
   RegisterDto,
@@ -40,7 +39,6 @@ import type { FastifyReply } from 'fastify';
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
-  private readonly usersService: UsersService;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -56,11 +54,8 @@ export class AuthService {
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService,
     private readonly socialAuthService: SocialAuthService,
-    private readonly otpService: OtpService,
-    @Inject(forwardRef(() => UsersService))
-    usersService: unknown
+    private readonly otpService: OtpService
   ) {
-    this.usersService = usersService as UsersService;
     // Defensive check: ensure configService is available
     if (!this.configService) {
       void this.logging.log(
@@ -1407,7 +1402,7 @@ export class AuthService {
    */
   public async checkProfileCompletionStatus(
     userId: string,
-    role: Role
+    _role: Role
   ): Promise<{ isComplete: boolean; isProfileComplete?: boolean }> {
     try {
       const user = await this.databaseService.findUserByIdSafe(userId);
@@ -1425,28 +1420,10 @@ export class AuthService {
       // Check the database-level flag (authoritative)
       const dbIsComplete = user.isProfileComplete;
 
-      // Also validate with UsersService to ensure consistency
-      const validation = this.usersService.validateProfileCompletion(
-        user as unknown as Record<string, unknown>,
-        role
-      );
-
-      const serviceIsComplete = validation.isComplete;
-
-      // Log if there's a discrepancy
-      if (dbIsComplete !== serviceIsComplete) {
-        await this.logging.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Profile completion status mismatch for user ${userId}: DB=${dbIsComplete}, Validation=${serviceIsComplete}`,
-          'AuthService.checkProfileCompletionStatus'
-        );
-      }
-
-      // Return the database status as primary, but also include the validation result
+      // Return database status as authoritative source.
       return {
         isComplete: dbIsComplete,
-        isProfileComplete: serviceIsComplete, // For backward compatibility
+        isProfileComplete: dbIsComplete, // Backward compatibility
       };
     } catch (error) {
       await this.logging.log(
@@ -1466,11 +1443,8 @@ export class AuthService {
    */
   public isProfileComplete(user: object): boolean {
     if (!user || typeof user !== 'object') return false;
-    // Cast to unknown then Record to satisfy the type requirement
     const profileRecord = user as Record<string, unknown>;
-    const role = (profileRecord['role'] as Role) || Role.PATIENT;
-
-    return this.usersService.isProfileComplete(profileRecord, role);
+    return profileRecord['isProfileComplete'] === true;
   }
 
   /**

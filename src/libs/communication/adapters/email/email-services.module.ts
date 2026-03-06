@@ -25,7 +25,7 @@ import {
 } from './zeptomail';
 import { ConfigModule } from '@config/config.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
-import { ResilienceModule } from '@core/resilience';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 // LoggingModule, DatabaseModule, CacheModule are @Global()
 
 @Module({

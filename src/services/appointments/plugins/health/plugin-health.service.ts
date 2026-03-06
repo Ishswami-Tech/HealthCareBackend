@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PluginConfigService } from '@services/appointments/plugins/config/plugin-config.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 
 export interface PluginHealthMetrics {
   pluginName: string;

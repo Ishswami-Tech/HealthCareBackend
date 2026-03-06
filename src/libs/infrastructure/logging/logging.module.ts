@@ -1,5 +1,5 @@
 import { Module, Global, forwardRef } from '@nestjs/common';
-import { HttpModule } from '@infrastructure/http';
+import { HttpModule } from '@infrastructure/http/http.module';
 // ConfigModule is @Global() - no need to import it explicitly
 // ResilienceModule is not needed here - LoggingService doesn't directly depend on it
 // If CircuitBreakerService is needed, it should be injected where it's used, not at module level

@@ -24,7 +24,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { Prisma } from '@infrastructure/database/prisma/generated/client';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
@@ -36,7 +36,7 @@ import type {
 } from '@core/types/video.types';
 import { VideoProviderFactory } from '@services/video/providers/video-provider.factory';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { VIDEO_RECORDING_QUEUE } from '@queue/src/queue.constants';
 // Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE

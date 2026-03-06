@@ -14,13 +14,30 @@
 import { INestApplication } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import type { ValidationPipeOptions } from '@nestjs/common';
-import type { LoggingService } from '@infrastructure/logging';
-import type { ConfigService } from '@config';
-import type { SecurityConfigService } from '@security/security-config.service';
-import type { GracefulShutdownService } from '@core/resilience/graceful-shutdown.service';
-import type { ProcessErrorHandlersService } from '@core/resilience/graceful-shutdown.service';
 import type { IoAdapter } from '@nestjs/platform-socket.io';
 import type { RedisClient } from './common.types';
+
+// Keep framework type definitions independent from concrete service classes
+// to prevent cross-layer type import cycles.
+export interface FrameworkLoggingServiceLike {
+  log?: (...args: never[]) => unknown;
+}
+
+export interface FrameworkConfigServiceLike {
+  get?: <T = unknown>(path: string, defaultValue?: T) => T;
+}
+
+export interface FrameworkSecurityConfigServiceLike {
+  configureCORS?: (...args: never[]) => unknown;
+}
+
+export interface FrameworkGracefulShutdownServiceLike {
+  setupShutdownHandlers?: (...args: never[]) => void;
+}
+
+export interface FrameworkProcessErrorHandlersServiceLike {
+  setupErrorHandlers?: (...args: never[]) => void;
+}
 
 // ============================================================================
 // FRAMEWORK ADAPTER TYPES (consolidated from framework.adapter.interface.ts)
@@ -263,11 +280,11 @@ export interface BootstrapOptions {
   readonly middlewareConfig?: MiddlewareConfig;
   readonly serverConfig: ServerConfig;
   readonly logger: Logger;
-  readonly configService?: ConfigService;
-  readonly loggingService?: LoggingService;
-  readonly securityConfigService?: SecurityConfigService;
-  readonly gracefulShutdownService?: GracefulShutdownService;
-  readonly processErrorHandlersService?: ProcessErrorHandlersService;
+  readonly configService?: FrameworkConfigServiceLike;
+  readonly loggingService?: FrameworkLoggingServiceLike;
+  readonly securityConfigService?: FrameworkSecurityConfigServiceLike;
+  readonly gracefulShutdownService?: FrameworkGracefulShutdownServiceLike;
+  readonly processErrorHandlersService?: FrameworkProcessErrorHandlersServiceLike;
   readonly customWebSocketAdapter?: IoAdapter | null;
   readonly redisPubClient?: RedisClient | null;
   readonly redisSubClient?: RedisClient | null;
@@ -279,11 +296,11 @@ export interface BootstrapOptions {
 export interface ApplicationContext {
   readonly app: INestApplication;
   readonly frameworkAdapter: IFrameworkAdapter;
-  readonly configService: ConfigService;
-  readonly loggingService: LoggingService;
-  readonly securityConfigService: SecurityConfigService;
-  readonly gracefulShutdownService: GracefulShutdownService;
-  readonly processErrorHandlersService: ProcessErrorHandlersService;
+  readonly configService: FrameworkConfigServiceLike;
+  readonly loggingService: FrameworkLoggingServiceLike;
+  readonly securityConfigService: FrameworkSecurityConfigServiceLike;
+  readonly gracefulShutdownService: FrameworkGracefulShutdownServiceLike;
+  readonly processErrorHandlersService: FrameworkProcessErrorHandlersServiceLike;
   readonly serverConfig: ServerConfig;
 }
 

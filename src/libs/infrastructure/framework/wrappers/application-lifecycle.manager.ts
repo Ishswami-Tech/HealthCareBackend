@@ -13,7 +13,7 @@
  */
 
 import { INestApplication, Logger } from '@nestjs/common';
-import type { IFrameworkAdapter, FrameworkAdapterOptions } from '@infrastructure/framework';
+import type { IFrameworkAdapter, FrameworkAdapterOptions } from '@core/types/framework.types';
 import type { ApplicationConfig, ServerConfig } from '@core/types/framework.types';
 import type { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';

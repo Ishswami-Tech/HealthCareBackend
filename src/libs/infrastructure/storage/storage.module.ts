@@ -8,7 +8,7 @@
  */
 
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { S3StorageService } from './s3-storage.service';
 import { StaticAssetService } from './static-asset.service';

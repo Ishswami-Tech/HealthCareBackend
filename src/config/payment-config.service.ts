@@ -15,7 +15,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { CredentialEncryptionService } from '@communication/config/credential-encryption.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel } from '@core/types/logging.types';
 import type { ClinicPaymentConfig } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 

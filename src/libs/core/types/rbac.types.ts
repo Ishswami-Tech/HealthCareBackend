@@ -33,6 +33,8 @@ export const RolesList = [
 
 export type Role = (typeof RolesList)[number];
 
+export const RBAC_METADATA_KEY = 'rbac';
+
 /**
  * Represents a role entity from the database
  * @interface RoleEntity

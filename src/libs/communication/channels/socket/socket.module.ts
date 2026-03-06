@@ -5,7 +5,7 @@ import { JwtModule } from '@nestjs/jwt';
 // Use direct import to avoid circular dependency with barrel exports
 import { ConfigModule } from '@config/config.module';
 import { ConfigService } from '@config/config.service';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { AppGateway } from '@communication/channels/socket/app.gateway';
 import { EventSocketBroadcaster } from '@communication/channels/socket/event-socket.broadcaster';

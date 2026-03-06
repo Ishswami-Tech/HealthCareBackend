@@ -203,3 +203,126 @@ export interface CommunicationHealthMonitorStatus {
   };
   issues: string[];
 }
+
+/**
+ * Base email template payload data.
+ */
+export interface EmailTemplateData {
+  patientName: string;
+  clinicName?: string;
+  [key: string]: string | number | boolean | undefined | readonly string[];
+}
+
+export interface AppointmentTemplateData extends EmailTemplateData {
+  doctorName: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  location: string;
+  appointmentId?: string;
+  rescheduleUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface PrescriptionTemplateData extends EmailTemplateData {
+  doctorName: string;
+  prescriptionId: string;
+  medications: readonly string[];
+  pickupInstructions?: string;
+  pharmacyName?: string;
+  pharmacyAddress?: string;
+}
+
+export interface PaymentTemplateData extends EmailTemplateData {
+  amount: number;
+  currency: string;
+  transactionId: string;
+  paymentDate: string;
+  serviceDescription: string;
+  receiptUrl?: string;
+}
+
+export interface PasswordResetTemplateData extends EmailTemplateData {
+  resetUrl: string;
+  expiryTime?: string;
+}
+
+export interface AccountVerificationTemplateData extends EmailTemplateData {
+  verificationUrl: string;
+  verificationCode: string;
+}
+
+/**
+ * Communication Provider Type
+ */
+export enum CommunicationProviderType {
+  EMAIL = 'email',
+  WHATSAPP = 'whatsapp',
+  SMS = 'sms',
+}
+
+/**
+ * Email Provider
+ */
+export enum EmailProvider {
+  SMTP = 'smtp',
+  AWS_SES = 'aws_ses',
+  MAILGUN = 'mailgun',
+  MAILTRAP = 'mailtrap',
+  ZEPTOMAIL = 'zeptomail',
+}
+
+/**
+ * WhatsApp Provider
+ */
+export enum WhatsAppProvider {
+  META_BUSINESS = 'meta_business',
+  TWILIO = 'twilio',
+  MESSAGEBIRD = 'messagebird',
+  VONAGE = 'vonage',
+}
+
+/**
+ * SMS Provider
+ */
+export enum SMSProvider {
+  TWILIO = 'twilio',
+  AWS_SNS = 'aws_sns',
+  MESSAGEBIRD = 'messagebird',
+  VONAGE = 'vonage',
+}
+
+/**
+ * Provider Configuration
+ */
+export interface ProviderConfig {
+  provider: EmailProvider | WhatsAppProvider | SMSProvider;
+  enabled: boolean;
+  credentials: Record<string, string> | { encrypted: string };
+  settings?: Record<string, unknown>;
+  priority?: number;
+}
+
+/**
+ * Clinic Communication Configuration
+ */
+export interface ClinicCommunicationConfig {
+  clinicId: string;
+  email: {
+    primary?: ProviderConfig;
+    fallback?: ProviderConfig[];
+    defaultFrom?: string;
+    defaultFromName?: string;
+  };
+  whatsapp: {
+    primary?: ProviderConfig;
+    fallback?: ProviderConfig[];
+    defaultNumber?: string;
+  };
+  sms: {
+    primary?: ProviderConfig;
+    fallback?: ProviderConfig[];
+    defaultNumber?: string;
+  };
+  createdAt: Date;
+  updatedAt: Date;
+}

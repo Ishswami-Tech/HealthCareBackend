@@ -26,7 +26,7 @@ import { ReadReplicaRouterService } from './internal/read-replica-router.service
 import { DatabaseHealthMonitorService } from './internal/database-health-monitor.service';
 import { ClinicRateLimiterService } from './internal/clinic-rate-limiter.service';
 import { DatabaseService } from './database.service';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
 
 // Query patterns - strategies

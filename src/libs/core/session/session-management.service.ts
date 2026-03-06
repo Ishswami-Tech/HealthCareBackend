@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 // Import directly from database.service to avoid TDZ circular dependency with barrel (@infrastructure/database)

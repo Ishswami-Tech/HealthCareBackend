@@ -1,15 +1,14 @@
 # Event Service
 
-**Purpose:** Central event hub for event-driven architecture
-**Location:** `src/libs/infrastructure/events`
-**Status:** ✅ Production-ready
+**Purpose:** Central event hub for event-driven architecture **Location:**
+`src/libs/infrastructure/events` **Status:** ✅ Production-ready
 
 ---
 
 ## Quick Start
 
 ```typescript
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { EventCategory, EventPriority } from '@core/types';
 
 @Injectable()
@@ -31,7 +30,9 @@ export class MyService {
       version: '1.0.0',
       userId: 'user123',
       clinicId: 'clinic456',
-      payload: { /* event data */ },
+      payload: {
+        /* event data */
+      },
     });
   }
 }
@@ -98,7 +99,7 @@ export class MyListener {
     console.log('User created:', payload.payload.user);
   }
 
-  @OnEvent('**')  // Listen to ALL events
+  @OnEvent('**') // Listen to ALL events
   async handleAllEvents(payload: any) {
     // React to any event
   }
@@ -146,11 +147,13 @@ EVENT_CIRCUIT_BREAKER_TIMEOUT=60000
 ## Troubleshooting
 
 **Issue 1: Events not received by listeners**
+
 - Verify `@OnEvent()` decorator is used
 - Check EventEmitterModule is imported in AppModule
 - Ensure listener is provided in module
 
 **Issue 2: Circuit breaker open**
+
 - Check event emission rate
 - Review `EVENT_CIRCUIT_BREAKER_THRESHOLD`
 

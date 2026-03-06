@@ -11,9 +11,9 @@ import {
   SetEndpointAttributesCommand,
 } from '@aws-sdk/client-sns';
 import {
-  PushNotificationData,
-  PushNotificationResult,
-} from '@communication/channels/push/push.service';
+  type PushNotificationData,
+  type PushNotificationResult,
+} from '@core/types/notification.types';
 
 export interface SNSPlatformEndpoint {
   endpointArn: string;

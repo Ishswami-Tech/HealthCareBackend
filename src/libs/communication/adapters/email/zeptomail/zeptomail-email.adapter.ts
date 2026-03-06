@@ -21,7 +21,7 @@ import {
   isZeptoMailErrorRetryable,
 } from './zeptomail-error-codes';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
-import type { ProviderConfig } from '@communication/config';
+import type { ProviderConfig } from '@core/types/communication.types';
 
 /**
  * ZeptoMail API Request Payload

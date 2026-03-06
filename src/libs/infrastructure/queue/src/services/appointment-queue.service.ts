@@ -1,7 +1,7 @@
 import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { IEventService } from '@core/types';
 import { isEventService } from '@core/types';

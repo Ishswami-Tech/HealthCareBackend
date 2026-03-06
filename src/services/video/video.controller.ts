@@ -35,7 +35,7 @@ import {
 
 // 2. Internal imports - Infrastructure layer
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 
 // 3. Internal imports - Core layer
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';

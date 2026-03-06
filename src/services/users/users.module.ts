@@ -28,7 +28,15 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     CacheModule,
   ],
   controllers: [UsersController],
-  providers: [UsersService, ClinicContextService, LocationManagementService],
-  exports: [UsersService, ClinicContextService, LocationManagementService],
+  providers: [
+    UsersService,
+    ClinicContextService,
+    LocationManagementService,
+    {
+      provide: 'USERS_SERVICE',
+      useExisting: UsersService,
+    },
+  ],
+  exports: [UsersService, 'USERS_SERVICE', ClinicContextService, LocationManagementService],
 })
 export class UsersModule {}

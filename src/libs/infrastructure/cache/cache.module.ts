@@ -17,8 +17,8 @@ import { Module, Global, forwardRef, DynamicModule, Provider } from '@nestjs/com
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@config/config.module';
-import { EventsModule } from '@infrastructure/events';
-import { ResilienceModule } from '@core/resilience';
+import { EventsModule } from '@infrastructure/events/events.module';
+import { ResilienceModule } from '@core/resilience/resilience.module';
 import { DatabaseModule } from '@infrastructure/database/database.module'; // Direct import avoids TDZ circular dep
 // Import helper functions for environment variable access in static factory
 // Use top-level import for strict TypeScript compliance (no require())
@@ -65,7 +65,7 @@ import { ValidationCacheMiddleware } from '@infrastructure/cache/middleware/vali
 import { MetricsCacheMiddleware } from '@infrastructure/cache/middleware/metrics-cache.middleware';
 
 // Interceptors - Centralized
-import { HealthcareCacheInterceptor } from '@core/interceptors';
+import { HealthcareCacheInterceptor } from '@core/interceptors/healthcare-cache.interceptor';
 
 // Redis Module
 import { RedisModule } from '@infrastructure/cache/redis/redis.module';
@@ -76,9 +76,6 @@ import { ScheduleModule } from '@nestjs/schedule';
 // Queue Module for cache warming jobs (QueueService is @Global() from QueueModule)
 // Logging Module - explicitly import to ensure LOGGING_SERVICE token is available
 import { LoggingModule } from '@infrastructure/logging/logging.module';
-// Guards Module - required for CacheController which uses JwtAuthGuard
-// Use direct import to avoid TDZ issues with barrel exports
-import { GuardsModule } from '@core/guards/guards.module';
 
 /**
  * Cache Module with SOLID architecture and provider-agnostic design
@@ -114,9 +111,6 @@ export class CacheModule {
       forwardRef(() => LoggingModule),
       // DatabaseModule is @Global() but needs forwardRef due to circular dependency with ConfigModule
       forwardRef(() => DatabaseModule),
-      // GuardsModule - required for CacheController which uses JwtAuthGuard, RolesGuard, IpWhitelistGuard
-      // Only import in non-worker services (workers don't need controllers)
-      ...(isWorker ? [] : [forwardRef(() => GuardsModule)]),
     ];
 
     // Only include ScheduleModule and CacheWarmingService in non-worker services

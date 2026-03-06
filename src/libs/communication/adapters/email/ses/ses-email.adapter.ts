@@ -14,7 +14,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { BaseEmailAdapter } from '@communication/adapters/base/base-email-adapter';
 import type { EmailOptions, EmailResult } from '@communication/adapters/interfaces';
-import type { ProviderConfig } from '@communication/config';
+import type { ProviderConfig } from '@core/types/communication.types';
 import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 
 /**

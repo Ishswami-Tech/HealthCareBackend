@@ -1,8 +1,8 @@
 import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
 
 import type { UserWithRelations } from '@core/types/user.types';
@@ -12,7 +12,6 @@ import type { User } from '@core/types/database.types';
 import { EmergencyContact } from '@core/types/database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
-import { AuthService } from '@services/auth/auth.service';
 import { HealthcareErrorsService } from '@core/errors';
 // Removed ProfileCompletionService import as logic is moved here
 import type {
@@ -34,10 +33,15 @@ export interface RoleBasedRequirements {
   conditionalFields: Record<string, string[]>;
 }
 
+type UsersAuthServiceLike = {
+  register: (data: unknown) => Promise<unknown>;
+  logout: (userId: string) => Promise<unknown>;
+};
+
 @Injectable()
 export class UsersService {
   private readonly eventService: IEventService;
-  private readonly authService: AuthService;
+  private readonly authService: UsersAuthServiceLike;
 
   private formatDateToString(date: Date | string | null | undefined): string {
     if (date instanceof Date) {
@@ -146,7 +150,7 @@ export class UsersService {
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
     private readonly rbacService: RbacService,
-    @Inject(forwardRef(() => AuthService))
+    @Inject('AUTH_SERVICE')
     authService: unknown,
     private readonly errors: HealthcareErrorsService
   ) {
@@ -156,7 +160,7 @@ export class UsersService {
       throw new Error('EventService is not available or invalid');
     }
     this.eventService = eventService;
-    this.authService = authService as AuthService;
+    this.authService = authService as UsersAuthServiceLike;
   }
 
   async findAll(role?: Role, clinicId?: string): Promise<UserResponseDto[]> {

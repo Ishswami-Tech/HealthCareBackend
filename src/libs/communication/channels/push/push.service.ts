@@ -6,30 +6,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
-
-export interface PushNotificationData {
-  title: string;
-  body: string;
-  imageUrl?: string;
-  data?: Record<string, string>;
-  initiatorId?: string;
-  initiatorRole?: string;
-}
-
-export interface PushNotificationResult {
-  success: boolean;
-  messageId?: string;
-  error?: string;
-  provider?: string;
-  usedFallback?: boolean;
-  successCount?: number;
-  failureCount?: number;
-  results?: Array<{
-    success: boolean;
-    messageId?: string;
-    error?: string;
-  }>;
-}
+import type { PushNotificationData, PushNotificationResult } from '@core/types/notification.types';
 
 @Injectable()
 export class PushNotificationService implements OnModuleInit {

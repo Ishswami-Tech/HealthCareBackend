@@ -7,34 +7,45 @@
  * @description Payment webhook and callback endpoints
  */
 
-import {
-  Controller,
-  Post,
-  Body,
-  Headers,
-  Query,
-  HttpCode,
-  HttpStatus,
-  Inject,
-  forwardRef,
-} from '@nestjs/common';
+import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
-import { BillingService } from '@services/billing/billing.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
 
+type BillingServiceLike = {
+  handlePaymentCallback: (
+    clinicId: string,
+    paymentId: string,
+    orderId: string,
+    provider?: PaymentProvider
+  ) => Promise<unknown>;
+};
+
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentController {
+  private billingServiceRef: BillingServiceLike | null = null;
+
   constructor(
     private readonly paymentService: PaymentService,
-    @Inject(forwardRef(() => BillingService))
-    private readonly billingService: BillingService,
-    @Inject(forwardRef(() => LoggingService))
+    private readonly moduleRef: ModuleRef,
     private readonly loggingService: LoggingService
   ) {}
+
+  private getBillingService(): BillingServiceLike {
+    if (!this.billingServiceRef) {
+      this.billingServiceRef = this.moduleRef.get<BillingServiceLike>('BILLING_SERVICE', {
+        strict: false,
+      });
+    }
+    if (!this.billingServiceRef) {
+      throw new Error('BILLING_SERVICE is not available');
+    }
+    return this.billingServiceRef;
+  }
 
   /**
    * Razorpay webhook handler
@@ -86,7 +97,7 @@ export class PaymentController {
         const orderId = typeof orderEntity?.['id'] === 'string' ? orderEntity['id'] : '';
 
         if (paymentId && orderId) {
-          await this.billingService.handlePaymentCallback(
+          await this.getBillingService().handlePaymentCallback(
             clinicId,
             paymentId,
             orderId,
@@ -172,7 +183,7 @@ export class PaymentController {
       const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
       const orderStatus = typeof orderStatusRaw === 'string' ? orderStatusRaw : '';
       if (orderId && (orderStatus === 'PAID' || orderStatus === 'SUCCESS')) {
-        await this.billingService.handlePaymentCallback(
+        await this.getBillingService().handlePaymentCallback(
           clinicId,
           orderId,
           orderId,
@@ -258,7 +269,7 @@ export class PaymentController {
 
         if (merchantTransactionId && transactionId) {
           // Handle payment callback
-          await this.billingService.handlePaymentCallback(
+          await this.getBillingService().handlePaymentCallback(
             clinicId,
             transactionId,
             merchantTransactionId,
@@ -322,7 +333,7 @@ export class PaymentController {
         }
       }
 
-      await this.billingService.handlePaymentCallback(
+      await this.getBillingService().handlePaymentCallback(
         clinicId,
         paymentId,
         orderId,

@@ -1,9 +1,9 @@
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { SocketService } from '@communication/channels/socket/socket.service';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 // DeviceInfo type not used in this file
 import {
   LogType,

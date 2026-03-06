@@ -1,5 +1,5 @@
 import { Module, forwardRef, Global } from '@nestjs/common';
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { JwtModule } from '@nestjs/jwt';
 import { SessionManagementService } from './session-management.service';
 import { FastifySessionStoreAdapter } from './fastify-session-store.adapter';

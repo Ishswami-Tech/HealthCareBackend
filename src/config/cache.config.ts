@@ -10,7 +10,7 @@
  */
 
 import { registerAs } from '@nestjs/config';
-import type { CacheConfig, RedisConfig } from '@core/types';
+import type { CacheConfig, RedisConfig } from '@core/types/config.types';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
 import {
   getDefaultRedisHost,

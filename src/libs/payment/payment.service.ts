@@ -11,7 +11,7 @@
 import { Injectable } from '@nestjs/common';
 import { HttpService } from '@infrastructure/http';
 import { LoggingService } from '@logging';
-import { EventService } from '@infrastructure/events';
+import { EventService } from '@infrastructure/events/event.service';
 import {
   LogType,
   LogLevel,

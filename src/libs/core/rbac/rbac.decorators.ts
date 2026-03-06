@@ -1,9 +1,7 @@
 import { SetMetadata, applyDecorators } from '@nestjs/common';
 import { UseGuards } from '@nestjs/common';
 import { RbacGuard } from './rbac.guard';
-import type { RbacRequirement } from '@core/types/rbac.types';
-
-export const RBAC_METADATA_KEY = 'rbac';
+import { RBAC_METADATA_KEY, type RbacRequirement } from '@core/types/rbac.types';
 
 /**
  * Base RBAC decorator

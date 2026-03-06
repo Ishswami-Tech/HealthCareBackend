@@ -4,11 +4,10 @@
  * @description Module for centralized HTTP service
  */
 
-import { Module, Global, forwardRef } from '@nestjs/common';
+import { Module, Global } from '@nestjs/common';
 import { HttpModule as NestHttpModule } from '@nestjs/axios';
 
 import { HttpService } from './http.service';
-import { LoggingModule } from '@infrastructure/logging';
 
 /**
  * Global HTTP Module
@@ -32,7 +31,6 @@ import { LoggingModule } from '@infrastructure/logging';
       timeout: 30000, // 30 seconds default timeout
       maxRedirects: 5,
     }),
-    forwardRef(() => LoggingModule), // Use forwardRef to break circular dependency
   ],
   providers: [HttpService],
   exports: [HttpService],

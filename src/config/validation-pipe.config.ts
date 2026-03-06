@@ -1,7 +1,7 @@
 import { ValidationPipe, HttpStatus, BadRequestException } from '@nestjs/common';
 import type { ValidationError } from 'class-validator';
-import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { LoggingService } from '@infrastructure/logging/logging.service';
+import { LogType, LogLevel } from '@core/types/logging.types';
 
 import type { ValidationPipeOptions } from '@nestjs/common';
 

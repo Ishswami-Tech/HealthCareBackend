@@ -1,7 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { HttpModule } from '@infrastructure/http';
 // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
-import { ConfigModule } from '@config';
+import { ConfigModule } from '@config/config.module';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
 // Use direct import to avoid circular dependency with barrel exports
@@ -9,7 +9,7 @@ import { DatabaseModule } from '@infrastructure/database/database.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { SocketModule } from '@communication/channels/socket';
 import { ErrorsModule } from '@core/errors';
-import { CacheModule } from '@infrastructure/cache';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { QueueModule } from '@infrastructure/queue';
 import { VideoModule } from '@services/video/video.module';
 // Health indicators

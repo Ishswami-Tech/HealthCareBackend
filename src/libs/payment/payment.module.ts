@@ -7,18 +7,16 @@
  * @description Payment module for multi-provider payment processing
  */
 
-import { Module, forwardRef } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { HttpModule } from '@infrastructure/http';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
-import { CacheModule } from '@infrastructure/cache';
+import { CacheModule } from '@infrastructure/cache/cache.module';
 import { LoggingModule } from '@infrastructure/logging';
-import { EventsModule } from '@infrastructure/events';
+import { EventsModule } from '@infrastructure/events/events.module';
 import { PaymentService } from './payment.service';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentController } from './payment.controller';
-// BillingModule is imported with forwardRef to break circular dependency (BillingModule imports PaymentModule)
-import { BillingModule } from '@services/billing/billing.module';
 
 @Module({
   imports: [
@@ -27,7 +25,6 @@ import { BillingModule } from '@services/billing/billing.module';
     CacheModule,
     LoggingModule,
     EventsModule,
-    forwardRef(() => BillingModule), // Use forwardRef to break circular dependency
     // PaymentConfigService is now provided by ConfigModule (Global)
   ],
   controllers: [PaymentController],

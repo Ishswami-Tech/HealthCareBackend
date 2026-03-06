@@ -13,7 +13,7 @@
  */
 
 import { Logger } from '@nestjs/common';
-import type { IFrameworkAdapter } from '@infrastructure/framework';
+import type { IFrameworkAdapter } from '@core/types/framework.types';
 import type { BootstrapOptions, ApplicationContext } from '@core/types/framework.types';
 import { BootstrapStage } from '@core/types/framework.types';
 import { LogType, LogLevel } from '@core/types';
@@ -90,7 +90,9 @@ export class BootstrapOrchestrator {
         this.logger,
         {
           environment: options.applicationConfig.environment,
-          ...(options.configService && { configService: options.configService }),
+          ...(options.configService && {
+            configService: options.configService as ConfigService,
+          }),
         },
         this.loggingService
       );
@@ -117,27 +119,27 @@ export class BootstrapOrchestrator {
       const configService = await this.getService<ConfigService>(
         serviceContainer,
         ConfigService,
-        options.configService
+        options.configService as ConfigService | undefined
       );
       const loggingService = await this.getService<LoggingService>(
         serviceContainer,
         LoggingService as ServiceToken,
-        options.loggingService
+        options.loggingService as LoggingService | undefined
       );
       const securityConfigService = await this.getService<SecurityConfigService>(
         serviceContainer,
         SecurityConfigService as ServiceToken,
-        options.securityConfigService
+        options.securityConfigService as SecurityConfigService | undefined
       );
       const gracefulShutdownService = await this.getService<GracefulShutdownService>(
         serviceContainer,
         GracefulShutdownService as ServiceToken,
-        options.gracefulShutdownService
+        options.gracefulShutdownService as GracefulShutdownService | undefined
       );
       const processErrorHandlersService = await this.getService<ProcessErrorHandlersService>(
         serviceContainer,
         ProcessErrorHandlersService as ServiceToken,
-        options.processErrorHandlersService
+        options.processErrorHandlersService as ProcessErrorHandlersService | undefined
       );
 
       // Set framework adapter in security service

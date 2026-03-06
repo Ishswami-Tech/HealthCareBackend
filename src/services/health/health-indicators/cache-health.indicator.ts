@@ -8,7 +8,7 @@
 
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { HealthIndicatorResult } from './types';
-import { CacheService } from '@infrastructure/cache';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { CacheHealthMonitorService } from '@infrastructure/cache/services/cache-health-monitor.service';
 import type { CacheHealthMonitorStatus } from '@core/types';
 import { BaseHealthIndicator } from './base-health.indicator';

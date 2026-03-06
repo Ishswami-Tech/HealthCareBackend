@@ -33,7 +33,7 @@ import {
   generateSuspiciousActivityTemplate,
 } from '@communication/templates/emailTemplates';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
-import { CommunicationConfigService } from '@communication/config';
+import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 import { EmailUnsubscribeService } from '@communication/adapters/email/email-unsubscribe.service';
 

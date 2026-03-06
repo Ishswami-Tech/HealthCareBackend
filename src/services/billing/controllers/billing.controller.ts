@@ -15,9 +15,8 @@ import {
   NotFoundException,
   BadRequestException,
   Request,
-  Inject,
-  forwardRef,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { FastifyReply } from 'fastify';
 import * as fs from 'fs';
 import { BillingService } from '@services/billing/billing.service';
@@ -52,20 +51,49 @@ import { Role } from '@core/types/enums.types';
 import type { AuthenticatedRequest } from '@core/types';
 import { PaymentProvider } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
-import { AppointmentsService } from '@services/appointments/appointments.service';
 import { AppointmentType } from '@dtos/appointment.dto';
+
+type AppointmentsServiceLike = {
+  createAppointment: (
+    payload: Record<string, unknown>,
+    userId: string,
+    clinicId: string,
+    role: string
+  ) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>;
+  cancelAppointment: (
+    appointmentId: string,
+    reason: string,
+    userId: string,
+    clinicId: string,
+    role: string
+  ) => Promise<unknown>;
+};
 
 @ApiTags('billing')
 @Controller('billing')
 @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard, ProfileCompletionGuard)
 @RequiresProfileCompletion()
 export class BillingController {
+  private appointmentsServiceRef: AppointmentsServiceLike | null = null;
+
   constructor(
     private readonly billingService: BillingService,
     private readonly invoicePDFService: InvoicePDFService,
-    @Inject(forwardRef(() => AppointmentsService))
-    private readonly appointmentsService: AppointmentsService
+    private readonly moduleRef: ModuleRef
   ) {}
+
+  private getAppointmentsService(): AppointmentsServiceLike {
+    if (!this.appointmentsServiceRef) {
+      this.appointmentsServiceRef = this.moduleRef.get<AppointmentsServiceLike>(
+        'APPOINTMENTS_SERVICE',
+        { strict: false }
+      );
+    }
+    if (!this.appointmentsServiceRef) {
+      throw new Error('APPOINTMENTS_SERVICE is not available');
+    }
+    return this.appointmentsServiceRef;
+  }
 
   // ============ Billing Plans ============
 
@@ -516,7 +544,7 @@ export class BillingController {
       throw new BadRequestException('This endpoint only supports IN_PERSON appointments');
     }
 
-    const result = await this.appointmentsService.createAppointment(
+    const result = await this.getAppointmentsService().createAppointment(
       {
         ...body,
         type: AppointmentType.IN_PERSON,
@@ -548,7 +576,7 @@ export class BillingController {
       };
     } catch (linkError) {
       // Compensating rollback: cancel appointment if subscription link fails
-      await this.appointmentsService.cancelAppointment(
+      await this.getAppointmentsService().cancelAppointment(
         appointmentId,
         'Auto-cancelled: failed to link active subscription',
         userId,
