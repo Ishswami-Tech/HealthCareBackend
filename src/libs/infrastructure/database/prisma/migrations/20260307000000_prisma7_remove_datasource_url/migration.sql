@@ -1,0 +1,3 @@
+-- Prisma 7 config-only change migration
+-- datasource.url was removed from schema.prisma to comply with Prisma 7.
+-- No database schema changes are required.
