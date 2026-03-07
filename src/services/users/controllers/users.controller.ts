@@ -268,10 +268,22 @@ export class UsersController {
       throw new ForbiddenException('You do not have permission to update this user.');
     }
 
-    const updatedUser = await this.usersService.update(id, updateUserDto);
+    // Use validate and update rather than purely update so the DB profile status flag updates
+    const updatedUser = await this.usersService.updateUserProfileWithValidation(
+      id,
+      updateUserDto as unknown as Record<string, unknown>,
+      currentUserId,
+      req.clinicContext?.clinicId
+    );
+
+    // Check DB flag for profile completion since UserResponseDto doesn't include it
+    const profileStatus = await this.authService.checkProfileCompletionStatus(
+      id,
+      updatedUser.role as Role
+    );
 
     // If profile is complete, refresh the session tokens to reflect new user data
-    if (this.authService.isProfileComplete(updatedUser)) {
+    if (profileStatus.isComplete) {
       const fullProfile = await this.authService.getUserProfile(id);
       const sessionId = (req.user as JwtGuardUser)?.sessionId || 'unknown';
       const tokens = await this.authService.generateTokens(
