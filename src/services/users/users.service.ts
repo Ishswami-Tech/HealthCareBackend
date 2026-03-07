@@ -2122,10 +2122,14 @@ export class UsersService {
 
       // If profile is now complete, mark it as such
       if (validation.isComplete && !user.isProfileComplete) {
-        await this.completeUserProfile(userId, {
+        const completeResult = await this.completeUserProfile(userId, {
           ...(user as unknown as Record<string, unknown>),
           ...profileData,
         });
+
+        if (completeResult.success && completeResult.user) {
+          return completeResult.user;
+        }
       }
 
       return updatedUser;
