@@ -101,9 +101,7 @@ export class BillingController {
     }
 
     const normalizedProvider = provider.trim().toLowerCase();
-    const enabledProviders = (
-      process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
-    )
+    const enabledProviders = (process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE)
       .split(',')
       .map(value => value.trim().toLowerCase())
       .filter(Boolean);
@@ -406,7 +404,9 @@ export class BillingController {
       ...(status ? { status } : {}),
       ...(parsedStartDate ? { startDate: parsedStartDate } : {}),
       ...(parsedEndDate ? { endDate: parsedEndDate } : {}),
-      ...(revenueModel ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' } : {}),
+      ...(revenueModel
+        ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' }
+        : {}),
       ...(appointmentType ? { appointmentType } : {}),
       ...(paymentProvider ? { provider: paymentProvider } : {}),
     });
@@ -451,7 +451,9 @@ export class BillingController {
       ...(status ? { status } : {}),
       ...(parsedStartDate ? { startDate: parsedStartDate } : {}),
       ...(parsedEndDate ? { endDate: parsedEndDate } : {}),
-      ...(revenueModel ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' } : {}),
+      ...(revenueModel
+        ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' }
+        : {}),
       ...(appointmentType ? { appointmentType } : {}),
       ...(paymentProvider ? { provider: paymentProvider } : {}),
     });
