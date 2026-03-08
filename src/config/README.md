@@ -1,7 +1,7 @@
-# Config Module
+﻿# Config Module
 
 **Purpose:** Type-safe configuration management with environment validation
-**Location:** `src/config` **Status:** ✅ Production-ready
+**Location:** `src/config` **Status:** âœ… Production-ready
 
 ---
 
@@ -38,14 +38,14 @@ export class MyService {
 
 ## Key Features
 
-- ✅ **Type-Safe Configuration** - Full TypeScript type safety with autocomplete
-- ✅ **Environment File Priority** - .env.local > .env.{NODE_ENV} > .env
-- ✅ **Environment Validation** - Required variables validated on boot
-- ✅ **Multi-Provider Support** - Redis/Dragonfly caching, OpenVidu/Jitsi video
-- ✅ **Global Module** - Available everywhere via @Global decorator
-- ✅ **Zero Runtime Overhead** - Singleton pattern, loaded once at startup
-- ✅ **PaymentConfigService** - Multi-tenant payment configuration
-- ✅ **CommunicationConfigService** - Multi-tenant communication configuration
+- âœ… **Type-Safe Configuration** - Full TypeScript type safety with autocomplete
+- âœ… **Environment File Priority** - .env.local > .env.{NODE_ENV} > .env
+- âœ… **Environment Validation** - Required variables validated on boot
+- âœ… **Multi-Provider Support** - Redis/Dragonfly caching, OpenVidu/Jitsi video
+- âœ… **Global Module** - Available everywhere via @Global decorator
+- âœ… **Zero Runtime Overhead** - Singleton pattern, loaded once at startup
+- âœ… **PaymentConfigService** - Multi-tenant payment configuration
+- âœ… **CommunicationConfigService** - Multi-tenant communication configuration
 
 ---
 
@@ -282,7 +282,7 @@ import { PaymentConfigService } from '@config/payment-config.service';
 const config = await this.paymentConfigService.getClinicConfig(clinicId);
 
 // Payment provider config
-console.log(config.payment.primary.provider); // 'razorpay' | 'phonepe'
+console.log(config.payment.primary.provider); // 'cashfree' (primary), adapter-ready for future providers
 console.log(config.payment.primary.apiKey);
 console.log(config.payment.fallback); // Fallback providers
 
@@ -290,8 +290,8 @@ console.log(config.payment.fallback); // Fallback providers
 await this.paymentConfigService.setClinicConfig(clinicId, {
   payment: {
     primary: {
-      provider: 'razorpay',
-      apiKey: 'rzp_live_xxx',
+      provider: 'cashfree',
+      apiKey: 'cf_live_xxx',
       apiSecret: 'encrypted_secret',
       enabled: true,
     },
@@ -324,23 +324,23 @@ Configuration is organized by environment:
 
 ```
 src/config/
-├── config.module.ts           # Global config module
-├── config.service.ts          # Enhanced type-safe service
-├── payment-config.service.ts  # Multi-tenant payment config
-├── constants.ts               # Environment variable constants
-├── cache.config.ts            # Cache provider configuration
-├── rate-limit.config.ts       # Rate limiting rules
-├── video.config.ts            # Video provider configuration
-├── jwt.config.ts              # JWT configuration
-├── swagger.config.ts          # Swagger/OpenAPI config
-├── validation-pipe.config.ts  # Input validation config
-└── environment/
-    ├── development.config.ts  # Development config
-    ├── production.config.ts   # Production config
-    ├── staging.config.ts      # Staging config
-    ├── test.config.ts         # Test config
-    ├── validation.ts          # Environment validation
-    └── utils.ts               # Config utilities
+â”œâ”€â”€ config.module.ts           # Global config module
+â”œâ”€â”€ config.service.ts          # Enhanced type-safe service
+â”œâ”€â”€ payment-config.service.ts  # Multi-tenant payment config
+â”œâ”€â”€ constants.ts               # Environment variable constants
+â”œâ”€â”€ cache.config.ts            # Cache provider configuration
+â”œâ”€â”€ rate-limit.config.ts       # Rate limiting rules
+â”œâ”€â”€ video.config.ts            # Video provider configuration
+â”œâ”€â”€ jwt.config.ts              # JWT configuration
+â”œâ”€â”€ swagger.config.ts          # Swagger/OpenAPI config
+â”œâ”€â”€ validation-pipe.config.ts  # Input validation config
+â””â”€â”€ environment/
+    â”œâ”€â”€ development.config.ts  # Development config
+    â”œâ”€â”€ production.config.ts   # Production config
+    â”œâ”€â”€ staging.config.ts      # Staging config
+    â”œâ”€â”€ test.config.ts         # Test config
+    â”œâ”€â”€ validation.ts          # Environment validation
+    â””â”€â”€ utils.ts               # Config utilities
 ```
 
 ---
@@ -584,26 +584,26 @@ const host = this.config.getCacheHost(); // Works for both
 
 ```
 ConfigModule (@Global)
-├── ConfigService (type-safe wrapper)
-│   ├── getAppConfig()
-│   ├── getDatabaseConfig()
-│   ├── getRedisConfig()
-│   ├── getCacheConfig()
-│   ├── getVideoConfig()
-│   └── ... more typed getters
-├── PaymentConfigService (multi-tenant)
-│   ├── getClinicConfig()
-│   └── setClinicConfig()
-└── Configuration Files
-    ├── environment/
-    │   ├── development.config.ts
-    │   ├── production.config.ts
-    │   ├── staging.config.ts
-    │   └── test.config.ts
-    ├── cache.config.ts
-    ├── video.config.ts
-    ├── rate-limit.config.ts
-    └── ... more config files
+â”œâ”€â”€ ConfigService (type-safe wrapper)
+â”‚   â”œâ”€â”€ getAppConfig()
+â”‚   â”œâ”€â”€ getDatabaseConfig()
+â”‚   â”œâ”€â”€ getRedisConfig()
+â”‚   â”œâ”€â”€ getCacheConfig()
+â”‚   â”œâ”€â”€ getVideoConfig()
+â”‚   â””â”€â”€ ... more typed getters
+â”œâ”€â”€ PaymentConfigService (multi-tenant)
+â”‚   â”œâ”€â”€ getClinicConfig()
+â”‚   â””â”€â”€ setClinicConfig()
+â””â”€â”€ Configuration Files
+    â”œâ”€â”€ environment/
+    â”‚   â”œâ”€â”€ development.config.ts
+    â”‚   â”œâ”€â”€ production.config.ts
+    â”‚   â”œâ”€â”€ staging.config.ts
+    â”‚   â””â”€â”€ test.config.ts
+    â”œâ”€â”€ cache.config.ts
+    â”œâ”€â”€ video.config.ts
+    â”œâ”€â”€ rate-limit.config.ts
+    â””â”€â”€ ... more config files
 ```
 
 **Flow:**
@@ -629,3 +629,4 @@ ConfigModule (@Global)
 ## Contributing
 
 See main [README.md](../README.md) for contribution guidelines.
+

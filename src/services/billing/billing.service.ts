@@ -43,8 +43,8 @@ import type {
   PaymentIntentOptions,
   PaymentResult,
   PaymentStatusResult,
-  PaymentProvider,
 } from '@core/types/payment.types';
+import { PaymentProvider } from '@core/types/payment.types';
 
 // Import centralized types
 import type {
@@ -74,6 +74,143 @@ export class BillingService {
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
   ) {}
+
+  private isSoleProprietorModeEnabled(): boolean {
+    const raw =
+      this.configService.getEnv('SOLE_PROPRIETOR_MODE') ??
+      this.configService.getEnv('PAYMENT_SOLE_PROPRIETOR_MODE') ??
+      'true';
+    return String(raw).toLowerCase() === 'true';
+  }
+
+  private async emitPaymentLifecycleEvents(args: {
+    clinicId: string;
+    paymentId: string;
+    userId?: string;
+    appointmentId?: string;
+    subscriptionId?: string;
+    status: string;
+    amount: number;
+  }): Promise<void> {
+    const normalizedStatus = String(args.status).toLowerCase();
+    const eventType =
+      normalizedStatus === 'completed'
+        ? 'payment.completed'
+        : normalizedStatus === 'failed'
+          ? 'payment.failed'
+          : normalizedStatus === 'cancelled'
+            ? 'payment.cancelled'
+            : 'payment.pending';
+
+    const paymentLifecycleEvent: EnterpriseEventPayload = {
+      eventId: `${eventType.replace('.', '-')}-${args.paymentId}`,
+      eventType,
+      category: EventCategory.BILLING,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'BillingService',
+      version: '1.0.0',
+      clinicId: args.clinicId,
+      ...(args.userId && { userId: args.userId }),
+      metadata: {
+        paymentId: args.paymentId,
+        amount: args.amount,
+        status: normalizedStatus,
+        ...(args.appointmentId && { appointmentId: args.appointmentId }),
+        ...(args.subscriptionId && { subscriptionId: args.subscriptionId }),
+      },
+    };
+
+    await this.eventService.emitEnterprise(eventType, paymentLifecycleEvent);
+
+    if (args.appointmentId) {
+      await this.eventService.emit(eventType, {
+        appointmentId: args.appointmentId,
+        paymentId: args.paymentId,
+        status: normalizedStatus,
+        clinicId: args.clinicId,
+      });
+
+      if (this.isSoleProprietorModeEnabled() && normalizedStatus === 'completed') {
+        await this.eventService.emit('billing.payout.pending', {
+          appointmentId: args.appointmentId,
+          paymentId: args.paymentId,
+          clinicId: args.clinicId,
+          reason: 'Sole proprietor mode: payout deferred until consultation completion',
+        });
+      }
+    }
+  }
+
+  private buildPaymentCallbackUrl(
+    clinicId: string,
+    orderId: string,
+    provider?: PaymentProvider
+  ): string {
+    const frontendBaseUrl =
+      this.configService.getEnv('FRONTEND_URL') ||
+      this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
+      'http://localhost:3000';
+
+    const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
+    const callbackUrl = new URL(`${normalizedFrontendUrl}/payment/callback`);
+    callbackUrl.searchParams.set('clinicId', clinicId);
+    callbackUrl.searchParams.set('orderId', orderId);
+    if (provider) {
+      callbackUrl.searchParams.set('provider', String(provider));
+    }
+    return callbackUrl.toString();
+  }
+
+  private roundToTwo(value: number): number {
+    return Math.round(value * 100) / 100;
+  }
+
+  private asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    return value as Record<string, unknown>;
+  }
+
+  private getPlatformFeePercent(): number {
+    const raw = this.configService.getEnv('PLATFORM_FEE_PERCENT', '20') || '20';
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : 20;
+  }
+
+  private normalizePaymentProvider(value?: unknown): PaymentProvider | undefined {
+    if (typeof value !== 'string' || !value.trim()) {
+      return undefined;
+    }
+    const normalized = value.trim().toLowerCase();
+    const providers = Object.values(PaymentProvider) as string[];
+    return providers.includes(normalized) ? (normalized as PaymentProvider) : undefined;
+  }
+
+  private normalizeGatewayPaymentStatus(status: unknown): PaymentStatus {
+    const normalized = String(status || '')
+      .trim()
+      .toLowerCase();
+    if (
+      normalized === 'completed' ||
+      normalized === 'success' ||
+      normalized === 'paid' ||
+      normalized === 'captured'
+    ) {
+      return PaymentStatus.COMPLETED;
+    }
+    if (normalized === 'pending' || normalized === 'processing') {
+      return PaymentStatus.PENDING;
+    }
+    if (normalized === 'failed' || normalized === 'cancelled' || normalized === 'canceled') {
+      return PaymentStatus.FAILED;
+    }
+    if (normalized === 'refunded') {
+      return PaymentStatus.REFUNDED;
+    }
+    throw new BadRequestException(`Unsupported payment status from gateway: ${String(status)}`);
+  }
 
   // ============ Billing Plans ============
 
@@ -785,6 +922,10 @@ export class BillingService {
       await this.eventService.emit('billing.payment.created', {
         paymentId: payment.id,
       });
+      await this.eventService.emit('payment.pending', {
+        paymentId: payment.id,
+        clinicId: payment.clinicId,
+      });
 
       if (data.userId) {
         await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
@@ -876,6 +1017,215 @@ export class BillingService {
         priority: 'normal',
       }
     );
+  }
+
+  async getClinicPayments(
+    clinicId: string,
+    filters?: {
+      status?: string;
+      startDate?: Date;
+      endDate?: Date;
+      revenueModel?: 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER';
+      appointmentType?: string;
+      provider?: string;
+    }
+  ) {
+    const whereClause: Record<string, unknown> = { clinicId };
+    if (filters?.status) {
+      whereClause['status'] = filters.status;
+    }
+
+    const payments = await this.databaseService.findPaymentsSafe(whereClause);
+
+    return payments.filter(payment => {
+      if (!filters?.startDate && !filters?.endDate) {
+        // continue and evaluate metadata filters
+      } else {
+        const createdAt = new Date(payment.createdAt);
+        if (filters?.startDate && createdAt < filters.startDate) {
+          return false;
+        }
+        if (filters?.endDate && createdAt > filters.endDate) {
+          return false;
+        }
+      }
+
+      const metadata = this.asRecord(payment.metadata) || {};
+      const payout = this.asRecord(metadata['payout']) || {};
+      const model =
+        String(
+          metadata['revenueModel'] ||
+            payout['revenueModel'] ||
+            (payment.subscriptionId ? 'SUBSCRIPTION' : payment.appointmentId ? 'APPOINTMENT' : 'OTHER')
+        ).toUpperCase();
+      const appointmentType = String(
+        metadata['appointmentType'] || payout['appointmentType'] || ''
+      ).toUpperCase();
+      const provider = String(metadata['provider'] || '').toUpperCase();
+
+      if (filters?.revenueModel && model !== filters.revenueModel.toUpperCase()) {
+        return false;
+      }
+      if (filters?.appointmentType && appointmentType !== filters.appointmentType.toUpperCase()) {
+        return false;
+      }
+      if (filters?.provider && provider !== filters.provider.toUpperCase()) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async getLedgerEntriesForClinic(
+    clinicId: string,
+    filters?: {
+      status?: string;
+      startDate?: Date;
+      endDate?: Date;
+      revenueModel?: 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER';
+      appointmentType?: string;
+      provider?: string;
+    }
+  ): Promise<{
+    payments: Array<Record<string, unknown>>;
+    summary: {
+      totalCollections: number;
+      totalDoctorPayable: number;
+      totalPlatformRevenue: number;
+      totalRefunded: number;
+      totalPayoutReleased: number;
+      pendingPayouts: number;
+      byRevenueModel: {
+        APPOINTMENT: number;
+        SUBSCRIPTION: number;
+        OTHER: number;
+      };
+      byAppointmentType: {
+        VIDEO_CALL: number;
+        IN_PERSON: number;
+        HOME_VISIT: number;
+        OTHER: number;
+      };
+    };
+  }> {
+    const payments = await this.getClinicPayments(clinicId, filters);
+
+    const paymentRows = payments.map(payment => {
+      const metadata = this.asRecord(payment.metadata) || {};
+      const payout = this.asRecord(metadata['payout']) || {};
+      const ledger = Array.isArray(payout['ledger']) ? (payout['ledger'] as unknown[]) : [];
+      const revenueModel = String(
+        metadata['revenueModel'] ||
+          payout['revenueModel'] ||
+          (payment.subscriptionId ? 'SUBSCRIPTION' : payment.appointmentId ? 'APPOINTMENT' : 'OTHER')
+      ).toUpperCase();
+      const appointmentType = String(metadata['appointmentType'] || payout['appointmentType'] || '').toUpperCase();
+      const provider = String(metadata['provider'] || '').toUpperCase();
+
+      return {
+        paymentId: payment.id,
+        appointmentId: payment.appointmentId || null,
+        userId: payment.userId || null,
+        amount: payment.amount,
+        status: payment.status,
+        refundAmount: payment.refundAmount || 0,
+        createdAt: payment.createdAt,
+        updatedAt: payment.updatedAt,
+        payoutState: payout['state'] || 'N/A',
+        payoutDoctorId: payout['doctorId'] || null,
+        payoutDoctorShareAmount: payout['doctorShareAmount'] || 0,
+        payoutPlatformFeeAmount: payout['platformFeeAmount'] || 0,
+        payoutReference: payout['payoutReference'] || null,
+        revenueModel,
+        appointmentType: appointmentType || null,
+        provider: provider || null,
+        ledgerEntries: ledger,
+      };
+    });
+
+    const summary = paymentRows.reduce(
+      (acc, row) => {
+        const amount = Number(row['amount'] || 0);
+        const refunded = Number(row['refundAmount'] || 0);
+        const doctorPayable = Number(row['payoutDoctorShareAmount'] || 0);
+        const platformFee = Number(row['payoutPlatformFeeAmount'] || 0);
+        const payoutState = String(row['payoutState'] || '');
+        const payoutRef = row['payoutReference'];
+
+        acc.totalCollections += amount;
+        acc.totalRefunded += refunded;
+        acc.totalDoctorPayable += doctorPayable;
+        acc.totalPlatformRevenue += platformFee;
+        const revenueModel = String(row['revenueModel'] || 'OTHER').toUpperCase();
+        if (revenueModel === 'APPOINTMENT') {
+          acc.byRevenueModel.APPOINTMENT += amount;
+        } else if (revenueModel === 'SUBSCRIPTION') {
+          acc.byRevenueModel.SUBSCRIPTION += amount;
+        } else {
+          acc.byRevenueModel.OTHER += amount;
+        }
+        const apptType = String(row['appointmentType'] || 'OTHER').toUpperCase();
+        if (apptType === 'VIDEO_CALL') {
+          acc.byAppointmentType.VIDEO_CALL += amount;
+        } else if (apptType === 'IN_PERSON') {
+          acc.byAppointmentType.IN_PERSON += amount;
+        } else if (apptType === 'HOME_VISIT') {
+          acc.byAppointmentType.HOME_VISIT += amount;
+        } else {
+          acc.byAppointmentType.OTHER += amount;
+        }
+        if (payoutState === 'PAYOUT_PENDING' || payoutState === 'PAYOUT_READY') {
+          acc.pendingPayouts += doctorPayable;
+        }
+        if (payoutState === 'PAYOUT_SUCCESS' || payoutRef) {
+          acc.totalPayoutReleased += doctorPayable;
+        }
+        return acc;
+      },
+      {
+        totalCollections: 0,
+        totalDoctorPayable: 0,
+        totalPlatformRevenue: 0,
+        totalRefunded: 0,
+        totalPayoutReleased: 0,
+        pendingPayouts: 0,
+        byRevenueModel: {
+          APPOINTMENT: 0,
+          SUBSCRIPTION: 0,
+          OTHER: 0,
+        },
+        byAppointmentType: {
+          VIDEO_CALL: 0,
+          IN_PERSON: 0,
+          HOME_VISIT: 0,
+          OTHER: 0,
+        },
+      }
+    );
+
+    return {
+      payments: paymentRows,
+      summary: {
+        totalCollections: this.roundToTwo(summary.totalCollections),
+        totalDoctorPayable: this.roundToTwo(summary.totalDoctorPayable),
+        totalPlatformRevenue: this.roundToTwo(summary.totalPlatformRevenue),
+        totalRefunded: this.roundToTwo(summary.totalRefunded),
+        totalPayoutReleased: this.roundToTwo(summary.totalPayoutReleased),
+        pendingPayouts: this.roundToTwo(summary.pendingPayouts),
+        byRevenueModel: {
+          APPOINTMENT: this.roundToTwo(summary.byRevenueModel.APPOINTMENT),
+          SUBSCRIPTION: this.roundToTwo(summary.byRevenueModel.SUBSCRIPTION),
+          OTHER: this.roundToTwo(summary.byRevenueModel.OTHER),
+        },
+        byAppointmentType: {
+          VIDEO_CALL: this.roundToTwo(summary.byAppointmentType.VIDEO_CALL),
+          IN_PERSON: this.roundToTwo(summary.byAppointmentType.IN_PERSON),
+          HOME_VISIT: this.roundToTwo(summary.byAppointmentType.HOME_VISIT),
+          OTHER: this.roundToTwo(summary.byAppointmentType.OTHER),
+        },
+      },
+    };
   }
 
   async getPayment(id: string) {
@@ -1202,7 +1552,11 @@ export class BillingService {
         subscriptionId: subscription.id,
         planId: subscription.planId,
         baseUrl,
-        redirectUrl: `${baseUrl}/payment/callback`,
+        redirectUrl: this.buildPaymentCallbackUrl(
+          subscription.clinicId,
+          invoice.invoiceNumber,
+          provider
+        ),
       },
     };
 
@@ -1236,6 +1590,8 @@ export class BillingService {
         paymentIntentId: paymentId,
         orderId,
         provider: providerName,
+        revenueModel: 'SUBSCRIPTION',
+        serviceType: 'SUBSCRIPTION_PLAN',
         ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
       },
     });
@@ -1342,7 +1698,11 @@ export class BillingService {
         appointmentId: appointment.id,
         appointmentType,
         baseUrl,
-        redirectUrl: `${baseUrl}/payment/callback`,
+        redirectUrl: this.buildPaymentCallbackUrl(
+          appointment.clinicId,
+          invoice.invoiceNumber,
+          provider
+        ),
       },
     };
 
@@ -1377,6 +1737,8 @@ export class BillingService {
         orderId,
         provider: providerName,
         appointmentType,
+        revenueModel: 'APPOINTMENT',
+        serviceType: appointmentType,
         ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
       },
     });
@@ -1412,134 +1774,100 @@ export class BillingService {
     provider?: PaymentProvider
   ): Promise<{ payment: unknown; invoice?: unknown }> {
     try {
+      const normalizedProvider = this.normalizePaymentProvider(provider);
+
       // Verify payment status with provider
       const paymentStatus: PaymentStatusResult = await this.paymentService.verifyPayment(
         clinicId,
         { paymentId, orderId },
-        provider
+        normalizedProvider
       );
+      const normalizedIncomingStatus = this.normalizeGatewayPaymentStatus(paymentStatus.status);
 
-      // Find payment record
-      const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+      // Find payment record: by ID, gateway transaction ID, then order ID fallback
+      let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
       if (!payment) {
-        // Try to find by transactionId
-        const payments = await this.databaseService.findPaymentsSafe({
-          transactionId: paymentId,
-        });
-        if (payments.length === 0) {
-          throw new NotFoundException('Payment record not found');
-        }
-        const foundPayment = payments[0]!;
-
-        // Update payment status
-        const updatedPayment = await this.updatePayment(foundPayment.id, {
-          status: paymentStatus.status as PaymentStatus,
-          transactionId: paymentStatus.transactionId || paymentId,
-        });
-
-        // If payment completed and linked to invoice, mark invoice as paid
-        if (
-          paymentStatus.status === 'completed' &&
-          'invoiceId' in foundPayment &&
-          foundPayment.invoiceId
-        ) {
-          await this.markInvoiceAsPaid(foundPayment.invoiceId);
-        }
-
-        // If payment is for subscription, update subscription
-        if (
-          paymentStatus.status === 'completed' &&
-          'subscriptionId' in foundPayment &&
-          foundPayment.subscriptionId
-        ) {
-          await this.renewSubscriptionAfterPayment(foundPayment.subscriptionId);
-        }
-
-        const paymentCompletedEvent: EnterpriseEventPayload = {
-          eventId: `payment-completed-${foundPayment.id}`,
-          eventType: 'payment.completed',
-          category: EventCategory.BILLING,
-          priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
-          source: 'BillingService',
-          version: '1.0.0',
-          clinicId,
-          ...(foundPayment.userId && { userId: foundPayment.userId }),
-          metadata: {
-            paymentId: foundPayment.id,
-            amount: paymentStatus.amount,
-            status: paymentStatus.status,
-            ...(foundPayment.appointmentId && { appointmentId: foundPayment.appointmentId }),
-            ...(foundPayment.subscriptionId && { subscriptionId: foundPayment.subscriptionId }),
-          },
-        };
-        await this.eventService.emitEnterprise('payment.completed', paymentCompletedEvent);
-
-        // Also emit simple event for @OnEvent listeners
-        if (foundPayment.appointmentId && paymentStatus.status === 'completed') {
-          await this.eventService.emit('payment.completed', {
-            appointmentId: foundPayment.appointmentId,
-            paymentId: foundPayment.id,
-            status: paymentStatus.status,
-            clinicId,
-          });
-        }
-
-        return { payment: updatedPayment };
+        const byPaymentIdTx = await this.databaseService.findPaymentsSafe({ transactionId: paymentId });
+        payment = byPaymentIdTx[0] || null;
+      }
+      if (!payment) {
+        const byOrderIdTx = await this.databaseService.findPaymentsSafe({ transactionId: orderId });
+        payment = byOrderIdTx[0] || null;
+      }
+      if (!payment) {
+        throw new NotFoundException('Payment record not found');
       }
 
-      // Update payment status
+      const currentStatusLower = String(payment.status || '').toLowerCase();
+      const incomingStatusLower = String(normalizedIncomingStatus).toLowerCase();
+      const isSameStatus = currentStatusLower === incomingStatusLower;
+      const isCurrentFinal =
+        currentStatusLower === 'completed' ||
+        currentStatusLower === 'refunded' ||
+        currentStatusLower === 'cancelled';
+
+      // Idempotency + anti-regression for repeated gateway callbacks.
+      if (
+        isSameStatus ||
+        (isCurrentFinal && incomingStatusLower !== currentStatusLower) ||
+        (currentStatusLower === 'failed' && incomingStatusLower === 'pending')
+      ) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          'Ignoring duplicate or regressive payment callback',
+          'BillingService',
+          {
+            clinicId,
+            paymentId: payment.id,
+            currentStatus: currentStatusLower,
+            incomingStatus: incomingStatusLower,
+            orderId,
+            provider: normalizedProvider || 'unknown',
+          }
+        );
+        return { payment };
+      }
+
+      const callbackMetadata = this.asRecord(payment.metadata)
+        ? { ...(payment.metadata as Record<string, unknown>) }
+        : {};
+      callbackMetadata['callbackAudit'] = {
+        provider: normalizedProvider || 'unknown',
+        orderId,
+        requestedPaymentId: paymentId,
+        verifiedTransactionId: paymentStatus.transactionId || paymentId,
+        receivedAt: new Date().toISOString(),
+        incomingStatus: incomingStatusLower,
+      };
+
       const updatedPayment = await this.updatePayment(payment.id, {
-        status: paymentStatus.status as PaymentStatus,
+        status: normalizedIncomingStatus,
         transactionId: paymentStatus.transactionId || paymentId,
+        metadata: callbackMetadata,
       });
 
-      // If payment completed and linked to invoice, mark invoice as paid
-      if (paymentStatus.status === 'completed' && 'invoiceId' in payment && payment.invoiceId) {
-        const invoice = await this.markInvoiceAsPaid(payment.invoiceId);
-        return { payment: updatedPayment, invoice };
+      let invoice: unknown | undefined;
+      if (incomingStatusLower === 'completed' && payment.invoiceId) {
+        invoice = await this.markInvoiceAsPaid(payment.invoiceId);
       }
 
-      // If payment is for subscription, update subscription
-      if (
-        paymentStatus.status === 'completed' &&
-        'subscriptionId' in payment &&
-        payment.subscriptionId
-      ) {
+      if (incomingStatusLower === 'completed' && payment.subscriptionId) {
         await this.renewSubscriptionAfterPayment(payment.subscriptionId);
+        await this.prepareLedgerForSubscriptionPayment(payment.id, clinicId);
       }
 
-      const paymentCompletedEvent: EnterpriseEventPayload = {
-        eventId: `payment-completed-${payment.id}`,
-        eventType: 'payment.completed',
-        category: EventCategory.BILLING,
-        priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
-        source: 'BillingService',
-        version: '1.0.0',
+      await this.emitPaymentLifecycleEvents({
         clinicId,
-        ...(payment.userId && { userId: payment.userId }),
-        metadata: {
-          paymentId: payment.id,
-          amount: paymentStatus.amount,
-          status: paymentStatus.status,
-          ...(payment.appointmentId && { appointmentId: payment.appointmentId }),
-          ...(payment.subscriptionId && { subscriptionId: payment.subscriptionId }),
-        },
-      };
-      await this.eventService.emitEnterprise('payment.completed', paymentCompletedEvent);
+        paymentId: payment.id,
+        status: paymentStatus.status,
+        amount: paymentStatus.amount,
+        ...(payment.userId ? { userId: payment.userId } : {}),
+        ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
+        ...(payment.subscriptionId ? { subscriptionId: payment.subscriptionId } : {}),
+      });
 
-      // Also emit simple event for @OnEvent listeners
-      if (payment.appointmentId && paymentStatus.status === 'completed') {
-        await this.eventService.emit('payment.completed', {
-          appointmentId: payment.appointmentId,
-          paymentId: payment.id,
-          status: paymentStatus.status,
-          clinicId,
-        });
-      }
-
-      return { payment: updatedPayment };
+      return { payment: updatedPayment, ...(invoice ? { invoice } : {}) };
     } catch (error) {
       await this.loggingService.log(
         LogType.PAYMENT,
@@ -1555,6 +1883,321 @@ export class BillingService {
       );
       throw error;
     }
+  }
+
+  async preparePayoutForAppointmentPayment(paymentId: string, clinicId: string): Promise<void> {
+    const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+    if (!payment || payment.clinicId !== clinicId || !payment.appointmentId) {
+      return;
+    }
+    if (String(payment.status) !== String(PaymentStatus.COMPLETED)) {
+      return;
+    }
+
+    const appointment = await this.databaseService.findAppointmentByIdSafe(payment.appointmentId);
+    if (!appointment || appointment.clinicId !== clinicId) {
+      return;
+    }
+
+    const metadata =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? { ...(payment.metadata as Record<string, unknown>) }
+        : {};
+
+    const existingPayout =
+      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+        ? (metadata['payout'] as Record<string, unknown>)
+        : null;
+    if (existingPayout && existingPayout['state']) {
+      return; // idempotent
+    }
+
+    const gross = this.roundToTwo(payment.amount);
+    const feePercent = this.getPlatformFeePercent();
+    const platformFee = this.roundToTwo((gross * feePercent) / 100);
+    const doctorShare = this.roundToTwo(gross - platformFee);
+
+    const payout = {
+      mode: 'SOLE_PROPRIETOR',
+      state: 'PAYOUT_PENDING',
+      grossAmount: gross,
+      platformFeePercent: feePercent,
+      platformFeeAmount: platformFee,
+      doctorShareAmount: doctorShare,
+      doctorId: appointment.doctorId,
+      preparedAt: new Date().toISOString(),
+      ledger: [
+        {
+          type: 'PLATFORM_CREDIT',
+          amount: gross,
+          reference: payment.id,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          type: 'DOCTOR_PAYABLE_CREDIT',
+          amount: doctorShare,
+          reference: payment.id,
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    };
+
+    await this.updatePayment(payment.id, {
+      metadata: {
+        ...metadata,
+        payout,
+      },
+    });
+  }
+
+  async prepareLedgerForSubscriptionPayment(paymentId: string, clinicId: string): Promise<void> {
+    const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
+    if (!payment || payment.clinicId !== clinicId || !payment.subscriptionId) {
+      return;
+    }
+    if (String(payment.status) !== String(PaymentStatus.COMPLETED)) {
+      return;
+    }
+
+    const metadata = this.asRecord(payment.metadata) ? { ...(payment.metadata as Record<string, unknown>) } : {};
+    const existingPayout = this.asRecord(metadata['payout']);
+    if (existingPayout && existingPayout['state']) {
+      return;
+    }
+
+    const gross = this.roundToTwo(payment.amount);
+    const payout = {
+      state: 'REVENUE_RECORDED',
+      revenueModel: 'SUBSCRIPTION',
+      doctorId: null,
+      doctorShareAmount: 0,
+      platformFeePercent: 100,
+      platformFeeAmount: gross,
+      ledger: [
+        {
+          type: 'PLATFORM_CREDIT',
+          amount: gross,
+          at: new Date().toISOString(),
+          note: 'Subscription payment credited to platform revenue',
+        },
+      ],
+    };
+
+    await this.updatePayment(payment.id, {
+      metadata: {
+        ...metadata,
+        revenueModel: 'SUBSCRIPTION',
+        payout,
+      },
+    });
+  }
+
+  async markPayoutReadyForCompletedAppointment(appointmentId: string, clinicId: string): Promise<void> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || appointment.clinicId !== clinicId) {
+      return;
+    }
+    if (String(appointment.status) !== String('COMPLETED')) {
+      return;
+    }
+
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId,
+      clinicId,
+      status: PaymentStatus.COMPLETED,
+    });
+    const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (!payment) {
+      return;
+    }
+
+    const metadata =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? { ...(payment.metadata as Record<string, unknown>) }
+        : {};
+    const payout =
+      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+        ? { ...(metadata['payout'] as Record<string, unknown>) }
+        : null;
+    if (!payout) {
+      return;
+    }
+    if (payout['state'] === 'PAYOUT_SUCCESS' || payout['state'] === 'PAYOUT_READY') {
+      return;
+    }
+
+    payout['state'] = 'PAYOUT_READY';
+    payout['readyAt'] = new Date().toISOString();
+
+    await this.updatePayment(payment.id, {
+      metadata: {
+        ...metadata,
+        payout,
+      },
+    });
+  }
+
+  async releasePayoutForAppointment(
+    appointmentId: string,
+    clinicId: string,
+    initiatedBy: string
+  ): Promise<{
+    success: boolean;
+    paymentId?: string;
+    doctorId?: string;
+    doctorShareAmount?: number;
+    message: string;
+  }> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || appointment.clinicId !== clinicId) {
+      throw new NotFoundException('Appointment not found');
+    }
+    if (String(appointment.status) !== String('COMPLETED')) {
+      throw new BadRequestException('Payout is allowed only after consultation is completed');
+    }
+
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId,
+      clinicId,
+      status: PaymentStatus.COMPLETED,
+    });
+    const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (!payment) {
+      throw new BadRequestException('No completed payment found for this appointment');
+    }
+
+    const metadata =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? { ...(payment.metadata as Record<string, unknown>) }
+        : {};
+    const payout =
+      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+        ? { ...(metadata['payout'] as Record<string, unknown>) }
+        : null;
+    if (!payout) {
+      throw new BadRequestException('Payout details are not prepared for this payment');
+    }
+    if (payout['state'] === 'PAYOUT_PENDING') {
+      payout['state'] = 'PAYOUT_READY';
+      payout['readyAt'] = new Date().toISOString();
+    }
+    if (payout['state'] !== 'PAYOUT_READY' && payout['state'] !== 'PAYOUT_SUCCESS') {
+      throw new BadRequestException('Payout is not in a releasable state');
+    }
+    if (payout['state'] === 'PAYOUT_SUCCESS') {
+      return {
+        success: true,
+        paymentId: payment.id,
+        doctorId: String(payout['doctorId'] || appointment.doctorId),
+        doctorShareAmount: Number(payout['doctorShareAmount'] || 0),
+        message: 'Payout already completed',
+      };
+    }
+
+    const ledger =
+      Array.isArray(payout['ledger']) ? [...(payout['ledger'] as Array<Record<string, unknown>>)] : [];
+    ledger.push({
+      type: 'PLATFORM_DEBIT',
+      amount: Number(payout['doctorShareAmount'] || 0),
+      reference: payment.id,
+      createdAt: new Date().toISOString(),
+    });
+    ledger.push({
+      type: 'DOCTOR_PAYOUT_CREDIT',
+      amount: Number(payout['doctorShareAmount'] || 0),
+      reference: payment.id,
+      createdAt: new Date().toISOString(),
+    });
+
+    payout['state'] = 'PAYOUT_SUCCESS';
+    payout['paidAt'] = new Date().toISOString();
+    payout['payoutReference'] = `manual-${Date.now()}`;
+    payout['initiatedBy'] = initiatedBy;
+    payout['ledger'] = ledger;
+
+    await this.updatePayment(payment.id, {
+      metadata: {
+        ...metadata,
+        payout,
+      },
+    });
+
+    await this.eventService.emit('billing.payout.success', {
+      appointmentId,
+      clinicId,
+      paymentId: payment.id,
+      doctorId: String(payout['doctorId'] || appointment.doctorId),
+      amount: Number(payout['doctorShareAmount'] || 0),
+      initiatedBy,
+    });
+
+    return {
+      success: true,
+      paymentId: payment.id,
+      doctorId: String(payout['doctorId'] || appointment.doctorId),
+      doctorShareAmount: Number(payout['doctorShareAmount'] || 0),
+      message: 'Payout marked as successful',
+    };
+  }
+
+  async getAppointmentPayoutStatus(appointmentId: string, clinicId: string): Promise<{
+    paymentId?: string;
+    appointmentId: string;
+    payoutState: string;
+    payoutData?: Record<string, unknown>;
+  }> {
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || appointment.clinicId !== clinicId) {
+      throw new NotFoundException('Appointment not found');
+    }
+
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId,
+      clinicId,
+    });
+    const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+    if (!payment) {
+      return {
+        appointmentId,
+        payoutState: 'NO_PAYMENT',
+      };
+    }
+
+    const metadata =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? (payment.metadata as Record<string, unknown>)
+        : {};
+    const payout =
+      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+        ? (metadata['payout'] as Record<string, unknown>)
+        : undefined;
+
+    return {
+      paymentId: payment.id,
+      appointmentId,
+      payoutState: payout ? String(payout['state'] || 'PAYOUT_PENDING') : 'PAYOUT_NOT_PREPARED',
+      ...(payout ? { payoutData: payout } : {}),
+    };
+  }
+
+  async reconcilePaymentForClinic(
+    clinicId: string,
+    paymentRecordId: string,
+    provider?: PaymentProvider
+  ): Promise<{ payment: unknown; invoice?: unknown }> {
+    const payment = await this.databaseService.findPaymentByIdSafe(paymentRecordId);
+    if (!payment || payment.clinicId !== clinicId) {
+      throw new NotFoundException('Payment record not found for this clinic');
+    }
+
+    const metadata = this.asRecord(payment.metadata) || {};
+    const orderId =
+      String(metadata['orderId'] || metadata['invoiceNumber'] || payment.transactionId || payment.id);
+    const gatewayPaymentId = String(payment.transactionId || payment.id);
+
+    const metadataProvider = this.normalizePaymentProvider(metadata['provider']);
+
+    return this.handlePaymentCallback(clinicId, gatewayPaymentId, orderId, provider || metadataProvider);
   }
 
   /**
@@ -1624,6 +2267,10 @@ export class BillingService {
     error?: string;
   }> {
     try {
+      if (amount !== undefined && (!Number.isFinite(amount) || amount <= 0)) {
+        throw new BadRequestException('Refund amount must be a positive number');
+      }
+
       // Get payment to verify it exists and get amount
       const payment = await this.databaseService.findPaymentByIdSafe(paymentId);
       if (!payment) {
@@ -1644,7 +2291,29 @@ export class BillingService {
         }
         if (amount && totalRefunded + amount > paymentAmount) {
           throw new BadRequestException(
-            `Refund amount exceeds remaining amount. Remaining: ₹${paymentAmount - totalRefunded}`
+            `Refund amount exceeds remaining amount. Remaining: INR ${paymentAmount - totalRefunded}`
+          );
+        }
+      }
+
+      // Sole proprietor policy: for appointment-linked payments, full refund only before consultation starts.
+      if (this.isSoleProprietorModeEnabled() && 'appointmentId' in payment && payment.appointmentId) {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(payment.appointmentId);
+        if (!appointment) {
+          throw new NotFoundException('Linked appointment not found for refund');
+        }
+        const appointmentStatus = String(appointment.status || '').toUpperCase();
+        if (appointmentStatus === 'IN_PROGRESS' || appointmentStatus === 'COMPLETED') {
+          throw new BadRequestException(
+            'Refund not allowed after consultation has started or completed.'
+          );
+        }
+
+        const alreadyRefunded = ('refundAmount' in payment && payment.refundAmount) || 0;
+        const remainingAmount = payment.amount - alreadyRefunded;
+        if (amount !== undefined && Math.abs(amount - remainingAmount) > 0.01) {
+          throw new BadRequestException(
+            `Only full refund is allowed before consultation. Required amount: INR ${remainingAmount}`
           );
         }
       }
@@ -1664,7 +2333,7 @@ export class BillingService {
         },
       };
       if (amount !== undefined) {
-        refundOptions.amount = amount * 100; // Convert to paise
+        refundOptions.amount = Math.round(amount * 100); // Convert to paise
       }
       if (reason !== undefined) {
         refundOptions.reason = reason;
@@ -1677,14 +2346,61 @@ export class BillingService {
 
       // Update payment record with refund information
       const currentRefundAmount = ('refundAmount' in payment && payment.refundAmount) || 0;
-      const refundAmount = refundResult.amount;
-      const newRefundAmount = currentRefundAmount + refundAmount;
+      const refundAmountInRupees = refundResult.amount / 100;
+      const newRefundAmount = currentRefundAmount + refundAmountInRupees;
 
       await this.updatePayment(payment.id, {
         refundAmount: newRefundAmount,
         status:
           newRefundAmount >= payment.amount ? PaymentStatus.REFUNDED : PaymentStatus.COMPLETED,
       });
+
+      const paymentAfterRefund = await this.databaseService.findPaymentByIdSafe(payment.id);
+      if (paymentAfterRefund) {
+        const metadata =
+          paymentAfterRefund.metadata &&
+          typeof paymentAfterRefund.metadata === 'object' &&
+          !Array.isArray(paymentAfterRefund.metadata)
+            ? { ...(paymentAfterRefund.metadata as Record<string, unknown>) }
+            : {};
+        const payout =
+          metadata['payout'] &&
+          typeof metadata['payout'] === 'object' &&
+          !Array.isArray(metadata['payout'])
+            ? { ...(metadata['payout'] as Record<string, unknown>) }
+            : null;
+
+        if (payout) {
+          const currentDoctorShare = Number(payout['doctorShareAmount'] || 0);
+          const adjustedDoctorShare = this.roundToTwo(
+            Math.max(0, currentDoctorShare - refundAmountInRupees)
+          );
+          const currentPlatformFee = Number(payout['platformFeeAmount'] || 0);
+          const adjustedPlatformFee = this.roundToTwo(
+            Math.max(0, currentPlatformFee - Math.min(currentPlatformFee, refundAmountInRupees))
+          );
+          const ledger = Array.isArray(payout['ledger'])
+            ? [...(payout['ledger'] as Array<Record<string, unknown>>)]
+            : [];
+          ledger.push({
+            type: 'REFUND_DEBIT',
+            amount: refundAmountInRupees,
+            reference: payment.id,
+            createdAt: new Date().toISOString(),
+          });
+          payout['doctorShareAmount'] = adjustedDoctorShare;
+          payout['platformFeeAmount'] = adjustedPlatformFee;
+          payout['lastRefundAt'] = new Date().toISOString();
+          payout['ledger'] = ledger;
+
+          await this.updatePayment(payment.id, {
+            metadata: {
+              ...metadata,
+              payout,
+            },
+          });
+        }
+      }
 
       await this.loggingService.log(
         LogType.PAYMENT,
@@ -1694,7 +2410,7 @@ export class BillingService {
         {
           paymentId: payment.id,
           refundId: refundResult.refundId,
-          amount: refundAmount,
+          amount: refundAmountInRupees,
           clinicId,
         }
       );
@@ -1707,7 +2423,7 @@ export class BillingService {
         error?: string;
       } = {
         success: true,
-        amount: refundAmount,
+        amount: refundAmountInRupees,
         status: refundResult.status,
       };
       if (refundResult.refundId !== undefined) {

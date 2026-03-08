@@ -296,7 +296,12 @@ export class UsersController {
       this.authService.setAuthCookies(reply, tokens);
     }
 
-    return updatedUser;
+/*  */    return {
+      ...updatedUser,
+      profileComplete: profileStatus.isComplete,
+      isProfileComplete: profileStatus.isComplete,
+      requiresProfileCompletion: !profileStatus.isComplete,
+    } as unknown as UserResponseDto;
   }
 
   @Delete(':id')

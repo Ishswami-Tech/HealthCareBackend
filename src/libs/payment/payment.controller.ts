@@ -7,7 +7,7 @@
  * @description Payment webhook and callback endpoints
  */
 
-import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
@@ -28,6 +28,12 @@ type BillingServiceLike = {
 @Controller('payments')
 export class PaymentController {
   private billingServiceRef: BillingServiceLike | null = null;
+  private readonly enabledProviders = (
+    process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+  )
+    .split(',')
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean);
 
   constructor(
     private readonly paymentService: PaymentService,
@@ -47,6 +53,32 @@ export class PaymentController {
     return this.billingServiceRef;
   }
 
+  private parsePaymentProvider(provider?: string): PaymentProvider | undefined {
+    if (!provider) {
+      return undefined;
+    }
+
+    const normalizedProvider = provider.trim().toLowerCase();
+    const enabledProviders = (
+      process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+    )
+      .split(',')
+      .map(value => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!enabledProviders.includes(normalizedProvider)) {
+      throw new BadRequestException(
+        `Payment provider '${provider}' is not enabled. Enabled providers: ${enabledProviders.join(', ')}`
+      );
+    }
+
+    return normalizedProvider as PaymentProvider;
+  }
+
+  private isProviderEnabled(provider: PaymentProvider): boolean {
+    return this.enabledProviders.includes(provider);
+  }
+
   /**
    * Razorpay webhook handler
    */
@@ -61,8 +93,22 @@ export class PaymentController {
     @Query('clinicId') clinicId: string
   ): Promise<{ success: boolean }> {
     try {
+      if (!this.isProviderEnabled(PaymentProvider.RAZORPAY)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'Razorpay webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
       if (!clinicId) {
         throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('Razorpay webhook signature is required');
       }
 
       // Verify webhook signature
@@ -147,6 +193,9 @@ export class PaymentController {
       if (!clinicId) {
         throw new Error('Clinic ID is required');
       }
+      if (!signature) {
+        throw new Error('Cashfree webhook signature is required');
+      }
 
       const isValid = await this.paymentService.verifyWebhook(
         clinicId,
@@ -174,6 +223,14 @@ export class PaymentController {
       ) as Record<string, unknown>;
       const orderIdRaw =
         dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
+      const paymentIdRaw =
+        dataObj['paymentId'] ??
+        dataObj['payment_id'] ??
+        dataObj['cf_payment_id'] ??
+        body['paymentId'] ??
+        body['payment_id'] ??
+        body['cf_payment_id'] ??
+        orderIdRaw;
       const orderStatusRaw =
         dataObj['orderStatus'] ??
         dataObj['order_status'] ??
@@ -181,11 +238,20 @@ export class PaymentController {
         body['order_status'] ??
         '';
       const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
-      const orderStatus = typeof orderStatusRaw === 'string' ? orderStatusRaw : '';
-      if (orderId && (orderStatus === 'PAID' || orderStatus === 'SUCCESS')) {
+      const paymentId = typeof paymentIdRaw === 'string' ? paymentIdRaw : '';
+      const orderStatus =
+        typeof orderStatusRaw === 'string' ? orderStatusRaw.toUpperCase() : '';
+      if (
+        orderId &&
+        paymentId &&
+        (orderStatus === 'PAID' ||
+          orderStatus === 'SUCCESS' ||
+          orderStatus === 'FAILED' ||
+          orderStatus === 'CANCELLED')
+      ) {
         await this.getBillingService().handlePaymentCallback(
           clinicId,
-          orderId,
+          paymentId,
           orderId,
           PaymentProvider.CASHFREE
         );
@@ -229,8 +295,22 @@ export class PaymentController {
     @Query('clinicId') clinicId: string
   ): Promise<{ success: boolean }> {
     try {
+      if (!this.isProviderEnabled(PaymentProvider.PHONEPE)) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.WARN,
+          'PhonePe webhook received but provider is disabled',
+          'PaymentController',
+          { clinicId }
+        );
+        return { success: false };
+      }
+
       if (!clinicId) {
         throw new Error('Clinic ID is required');
+      }
+      if (!signature) {
+        throw new Error('PhonePe webhook signature is required');
       }
 
       // Verify webhook signature
@@ -320,18 +400,7 @@ export class PaymentController {
         throw new Error('Clinic ID, Payment ID, and Order ID are required');
       }
 
-      // Convert provider string to PaymentProvider enum
-      let paymentProvider: PaymentProvider | undefined;
-      if (provider) {
-        const normalizedProvider = provider.toLowerCase();
-        if (normalizedProvider === 'razorpay') {
-          paymentProvider = PaymentProvider.RAZORPAY;
-        } else if (normalizedProvider === 'cashfree') {
-          paymentProvider = PaymentProvider.CASHFREE;
-        } else if (normalizedProvider === 'phonepe') {
-          paymentProvider = PaymentProvider.PHONEPE;
-        }
-      }
+      const paymentProvider = this.parsePaymentProvider(provider);
 
       await this.getBillingService().handlePaymentCallback(
         clinicId,

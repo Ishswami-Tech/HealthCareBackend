@@ -1589,6 +1589,14 @@ export class AppointmentsService {
             doctorId: appointment?.doctorId,
           },
         });
+
+        await this.eventService.emit('appointment.completed', {
+          appointmentId,
+          clinicId,
+          status: 'COMPLETED',
+          patientId: appointment?.patientId,
+          doctorId: appointment?.doctorId,
+        });
       }
       return result;
     } catch (_error) {
