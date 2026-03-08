@@ -173,6 +173,16 @@ export class BillingService {
     return value as Record<string, unknown>;
   }
 
+  private asSafeString(value: unknown, fallback: string = ''): string {
+    if (typeof value === 'string') {
+      return value;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+      return String(value);
+    }
+    return fallback;
+  }
+
   private getPlatformFeePercent(): number {
     const raw = this.configService.getEnv('PLATFORM_FEE_PERCENT', '20') || '20';
     const parsed = Number(raw);
@@ -189,9 +199,7 @@ export class BillingService {
   }
 
   private normalizeGatewayPaymentStatus(status: unknown): PaymentStatus {
-    const normalized = String(status || '')
-      .trim()
-      .toLowerCase();
+    const normalized = this.asSafeString(status).trim().toLowerCase();
     if (
       normalized === 'completed' ||
       normalized === 'success' ||
@@ -1052,7 +1060,7 @@ export class BillingService {
 
       const metadata = this.asRecord(payment.metadata) || {};
       const payout = this.asRecord(metadata['payout']) || {};
-      const model = String(
+      const model = this.asSafeString(
         metadata['revenueModel'] ||
           payout['revenueModel'] ||
           (payment.subscriptionId
@@ -1061,10 +1069,10 @@ export class BillingService {
               ? 'APPOINTMENT'
               : 'OTHER')
       ).toUpperCase();
-      const appointmentType = String(
+      const appointmentType = this.asSafeString(
         metadata['appointmentType'] || payout['appointmentType'] || ''
       ).toUpperCase();
-      const provider = String(metadata['provider'] || '').toUpperCase();
+      const provider = this.asSafeString(metadata['provider']).toUpperCase();
 
       if (filters?.revenueModel && model !== filters.revenueModel.toUpperCase()) {
         return false;
@@ -1118,7 +1126,7 @@ export class BillingService {
       const metadata = this.asRecord(payment.metadata) || {};
       const payout = this.asRecord(metadata['payout']) || {};
       const ledger = Array.isArray(payout['ledger']) ? (payout['ledger'] as unknown[]) : [];
-      const revenueModel = String(
+      const revenueModel = this.asSafeString(
         metadata['revenueModel'] ||
           payout['revenueModel'] ||
           (payment.subscriptionId
@@ -1127,10 +1135,10 @@ export class BillingService {
               ? 'APPOINTMENT'
               : 'OTHER')
       ).toUpperCase();
-      const appointmentType = String(
+      const appointmentType = this.asSafeString(
         metadata['appointmentType'] || payout['appointmentType'] || ''
       ).toUpperCase();
-      const provider = String(metadata['provider'] || '').toUpperCase();
+      const provider = this.asSafeString(metadata['provider']).toUpperCase();
 
       return {
         paymentId: payment.id,
@@ -1159,7 +1167,7 @@ export class BillingService {
         const refunded = Number(row['refundAmount'] || 0);
         const doctorPayable = Number(row['payoutDoctorShareAmount'] || 0);
         const platformFee = Number(row['payoutPlatformFeeAmount'] || 0);
-        const payoutState = String(row['payoutState'] || '');
+        const payoutState = this.asSafeString(row['payoutState']);
         const payoutRef = row['payoutReference'];
 
         acc.totalCollections += amount;
@@ -1858,7 +1866,7 @@ export class BillingService {
         metadata: callbackMetadata,
       });
 
-      let invoice: unknown | undefined;
+      let invoice: unknown;
       if (incomingStatusLower === 'completed' && payment.invoiceId) {
         invoice = await this.markInvoiceAsPaid(payment.invoiceId);
       }
@@ -2107,10 +2115,12 @@ export class BillingService {
       throw new BadRequestException('Payout is not in a releasable state');
     }
     if (payout['state'] === 'PAYOUT_SUCCESS') {
+      const payoutDoctorId =
+        this.asSafeString(payout['doctorId']) || this.asSafeString(appointment.doctorId);
       return {
         success: true,
         paymentId: payment.id,
-        doctorId: String(payout['doctorId'] || appointment.doctorId),
+        doctorId: payoutDoctorId,
         doctorShareAmount: Number(payout['doctorShareAmount'] || 0),
         message: 'Payout already completed',
       };
@@ -2145,11 +2155,13 @@ export class BillingService {
       },
     });
 
+    const payoutDoctorId =
+      this.asSafeString(payout['doctorId']) || this.asSafeString(appointment.doctorId);
     await this.eventService.emit('billing.payout.success', {
       appointmentId,
       clinicId,
       paymentId: payment.id,
-      doctorId: String(payout['doctorId'] || appointment.doctorId),
+      doctorId: payoutDoctorId,
       amount: Number(payout['doctorShareAmount'] || 0),
       initiatedBy,
     });
@@ -2157,7 +2169,7 @@ export class BillingService {
     return {
       success: true,
       paymentId: payment.id,
-      doctorId: String(payout['doctorId'] || appointment.doctorId),
+      doctorId: payoutDoctorId,
       doctorShareAmount: Number(payout['doctorShareAmount'] || 0),
       message: 'Payout marked as successful',
     };
@@ -2203,7 +2215,9 @@ export class BillingService {
     return {
       paymentId: payment.id,
       appointmentId,
-      payoutState: payout ? String(payout['state'] || 'PAYOUT_PENDING') : 'PAYOUT_NOT_PREPARED',
+      payoutState: payout
+        ? this.asSafeString(payout['state'], 'PAYOUT_PENDING')
+        : 'PAYOUT_NOT_PREPARED',
       ...(payout ? { payoutData: payout } : {}),
     };
   }
@@ -2219,10 +2233,12 @@ export class BillingService {
     }
 
     const metadata = this.asRecord(payment.metadata) || {};
-    const orderId = String(
-      metadata['orderId'] || metadata['invoiceNumber'] || payment.transactionId || payment.id
-    );
-    const gatewayPaymentId = String(payment.transactionId || payment.id);
+    const orderId =
+      this.asSafeString(metadata['orderId']) ||
+      this.asSafeString(metadata['invoiceNumber']) ||
+      this.asSafeString(payment.transactionId) ||
+      payment.id;
+    const gatewayPaymentId = this.asSafeString(payment.transactionId) || payment.id;
 
     const metadataProvider = this.normalizePaymentProvider(metadata['provider']);
 
