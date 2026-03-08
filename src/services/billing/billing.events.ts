@@ -209,7 +209,10 @@ export class BillingEventsListener {
     try {
       // Only process if payment is for an appointment and status is completed
       if (payload.appointmentId && payload.status === 'completed' && payload.clinicId) {
-        await this.billingService.preparePayoutForAppointmentPayment(payload.paymentId, payload.clinicId);
+        await this.billingService.preparePayoutForAppointmentPayment(
+          payload.paymentId,
+          payload.clinicId
+        );
 
         const appointmentId = payload.appointmentId;
         const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
@@ -298,10 +301,7 @@ export class BillingEventsListener {
   }
 
   @OnEvent('appointment.completed')
-  async handleAppointmentCompleted(payload: {
-    appointmentId: string;
-    clinicId: string;
-  }) {
+  async handleAppointmentCompleted(payload: { appointmentId: string; clinicId: string }) {
     try {
       if (!payload?.appointmentId || !payload?.clinicId) {
         return;

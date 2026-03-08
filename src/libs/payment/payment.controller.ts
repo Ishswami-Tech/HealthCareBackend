@@ -7,7 +7,16 @@
  * @description Payment webhook and callback endpoints
  */
 
-import { Controller, Post, Body, Headers, Query, HttpCode, HttpStatus, BadRequestException } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Headers,
+  Query,
+  HttpCode,
+  HttpStatus,
+  BadRequestException,
+} from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
@@ -59,9 +68,7 @@ export class PaymentController {
     }
 
     const normalizedProvider = provider.trim().toLowerCase();
-    const enabledProviders = (
-      process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
-    )
+    const enabledProviders = (process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE)
       .split(',')
       .map(value => value.trim().toLowerCase())
       .filter(Boolean);
@@ -239,8 +246,7 @@ export class PaymentController {
         '';
       const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
       const paymentId = typeof paymentIdRaw === 'string' ? paymentIdRaw : '';
-      const orderStatus =
-        typeof orderStatusRaw === 'string' ? orderStatusRaw.toUpperCase() : '';
+      const orderStatus = typeof orderStatusRaw === 'string' ? orderStatusRaw.toUpperCase() : '';
       if (
         orderId &&
         paymentId &&

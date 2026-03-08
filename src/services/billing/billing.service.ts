@@ -1052,12 +1052,15 @@ export class BillingService {
 
       const metadata = this.asRecord(payment.metadata) || {};
       const payout = this.asRecord(metadata['payout']) || {};
-      const model =
-        String(
-          metadata['revenueModel'] ||
-            payout['revenueModel'] ||
-            (payment.subscriptionId ? 'SUBSCRIPTION' : payment.appointmentId ? 'APPOINTMENT' : 'OTHER')
-        ).toUpperCase();
+      const model = String(
+        metadata['revenueModel'] ||
+          payout['revenueModel'] ||
+          (payment.subscriptionId
+            ? 'SUBSCRIPTION'
+            : payment.appointmentId
+              ? 'APPOINTMENT'
+              : 'OTHER')
+      ).toUpperCase();
       const appointmentType = String(
         metadata['appointmentType'] || payout['appointmentType'] || ''
       ).toUpperCase();
@@ -1118,9 +1121,15 @@ export class BillingService {
       const revenueModel = String(
         metadata['revenueModel'] ||
           payout['revenueModel'] ||
-          (payment.subscriptionId ? 'SUBSCRIPTION' : payment.appointmentId ? 'APPOINTMENT' : 'OTHER')
+          (payment.subscriptionId
+            ? 'SUBSCRIPTION'
+            : payment.appointmentId
+              ? 'APPOINTMENT'
+              : 'OTHER')
       ).toUpperCase();
-      const appointmentType = String(metadata['appointmentType'] || payout['appointmentType'] || '').toUpperCase();
+      const appointmentType = String(
+        metadata['appointmentType'] || payout['appointmentType'] || ''
+      ).toUpperCase();
       const provider = String(metadata['provider'] || '').toUpperCase();
 
       return {
@@ -1787,7 +1796,9 @@ export class BillingService {
       // Find payment record: by ID, gateway transaction ID, then order ID fallback
       let payment = await this.databaseService.findPaymentByIdSafe(paymentId);
       if (!payment) {
-        const byPaymentIdTx = await this.databaseService.findPaymentsSafe({ transactionId: paymentId });
+        const byPaymentIdTx = await this.databaseService.findPaymentsSafe({
+          transactionId: paymentId,
+        });
         payment = byPaymentIdTx[0] || null;
       }
       if (!payment) {
@@ -1905,7 +1916,9 @@ export class BillingService {
         : {};
 
     const existingPayout =
-      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+      metadata['payout'] &&
+      typeof metadata['payout'] === 'object' &&
+      !Array.isArray(metadata['payout'])
         ? (metadata['payout'] as Record<string, unknown>)
         : null;
     if (existingPayout && existingPayout['state']) {
@@ -1959,7 +1972,9 @@ export class BillingService {
       return;
     }
 
-    const metadata = this.asRecord(payment.metadata) ? { ...(payment.metadata as Record<string, unknown>) } : {};
+    const metadata = this.asRecord(payment.metadata)
+      ? { ...(payment.metadata as Record<string, unknown>) }
+      : {};
     const existingPayout = this.asRecord(metadata['payout']);
     if (existingPayout && existingPayout['state']) {
       return;
@@ -1992,7 +2007,10 @@ export class BillingService {
     });
   }
 
-  async markPayoutReadyForCompletedAppointment(appointmentId: string, clinicId: string): Promise<void> {
+  async markPayoutReadyForCompletedAppointment(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<void> {
     const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
     if (!appointment || appointment.clinicId !== clinicId) {
       return;
@@ -2016,7 +2034,9 @@ export class BillingService {
         ? { ...(payment.metadata as Record<string, unknown>) }
         : {};
     const payout =
-      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+      metadata['payout'] &&
+      typeof metadata['payout'] === 'object' &&
+      !Array.isArray(metadata['payout'])
         ? { ...(metadata['payout'] as Record<string, unknown>) }
         : null;
     if (!payout) {
@@ -2071,7 +2091,9 @@ export class BillingService {
         ? { ...(payment.metadata as Record<string, unknown>) }
         : {};
     const payout =
-      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+      metadata['payout'] &&
+      typeof metadata['payout'] === 'object' &&
+      !Array.isArray(metadata['payout'])
         ? { ...(metadata['payout'] as Record<string, unknown>) }
         : null;
     if (!payout) {
@@ -2094,8 +2116,9 @@ export class BillingService {
       };
     }
 
-    const ledger =
-      Array.isArray(payout['ledger']) ? [...(payout['ledger'] as Array<Record<string, unknown>>)] : [];
+    const ledger = Array.isArray(payout['ledger'])
+      ? [...(payout['ledger'] as Array<Record<string, unknown>>)]
+      : [];
     ledger.push({
       type: 'PLATFORM_DEBIT',
       amount: Number(payout['doctorShareAmount'] || 0),
@@ -2140,7 +2163,10 @@ export class BillingService {
     };
   }
 
-  async getAppointmentPayoutStatus(appointmentId: string, clinicId: string): Promise<{
+  async getAppointmentPayoutStatus(
+    appointmentId: string,
+    clinicId: string
+  ): Promise<{
     paymentId?: string;
     appointmentId: string;
     payoutState: string;
@@ -2168,7 +2194,9 @@ export class BillingService {
         ? (payment.metadata as Record<string, unknown>)
         : {};
     const payout =
-      metadata['payout'] && typeof metadata['payout'] === 'object' && !Array.isArray(metadata['payout'])
+      metadata['payout'] &&
+      typeof metadata['payout'] === 'object' &&
+      !Array.isArray(metadata['payout'])
         ? (metadata['payout'] as Record<string, unknown>)
         : undefined;
 
@@ -2191,13 +2219,19 @@ export class BillingService {
     }
 
     const metadata = this.asRecord(payment.metadata) || {};
-    const orderId =
-      String(metadata['orderId'] || metadata['invoiceNumber'] || payment.transactionId || payment.id);
+    const orderId = String(
+      metadata['orderId'] || metadata['invoiceNumber'] || payment.transactionId || payment.id
+    );
     const gatewayPaymentId = String(payment.transactionId || payment.id);
 
     const metadataProvider = this.normalizePaymentProvider(metadata['provider']);
 
-    return this.handlePaymentCallback(clinicId, gatewayPaymentId, orderId, provider || metadataProvider);
+    return this.handlePaymentCallback(
+      clinicId,
+      gatewayPaymentId,
+      orderId,
+      provider || metadataProvider
+    );
   }
 
   /**
@@ -2297,8 +2331,14 @@ export class BillingService {
       }
 
       // Sole proprietor policy: for appointment-linked payments, full refund only before consultation starts.
-      if (this.isSoleProprietorModeEnabled() && 'appointmentId' in payment && payment.appointmentId) {
-        const appointment = await this.databaseService.findAppointmentByIdSafe(payment.appointmentId);
+      if (
+        this.isSoleProprietorModeEnabled() &&
+        'appointmentId' in payment &&
+        payment.appointmentId
+      ) {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(
+          payment.appointmentId
+        );
         if (!appointment) {
           throw new NotFoundException('Linked appointment not found for refund');
         }

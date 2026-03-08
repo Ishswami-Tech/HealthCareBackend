@@ -296,7 +296,7 @@ export class UsersController {
       this.authService.setAuthCookies(reply, tokens);
     }
 
-/*  */    return {
+    /*  */ return {
       ...updatedUser,
       profileComplete: profileStatus.isComplete,
       isProfileComplete: profileStatus.isComplete,
