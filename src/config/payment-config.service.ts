@@ -139,11 +139,6 @@ export class PaymentConfigService implements OnModuleInit {
     const cashfreeEnv = this.configService.getEnv('CASHFREE_ENVIRONMENT', 'sandbox');
     const cashfreeEnabled = cashfreeAppId.length > 0 && cashfreeSecretKey.length > 0;
 
-    // Read Razorpay credentials from env as primary fallback
-    const razorpayKeyId = this.configService.getEnv('RAZORPAY_KEY_ID') || '';
-    const razorpayKeySecret = this.configService.getEnv('RAZORPAY_KEY_SECRET') || '';
-    const razorpayEnabled = razorpayKeyId.length > 0 && razorpayKeySecret.length > 0;
-
     return {
       clinicId,
       payment: {
@@ -165,17 +160,7 @@ export class PaymentConfigService implements OnModuleInit {
             : {},
           priority: 1,
         },
-        fallback: [
-          {
-            provider: PaymentProvider.RAZORPAY,
-            enabled: razorpayEnabled,
-            credentials: razorpayEnabled
-              ? { keyId: razorpayKeyId, keySecret: razorpayKeySecret }
-              : {},
-            priority: 2,
-          },
-          { provider: PaymentProvider.PHONEPE, enabled: false, credentials: {}, priority: 3 },
-        ],
+        fallback: [],
         defaultCurrency: this.configService.getEnv('PAYMENT_DEFAULT_CURRENCY', 'INR') || 'INR',
         defaultProvider: PaymentProvider.CASHFREE,
       },

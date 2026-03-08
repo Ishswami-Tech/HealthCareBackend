@@ -815,10 +815,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
       'pgbouncer',
       'socket_path',
     ];
-    const prismaParamRegex = new RegExp(
-      `[?&](${prismaOnlyParams.join('|')})=[^&]*`,
-      'g'
-    );
+    const prismaParamRegex = new RegExp(`[?&](${prismaOnlyParams.join('|')})=[^&]*`, 'g');
     connectionString = connectionString.replace(prismaParamRegex, match => {
       return match.startsWith('?') ? '?' : '';
     });

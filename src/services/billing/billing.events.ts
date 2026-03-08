@@ -209,6 +209,8 @@ export class BillingEventsListener {
     try {
       // Only process if payment is for an appointment and status is completed
       if (payload.appointmentId && payload.status === 'completed' && payload.clinicId) {
+        await this.billingService.preparePayoutForAppointmentPayment(payload.paymentId, payload.clinicId);
+
         const appointmentId = payload.appointmentId;
         const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
@@ -290,6 +292,34 @@ export class BillingEventsListener {
           clinicId: payload.clinicId,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
+        }
+      );
+    }
+  }
+
+  @OnEvent('appointment.completed')
+  async handleAppointmentCompleted(payload: {
+    appointmentId: string;
+    clinicId: string;
+  }) {
+    try {
+      if (!payload?.appointmentId || !payload?.clinicId) {
+        return;
+      }
+      await this.billingService.markPayoutReadyForCompletedAppointment(
+        payload.appointmentId,
+        payload.clinicId
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to mark payout ready after appointment completion: ${error instanceof Error ? error.message : String(error)}`,
+        'BillingEventsListener',
+        {
+          appointmentId: payload?.appointmentId,
+          clinicId: payload?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
         }
       );
     }

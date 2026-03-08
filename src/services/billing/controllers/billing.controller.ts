@@ -95,6 +95,28 @@ export class BillingController {
     return this.appointmentsServiceRef;
   }
 
+  private parsePaymentProvider(provider?: string): PaymentProvider | undefined {
+    if (!provider) {
+      return undefined;
+    }
+
+    const normalizedProvider = provider.trim().toLowerCase();
+    const enabledProviders = (
+      process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+    )
+      .split(',')
+      .map(value => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!enabledProviders.includes(normalizedProvider)) {
+      throw new BadRequestException(
+        `Payment provider '${provider}' is not enabled. Enabled providers: ${enabledProviders.join(', ')}`
+      );
+    }
+
+    return normalizedProvider as PaymentProvider;
+  }
+
   // ============ Billing Plans ============
 
   @Get('plans')
@@ -345,6 +367,96 @@ export class BillingController {
     return this.billingService.getUserPayments(userId, role, requestingUserId, clinicId);
   }
 
+  @Get('payments/clinic')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'read')
+  @Cache({
+    keyTemplate:
+      'billing:payments:clinic:{clinicId}:{status}:{revenueModel}:{appointmentType}:{provider}:{startDate}:{endDate}',
+    ttl: 300,
+    tags: ['billing', 'payments', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
+  async getClinicPayments(
+    @Request() req?: ClinicAuthenticatedRequest,
+    @Query('status') status?: string,
+    @Query('revenueModel') revenueModel?: string,
+    @Query('appointmentType') appointmentType?: string,
+    @Query('provider') provider?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required');
+    }
+
+    const parsedStartDate = startDate ? new Date(startDate) : undefined;
+    const parsedEndDate = endDate ? new Date(endDate) : undefined;
+    if (startDate && Number.isNaN(parsedStartDate?.getTime())) {
+      throw new BadRequestException('Invalid startDate');
+    }
+    if (endDate && Number.isNaN(parsedEndDate?.getTime())) {
+      throw new BadRequestException('Invalid endDate');
+    }
+
+    const paymentProvider = this.parsePaymentProvider(provider);
+
+    return this.billingService.getClinicPayments(clinicId, {
+      ...(status ? { status } : {}),
+      ...(parsedStartDate ? { startDate: parsedStartDate } : {}),
+      ...(parsedEndDate ? { endDate: parsedEndDate } : {}),
+      ...(revenueModel ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' } : {}),
+      ...(appointmentType ? { appointmentType } : {}),
+      ...(paymentProvider ? { provider: paymentProvider } : {}),
+    });
+  }
+
+  @Get('payments/ledger')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('payments', 'read')
+  @Cache({
+    keyTemplate:
+      'billing:payments:ledger:{clinicId}:{status}:{revenueModel}:{appointmentType}:{provider}:{startDate}:{endDate}',
+    ttl: 300,
+    tags: ['billing', 'payments', 'ledger', 'clinic:{clinicId}'],
+    enableSWR: true,
+  })
+  async getClinicPaymentLedger(
+    @Request() req?: ClinicAuthenticatedRequest,
+    @Query('status') status?: string,
+    @Query('revenueModel') revenueModel?: string,
+    @Query('appointmentType') appointmentType?: string,
+    @Query('provider') provider?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required');
+    }
+
+    const parsedStartDate = startDate ? new Date(startDate) : undefined;
+    const parsedEndDate = endDate ? new Date(endDate) : undefined;
+    if (startDate && Number.isNaN(parsedStartDate?.getTime())) {
+      throw new BadRequestException('Invalid startDate');
+    }
+    if (endDate && Number.isNaN(parsedEndDate?.getTime())) {
+      throw new BadRequestException('Invalid endDate');
+    }
+
+    const paymentProvider = this.parsePaymentProvider(provider);
+
+    return this.billingService.getLedgerEntriesForClinic(clinicId, {
+      ...(status ? { status } : {}),
+      ...(parsedStartDate ? { startDate: parsedStartDate } : {}),
+      ...(parsedEndDate ? { endDate: parsedEndDate } : {}),
+      ...(revenueModel ? { revenueModel: revenueModel as 'APPOINTMENT' | 'SUBSCRIPTION' | 'OTHER' } : {}),
+      ...(appointmentType ? { appointmentType } : {}),
+      ...(paymentProvider ? { provider: paymentProvider } : {}),
+    });
+  }
+
   @Get('payments/:id')
   @Roles(
     Role.SUPER_ADMIN,
@@ -392,18 +504,7 @@ export class BillingController {
       throw new NotFoundException('Clinic context is required for refund');
     }
 
-    // Convert provider string to PaymentProvider enum
-    let paymentProvider: PaymentProvider | undefined;
-    if (provider) {
-      const normalizedProvider = provider.toLowerCase();
-      if (normalizedProvider === 'razorpay') {
-        paymentProvider = PaymentProvider.RAZORPAY;
-      } else if (normalizedProvider === 'cashfree') {
-        paymentProvider = PaymentProvider.CASHFREE;
-      } else if (normalizedProvider === 'phonepe') {
-        paymentProvider = PaymentProvider.PHONEPE;
-      }
-    }
+    const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.refundPayment(
       clinicId,
@@ -421,6 +522,24 @@ export class BillingController {
         ? 'Refund processed successfully'
         : `Refund failed: ${result.error || 'Unknown error'}`,
     };
+  }
+
+  @Post('payments/:id/reconcile')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('payments', 'update')
+  async reconcilePayment(
+    @Param('id') paymentId: string,
+    @Body() body?: { provider?: string },
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for payment reconciliation');
+    }
+
+    const paymentProvider = this.parsePaymentProvider(body?.provider);
+
+    return this.billingService.reconcilePaymentForClinic(clinicId, paymentId, paymentProvider);
   }
 
   // ============ Analytics ============
@@ -693,18 +812,7 @@ export class BillingController {
     @Param('id') subscriptionId: string,
     @Query('provider') provider?: string
   ) {
-    // Convert provider string to PaymentProvider enum
-    let paymentProvider: PaymentProvider | undefined;
-    if (provider) {
-      const normalizedProvider = provider.toLowerCase();
-      if (normalizedProvider === 'razorpay') {
-        paymentProvider = PaymentProvider.RAZORPAY;
-      } else if (normalizedProvider === 'cashfree') {
-        paymentProvider = PaymentProvider.CASHFREE;
-      } else if (normalizedProvider === 'phonepe') {
-        paymentProvider = PaymentProvider.PHONEPE;
-      }
-    }
+    const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.processSubscriptionPayment(
       subscriptionId,
@@ -729,18 +837,7 @@ export class BillingController {
     @Body() body: { amount: number; appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
     @Query('provider') provider?: string
   ) {
-    // Convert provider string to PaymentProvider enum
-    let paymentProvider: PaymentProvider | undefined;
-    if (provider) {
-      const normalizedProvider = provider.toLowerCase();
-      if (normalizedProvider === 'razorpay') {
-        paymentProvider = PaymentProvider.RAZORPAY;
-      } else if (normalizedProvider === 'cashfree') {
-        paymentProvider = PaymentProvider.CASHFREE;
-      } else if (normalizedProvider === 'phonepe') {
-        paymentProvider = PaymentProvider.PHONEPE;
-      }
-    }
+    const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
@@ -754,6 +851,42 @@ export class BillingController {
       paymentIntent: result.paymentIntent,
       message: 'Payment intent created successfully. Redirect user to payment gateway.',
     };
+  }
+
+  @Get('appointments/:id/payout-status')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.DOCTOR,
+    Role.PATIENT,
+    Role.RECEPTIONIST
+  )
+  @RequireResourcePermission('payments', 'read')
+  async getAppointmentPayoutStatus(
+    @Param('id') appointmentId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for payout status');
+    }
+    return this.billingService.getAppointmentPayoutStatus(appointmentId, clinicId);
+  }
+
+  @Post('appointments/:id/release-payout')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('payments', 'update')
+  async releaseAppointmentPayout(
+    @Param('id') appointmentId: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req?.clinicContext?.clinicId;
+    const initiatedBy = req?.user?.['sub'] || 'system';
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required for payout release');
+    }
+    return this.billingService.releasePayoutForAppointment(appointmentId, clinicId, initiatedBy);
   }
 
   // ============ Clinic Expenses ============

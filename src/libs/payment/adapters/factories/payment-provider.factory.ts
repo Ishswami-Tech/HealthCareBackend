@@ -21,11 +21,26 @@ import { PaymentProvider } from '@core/types/payment.types';
 @Injectable()
 export class PaymentProviderFactory {
   constructor(private readonly loggingService: LoggingService) {}
+  private readonly enabledProviders = (
+    process.env['PAYMENT_ENABLED_PROVIDERS'] || PaymentProvider.CASHFREE
+  )
+    .split(',')
+    .map(provider => provider.trim().toLowerCase())
+    .filter(Boolean);
+
+  private assertProviderEnabled(provider: PaymentProvider): void {
+    if (!this.enabledProviders.includes(provider)) {
+      throw new Error(
+        `Payment provider '${provider}' is disabled. Enabled providers: ${this.enabledProviders.join(', ')}`
+      );
+    }
+  }
 
   /**
    * Create payment provider adapter based on configuration
    */
   async createAdapter(config: PaymentProviderConfig): Promise<PaymentProviderAdapter> {
+    this.assertProviderEnabled(config.provider);
     let adapter: PaymentProviderAdapter;
 
     switch (config.provider) {
@@ -68,6 +83,7 @@ export class PaymentProviderFactory {
     config: PaymentProviderConfig,
     httpService: HttpService
   ): Promise<PaymentProviderAdapter> {
+    this.assertProviderEnabled(config.provider);
     let adapter: PaymentProviderAdapter;
 
     switch (config.provider) {
