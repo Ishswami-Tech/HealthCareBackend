@@ -1144,6 +1144,22 @@ jobs:
           OPENVIDU_WEBHOOK_ENDPOINT=${{ vars.OPENVIDU_WEBHOOK_ENDPOINT }}
           OPENVIDU_WEBHOOK_EVENTS=${{ vars.OPENVIDU_WEBHOOK_EVENTS }}
 
+          # Payment - Cashfree (Primary Provider)
+          # =======================================
+          # Cashfree Payment Gateway Configuration
+          CASHFREE_ENVIRONMENT=${{ vars.CASHFREE_ENVIRONMENT }}
+          CASHFREE_APP_ID=${{ secrets.CASHFREE_APP_ID }}
+          CASHFREE_SECRET_KEY=${{ secrets.CASHFREE_SECRET_KEY }}
+          CASHFREE_API_VERSION=${{ vars.CASHFREE_API_VERSION }}
+          CASHFREE_RETURN_URL=${{ vars.CASHFREE_RETURN_URL }}
+          CASHFREE_NOTIFY_URL=${{ vars.CASHFREE_NOTIFY_URL }}
+
+          # Payment - Razorpay (Fallback Provider - Optional)
+          # ============================================
+          RAZORPAY_KEY_ID=${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET=${{ secrets.RAZORPAY_KEY_SECRET }}
+          PAYMENT_DEFAULT_CURRENCY=${{ vars.PAYMENT_DEFAULT_CURRENCY }}
+
           # Coturn Configuration (for infrastructure services)
           # These are used by docker-compose.prod.yml for coturn container
           COTURN_PASSWORD=${{ secrets.COTURN_PASSWORD }}
