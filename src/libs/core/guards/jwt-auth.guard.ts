@@ -3,6 +3,7 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -128,6 +129,17 @@ export class JwtAuthGuard implements CanActivate {
    * Public route prefixes (documentation, assets, etc.)
    */
   private readonly publicPrefixPaths = ['/docs', '/swagger', '/api-json', '/favicon.ico'];
+
+  /**
+   * Paths that remain accessible even when profile is incomplete.
+   * These endpoints are required to complete profile and maintain session.
+   */
+  private readonly profileCompletionBypassPrefixPaths = [
+    '/api/v1/auth/',
+    '/api/v1/profile-completion',
+    '/api/v1/user/',
+    '/api/v1/users/profile',
+  ];
 
   /**
    * Creates a new JwtAuthGuard instance
@@ -270,6 +282,21 @@ export class JwtAuthGuard implements CanActivate {
         const user = await this.databaseService.findUserByIdSafe(userId);
         if (user && typeof user === 'object' && 'isActive' in user && user.isActive === false) {
           throw new UnauthorizedException('Account has been deactivated');
+        }
+
+        if (
+          user &&
+          typeof user === 'object' &&
+          'isProfileComplete' in user &&
+          user.isProfileComplete === false &&
+          this.shouldEnforceProfileCompletion(path)
+        ) {
+          throw new ForbiddenException({
+            error: 'Profile Incomplete',
+            message: 'Please complete your profile to access this feature.',
+            requiresProfileCompletion: true,
+            redirectUrl: '/profile-completion',
+          });
         }
       }
 
@@ -568,7 +595,35 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Session ID is missing');
     }
 
-    const sessionData = await this.getSessionData(userId, sessionId);
+    let sessionData = await this.getSessionData(userId, sessionId);
+
+    if (!sessionData) {
+      // Cache can be cold after Redis/container restart. Recover session from still-valid JWT context.
+      const tokenExp =
+        typeof (request.user as JwtPayload)?.['exp'] === 'number'
+          ? ((request.user as JwtPayload)['exp'] as number)
+          : undefined;
+      try {
+        const clinicIdFromToken =
+          typeof (request.user as JwtPayload)?.['clinicId'] === 'string'
+            ? ((request.user as JwtPayload)['clinicId'] as string)
+            : undefined;
+
+        await this.sessionManagementService.restoreSession(sessionId, {
+          userId,
+          ...(clinicIdFromToken ? { clinicId: clinicIdFromToken } : {}),
+          userAgent: (request.headers['user-agent'] as string) || 'unknown',
+          ipAddress: request.ip || 'unknown',
+          ...(tokenExp ? { expiresAt: new Date(tokenExp * 1000) } : {}),
+          metadata: {
+            recoveredBy: 'JwtAuthGuard',
+          },
+        });
+        sessionData = await this.getSessionData(userId, sessionId);
+      } catch {
+        // fall through to existing unauthorized handling below
+      }
+    }
 
     if (!sessionData) {
       void logger.log(
@@ -594,9 +649,12 @@ export class JwtAuthGuard implements CanActivate {
       const currentFingerprint = this.generateDeviceFingerprint(request);
       const currentUserAgent = (request.headers['user-agent'] as string) || 'unknown';
       const storedUserAgent = sessionData.deviceInfo?.userAgent || 'unknown';
+      const isProxyOrServerAgent =
+        this.isServerSideUserAgent(storedUserAgent) || this.isServerSideUserAgent(currentUserAgent);
 
       if (
         sessionData.deviceFingerprint !== currentFingerprint &&
+        !isProxyOrServerAgent &&
         !this.isSimilarUserAgent(storedUserAgent, currentUserAgent)
       ) {
         void logger.log(
@@ -615,6 +673,21 @@ export class JwtAuthGuard implements CanActivate {
         );
         // Depending on security policy, you might want to invalidate the session here.
         // For now, we'll just log it.
+      } else if (sessionData.deviceFingerprint !== currentFingerprint && isProxyOrServerAgent) {
+        // Requests passing through SSR/proxies often present non-browser user agents.
+        // Skip noisy mismatch warnings in those cases while retaining strict checks for browser traffic.
+        void logger.log(
+          LogType.AUTH,
+          LogLevel.DEBUG,
+          'Device fingerprint mismatch ignored for trusted server-side user agent',
+          'JwtAuthGuard',
+          {
+            userId,
+            sessionId,
+            storedUserAgent,
+            currentUserAgent,
+          }
+        );
       }
     }
 
@@ -661,6 +734,19 @@ export class JwtAuthGuard implements CanActivate {
 
     // Consider similar if both browser family and OS family match
     return storedBrowser === currentBrowser && storedOS === currentOS;
+  }
+
+  /**
+   * Detect server/proxy user-agents where strict browser fingerprint checks create false positives.
+   */
+  private isServerSideUserAgent(userAgent: string): boolean {
+    const ua = (userAgent || '').toLowerCase();
+    return (
+      ua.includes('node') ||
+      ua.includes('undici') ||
+      ua.includes('axios') ||
+      ua.includes('healthcarefrontend/')
+    );
   }
 
   private async checkConcurrentSessions(userId: string): Promise<void> {
@@ -892,6 +978,10 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     return this.publicPrefixPaths.some(publicPrefix => path.startsWith(publicPrefix));
+  }
+
+  private shouldEnforceProfileCompletion(path: string): boolean {
+    return !this.profileCompletionBypassPrefixPaths.some(prefix => path.startsWith(prefix));
   }
 
   private normalizePath(path?: string | null): string {

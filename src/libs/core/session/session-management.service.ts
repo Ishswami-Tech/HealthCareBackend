@@ -165,6 +165,72 @@ export class SessionManagementService implements OnModuleInit {
   }
 
   /**
+   * Restore an existing session id back into cache when cache was lost (e.g. Redis restart)
+   * but JWT/session token is still valid.
+   */
+  async restoreSession(
+    sessionId: string,
+    restoreDto: {
+      userId: string;
+      clinicId?: string;
+      userAgent?: string;
+      ipAddress?: string;
+      expiresAt?: Date;
+      metadata?: Record<string, unknown>;
+    }
+  ): Promise<SessionData> {
+    const existing = await this.getSession(sessionId);
+    if (existing) {
+      return existing;
+    }
+
+    // Use ConfigService (which uses dotenv) for environment variable access
+    const sessionTimeout =
+      this.config?.sessionTimeout || this.configService.getEnvNumber('SESSION_TIMEOUT', 86400);
+    const now = new Date();
+    const expiresAt =
+      restoreDto.expiresAt && restoreDto.expiresAt.getTime() > now.getTime()
+        ? restoreDto.expiresAt
+        : new Date(now.getTime() + sessionTimeout * 1000);
+
+    const restoredSession: SessionData = {
+      sessionId,
+      userId: restoreDto.userId,
+      ...(restoreDto.clinicId && { clinicId: restoreDto.clinicId }),
+      ...(restoreDto.userAgent && { userAgent: restoreDto.userAgent }),
+      ...(restoreDto.ipAddress && { ipAddress: restoreDto.ipAddress }),
+      loginTime: now,
+      lastActivity: now,
+      expiresAt,
+      isActive: true,
+      metadata: {
+        source: 'session-restore',
+        ...(restoreDto.metadata || {}),
+      },
+    };
+
+    await this.storeSession(restoredSession);
+    await this.addUserSession(restoreDto.userId, sessionId);
+    if (restoreDto.clinicId) {
+      await this.addClinicSession(restoreDto.clinicId, sessionId);
+    }
+
+    await this.loggingService.log(
+      LogType.SECURITY,
+      LogLevel.WARN,
+      'Session restored after cache miss',
+      'SessionManagementService',
+      {
+        sessionId,
+        userId: restoreDto.userId,
+        clinicId: restoreDto.clinicId,
+      }
+    );
+
+    return restoredSession;
+  }
+
+  /**
    * Get session with blacklist and expiry checks
    * @param sessionId - Session identifier
    * @returns Session data or null if not found/invalid

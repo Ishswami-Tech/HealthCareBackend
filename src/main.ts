@@ -970,59 +970,69 @@ async function bootstrap() {
       throw new Error('Application instance is undefined');
     }
 
+    const enableSwagger = configService.getEnvBoolean(
+      'SWAGGER_ENABLED',
+      appConfig.environment !== 'production'
+    );
+
     // Configure Swagger with error handling
-    try {
-      logger.log('Starting Swagger configuration...');
+    if (enableSwagger) {
+      try {
+        logger.log('Starting Swagger configuration...');
 
-      // Check if SwaggerModule methods exist
-      if (typeof SwaggerModule.createDocument !== 'function') {
-        throw new Error('SwaggerModule.createDocument is not a function');
+        // Check if SwaggerModule methods exist
+        if (typeof SwaggerModule.createDocument !== 'function') {
+          throw new Error('SwaggerModule.createDocument is not a function');
+        }
+        if (typeof SwaggerModule.setup !== 'function') {
+          throw new Error('SwaggerModule.setup is not a function');
+        }
+
+        logger.log('Creating Swagger document...');
+        // Configure Swagger to handle circular dependencies
+        // Disable deepScanRoutes to avoid scanning all types which can cause circular dependency issues
+        // Using lazy resolvers for circular dependencies
+        const document = SwaggerModule.createDocument(app, swaggerConfig, {
+          extraModels: [],
+          operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
+          deepScanRoutes: false, // Disable deep scanning to avoid circular dependency issues
+          ignoreGlobalPrefix: false,
+        });
+        logger.log('Swagger document created successfully');
+
+        // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
+        // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
+
+        const swaggerPath =
+          typeof _swaggerUrl === 'string' ? _swaggerUrl.replace(/^\//, '') : 'docs';
+        logger.log(`Setting up Swagger at path: ${swaggerPath}`);
+        SwaggerModule.setup(swaggerPath, app, document, {
+          ...swaggerCustomOptions,
+          swaggerOptions: {
+            ...swaggerCustomOptions.swaggerOptions,
+            // Set the default server based on environment
+            urls: [
+              {
+                url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${String(_swaggerUrl || '/docs')}/swagger.json`,
+                name: appConfig.environment === 'production' ? 'Production' : 'Development',
+              },
+            ],
+          },
+        });
+
+        logger.log(`Swagger API documentation configured for ${appConfig.environment} environment`);
+      } catch (swaggerError) {
+        const swaggerErrorMessage =
+          swaggerError instanceof Error ? swaggerError.message : 'Unknown error';
+        const swaggerErrorStack =
+          swaggerError instanceof Error ? swaggerError.stack : 'No stack trace';
+        logger.error(`Failed to configure Swagger: ${swaggerErrorMessage}`);
+        logger.error(`Swagger error stack: ${swaggerErrorStack}`);
+        logger.warn('Application will continue without Swagger documentation');
+        // Don't throw - allow application to continue without Swagger
       }
-      if (typeof SwaggerModule.setup !== 'function') {
-        throw new Error('SwaggerModule.setup is not a function');
-      }
-
-      logger.log('Creating Swagger document...');
-      // Configure Swagger to handle circular dependencies
-      // Disable deepScanRoutes to avoid scanning all types which can cause circular dependency issues
-      // Using lazy resolvers for circular dependencies
-      const document = SwaggerModule.createDocument(app, swaggerConfig, {
-        extraModels: [],
-        operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
-        deepScanRoutes: false, // Disable deep scanning to avoid circular dependency issues
-        ignoreGlobalPrefix: false,
-      });
-      logger.log('Swagger document created successfully');
-
-      // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
-      // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
-
-      const swaggerPath = typeof _swaggerUrl === 'string' ? _swaggerUrl.replace(/^\//, '') : 'docs';
-      logger.log(`Setting up Swagger at path: ${swaggerPath}`);
-      SwaggerModule.setup(swaggerPath, app, document, {
-        ...swaggerCustomOptions,
-        swaggerOptions: {
-          ...swaggerCustomOptions.swaggerOptions,
-          // Set the default server based on environment
-          urls: [
-            {
-              url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${String(_swaggerUrl || '/docs')}/swagger.json`,
-              name: appConfig.environment === 'production' ? 'Production' : 'Development',
-            },
-          ],
-        },
-      });
-
-      logger.log(`Swagger API documentation configured for ${appConfig.environment} environment`);
-    } catch (swaggerError) {
-      const swaggerErrorMessage =
-        swaggerError instanceof Error ? swaggerError.message : 'Unknown error';
-      const swaggerErrorStack =
-        swaggerError instanceof Error ? swaggerError.stack : 'No stack trace';
-      logger.error(`Failed to configure Swagger: ${swaggerErrorMessage}`);
-      logger.error(`Swagger error stack: ${swaggerErrorStack}`);
-      logger.warn('Application will continue without Swagger documentation');
-      // Don't throw - allow application to continue without Swagger
+    } else {
+      logger.log('Swagger disabled by configuration (SWAGGER_ENABLED=false or production default)');
     }
 
     // Get server configuration and start server
