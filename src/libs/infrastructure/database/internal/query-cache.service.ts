@@ -66,10 +66,14 @@ export class QueryCacheService {
       }
       return cached;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isBootstrapCacheInitIssue = errorMessage.includes(
+        'providerFactory not initialized yet'
+      );
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.WARN,
-        `Cache get failed: ${error instanceof Error ? error.message : String(error)}`,
+        isBootstrapCacheInitIssue ? LogLevel.DEBUG : LogLevel.WARN,
+        `Cache get failed: ${errorMessage}`,
         this.serviceName,
         { error: error instanceof Error ? error.stack : String(error) }
       );
@@ -104,10 +108,14 @@ export class QueryCacheService {
         { ttl, containsPHI: options.containsPHI }
       );
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isBootstrapCacheInitIssue = errorMessage.includes(
+        'providerFactory not initialized yet'
+      );
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.WARN,
-        `Cache set failed: ${error instanceof Error ? error.message : String(error)}`,
+        isBootstrapCacheInitIssue ? LogLevel.DEBUG : LogLevel.WARN,
+        `Cache set failed: ${errorMessage}`,
         this.serviceName,
         { error: error instanceof Error ? error.stack : String(error) }
       );
@@ -131,10 +139,14 @@ export class QueryCacheService {
         }
       }
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isBootstrapCacheInitIssue = errorMessage.includes(
+        'providerFactory not initialized yet'
+      );
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.WARN,
-        `Cache invalidation failed: ${error instanceof Error ? error.message : String(error)}`,
+        isBootstrapCacheInitIssue ? LogLevel.DEBUG : LogLevel.WARN,
+        `Cache invalidation failed: ${errorMessage}`,
         this.serviceName,
         { error: error instanceof Error ? error.stack : String(error) }
       );

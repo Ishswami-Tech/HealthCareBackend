@@ -493,9 +493,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       // Additional check: Ensure Prisma is actually connected (not just initialized)
       if (!this.prismaService.isConnected()) {
-        // Try to wait a bit more for connection
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!this.prismaService.isConnected()) {
+        const isConnectedNow = await this.prismaService.waitUntilReady(10000);
+        if (!isConnectedNow || !this.prismaService.isConnected()) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
             'Prisma client is initialized but not connected to database. Please check DATABASE_URL and database server status.',
@@ -708,15 +707,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         );
       });
 
+      const isStartupConnectionIssue =
+        Date.now() - this.serviceStartTime < 120000 &&
+        (dbError.message.includes('not connected to database') ||
+          dbError.message.includes('not ready within timeout'));
+
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.ERROR,
+        isStartupConnectionIssue ? LogLevel.WARN : LogLevel.ERROR,
         `Read operation failed: ${dbError.message}`,
         this.serviceName,
         {
           error: dbError.stack,
           executionTime,
           clinicId: queryOptions.clinicId,
+          startupConnectionIssue: isStartupConnectionIssue,
         }
       );
 
@@ -793,9 +798,8 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
 
       // Additional check: Ensure Prisma is actually connected (not just initialized)
       if (!this.prismaService.isConnected()) {
-        // Try to wait a bit more for connection
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        if (!this.prismaService.isConnected()) {
+        const isConnectedNow = await this.prismaService.waitUntilReady(10000);
+        if (!isConnectedNow || !this.prismaService.isConnected()) {
           throw new HealthcareError(
             ErrorCode.DATABASE_CONNECTION_FAILED,
             'Prisma client is initialized but not connected to database. Please check DATABASE_URL and database server status.',
@@ -960,15 +964,21 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         auditInfo.userId
       );
 
+      const isStartupConnectionIssue =
+        Date.now() - this.serviceStartTime < 120000 &&
+        (dbError.message.includes('not connected to database') ||
+          dbError.message.includes('not ready within timeout'));
+
       void this.loggingService.log(
         LogType.DATABASE,
-        LogLevel.ERROR,
+        isStartupConnectionIssue ? LogLevel.WARN : LogLevel.ERROR,
         `Write operation failed: ${dbError.message}`,
         this.serviceName,
         {
           error: dbError.stack,
           executionTime,
           auditInfo,
+          startupConnectionIssue: isStartupConnectionIssue,
         }
       );
 
