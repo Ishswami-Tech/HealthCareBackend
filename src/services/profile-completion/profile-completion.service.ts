@@ -102,8 +102,9 @@ export class ProfileCompletionService {
         'dateOfBirth',
         'gender',
         'address',
-        'clinicName',
-        'clinicAddress',
+        // Note: clinicName and clinicAddress are NOT required here
+        // Clinic is already configured in the Clinic table and associated with the user via clinicId
+        // These should only be managed in clinic settings, not during user profile completion
       ],
       conditionalFields: {},
     },
