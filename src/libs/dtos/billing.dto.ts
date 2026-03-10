@@ -34,6 +34,7 @@ export class CreateBillingPlanDto {
   appointmentsIncluded?: number;
   isUnlimitedAppointments?: boolean;
   appointmentTypes?: Record<string, unknown>;
+  isActive?: boolean;
 }
 
 export class UpdateBillingPlanDto {

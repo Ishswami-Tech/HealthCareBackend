@@ -468,14 +468,26 @@ export class JwtAuthService {
 
       return payload;
     } catch (_error) {
+      const errorName = _error instanceof Error ? _error.name : 'UnknownError';
+      const errorMessage = _error instanceof Error ? _error.message : String(_error);
+      const isExpectedAuthFailure =
+        errorName === 'TokenExpiredError' ||
+        errorName === 'JsonWebTokenError' ||
+        errorMessage.toLowerCase().includes('jwt');
+
       void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
+        LogType.AUTH,
+        isExpectedAuthFailure ? LogLevel.INFO : LogLevel.ERROR,
         'Enhanced token verification failed',
         'JwtAuthService',
         {
-          error: _error instanceof Error ? _error.message : String(_error),
-          stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+          error: errorMessage,
+          errorName,
+          ...(isExpectedAuthFailure
+            ? {}
+            : {
+                stack: _error instanceof Error ? _error.stack : 'No stack trace available',
+              }),
         }
       );
       throw _error;
