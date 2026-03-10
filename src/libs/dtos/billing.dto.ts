@@ -14,38 +14,109 @@ import {
   IsDateString,
   IsEnum,
   IsUUID,
+  IsBoolean,
+  IsObject,
 } from 'class-validator';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import { AppointmentPriority, AppointmentType, TreatmentType } from '@dtos/appointment.dto';
 
 export class CreateBillingPlanDto {
+  @IsString()
+  @IsNotEmpty()
   name!: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsNumber()
+  @IsPositive()
   amount!: number;
+
+  @IsOptional()
+  @IsString()
   currency?: string = 'INR';
+
+  @IsEnum(BillingInterval)
   interval!: BillingInterval;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
   intervalCount?: number = 1;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
   trialPeriodDays?: number;
+
+  @IsOptional()
+  @IsObject()
   features?: Record<string, unknown>;
+
   @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId?: string;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
   appointmentsIncluded?: number;
+
+  @IsOptional()
+  @IsBoolean()
   isUnlimitedAppointments?: boolean;
+
+  @IsOptional()
+  @IsObject()
   appointmentTypes?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 }
 
 export class UpdateBillingPlanDto {
+  @IsOptional()
+  @IsString()
   name?: string;
+
+  @IsOptional()
+  @IsString()
   description?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
   amount?: number;
+
+  @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsObject()
   features?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsNumber()
+  @IsPositive()
   appointmentsIncluded?: number;
+
+  @IsOptional()
+  @IsBoolean()
   isUnlimitedAppointments?: boolean;
+
+  @IsOptional()
+  @IsObject()
   appointmentTypes?: Record<string, unknown>;
 }
 
