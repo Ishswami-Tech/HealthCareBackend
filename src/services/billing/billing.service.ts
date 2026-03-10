@@ -235,6 +235,13 @@ export class BillingService {
         ...(data.features && { features: data.features }),
         ...(data.clinicId && { clinicId: data.clinicId }),
         ...(data.metadata && { metadata: data.metadata }),
+        ...(data.appointmentsIncluded !== undefined && {
+          appointmentsIncluded: data.appointmentsIncluded,
+        }),
+        ...(data.isUnlimitedAppointments !== undefined && {
+          isUnlimitedAppointments: data.isUnlimitedAppointments,
+        }),
+        ...(data.isActive !== undefined && { isActive: data.isActive }),
       });
 
       await this.loggingService.log(
