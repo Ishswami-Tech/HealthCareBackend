@@ -1402,7 +1402,7 @@ export class AuthService {
    */
   public async checkProfileCompletionStatus(
     userId: string,
-    _role: Role
+    role: Role
   ): Promise<{ isComplete: boolean; isProfileComplete?: boolean }> {
     try {
       const user = await this.databaseService.findUserByIdSafe(userId);
@@ -1417,13 +1417,24 @@ export class AuthService {
         return { isComplete: false };
       }
 
-      // Check the database-level flag (authoritative)
-      const dbIsComplete = user.isProfileComplete;
+      const dbIsComplete = user.isProfileComplete === true;
+      const calculatedIsComplete = this.calculateProfileCompletionFromUser(
+        user as unknown as Record<string, unknown>,
+        role
+      );
+      const isComplete = dbIsComplete || calculatedIsComplete;
 
-      // Return database status as authoritative source.
+      // Self-heal stale rows so subsequent checks can use the persisted flag.
+      if (!dbIsComplete && calculatedIsComplete) {
+        await this.databaseService.updateUserSafe(userId, {
+          isProfileComplete: true,
+          profileCompletedAt: new Date(),
+        } as UserUpdateInput);
+      }
+
       return {
-        isComplete: dbIsComplete,
-        isProfileComplete: dbIsComplete, // Backward compatibility
+        isComplete,
+        isProfileComplete: isComplete, // Backward compatibility
       };
     } catch (error) {
       await this.logging.log(
@@ -1445,6 +1456,48 @@ export class AuthService {
     if (!user || typeof user !== 'object') return false;
     const profileRecord = user as Record<string, unknown>;
     return profileRecord['isProfileComplete'] === true;
+  }
+
+  private calculateProfileCompletionFromUser(user: Record<string, unknown>, role: Role): boolean {
+    const requiredFields = this.getRequiredProfileFieldsForRole(role);
+    if (requiredFields.length === 0) {
+      return false;
+    }
+
+    return requiredFields.every(field => this.isProfileFieldPresent(user[field]));
+  }
+
+  private getRequiredProfileFieldsForRole(role: Role): string[] {
+    switch (role) {
+      case Role.PATIENT:
+        return ['firstName', 'lastName', 'phone', 'dateOfBirth'];
+      case Role.DOCTOR:
+      case Role.ASSISTANT_DOCTOR:
+        return [
+          'firstName',
+          'lastName',
+          'phone',
+          'dateOfBirth',
+          'gender',
+          'address',
+          'specialization',
+          'experience',
+        ];
+      default:
+        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
+    }
+  }
+
+  private isProfileFieldPresent(value: unknown): boolean {
+    if (value === null || value === undefined) {
+      return false;
+    }
+
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+
+    return true;
   }
 
   /**
