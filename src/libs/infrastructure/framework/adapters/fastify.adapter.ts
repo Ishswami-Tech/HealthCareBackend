@@ -156,6 +156,7 @@ export class FastifyFrameworkAdapter implements IFastifyFrameworkAdapter {
               : (['error', 'warn', 'log'] as LogLevel[]),
           bufferLogs: true,
           cors: false, // Will be configured separately via SecurityConfigService
+          rawBody: true,
         }
       ),
       new Promise<never>((_, reject) =>

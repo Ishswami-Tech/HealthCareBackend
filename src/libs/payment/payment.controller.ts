@@ -16,6 +16,7 @@ import {
   HttpCode,
   HttpStatus,
   BadRequestException,
+  Req,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
@@ -23,6 +24,8 @@ import { PaymentService } from './payment.service';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel, PaymentProvider } from '@core/types';
+import { Public } from '@core/decorators/public.decorator';
+import type { FastifyRequest } from 'fastify';
 
 type BillingServiceLike = {
   handlePaymentCallback: (
@@ -90,6 +93,7 @@ export class PaymentController {
    * Razorpay webhook handler
    */
   @Post('razorpay/webhook')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle Razorpay webhook' })
   @ApiHeader({ name: 'X-Razorpay-Signature', description: 'Razorpay webhook signature' })
@@ -187,28 +191,45 @@ export class PaymentController {
    * Cashfree webhook handler
    */
   @Post('cashfree/webhook')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle Cashfree webhook' })
-  @ApiHeader({ name: 'x-cf-signature', description: 'Cashfree webhook signature' })
+  @ApiHeader({ name: 'x-webhook-signature', description: 'Cashfree webhook signature' })
+  @ApiHeader({ name: 'x-webhook-timestamp', description: 'Cashfree webhook timestamp' })
   @ApiResponse({ status: 200, description: 'Webhook processed successfully' })
   async handleCashfreeWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() body: Record<string, unknown>,
-    @Headers('x-cf-signature') signature: string,
+    @Headers('x-webhook-signature') webhookSignature: string,
+    @Headers('x-cf-signature') legacySignature: string,
+    @Headers('x-webhook-timestamp') timestamp: string,
     @Query('clinicId') clinicId: string
   ): Promise<{ success: boolean }> {
     try {
+      const signature = webhookSignature || legacySignature;
       if (!clinicId) {
         throw new Error('Clinic ID is required');
       }
       if (!signature) {
         throw new Error('Cashfree webhook signature is required');
       }
+      if (!timestamp) {
+        throw new Error('Cashfree webhook timestamp is required');
+      }
+
+      const rawPayload =
+        typeof request.rawBody === 'string'
+          ? request.rawBody
+          : Buffer.isBuffer(request.rawBody)
+            ? request.rawBody.toString('utf8')
+            : JSON.stringify(body);
 
       const isValid = await this.paymentService.verifyWebhook(
         clinicId,
         {
-          payload: body,
+          payload: rawPayload,
           signature: signature || '',
+          timestamp,
         },
         PaymentProvider.CASHFREE
       );
@@ -224,37 +245,32 @@ export class PaymentController {
         return { success: false };
       }
 
-      // Parse orderId and orderStatus - support top-level and nested data (appointment/video payments)
+      // Cashfree final status is payment_status=SUCCESS and cf_payment_id is unique per attempt.
       const dataObj = (
         typeof body['data'] === 'object' && body['data'] !== null ? body['data'] : body
       ) as Record<string, unknown>;
       const orderIdRaw =
         dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
       const paymentIdRaw =
+        dataObj['cf_payment_id'] ??
         dataObj['paymentId'] ??
         dataObj['payment_id'] ??
-        dataObj['cf_payment_id'] ??
         body['paymentId'] ??
         body['payment_id'] ??
         body['cf_payment_id'] ??
         orderIdRaw;
-      const orderStatusRaw =
-        dataObj['orderStatus'] ??
-        dataObj['order_status'] ??
-        body['orderStatus'] ??
-        body['order_status'] ??
+      const paymentStatusRaw =
+        dataObj['payment_status'] ??
+        dataObj['paymentStatus'] ??
+        body['payment_status'] ??
+        body['paymentStatus'] ??
         '';
       const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
       const paymentId = typeof paymentIdRaw === 'string' ? paymentIdRaw : '';
-      const orderStatus = typeof orderStatusRaw === 'string' ? orderStatusRaw.toUpperCase() : '';
-      if (
-        orderId &&
-        paymentId &&
-        (orderStatus === 'PAID' ||
-          orderStatus === 'SUCCESS' ||
-          orderStatus === 'FAILED' ||
-          orderStatus === 'CANCELLED')
-      ) {
+      const paymentStatus =
+        typeof paymentStatusRaw === 'string' ? paymentStatusRaw.toUpperCase() : '';
+
+      if (orderId && paymentId && paymentStatus === 'SUCCESS') {
         await this.getBillingService().handlePaymentCallback(
           clinicId,
           paymentId,
@@ -268,7 +284,7 @@ export class PaymentController {
         LogLevel.INFO,
         'Cashfree webhook processed',
         'PaymentController',
-        { clinicId }
+        { clinicId, paymentStatus, orderId, paymentId }
       );
 
       return { success: true };
@@ -291,6 +307,7 @@ export class PaymentController {
    * PhonePe webhook handler
    */
   @Post('phonepe/webhook')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle PhonePe webhook' })
   @ApiHeader({ name: 'X-VERIFY', description: 'PhonePe webhook signature' })
@@ -392,6 +409,7 @@ export class PaymentController {
    * Generic payment callback handler
    */
   @Post('callback')
+  @Public()
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Handle payment callback' })
   @ApiResponse({ status: 200, description: 'Callback processed successfully' })

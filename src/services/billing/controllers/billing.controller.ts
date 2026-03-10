@@ -217,6 +217,25 @@ export class BillingController {
     return this.billingService.getUserSubscriptions(userId, role, requestingUserId, clinicId);
   }
 
+  @Get('subscriptions/clinic')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
+  @RequireResourcePermission('subscriptions', 'read')
+  @Cache({
+    keyTemplate: 'billing:subscriptions:clinic:{clinicId}',
+    ttl: 1800,
+    tags: ['billing', 'subscriptions', 'clinic:{clinicId}'],
+    enableSWR: true,
+    containsPHI: true,
+  })
+  @RateLimitAPI()
+  async getClinicSubscriptions(@Request() req?: ClinicAuthenticatedRequest) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required');
+    }
+    return this.billingService.getClinicSubscriptions(clinicId);
+  }
+
   @Get('subscriptions/:id')
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
@@ -288,6 +307,25 @@ export class BillingController {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req?.clinicContext?.clinicId;
     return this.billingService.getUserInvoices(userId, role, requestingUserId, clinicId);
+  }
+
+  @Get('invoices/clinic')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
+  @RequireResourcePermission('invoices', 'read')
+  @Cache({
+    keyTemplate: 'billing:invoices:clinic:{clinicId}',
+    ttl: 900,
+    tags: ['billing', 'invoices', 'clinic:{clinicId}'],
+    enableSWR: true,
+    containsPHI: true,
+  })
+  @RateLimitAPI()
+  async getClinicInvoices(@Request() req?: ClinicAuthenticatedRequest) {
+    const clinicId = req?.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new NotFoundException('Clinic context is required');
+    }
+    return this.billingService.getClinicInvoices(clinicId);
   }
 
   @Get('invoices/:id')
@@ -852,6 +890,23 @@ export class BillingController {
       invoice: result.invoice,
       paymentIntent: result.paymentIntent,
       message: 'Payment intent created successfully. Redirect user to payment gateway.',
+    };
+  }
+
+  @Post('invoices/:id/process-payment')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.RECEPTIONIST)
+  @RequireResourcePermission('payments', 'create')
+  async processInvoicePayment(
+    @Param('id') invoiceId: string,
+    @Query('provider') provider?: string
+  ) {
+    const paymentProvider = this.parsePaymentProvider(provider);
+    const result = await this.billingService.processInvoicePayment(invoiceId, paymentProvider);
+    return {
+      success: true,
+      invoice: result.invoice,
+      paymentIntent: result.paymentIntent,
+      message: 'Invoice payment intent created successfully. Redirect user to payment gateway.',
     };
   }
 
