@@ -4,8 +4,14 @@
 
 echo "Running pre-push validation..."
 
+if command -v yarn >/dev/null 2>&1; then
+  YARN_CMD="yarn"
+else
+  YARN_CMD="corepack yarn"
+fi
+
 # Block push if schema.prisma changed without migration changes in outgoing commits
-yarn prisma:check-migration-sync || {
+$YARN_CMD prisma:check-migration-sync || {
   echo ""
   echo "ERROR: Prisma schema/migration sync check failed."
   echo "If schema.prisma changed, commit migration files before pushing."
@@ -14,7 +20,7 @@ yarn prisma:check-migration-sync || {
 
 # Run full build - this ensures code builds successfully before pushing
 # yarn build runs linting, formatting, type checking, security, compilation
-yarn build || {
+$YARN_CMD build || {
   echo ""
   echo "ERROR: Build failed. Fix errors before pushing."
   exit 1
