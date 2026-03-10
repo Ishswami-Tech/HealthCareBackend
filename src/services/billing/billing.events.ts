@@ -21,6 +21,19 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.subscription.created')
   async handleSubscriptionCreated(payload: { subscriptionId: string; userId: string }) {
+    if (!payload?.subscriptionId) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Skipping subscription.created event with missing subscriptionId',
+        'BillingEventsListener',
+        {
+          userId: payload?.userId,
+        }
+      );
+      return;
+    }
+
     await this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,

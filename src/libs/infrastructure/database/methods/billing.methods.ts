@@ -132,6 +132,10 @@ export class BillingMethods extends DatabaseMethodsBase {
    * Find subscription by ID
    */
   async findSubscriptionByIdSafe(id: string): Promise<SubscriptionWithRelations | null> {
+    if (!id) {
+      return null;
+    }
+
     return await this.executeRead<SubscriptionWithRelations | null>(async prisma => {
       return await prisma.subscription.findUnique({
         where: { id },

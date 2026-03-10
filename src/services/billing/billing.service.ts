@@ -3190,6 +3190,16 @@ export class BillingService {
    */
   async sendSubscriptionConfirmation(subscriptionId: string): Promise<void> {
     try {
+      if (!subscriptionId) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Skipping subscription confirmation because subscriptionId is missing',
+          'BillingService'
+        );
+        return;
+      }
+
       const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
 
       if (!subscription) {
