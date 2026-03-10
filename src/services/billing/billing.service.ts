@@ -557,6 +557,22 @@ export class BillingService {
     );
   }
 
+  async getClinicSubscriptions(clinicId: string) {
+    const cacheKey = `billing_subscriptions:clinic:${clinicId}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.findSubscriptionsSafe({ clinicId });
+      },
+      {
+        ttl: 1800,
+        tags: ['billing_subscriptions', `clinic:${clinicId}`],
+        priority: 'normal',
+      }
+    );
+  }
+
   async getSubscription(id: string) {
     const cacheKey = `billing_subscription:${id}`;
 
@@ -818,6 +834,22 @@ export class BillingService {
       {
         ttl: 900,
         tags: [`user_invoices:${userId}`],
+        priority: 'normal',
+      }
+    );
+  }
+
+  async getClinicInvoices(clinicId: string) {
+    const cacheKey = `billing_invoices:clinic:${clinicId}`;
+
+    return this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.findInvoicesSafe({ clinicId });
+      },
+      {
+        ttl: 900,
+        tags: ['billing_invoices', `clinic:${clinicId}`],
         priority: 'normal',
       }
     );
@@ -1589,6 +1621,12 @@ export class BillingService {
       paymentIntentOptions,
       provider
     );
+    paymentIntentResult.metadata = {
+      ...(this.asRecord(paymentIntentResult.metadata) || {}),
+      clinicId: subscription.clinicId,
+      invoiceId: invoice.id,
+      subscriptionId: subscription.id,
+    };
 
     // Extract payment intent details with proper type checking
     const paymentId = paymentIntentResult.paymentId || '';
@@ -1735,6 +1773,13 @@ export class BillingService {
       paymentIntentOptions,
       provider
     );
+    paymentIntentResult.metadata = {
+      ...(this.asRecord(paymentIntentResult.metadata) || {}),
+      clinicId: appointment.clinicId,
+      invoiceId: invoice.id,
+      appointmentId: appointment.id,
+      appointmentType,
+    };
 
     // Extract payment intent details with proper type checking
     const paymentId = paymentIntentResult.paymentId || '';
@@ -1778,6 +1823,119 @@ export class BillingService {
         paymentId: payment.id,
         amount,
         appointmentType,
+      }
+    );
+
+    return {
+      invoice,
+      paymentIntent: paymentIntentResult,
+    };
+  }
+
+  async processInvoicePayment(
+    invoiceId: string,
+    provider?: PaymentProvider
+  ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
+    const invoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    const invoiceStatus = String(invoice.status);
+
+    if (invoiceStatus === 'PAID') {
+      throw new BadRequestException('Invoice is already paid');
+    }
+
+    if (invoiceStatus === 'VOID') {
+      throw new BadRequestException('Void invoices cannot be paid');
+    }
+
+    const user = await this.databaseService.findUserByIdSafe(invoice.userId);
+    const invoiceAmount =
+      typeof invoice.totalAmount === 'number' ? invoice.totalAmount : Number(invoice.totalAmount);
+    const invoiceRecord = invoice as unknown as Record<string, unknown>;
+    const currency =
+      typeof invoiceRecord['currency'] === 'string' ? String(invoiceRecord['currency']) : 'INR';
+    const baseUrl =
+      this.configService.getEnv('BASE_URL') ||
+      this.configService.getEnv('API_URL') ||
+      (() => {
+        throw new Error(
+          'Missing required environment variable: BASE_URL or API_URL. Please set BASE_URL or API_URL in environment configuration.'
+        );
+      })();
+
+    const paymentIntentOptions: PaymentIntentOptions = {
+      amount: invoiceAmount * 100,
+      currency,
+      orderId: invoice.invoiceNumber,
+      customerId: invoice.userId,
+      ...(user?.email && { customerEmail: user.email }),
+      ...(user?.phone && { customerPhone: user.phone }),
+      ...(user?.name && { customerName: user.name }),
+      description: `Payment for invoice ${invoice.invoiceNumber}`,
+      clinicId: invoice.clinicId,
+      metadata: {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        baseUrl,
+        redirectUrl: this.buildPaymentCallbackUrl(
+          invoice.clinicId,
+          invoice.invoiceNumber,
+          provider
+        ),
+      },
+    };
+
+    const paymentIntentResult: PaymentResult = await this.paymentService.createPaymentIntent(
+      invoice.clinicId,
+      paymentIntentOptions,
+      provider
+    );
+    paymentIntentResult.metadata = {
+      ...(this.asRecord(paymentIntentResult.metadata) || {}),
+      clinicId: invoice.clinicId,
+      invoiceId: invoice.id,
+    };
+
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl =
+      paymentIntentResult.metadata &&
+      typeof paymentIntentResult.metadata === 'object' &&
+      !Array.isArray(paymentIntentResult.metadata)
+        ? paymentIntentResult.metadata['redirectUrl']
+        : undefined;
+
+    await this.createPayment({
+      amount: invoiceAmount,
+      clinicId: invoice.clinicId,
+      userId: invoice.userId,
+      invoiceId: invoice.id,
+      ...(paymentId && { transactionId: paymentId }),
+      description: `Payment for invoice ${invoice.invoiceNumber}`,
+      metadata: {
+        paymentIntentId: paymentId,
+        orderId,
+        provider: providerName,
+        revenueModel: 'OTHER',
+        serviceType: 'INVOICE',
+        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+      },
+    });
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Invoice payment intent created',
+      'BillingService',
+      {
+        invoiceId,
+        amount: invoiceAmount,
+        provider: providerName || provider || 'default',
       }
     );
 

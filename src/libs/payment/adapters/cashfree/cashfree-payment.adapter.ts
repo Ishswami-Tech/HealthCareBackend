@@ -462,18 +462,25 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
   }
 
   /**
-   * Verify webhook signature (x-cf-signature)
-   * Cashfree signs payload with secret: HMAC or SHA256 of body.
+   * Verify Cashfree webhook signature.
+   * Cashfree payment webhooks sign the exact raw request body prefixed with the webhook timestamp.
    */
   async verifyWebhook(options: WebhookVerificationOptions): Promise<boolean> {
     try {
       const payloadStr =
         typeof options.payload === 'string' ? options.payload : JSON.stringify(options.payload);
+      if (!options.timestamp) {
+        throw new Error('Cashfree webhook timestamp is required');
+      }
 
       const expectedSignature = crypto
         .createHmac('sha256', this.secretKey)
-        .update(payloadStr)
+        .update(`${options.timestamp}${payloadStr}`)
         .digest('base64');
+
+      if (options.signature.length !== expectedSignature.length) {
+        return false;
+      }
 
       return crypto.timingSafeEqual(
         Buffer.from(options.signature, 'utf8'),

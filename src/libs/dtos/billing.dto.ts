@@ -121,22 +121,52 @@ export class UpdateBillingPlanDto {
 }
 
 export class CreateSubscriptionDto {
+  @IsUUID('4', { message: 'User ID must be a valid UUID' })
   userId!: string;
+
+  @IsUUID('4', { message: 'Plan ID must be a valid UUID' })
   planId!: string;
+
   @IsNotEmpty({ message: 'Clinic ID is required' })
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   clinicId!: string;
+
+  @IsOptional()
+  @IsDateString()
   startDate?: string;
+
+  @IsOptional()
+  @IsDateString()
   endDate?: string;
+
+  @IsOptional()
+  @IsDateString()
   trialStart?: string;
+
+  @IsOptional()
+  @IsDateString()
   trialEnd?: string;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
 }
 
 export class UpdateSubscriptionDto {
+  @IsOptional()
+  @IsEnum(SubscriptionStatus)
   status?: SubscriptionStatus;
+
+  @IsOptional()
+  @IsDateString()
   endDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
   cancelAtPeriodEnd?: boolean;
+
+  @IsOptional()
+  @IsObject()
   metadata?: Record<string, unknown>;
 }
 
