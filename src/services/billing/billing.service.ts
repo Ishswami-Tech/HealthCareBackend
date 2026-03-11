@@ -438,6 +438,25 @@ export class BillingService {
 
   async createSubscription(data: CreateSubscriptionDto) {
     const plan = await this.getBillingPlan(data.planId);
+    const existingSubscriptions = await this.databaseService.findSubscriptionsSafe({
+      userId: data.userId,
+      clinicId: data.clinicId,
+      planId: data.planId,
+    });
+    const blockingStatuses = new Set<string>([
+      String(SubscriptionStatus.ACTIVE),
+      String(SubscriptionStatus.TRIALING),
+      String(SubscriptionStatus.INCOMPLETE),
+      String(SubscriptionStatus.PAST_DUE),
+    ]);
+
+    if (
+      existingSubscriptions.some(subscription => blockingStatuses.has(String(subscription.status)))
+    ) {
+      throw new ConflictException(
+        'An active or pending subscription already exists for this user and plan'
+      );
+    }
 
     // Calculate period dates
     const startDate = data.startDate ? new Date(data.startDate) : new Date();
@@ -451,7 +470,7 @@ export class BillingService {
     // Handle trial period
     let trialStart = data.trialStart ? new Date(data.trialStart) : undefined;
     let trialEnd = data.trialEnd ? new Date(data.trialEnd) : undefined;
-    let status = SubscriptionStatus.ACTIVE;
+    let status = SubscriptionStatus.INCOMPLETE;
 
     if (plan.trialPeriodDays && !data.trialStart && !data.trialEnd) {
       trialStart = new Date();
@@ -2425,6 +2444,43 @@ export class BillingService {
       return;
     }
 
+    const currentStatus = String(subscription.status);
+    const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
+      ? null
+      : subscription.plan.appointmentsIncluded || null;
+
+    if (
+      currentStatus === String(SubscriptionStatus.INCOMPLETE) ||
+      currentStatus === String(SubscriptionStatus.INCOMPLETE_EXPIRED) ||
+      currentStatus === String(SubscriptionStatus.PAST_DUE)
+    ) {
+      await this.databaseService.updateSubscriptionSafe(subscriptionId, {
+        status: SubscriptionStatus.ACTIVE,
+        appointmentsUsed: 0,
+        ...(appointmentsRemaining !== null && { appointmentsRemaining }),
+      });
+
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Subscription activated after initial payment',
+        'BillingService',
+        {
+          subscriptionId,
+          periodStart: subscription.currentPeriodStart.toISOString(),
+          periodEnd: subscription.currentPeriodEnd.toISOString(),
+        }
+      );
+
+      await this.eventService.emit('billing.subscription.renewed', {
+        subscriptionId,
+        periodStart: subscription.currentPeriodStart,
+        periodEnd: subscription.currentPeriodEnd,
+      });
+
+      return;
+    }
+
     // Calculate new period
     const newPeriodStart = new Date(subscription.currentPeriodEnd);
     const newPeriodEnd = this.calculatePeriodEnd(
@@ -2434,10 +2490,6 @@ export class BillingService {
     );
 
     // Reset appointment usage for new period
-    const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
-      ? null
-      : subscription.plan.appointmentsIncluded || null;
-
     await this.databaseService.updateSubscriptionSafe(subscriptionId, {
       currentPeriodStart: newPeriodStart,
       currentPeriodEnd: newPeriodEnd,
