@@ -437,6 +437,7 @@ export class AppointmentsController {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const userId = req.user?.sub;
+      const role = req.user?.role || Role.PATIENT;
 
       if (!userId) {
         throw new BadRequestException('User ID not found');
@@ -466,7 +467,8 @@ export class AppointmentsController {
       const result = await this.appointmentService.getAppointments(
         filters as AppointmentFilterDto,
         userId || '',
-        clinicId
+        clinicId,
+        role
       );
 
       await this.loggingService.log(
@@ -596,6 +598,7 @@ export class AppointmentsController {
     try {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
+      const role = req.user?.role || Role.PATIENT;
 
       if (!clinicId) {
         throw this.errors.validationError('clinicId', 'Clinic context is required', context);
@@ -635,7 +638,8 @@ export class AppointmentsController {
       const result = await this.appointmentService.getAppointments(
         filters as AppointmentFilterDto,
         currentUserId || '',
-        clinicId
+        clinicId,
+        role
       );
 
       // Log successful operation
