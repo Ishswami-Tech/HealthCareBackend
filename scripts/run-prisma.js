@@ -120,8 +120,9 @@ try {
   } else if (command === 'validate') {
     log('Running Prisma schema validation...', 'cyan');
     log(`  Schema: ${schemaPath}`, 'cyan');
+    log(`  Config: ${configPath}`, 'cyan');
     execSync(
-      `node --max-old-space-size=8192 node_modules/prisma/build/index.js validate --schema="${schemaPath}"`,
+      `node --max-old-space-size=8192 node_modules/prisma/build/index.js validate --schema="${schemaPath}" --config="${configPath}"`,
       {
         stdio: 'inherit',
         cwd: path.join(__dirname, '..'),
@@ -139,6 +140,8 @@ try {
     process.exit(1);
   }
 } catch (error) {
-  log(`❌ Prisma operation failed: ${error.message}`, 'red');
+  console.error(`${colors.red}❌ Prisma operation failed: ${error.message}${colors.reset}`);
+  if (error.stdout) console.error(error.stdout.toString());
+  if (error.stderr) console.error(error.stderr.toString());
   process.exit(1);
 }
