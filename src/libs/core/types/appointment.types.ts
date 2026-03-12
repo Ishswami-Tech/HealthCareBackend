@@ -1323,6 +1323,7 @@ export interface VideoCallSettings {
  * Queue entry data
  */
 export interface QueueEntryData {
+  entryId?: string;
   appointmentId: string;
   patientId: string;
   doctorId: string;
@@ -1339,6 +1340,46 @@ export interface QueueEntryData {
   emergencyAt?: string;
   type?: string;
   notes?: string;
+  queueCategory?: string;
+  queueOwnerId?: string;
+  primaryDoctorId?: string;
+  assignedDoctorId?: string;
+}
+
+/**
+ * Canonical queue entry - unified contract for all queue lanes
+ * @description Single source of truth for queue data across doctor queue and medicine desk
+ */
+export interface CanonicalQueueEntry {
+  entryId: string;
+  queueCategory: string; // DOCTOR_CONSULTATION | MEDICINE_DESK | THERAPY_PROCEDURE
+  queueOwnerId: string; // doctorId for doctor queue, pharmacyId for medicine desk
+  clinicId: string;
+  locationId?: string;
+  appointmentId: string;
+  patientId: string;
+  patientName?: string;
+  doctorName?: string;
+  primaryDoctorId?: string;
+  assignedDoctorId?: string;
+  position: number;
+  totalInQueue: number;
+  status: string; // WAITING, IN_PROGRESS, COMPLETED, etc.
+  serviceBucket?: string; // GENERAL, FOLLOW_UP, THERAPY, etc.
+  treatmentType?: string;
+  estimatedWaitTime?: number;
+  paymentStatus?: string; // PAID, PENDING (for medicine desk)
+  waitingForPayment?: boolean; // medicine desk only
+  readyForHandover?: boolean; // medicine desk only
+}
+
+/**
+ * Queue category enum
+ */
+export enum QueueCategory {
+  DOCTOR_CONSULTATION = 'DOCTOR_CONSULTATION',
+  MEDICINE_DESK = 'MEDICINE_DESK',
+  THERAPY_PROCEDURE = 'THERAPY_PROCEDURE',
 }
 
 // ============================================================================

@@ -85,6 +85,34 @@ export class CheckInService {
     private readonly appointmentQueueService: AppointmentQueueService
   ) {}
 
+  private async ensureActiveInPersonCoverage(appointment: {
+    id: string;
+    clinicId?: string | null;
+    subscriptionId?: string | null;
+    isSubscriptionBased?: boolean | null;
+  }): Promise<void> {
+    if (!appointment.subscriptionId || !appointment.isSubscriptionBased) {
+      throw new BadRequestException(
+        'This in-person appointment is not linked to an active subscription'
+      );
+    }
+
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(
+      appointment.subscriptionId
+    );
+    if (!subscription || subscription.clinicId !== appointment.clinicId) {
+      throw new BadRequestException('Linked subscription was not found for this appointment');
+    }
+
+    if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
+      throw new BadRequestException('Linked subscription is no longer active');
+    }
+
+    if (subscription.currentPeriodEnd < new Date()) {
+      throw new BadRequestException('Linked subscription coverage period has ended');
+    }
+  }
+
   /**
    * Public API: Check-in for appointments
    * Validates appointment type and routes to type-specific handler
@@ -143,12 +171,13 @@ export class CheckInService {
       const now = new Date();
       const clinicId = appointment.clinicId || '';
 
-      // 1. Check if already checked in
-      if (String(appointment.status) === String(AppointmentStatus.CHECKED_IN)) {
-        throw new BadRequestException('Appointment is already checked in');
+      await this.ensureActiveInPersonCoverage(appointment);
+
+      if (String(appointment.status) === String(AppointmentStatus.CONFIRMED)) {
+        throw new BadRequestException('Appointment arrival is already confirmed');
       }
 
-      // 2. Update appointment status to CHECKED_IN in the database
+      // 2. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const appointmentDelegate = client['appointment'] as {
@@ -157,7 +186,7 @@ export class CheckInService {
           return await appointmentDelegate.update({
             where: { id: appointment.id },
             data: {
-              status: 'CHECKED_IN',
+              status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
             },
@@ -170,7 +199,7 @@ export class CheckInService {
           operation: 'UPDATE',
           resourceId: appointment.id,
           userRole: 'patient',
-          details: { status: 'CHECKED_IN', checkInMethod: 'manual' },
+          details: { status: 'CONFIRMED', checkInMethod: 'manual' },
         }
       );
 
@@ -178,7 +207,7 @@ export class CheckInService {
       const result: CheckInResult = {
         success: true,
         appointmentId: appointment.id,
-        message: 'Check-in successful',
+        message: 'Check-in confirmed successfully',
         checkedInAt: now.toISOString(),
       };
 
@@ -216,7 +245,7 @@ export class CheckInService {
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Manual check-in successful (status updated, queue position assigned)',
+        'Manual check-in successful (appointment confirmed, queue position assigned)',
         'CheckInService.checkInInPerson',
         {
           appointmentId: appointment.id,
@@ -254,7 +283,7 @@ export class CheckInService {
         return JSON.parse(cached as string) as CheckedInAppointmentsResponse;
       }
 
-      // Get checked-in appointments from database (placeholder implementation)
+      // Get arrived appointments from database (placeholder implementation)
       const appointments = await this.fetchCheckedInAppointments(clinicId);
 
       const result: CheckedInAppointmentsResponse = {
@@ -284,7 +313,7 @@ export class CheckInService {
       void this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to get checked-in appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
+        `Failed to get arrived appointments: ${_error instanceof Error ? _error.message : String(_error)}`,
         'CheckInService',
         {
           clinicId,
@@ -350,7 +379,7 @@ export class CheckInService {
     try {
       const now = new Date();
 
-      // 1. Update appointment status to CHECKED_IN in the database
+      // 1. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const appointmentDelegate = client['appointment'] as {
@@ -359,7 +388,7 @@ export class CheckInService {
           return await appointmentDelegate.update({
             where: { id: appointment.id },
             data: {
-              status: 'CHECKED_IN',
+              status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
             },
@@ -372,7 +401,7 @@ export class CheckInService {
           operation: 'UPDATE',
           resourceId: appointment.id,
           userRole: 'system',
-          details: { status: 'CHECKED_IN' },
+          details: { status: 'CONFIRMED' },
         }
       );
 
@@ -380,7 +409,7 @@ export class CheckInService {
       const result: CheckInResult = {
         success: true,
         appointmentId: appointment.id,
-        message: 'Check-in successful',
+        message: 'Check-in confirmed successfully',
         checkedInAt: now.toISOString(),
       };
 
@@ -418,7 +447,7 @@ export class CheckInService {
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Check-in successful (status updated, queue position assigned)',
+        'Check-in successful (appointment confirmed, queue position assigned)',
         'CheckInService.processCheckInInPerson',
         {
           appointmentId: appointment.id,
@@ -507,35 +536,46 @@ export class CheckInService {
     const startTime = Date.now();
 
     try {
-      // Validate appointment is checked in
-      const checkIn = await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            checkIn: {
-              findFirst: <T>(args: T) => Promise<{ id: string } | null>;
-            };
-          }
-        ).checkIn.findFirst({
-          where: {
-            appointmentId,
-          },
-          select: {
-            id: true,
-          },
-        } as never);
-      });
-
-      if (!checkIn) {
-        throw new BadRequestException(
-          'Appointment must be checked in before starting consultation'
-        );
+      const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
+      if (!appointment.doctorId) {
+        throw new BadRequestException('Appointment is missing doctor assignment');
       }
 
-      // Start consultation
-      const result = await this.performConsultationStart(appointmentId, clinicId);
+      const currentStatus = String(appointment.status || '').toUpperCase();
+      if (currentStatus !== String(AppointmentStatus.CONFIRMED)) {
+        throw new BadRequestException('Appointment must be confirmed before starting consultation');
+      }
 
-      // Remove from queue
-      await this.removeFromQueue(appointmentId, clinicId);
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const appointmentDelegate = client['appointment'] as {
+            update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+          };
+          return await appointmentDelegate.update({
+            where: { id: appointmentId },
+            data: {
+              status: 'IN_PROGRESS',
+              updatedAt: new Date(),
+            },
+          });
+        },
+        {
+          userId: appointment.doctorId,
+          clinicId,
+          resourceType: 'APPOINTMENT',
+          operation: 'UPDATE',
+          resourceId: appointmentId,
+          userRole: 'doctor',
+          details: { status: 'IN_PROGRESS' },
+        }
+      );
+
+      await this.appointmentQueueService.startConsultation(
+        appointmentId,
+        appointment.doctorId,
+        clinicId,
+        'clinic'
+      );
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -545,7 +585,13 @@ export class CheckInService {
         { appointmentId, clinicId, responseTime: Date.now() - startTime }
       );
 
-      return result;
+      return {
+        success: true,
+        appointmentId,
+        clinicId,
+        consultationStartedAt: new Date().toISOString(),
+        message: 'Consultation started',
+      };
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -749,7 +795,7 @@ export class CheckInService {
       locationId: appointment.locationId,
       type: appointment.type as AppointmentType,
       status: appointment.status as AppointmentStatus,
-      domain: (appointment as unknown as { domain?: string }).domain || 'healthcare',
+      domain: (appointment as unknown as { domain?: string }).domain || 'clinic',
     };
   }
 
@@ -791,7 +837,7 @@ export class CheckInService {
       locationId: appointment.locationId,
       type: appointment.type as AppointmentType,
       status: appointment.status as AppointmentStatus,
-      domain: 'healthcare',
+      domain: 'clinic',
     };
   }
 
@@ -869,8 +915,8 @@ export class CheckInService {
         appointmentId,
         appointment.doctorId,
         clinicId,
-        'healthcare'
-      ); // hardcoded domain or fetch?
+        'clinic'
+      );
     }
   }
 
@@ -883,7 +929,7 @@ export class CheckInService {
         patientName: 'John Doe',
         doctorName: 'Dr. Smith',
         checkInTime: new Date().toISOString(),
-        status: 'CHECKED_IN',
+        status: 'CONFIRMED',
       },
     ]);
   }
@@ -896,8 +942,8 @@ export class CheckInService {
       const pos = await this.appointmentQueueService.getPatientQueuePosition(
         appointmentId,
         clinicId,
-        'healthcare'
-      ); // defaulting domain
+        'clinic'
+      );
       if (!pos) return null;
       return {
         position: pos.position,
@@ -916,7 +962,7 @@ export class CheckInService {
       doctorId,
       clinicId,
       new Date().toISOString().split('T')[0] || '',
-      'healthcare'
+      'clinic'
     );
     return response.queue;
   }
@@ -958,7 +1004,7 @@ export class CheckInService {
         date: new Date().toISOString().split('T')[0] || '',
         newOrder: appointmentOrder,
       },
-      'healthcare'
+      'clinic'
     );
   }
 

@@ -19,6 +19,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
+import { Role } from '@core/types/enums.types';
 
 /**
  * Appointment status enumeration
@@ -31,7 +32,6 @@ export enum AppointmentStatus {
   PENDING = 'PENDING',
   SCHEDULED = 'SCHEDULED',
   CONFIRMED = 'CONFIRMED',
-  CHECKED_IN = 'CHECKED_IN',
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',
   CANCELLED = 'CANCELLED',
@@ -84,6 +84,26 @@ export enum TreatmentType {
   BASTI = 'BASTI',
   NASYA = 'NASYA',
   RAKTAMOKSHANA = 'RAKTAMOKSHANA',
+}
+
+export enum AppointmentServiceCategory {
+  CONSULTATION = 'CONSULTATION',
+  DIAGNOSIS = 'DIAGNOSIS',
+  TREATMENT = 'TREATMENT',
+  SURGERY = 'SURGERY',
+  COUNSELING = 'COUNSELING',
+  THERAPY = 'THERAPY',
+}
+
+export enum AppointmentQueueCategory {
+  DOCTOR_CONSULTATION = 'DOCTOR_CONSULTATION',
+  THERAPY_PROCEDURE = 'THERAPY_PROCEDURE',
+  MEDICINE_DESK = 'MEDICINE_DESK',
+}
+
+export enum AppointmentBillingMode {
+  SUBSCRIPTION_INCLUDED = 'SUBSCRIPTION_INCLUDED',
+  PER_APPOINTMENT_PAYMENT = 'PER_APPOINTMENT_PAYMENT',
 }
 
 /**
@@ -326,6 +346,94 @@ export class CreateAppointmentDto {
   @IsArray()
   @IsString({ each: true })
   symptoms?: string[];
+}
+
+export class AppointmentServiceMetadataDto {
+  @ApiProperty({
+    enum: TreatmentType,
+    enumName: 'TreatmentType',
+    example: TreatmentType.GENERAL_CONSULTATION,
+  })
+  treatmentType!: TreatmentType;
+
+  @ApiProperty({
+    example: 'General Consultation',
+    description: 'User-facing service name',
+  })
+  label!: string;
+
+  @ApiProperty({
+    example: 'Comprehensive health assessment and treatment planning',
+    description: 'User-facing service description',
+  })
+  description!: string;
+
+  @ApiProperty({
+    enum: AppointmentServiceCategory,
+    enumName: 'AppointmentServiceCategory',
+    example: AppointmentServiceCategory.CONSULTATION,
+  })
+  category!: AppointmentServiceCategory;
+
+  @ApiProperty({
+    example: 30,
+    description: 'Default expected duration in minutes',
+  })
+  defaultDurationMinutes!: number;
+
+  @ApiProperty({
+    type: [String],
+    enum: AppointmentType,
+    enumName: 'AppointmentType',
+    example: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
+  })
+  appointmentModes!: AppointmentType[];
+
+  @ApiProperty({
+    enum: AppointmentQueueCategory,
+    enumName: 'AppointmentQueueCategory',
+    example: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+  })
+  queueCategory!: AppointmentQueueCategory;
+
+  @ApiProperty({
+    example: 'GENERAL',
+    description: 'Operational grouping used by queue boards and dashboards',
+  })
+  serviceBucket!: string;
+
+  @ApiProperty({
+    enum: AppointmentBillingMode,
+    enumName: 'AppointmentBillingMode',
+    example: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+  })
+  billingMode!: AppointmentBillingMode;
+
+  @ApiProperty({
+    example: false,
+    description: 'Whether assistant doctors can take this service under delegation rules',
+  })
+  assistantDoctorEligible!: boolean;
+
+  @ApiProperty({
+    example: true,
+    description: 'Whether the service is currently shown as bookable in the UI',
+  })
+  active!: boolean;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Per-appointment fee used when the selected mode requires direct payment',
+  })
+  videoConsultationFee?: number;
+}
+
+export class AppointmentServiceCatalogResponseDto {
+  @ApiProperty({
+    type: [AppointmentServiceMetadataDto],
+    description: 'Backend-owned appointment service catalog',
+  })
+  services!: AppointmentServiceMetadataDto[];
 }
 
 /**
@@ -1701,7 +1809,7 @@ export class UpdateAppointmentStatusDto {
     description: 'New status for the appointment',
     enum: AppointmentStatus,
     enumName: 'AppointmentStatus',
-    example: 'CHECKED_IN',
+    example: 'CONFIRMED',
   })
   @IsEnum(AppointmentStatus, { message: 'Status must be a valid appointment status' })
   status!: AppointmentStatus;
@@ -1818,4 +1926,119 @@ export class UpdateAppointmentStatusDto {
   @IsArray()
   @IsString({ each: true })
   restrictions?: string[];
+}
+
+export class ReassignAppointmentDoctorDto {
+  @ApiProperty({
+    description: 'Doctor record ID that will actively service the appointment',
+    example: '4fcb4f72-4444-4d6f-91cc-21f2b91d0c8f',
+  })
+  @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
+  doctorId!: string;
+
+  @ApiPropertyOptional({
+    description: 'Reason for reassignment or assistant doctor takeover',
+    example: 'Primary doctor unavailable, delegated to assistant doctor at same location',
+  })
+  @IsOptional()
+  @IsString({ message: 'Reason must be a string' })
+  reason?: string;
+}
+
+export class AppointmentReassignmentCandidateDto {
+  @ApiProperty({
+    example: 'doctor-uuid-123',
+    description: 'Doctor or assistant doctor identifier',
+  })
+  id!: string;
+
+  @ApiProperty({
+    example: 'Dr. Aadesh',
+    description: 'Display name for the servicing doctor candidate',
+  })
+  name!: string;
+
+  @ApiProperty({
+    example: 'DOCTOR',
+    description: 'Role of the candidate doctor',
+    enum: Role,
+    enumName: 'Role',
+  })
+  role!: Role;
+
+  @ApiProperty({
+    example: true,
+    description: 'Whether this candidate can service the appointment',
+  })
+  eligible!: boolean;
+
+  @ApiPropertyOptional({
+    example: 'Assistant coverage not configured for this primary doctor',
+    description: 'Reason the candidate is not eligible, when applicable',
+  })
+  reason?: string;
+
+  @ApiProperty({
+    example: false,
+    description: 'Whether this is the currently assigned doctor',
+  })
+  isCurrent!: boolean;
+
+  @ApiProperty({
+    example: false,
+    description: 'Whether this doctor is the primary/original booked doctor',
+  })
+  isPrimary!: boolean;
+}
+
+export class AppointmentReassignmentCandidatesResponseDto {
+  @ApiProperty({
+    type: [AppointmentReassignmentCandidateDto],
+    description: 'Eligible and ineligible servicing doctor candidates for this appointment',
+  })
+  candidates!: AppointmentReassignmentCandidateDto[];
+}
+
+export class AssistantDoctorCoverageAssignmentDto {
+  @ApiProperty({
+    description: 'Assistant doctor record ID',
+    example: 'assistant-doctor-uuid',
+  })
+  @IsUUID('4', { message: 'Assistant doctor ID must be a valid UUID' })
+  assistantDoctorId!: string;
+
+  @ApiProperty({
+    description: 'Primary doctor IDs covered by this assistant doctor',
+    type: [String],
+    example: ['primary-doctor-uuid'],
+  })
+  @IsArray()
+  @IsUUID('4', { each: true, message: 'Primary doctor IDs must be valid UUIDs' })
+  primaryDoctorIds!: string[];
+
+  @ApiProperty({
+    description: 'Whether this assistant coverage assignment is active',
+    example: true,
+  })
+  @IsBoolean()
+  isActive!: boolean;
+}
+
+export class UpdateAssistantDoctorCoverageDto {
+  @ApiProperty({
+    description: 'Assistant doctor coverage configuration for the clinic',
+    type: [AssistantDoctorCoverageAssignmentDto],
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AssistantDoctorCoverageAssignmentDto)
+  entries!: AssistantDoctorCoverageAssignmentDto[];
+}
+
+export class AssistantDoctorCoverageResponseDto {
+  @ApiProperty({
+    type: [AssistantDoctorCoverageAssignmentDto],
+    description: 'Assistant doctor coverage configuration persisted for the clinic',
+  })
+  entries!: AssistantDoctorCoverageAssignmentDto[];
 }

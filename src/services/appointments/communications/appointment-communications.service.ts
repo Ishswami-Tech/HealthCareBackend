@@ -320,21 +320,14 @@ export class AppointmentCommunicationsService {
   /**
    * Get active connections for a clinic
    */
-  async getActiveConnections(clinicId: string): Promise<unknown> {
+  getActiveConnections(clinicId: string): unknown {
     const startTime = Date.now();
-    const cacheKey = `connections:clinic:${clinicId}`;
 
     try {
-      // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string);
-      }
-
-      // This would integrate with the actual socket service to get real connections
-      // For now, return mock data
       const connections = {
         clinicId,
+        available: false,
+        source: 'unavailable',
         totalConnections: 0,
         connectionsByType: {
           patients: 0,
@@ -342,15 +335,13 @@ export class AppointmentCommunicationsService {
           admins: 0,
         },
         retrievedAt: new Date().toISOString(),
+        message: 'Active socket connection metrics are not currently wired for this clinic flow',
       };
-
-      // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(connections), this.CACHE_TTL);
 
       void this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.INFO,
-        'Active connections retrieved successfully',
+        LogLevel.WARN,
+        'Active connection metrics are unavailable for appointment communications',
         'AppointmentCommunicationsService',
         { clinicId, responseTime: Date.now() - startTime }
       );

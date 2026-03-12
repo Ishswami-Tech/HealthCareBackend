@@ -39,6 +39,183 @@ export class AppointmentQueueService {
     }
   }
 
+  private getQueueDate(date?: string): string {
+    return date || new Date().toISOString().split('T')[0] || '';
+  }
+
+  private buildQueueKey(domain: string, clinicId: string, ownerId: string, date?: string): string {
+    return `queue:${domain}:${clinicId}:${ownerId}:${this.getQueueDate(date)}`;
+  }
+
+  async enqueueOperationalItem(
+    queueData: {
+      entryId: string;
+      queueOwnerId: string;
+      patientId: string;
+      clinicId: string;
+      appointmentId?: string;
+      assignedDoctorId?: string;
+      primaryDoctorId?: string;
+      locationId?: string;
+      queueCategory: string;
+      type?: string;
+      notes?: string;
+      estimatedWaitTime?: number;
+    },
+    domain: string
+  ): Promise<OperationResponse> {
+    const queueKey = this.buildQueueKey(domain, queueData.clinicId, queueData.queueOwnerId);
+
+    try {
+      const existingEntries = await this.cacheService.lRange(queueKey, 0, -1);
+      const exists = existingEntries.some(entry => {
+        const data = JSON.parse(entry) as QueueEntryData;
+        return data.entryId === queueData.entryId;
+      });
+
+      if (exists) {
+        return { success: true, message: 'Queue item already exists' };
+      }
+
+      const queueEntry: QueueEntryData = {
+        entryId: queueData.entryId,
+        appointmentId: queueData.appointmentId || queueData.entryId,
+        patientId: queueData.patientId,
+        doctorId: queueData.assignedDoctorId || queueData.queueOwnerId,
+        clinicId: queueData.clinicId,
+        status: 'WAITING',
+        priority: 0,
+        checkedInAt: new Date().toISOString(),
+        ...(queueData.estimatedWaitTime !== undefined && {
+          estimatedWaitTime: queueData.estimatedWaitTime,
+        }),
+        ...(queueData.type && { type: queueData.type }),
+        ...(queueData.notes && { notes: queueData.notes }),
+        ...(queueData.locationId && { locationId: queueData.locationId }),
+        queueCategory: queueData.queueCategory,
+        queueOwnerId: queueData.queueOwnerId,
+        ...(queueData.primaryDoctorId && { primaryDoctorId: queueData.primaryDoctorId }),
+        ...(queueData.assignedDoctorId && { assignedDoctorId: queueData.assignedDoctorId }),
+      };
+
+      await this.cacheService.rPush(queueKey, JSON.stringify(queueEntry));
+
+      if (this.typedEventService) {
+        const totalInQueue = await this.cacheService.lLen(queueKey);
+        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+          eventId: `queue-enqueue-${queueData.entryId}-${Date.now()}`,
+          eventType: 'appointment.queue.updated',
+          category: EventCategory.APPOINTMENT,
+          priority: EventPriority.NORMAL,
+          timestamp: new Date().toISOString(),
+          source: 'AppointmentQueueService',
+          version: '1.0.0',
+          payload: {
+            doctorId: queueData.queueOwnerId,
+            domain,
+            action: 'CHECK_IN',
+            appointmentId: queueEntry.appointmentId,
+            entryId: queueData.entryId,
+            queueCategory: queueData.queueCategory,
+            position: totalInQueue,
+            totalInQueue,
+            clinicId: queueData.clinicId,
+            queueOwnerId: queueData.queueOwnerId,
+            locationId: queueData.locationId,
+            primaryDoctorId: queueData.primaryDoctorId,
+            assignedDoctorId: queueData.assignedDoctorId,
+          },
+        });
+      }
+
+      return { success: true, message: 'Queue item added successfully' };
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to enqueue operational item: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentQueueService',
+        {
+          entryId: queueData.entryId,
+          queueOwnerId: queueData.queueOwnerId,
+        }
+      );
+      throw error;
+    }
+  }
+
+  async getOperationalQueue(
+    queueOwnerId: string,
+    clinicId: string,
+    domain: string,
+    date?: string
+  ): Promise<QueueEntryData[]> {
+    const queueKey = this.buildQueueKey(domain, clinicId, queueOwnerId, date);
+    const entries = await this.cacheService.lRange(queueKey, 0, -1);
+
+    return entries.map((entry, index) => {
+      const entryData = JSON.parse(entry) as QueueEntryData;
+      return {
+        ...entryData,
+        position: index + 1,
+      };
+    });
+  }
+
+  async removeOperationalQueueItem(
+    entryId: string,
+    queueOwnerId: string,
+    clinicId: string,
+    domain: string,
+    date?: string
+  ): Promise<OperationResponse> {
+    const queueKey = this.buildQueueKey(domain, clinicId, queueOwnerId, date);
+    const entries = await this.cacheService.lRange(queueKey, 0, -1);
+    const remainingEntries = entries.filter(entry => {
+      const data = JSON.parse(entry) as QueueEntryData;
+      return data.entryId !== entryId;
+    });
+
+    if (entries.length === remainingEntries.length) {
+      return { success: false, message: 'Queue item not found' };
+    }
+
+    await this.cacheService.del(queueKey);
+    for (const entry of remainingEntries) {
+      await this.cacheService.rPush(queueKey, entry);
+    }
+
+    if (this.typedEventService) {
+      const queueCategory =
+        remainingEntries.length > 0
+          ? (() => {
+              const parsed = JSON.parse(remainingEntries[0] || '{}') as QueueEntryData;
+              return typeof parsed.queueCategory === 'string' ? parsed.queueCategory : undefined;
+            })()
+          : undefined;
+      await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+        eventId: `queue-remove-${entryId}-${Date.now()}`,
+        eventType: 'appointment.queue.updated',
+        category: EventCategory.APPOINTMENT,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'AppointmentQueueService',
+        version: '1.0.0',
+        payload: {
+          doctorId: queueOwnerId,
+          domain,
+          action: 'REMOVED',
+          entryId,
+          clinicId,
+          queueOwnerId,
+          ...(queueCategory ? { queueCategory } : {}),
+        },
+      });
+    }
+
+    return { success: true, message: 'Queue item removed successfully' };
+  }
+
   async checkIn(
     checkInData: {
       appointmentId: string;
@@ -66,7 +243,7 @@ export class AppointmentQueueService {
       });
 
       if (exists) {
-        throw new Error('Appointment already checked in');
+        throw new Error('Appointment arrival is already confirmed');
       }
 
       const queueEntry: QueueEntryData = {
@@ -103,6 +280,10 @@ export class AppointmentQueueService {
             appointmentId,
             position: totalInQueue,
             totalInQueue,
+            clinicId,
+            queueOwnerId: doctorId,
+            locationId,
+            queueCategory: 'DOCTOR_CONSULTATION',
           },
         });
       }
@@ -110,7 +291,7 @@ export class AppointmentQueueService {
       void this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        'Patient checked in successfully',
+        'Patient arrival confirmed successfully',
         'AppointmentQueueService',
         {
           appointmentId,
@@ -467,7 +648,11 @@ export class AppointmentQueueService {
             payload: {
               doctorId,
               domain,
-              consultationStarted: appointmentId,
+              action: 'STARTED',
+              appointmentId,
+              clinicId,
+              queueOwnerId: doctorId,
+              queueCategory: 'DOCTOR_CONSULTATION',
               queuePositions: updatedPositions,
             },
           });
@@ -574,6 +759,10 @@ export class AppointmentQueueService {
               doctorId,
               date,
               domain,
+              action: 'REORDERED',
+              clinicId,
+              queueOwnerId: doctorId,
+              queueCategory: 'DOCTOR_CONSULTATION',
               queuePositions: updatedPositions,
             },
           });
@@ -989,7 +1178,11 @@ export class AppointmentQueueService {
             domain,
             action: 'CALL_NEXT',
             appointmentId: entryData.appointmentId,
+            entryId: entryData.entryId,
             nextPatient: entryData,
+            clinicId,
+            queueOwnerId: doctorId,
+            queueCategory: 'DOCTOR_CONSULTATION',
           },
         });
       }
@@ -1024,7 +1217,14 @@ export class AppointmentQueueService {
         timestamp: new Date().toISOString(),
         source: 'AppointmentQueueService',
         version: '1.0.0',
-        payload: { doctorId, domain, action: 'PAUSED' },
+        payload: {
+          doctorId,
+          domain,
+          action: 'PAUSED',
+          clinicId,
+          queueOwnerId: doctorId,
+          queueCategory: 'DOCTOR_CONSULTATION',
+        },
       });
     }
     return { success: true, message: 'Queue paused' };
@@ -1047,7 +1247,14 @@ export class AppointmentQueueService {
         timestamp: new Date().toISOString(),
         source: 'AppointmentQueueService',
         version: '1.0.0',
-        payload: { doctorId, domain, action: 'RESUMED' },
+        payload: {
+          doctorId,
+          domain,
+          action: 'RESUMED',
+          clinicId,
+          queueOwnerId: doctorId,
+          queueCategory: 'DOCTOR_CONSULTATION',
+        },
       });
     }
     return { success: true, message: 'Queue resumed' };

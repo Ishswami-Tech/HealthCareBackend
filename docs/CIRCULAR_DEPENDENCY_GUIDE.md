@@ -2,7 +2,9 @@
 
 ## Overview
 
-Circular dependencies occur when Module A imports Module B, and Module B imports Module A, creating a loop. In large NestJS applications like this healthcare backend, circular dependencies are common but must be carefully managed.
+Circular dependencies occur when Module A imports Module B, and Module B imports
+Module A, creating a loop. In large NestJS applications like this healthcare
+backend, circular dependencies are common but must be carefully managed.
 
 ---
 
@@ -44,39 +46,41 @@ npx madge --circular --extensions ts --image graph.svg src/
 #### Example: CheckInService and AppointmentService
 
 **Before** (Circular Dependency ❌):
+
 ```typescript
 // check-in.module.ts
 @Module({
   imports: [
-    AppointmentsModule,  // ❌ Circular: Appointments imports CheckIn
+    AppointmentsModule, // ❌ Circular: Appointments imports CheckIn
   ],
   providers: [CheckInService],
-  exports: [CheckInService]
+  exports: [CheckInService],
 })
 export class CheckInModule {}
 
 // appointments.module.ts
 @Module({
   imports: [
-    CheckInModule,  // ❌ Circular: CheckIn imports Appointments
+    CheckInModule, // ❌ Circular: CheckIn imports Appointments
   ],
   providers: [AppointmentService],
-  exports: [AppointmentService]
+  exports: [AppointmentService],
 })
 export class AppointmentsModule {}
 ```
 
 **After** (Fixed with `forwardRef()` ✅):
+
 ```typescript
 // check-in.module.ts
 import { forwardRef } from '@nestjs/common';
 
 @Module({
   imports: [
-    forwardRef(() => AppointmentsModule),  // ✅ Lazy load
+    forwardRef(() => AppointmentsModule), // ✅ Lazy load
   ],
   providers: [CheckInService],
-  exports: [CheckInService]
+  exports: [CheckInService],
 })
 export class CheckInModule {}
 
@@ -85,15 +89,16 @@ import { forwardRef } from '@nestjs/common';
 
 @Module({
   imports: [
-    forwardRef(() => CheckInModule),  // ✅ Lazy load
+    forwardRef(() => CheckInModule), // ✅ Lazy load
   ],
   providers: [AppointmentService],
-  exports: [AppointmentService]
+  exports: [AppointmentService],
 })
 export class AppointmentsModule {}
 ```
 
 **Service Level with `forwardRef()`**:
+
 ```typescript
 // check-in.service.ts
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
@@ -103,7 +108,7 @@ import { AppointmentService } from '@services/appointments';
 export class CheckInService {
   constructor(
     @Inject(forwardRef(() => AppointmentService))
-    private readonly appointmentService: AppointmentService,
+    private readonly appointmentService: AppointmentService
   ) {}
 }
 
@@ -115,7 +120,7 @@ import { CheckInService } from '@services/check-in';
 export class AppointmentService {
   constructor(
     @Inject(forwardRef(() => CheckInService))
-    private readonly checkInService: CheckInService,
+    private readonly checkInService: CheckInService
   ) {}
 }
 ```
@@ -124,19 +129,21 @@ export class AppointmentService {
 
 ### 2. Event-Driven Architecture (Preferred Solution ⭐)
 
-**When to use**: When services need to react to changes in other services but don't need direct coupling.
+**When to use**: When services need to react to changes in other services but
+don't need direct coupling.
 
 **This app already has EventService** - USE IT!
 
 #### Example: CheckIn → Appointment Status Update
 
 **Before** (Direct Dependency ❌):
+
 ```typescript
 // check-in.service.ts
 @Injectable()
 export class CheckInService {
   constructor(
-    private readonly appointmentService: AppointmentService,  // ❌ Direct coupling
+    private readonly appointmentService: AppointmentService // ❌ Direct coupling
   ) {}
 
   async checkIn(appointmentId: string) {
@@ -144,7 +151,7 @@ export class CheckInService {
     const checkIn = await this.createCheckIn(appointmentId);
 
     // Update appointment status
-    await this.appointmentService.updateStatus(appointmentId, 'CHECKED_IN');  // ❌
+    await this.appointmentService.updateStatus(appointmentId, 'CONFIRMED'); // ❌
 
     return checkIn;
   }
@@ -152,6 +159,7 @@ export class CheckInService {
 ```
 
 **After** (Event-Driven ✅):
+
 ```typescript
 // check-in.service.ts
 import { EventService } from '@infrastructure/events';
@@ -159,8 +167,8 @@ import { EventService } from '@infrastructure/events';
 @Injectable()
 export class CheckInService {
   constructor(
-    private readonly eventService: EventService,  // ✅ Only depends on infrastructure
-    private readonly logger: LoggingService,
+    private readonly eventService: EventService, // ✅ Only depends on infrastructure
+    private readonly logger: LoggingService
   ) {}
 
   async checkIn(appointmentId: string) {
@@ -170,7 +178,7 @@ export class CheckInService {
     // Emit event (no direct coupling)
     await this.eventService.emitEnterprise('patient.checked_in', {
       eventId: `checkin-${checkIn.id}`,
-      eventType: 'patient.checked_in',
+      eventType: 'patient.arrival_confirmed',
       category: EventCategory.APPOINTMENT,
       priority: EventPriority.HIGH,
       timestamp: new Date().toISOString(),
@@ -179,8 +187,8 @@ export class CheckInService {
       payload: {
         appointmentId,
         checkInId: checkIn.id,
-        checkedInAt: checkIn.checkedInAt,
-      }
+        confirmedAt: checkIn.checkedInAt,
+      },
     });
 
     return checkIn;
@@ -194,19 +202,22 @@ import { OnEvent } from '@nestjs/event-emitter';
 export class AppointmentService {
   // No dependency on CheckInService!
 
-  @OnEvent('patient.checked_in')
-  async handlePatientCheckedIn(payload: EnterpriseEventPayload) {
+  @OnEvent('patient.arrival_confirmed')
+  async handlePatientArrivalConfirmed(payload: EnterpriseEventPayload) {
     const { appointmentId } = payload.payload;
 
     // Update appointment status
-    await this.updateStatus(appointmentId, 'CHECKED_IN');
+    await this.updateStatus(appointmentId, 'CONFIRMED');
 
-    this.logger.info('Appointment status updated after check-in', { appointmentId });
+    this.logger.info('Appointment status updated after arrival confirmation', {
+      appointmentId,
+    });
   }
 }
 ```
 
 **Benefits**:
+
 - ✅ No circular dependency
 - ✅ Services are decoupled
 - ✅ Easy to add more listeners (notifications, analytics, etc.)
@@ -220,30 +231,35 @@ export class AppointmentService {
 **When to use**: When you only need types, not runtime values.
 
 **Before** (Runtime Import ❌):
+
 ```typescript
 // check-in.service.ts
-import { AppointmentService } from '@services/appointments';  // ❌ Runtime import
+import { AppointmentService } from '@services/appointments'; // ❌ Runtime import
 
 export class CheckInService {
-  async processCheckIn(appointment: AppointmentService['findById']) {  // Using type
+  async processCheckIn(appointment: AppointmentService['findById']) {
+    // Using type
     // ...
   }
 }
 ```
 
 **After** (Type-Only Import ✅):
+
 ```typescript
 // check-in.service.ts
-import type { AppointmentService } from '@services/appointments';  // ✅ Type-only import
+import type { AppointmentService } from '@services/appointments'; // ✅ Type-only import
 
 export class CheckInService {
-  async processCheckIn(appointment: ReturnType<AppointmentService['findById']>) {
+  async processCheckIn(
+    appointment: ReturnType<AppointmentService['findById']>
+  ) {
     // ...
   }
 }
 
 // Even better: Use shared types
-import type { Appointment } from '@core/types';  // ✅ Best practice
+import type { Appointment } from '@core/types'; // ✅ Best practice
 
 export class CheckInService {
   async processCheckIn(appointment: Appointment) {
@@ -259,6 +275,7 @@ export class CheckInService {
 **Your app already has this structure** - use it properly!
 
 **File Structure**:
+
 ```
 src/libs/core/types/
 ├── appointment.types.ts      ← Domain types
@@ -268,15 +285,17 @@ src/libs/core/types/
 ```
 
 **Best Practice**:
+
 ```typescript
 // ✅ ALWAYS import from @core/types (NOT from service files)
 import type { Appointment, CheckIn, Patient } from '@core/types';
 
 // ❌ NEVER import types from service files
-import type { Appointment } from '@services/appointments/appointment.service';  // ❌ BAD!
+import type { Appointment } from '@services/appointments/appointment.service'; // ❌ BAD!
 ```
 
 **Define types once, use everywhere**:
+
 ```typescript
 // src/libs/core/types/appointment.types.ts
 export interface Appointment {
@@ -297,10 +316,10 @@ export interface CheckIn {
 
 // Now services import from ONE place
 // check-in.service.ts
-import type { Appointment, CheckIn } from '@core/types';  // ✅
+import type { Appointment, CheckIn } from '@core/types'; // ✅
 
 // appointment.service.ts
-import type { Appointment, CheckIn } from '@core/types';  // ✅
+import type { Appointment, CheckIn } from '@core/types'; // ✅
 ```
 
 ---
@@ -312,24 +331,26 @@ import type { Appointment, CheckIn } from '@core/types';  // ✅
 #### Example: CheckInService only needs `findAppointmentById`
 
 **Before** (Full Service Dependency ❌):
+
 ```typescript
 // check-in.service.ts
-import { AppointmentService } from '@services/appointments';  // ❌ Depends on entire service
+import { AppointmentService } from '@services/appointments'; // ❌ Depends on entire service
 
 @Injectable()
 export class CheckInService {
   constructor(
-    private readonly appointmentService: AppointmentService,  // ❌ Circular
+    private readonly appointmentService: AppointmentService // ❌ Circular
   ) {}
 
   async checkIn(appointmentId: string) {
-    const appointment = await this.appointmentService.findById(appointmentId);  // Only needs this one method!
+    const appointment = await this.appointmentService.findById(appointmentId); // Only needs this one method!
     // ...
   }
 }
 ```
 
 **After** (Interface Segregation ✅):
+
 ```typescript
 // src/libs/core/interfaces/appointment.interface.ts
 export interface IAppointmentFinder {
@@ -340,27 +361,28 @@ export interface IAppointmentFinder {
 import type { IAppointmentFinder } from '@core/interfaces';
 
 @Injectable()
-export class AppointmentService implements IAppointmentFinder {  // ✅ Implements interface
+export class AppointmentService implements IAppointmentFinder {
+  // ✅ Implements interface
   async findById(id: string): Promise<Appointment | null> {
-    return await this.database.executeHealthcareRead(async (client) => {
+    return await this.database.executeHealthcareRead(async client => {
       return await client.appointment.findUnique({ where: { id } });
     });
   }
 }
 
 // check-in.service.ts
-import type { IAppointmentFinder } from '@core/interfaces';  // ✅ Only interface
-import { AppointmentService } from '@services/appointments';  // For injection token
+import type { IAppointmentFinder } from '@core/interfaces'; // ✅ Only interface
+import { AppointmentService } from '@services/appointments'; // For injection token
 
 @Injectable()
 export class CheckInService {
   constructor(
-    @Inject(AppointmentService)  // Use as injection token
-    private readonly appointmentFinder: IAppointmentFinder,  // But type as interface
+    @Inject(AppointmentService) // Use as injection token
+    private readonly appointmentFinder: IAppointmentFinder // But type as interface
   ) {}
 
   async checkIn(appointmentId: string) {
-    const appointment = await this.appointmentFinder.findById(appointmentId);  // ✅
+    const appointment = await this.appointmentFinder.findById(appointmentId); // ✅
     // ...
   }
 }
@@ -373,35 +395,38 @@ export class CheckInService {
 **Your app already uses this pattern** - it prevents circular dependencies!
 
 **Good Architecture** (Already in place):
+
 ```typescript
 // check-in.service.ts
 @Injectable()
 export class CheckInService {
   constructor(
-    private readonly database: DatabaseService,  // ✅ Only depends on infrastructure
+    private readonly database: DatabaseService // ✅ Only depends on infrastructure
   ) {}
 
   async checkIn(appointmentId: string) {
     // Query database directly - NO dependency on AppointmentService!
-    const appointment = await this.database.executeHealthcareRead(async (client) => {
-      return await client.appointment.findUnique({
-        where: { id: appointmentId }
-      });
-    });
+    const appointment = await this.database.executeHealthcareRead(
+      async client => {
+        return await client.appointment.findUnique({
+          where: { id: appointmentId },
+        });
+      }
+    );
 
     if (!appointment) {
       throw new NotFoundException('Appointment not found');
     }
 
     // Create check-in
-    const checkIn = await this.database.executeHealthcareWrite(async (client) => {
+    const checkIn = await this.database.executeHealthcareWrite(async client => {
       return await client.checkIn.create({
         data: {
           appointmentId,
           locationId: appointment.locationId,
           patientId: appointment.patientId,
           clinicId: appointment.clinicId,
-        }
+        },
       });
     });
 
@@ -411,6 +436,7 @@ export class CheckInService {
 ```
 
 **Why this works**:
+
 - ✅ Both services depend on `DatabaseService` (infrastructure layer)
 - ✅ No service-to-service dependencies
 - ✅ Follows Dependency Inversion Principle
@@ -422,22 +448,24 @@ export class CheckInService {
 **Problem**: Index files (barrel exports) can create circular dependencies.
 
 **Before** (Barrel Export Issue ❌):
+
 ```typescript
 // src/services/appointments/index.ts
 export * from './appointment.service';
 export * from './appointment.controller';
-export * from './appointments.module';  // ❌ Exports module
+export * from './appointments.module'; // ❌ Exports module
 
 // src/services/check-in/index.ts
 export * from './check-in.service';
 export * from './check-in.controller';
-export * from './check-in.module';  // ❌ Exports module
+export * from './check-in.module'; // ❌ Exports module
 
 // Somewhere else
-import { CheckInModule } from '@services/check-in';  // ❌ Gets entire barrel
+import { CheckInModule } from '@services/check-in'; // ❌ Gets entire barrel
 ```
 
 **After** (Specific Imports ✅):
+
 ```typescript
 // src/services/appointments/index.ts
 export * from './appointment.service';
@@ -445,7 +473,7 @@ export * from './appointment.controller';
 // DON'T export module from barrel
 
 // Direct imports
-import { CheckInModule } from '@services/check-in/check-in.module';  // ✅ Specific file
+import { CheckInModule } from '@services/check-in/check-in.module'; // ✅ Specific file
 ```
 
 ---
@@ -501,17 +529,13 @@ npx madge --circular --extensions ts src/
 
 For each circular dependency, ask:
 
-1. **Is it a type-only dependency?**
-   → Use `import type`
+1. **Is it a type-only dependency?** → Use `import type`
 
-2. **Can it be solved with events?**
-   → Use EventService (preferred)
+2. **Can it be solved with events?** → Use EventService (preferred)
 
-3. **Is it a database query?**
-   → Use DatabaseService directly
+3. **Is it a database query?** → Use DatabaseService directly
 
-4. **Is it unavoidable?**
-   → Use `forwardRef()`
+4. **Is it unavoidable?** → Use `forwardRef()`
 
 ### Step 3: Refactor Pattern Decision Tree
 
@@ -535,7 +559,8 @@ Circular Dependency Detected
 
 ### Immediate Actions
 
-- [ ] Run `npx madge --circular --extensions ts src/` to find all circular dependencies
+- [ ] Run `npx madge --circular --extensions ts src/` to find all circular
+      dependencies
 - [ ] Review all service-to-service dependencies
 - [ ] Convert direct service calls to events where possible
 - [ ] Ensure all types are imported from `@core/types` (not from services)
@@ -545,18 +570,21 @@ Circular Dependency Detected
 ### Long-term Best Practices
 
 - [ ] **Layer Dependencies** (Already mostly done):
+
   ```
   Controllers → Services → Infrastructure → Core
   (Can only depend downward, never upward)
   ```
 
 - [ ] **Event-Driven for Cross-Service Communication**:
+
   ```
   Service A → EventService → Service B
   (No direct dependency)
   ```
 
 - [ ] **Shared Types in @core/types**:
+
   ```
   All services import from: @core/types
   Never import types from: @services/*
@@ -573,6 +601,7 @@ Circular Dependency Detected
 ## 🧪 Testing for Circular Dependencies
 
 Add to `package.json`:
+
 ```json
 {
   "scripts": {
@@ -587,6 +616,7 @@ Add to `package.json`:
 ```
 
 Add to CI/CD:
+
 ```bash
 # In GitHub Actions / GitLab CI
 - name: Check circular dependencies
@@ -605,6 +635,7 @@ Add to CI/CD:
 ### Pattern 1: Appointment ↔ CheckIn
 
 **Solution**: Use Events
+
 ```typescript
 // CheckIn creates → Emit event → Appointment listens
 @OnEvent('patient.checked_in')
@@ -614,6 +645,7 @@ async handleCheckedIn(payload) { /* ... */ }
 ### Pattern 2: User ↔ Clinic ↔ Patient
 
 **Solution**: Use DatabaseService directly
+
 ```typescript
 // Both query database, no circular dependency
 const user = await this.database.executeHealthcareRead(...)
@@ -622,6 +654,7 @@ const user = await this.database.executeHealthcareRead(...)
 ### Pattern 3: Notification ↔ Appointment
 
 **Solution**: Event-driven
+
 ```typescript
 // Appointment changes → Emit event → Notification listens
 @OnEvent('appointment.created')
@@ -632,8 +665,10 @@ async sendNotification(payload) { /* ... */ }
 
 ## 📚 References
 
-- **NestJS Circular Dependency**: https://docs.nestjs.com/fundamentals/circular-dependency
-- **Event-Driven Architecture**: Already implemented in this app via `EventService`
+- **NestJS Circular Dependency**:
+  https://docs.nestjs.com/fundamentals/circular-dependency
+- **Event-Driven Architecture**: Already implemented in this app via
+  `EventService`
 - **Dependency Inversion Principle**: Already followed via `DatabaseService`
 
 ---
@@ -641,12 +676,14 @@ async sendNotification(payload) { /* ... */ }
 ## ✅ Summary for Your App
 
 Your healthcare app **already follows good patterns**:
+
 - ✅ DatabaseService for data access
 - ✅ EventService for event-driven architecture
 - ✅ Shared types in @core/types
 - ✅ Layered architecture
 
 **To fix circular dependencies**:
+
 1. ⭐ **Use EventService** (already exists!) - Preferred
 2. Use `import type` for type-only imports
 3. Query DatabaseService directly instead of calling other services
@@ -656,6 +693,5 @@ Your healthcare app **already follows good patterns**:
 
 ---
 
-**Version**: 1.0.0
-**Last Updated**: 2024-12-15
-**Maintained By**: Healthcare Backend Team
+**Version**: 1.0.0 **Last Updated**: 2024-12-15 **Maintained By**: Healthcare
+Backend Team

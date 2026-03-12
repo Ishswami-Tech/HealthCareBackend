@@ -233,9 +233,9 @@ export class HealthcareErrorsService {
     );
   }
 
-  checkInAlreadyCheckedIn(appointmentId?: string, context?: string): HealthcareError {
+  checkInAlreadyConfirmed(appointmentId?: string, context?: string): HealthcareError {
     return this.createError(
-      ErrorCode.CHECKIN_ALREADY_CHECKED_IN,
+      ErrorCode.CHECKIN_ALREADY_CONFIRMED,
       HttpStatus.CONFLICT,
       context,
       appointmentId ? { appointmentId } : undefined

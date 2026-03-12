@@ -473,44 +473,25 @@ export class SocialAuthService {
   }
 
   /**
-   * Verify Facebook token (placeholder implementation)
+   * Verify Facebook token.
+   * Facebook provider verification is intentionally blocked until a live verification adapter
+   * is configured. Returning synthetic identities here is unsafe in production.
    */
-  private verifyFacebookToken(_token: string): unknown {
-    // In a real implementation, you would:
-    // 1. Verify the token with Facebook's API
-    // 2. Extract user information
-    // 3. Return the user data
-
-    // For now, return mock data
-    return {
-      id: 'facebook_user_123',
-      email: 'user@facebook.com',
-      first_name: 'Jane',
-      last_name: 'Smith',
-      picture: {
-        data: {
-          url: 'https://example.com/avatar.jpg',
-        },
-      },
-    };
+  private verifyFacebookToken(_token: string): Promise<never> {
+    return Promise.reject(
+      new BadRequestException('Facebook authentication is not enabled on this deployment')
+    );
   }
 
   /**
-   * Verify Apple token (placeholder implementation)
+   * Verify Apple token.
+   * Apple provider verification is intentionally blocked until a live verification adapter
+   * is configured. Returning synthetic identities here is unsafe in production.
    */
-  private verifyAppleToken(_token: string): unknown {
-    // In a real implementation, you would:
-    // 1. Verify the token with Apple's API
-    // 2. Extract user information
-    // 3. Return the user data
-
-    // For now, return mock data
-    return {
-      sub: 'apple_user_123',
-      email: 'user@icloud.com',
-      given_name: 'Bob',
-      family_name: 'Johnson',
-    };
+  private verifyAppleToken(_token: string): Promise<never> {
+    return Promise.reject(
+      new BadRequestException('Apple authentication is not enabled on this deployment')
+    );
   }
 
   /**

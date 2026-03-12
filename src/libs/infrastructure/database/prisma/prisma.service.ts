@@ -2813,7 +2813,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
         clinicId,
         date: date,
         status: {
-          in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'IN_PROGRESS'],
+          in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
         },
       },
       select: appointmentTimeSlotSelectValidator,

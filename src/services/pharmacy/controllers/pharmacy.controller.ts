@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  Query,
   UseGuards,
   Request,
   ForbiddenException,
@@ -131,6 +132,15 @@ export class PharmacyController {
     return this.pharmacyService.findAllPrescriptions(clinicId);
   }
 
+  @Get('prescriptions/queue')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
+  @RequireResourcePermission('prescriptions', 'read')
+  @ApiOperation({ summary: 'Get active medicine desk queue' })
+  async getMedicineDeskQueue(@Request() req: ClinicAuthenticatedRequest) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.getMedicineDeskQueue(clinicId);
+  }
+
   /**
    * @endpoint POST /pharmacy/prescriptions
    * @access DOCTOR, ASSISTANT_DOCTOR
@@ -168,6 +178,49 @@ export class PharmacyController {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId);
+  }
+
+  @Get('prescriptions/:id/payment-summary')
+  @Roles(
+    Role.PATIENT,
+    Role.PHARMACIST,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST
+  )
+  @RequireResourcePermission('prescriptions', 'read', { requireOwnership: true })
+  @ApiOperation({ summary: 'Get prescription payment summary' })
+  async getPrescriptionPaymentSummary(
+    @Param('id') id: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.getPrescriptionPaymentSummary(id, clinicId, {
+      ...(req.user?.sub ? { userId: req.user.sub } : {}),
+      ...(req.user?.role ? { role: req.user.role } : {}),
+    });
+  }
+
+  @Post('prescriptions/:id/process-payment')
+  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.FINANCE_BILLING)
+  @RequireResourcePermission('prescriptions', 'update', { requireOwnership: true })
+  @ApiOperation({ summary: 'Create payment intent for prescription dispense' })
+  async processPrescriptionPayment(
+    @Param('id') id: string,
+    @Query('provider') provider: string | undefined,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.createPrescriptionPaymentIntent(
+      id,
+      clinicId,
+      {
+        ...(req.user?.sub ? { userId: req.user.sub } : {}),
+        ...(req.user?.role ? { role: req.user.role } : {}),
+      },
+      provider
+    );
   }
 
   /**

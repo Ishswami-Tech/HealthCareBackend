@@ -93,10 +93,13 @@ const patientTests = {
       locationId: ctx.locationId || undefined,
     });
     // Only pass if check-in actually succeeded (not validation errors)
-    // Note: 400 could mean already checked in (which is OK) or validation error (which is not OK)
-    // We'll accept 400 only if it's "already checked in", otherwise require success
+    // Note: 400 could mean arrival already confirmed (which is OK) or validation error (which is not OK)
+    // We'll accept 400 only if it's the idempotent already-confirmed case, otherwise require success
     const passed =
-      result.ok || (result.status === 400 && result.data?.message?.includes('already checked in'));
+      result.ok ||
+      (result.status === 400 &&
+        (result.data?.message?.includes('already confirmed') ||
+          result.data?.message?.includes('arrival is already confirmed')));
     ctx.checkInSucceeded = passed; // Track check-in success for subsequent tests
     ctx.recordTest('Check In Appointment', passed);
     return passed;
@@ -266,5 +269,3 @@ runPatientTests().catch(error => {
   console.error('Test suite failed:', error);
   process.exit(1);
 });
-
-

@@ -124,71 +124,72 @@ model Receptionist {
 }
 
 model Clinic {
-  id                     String                       @id @default(uuid())
-  clinicId               String                       @unique
-  name                   String
-  address                String
-  phone                  String
-  email                  String                       @unique
-  app_name               String                       @unique
-  db_connection_string   String
-  databaseName           String?
-  databaseStatus         DatabaseStatus               @default(CREATING)
-  databaseCreatedAt      DateTime?
-  databaseLastSync       DateTime?
-  isActive               Boolean                      @default(true)
-  createdAt              DateTime                     @default(now())
-  updatedAt              DateTime                     @updatedAt
-  createdBy              String
-  subdomain              String?                      @unique
-  logo                   String?
-  website                String?
-  description            String?
-  timezone               String?                      @default("UTC")
-  currency               String?                      @default("INR")
-  language               String?                      @default("en")
-  settings               Json?
-  appointments           Appointment[]
-  appointmentTemplates   AppointmentTemplate[]
-  ayurvedicTherapies     AyurvedicTherapy[]
-  businessRules          BusinessRule[]
-  checkInLocations       CheckInLocation[]
-  admins                 ClinicAdmin[]
-  doctors                DoctorClinic[]
-  eligibilityChecks      EligibilityCheck[]
-  eligibilityCriteria    EligibilityCriteria[]
-  rbacRoles              RbacRole[]
-  receptionists          Receptionist[]
-  pharmacists            Pharmacist[]
-  therapists             Therapist[]
-  labTechnicians         LabTechnician[]
-  financeBilling         FinanceBilling[]
-  supportStaff           SupportStaff[]
-  nurses                 Nurse[]
-  counselors             Counselor[]
-  recurringSeries        RecurringAppointmentSeries[]
-  followUpPlans          FollowUpPlan[]
-  resources              Resource[]
-  resourceBookings       ResourceBooking[]
-  rolePermissions        RolePermission[]
-  therapyQueues          TherapyQueue[]
-  therapySessions        TherapySession[]
-  userRoles              UserRole[]
-  waitlistEntries        WaitlistEntry[]
-  ReceptionistsAtClinic  ReceptionistsAtClinic[]
-  locations              ClinicLocation[]
-  createdByUser          User                         @relation("UserCreatedClinics", fields: [createdBy], references: [id])
-  primaryUsers           User[]                       @relation("UserPrimaryClinic")
-  videoConsultations     VideoConsultation[]
-  users                  User[]                       @relation("UserClinics")
-  checkIns               CheckIn[]
-  locationHeads          LocationHead[]
-  emailSuppressions      EmailSuppressionList[]
-  whatsappSuppressions   WhatsAppSuppressionList[]
-  suppliers              Supplier[]
-  clinicExpenses         ClinicExpense[]
-  insuranceClaims        InsuranceClaim[]
-  communicationTemplates CommunicationTemplate[]
+  id                           String                              @id @default(uuid())
+  clinicId                     String                              @unique
+  name                         String
+  address                      String
+  phone                        String
+  email                        String                              @unique
+  app_name                     String                              @unique
+  db_connection_string         String
+  databaseName                 String?
+  databaseStatus               DatabaseStatus                      @default(CREATING)
+  databaseCreatedAt            DateTime?
+  databaseLastSync             DateTime?
+  isActive                     Boolean                             @default(true)
+  createdAt                    DateTime                            @default(now())
+  updatedAt                    DateTime                            @updatedAt
+  createdBy                    String
+  subdomain                    String?                             @unique
+  logo                         String?
+  website                      String?
+  description                  String?
+  timezone                     String?                             @default("UTC")
+  currency                     String?                             @default("INR")
+  language                     String?                             @default("en")
+  settings                     Json?
+  appointments                 Appointment[]
+  appointmentTemplates         AppointmentTemplate[]
+  ayurvedicTherapies           AyurvedicTherapy[]
+  businessRules                BusinessRule[]
+  checkInLocations             CheckInLocation[]
+  admins                       ClinicAdmin[]
+  doctors                      DoctorClinic[]
+  eligibilityChecks            EligibilityCheck[]
+  eligibilityCriteria          EligibilityCriteria[]
+  rbacRoles                    RbacRole[]
+  receptionists                Receptionist[]
+  pharmacists                  Pharmacist[]
+  therapists                   Therapist[]
+  labTechnicians               LabTechnician[]
+  financeBilling               FinanceBilling[]
+  supportStaff                 SupportStaff[]
+  nurses                       Nurse[]
+  counselors                   Counselor[]
+  recurringSeries              RecurringAppointmentSeries[]
+  followUpPlans                FollowUpPlan[]
+  resources                    Resource[]
+  resourceBookings             ResourceBooking[]
+  rolePermissions              RolePermission[]
+  therapyQueues                TherapyQueue[]
+  assistantCoverageAssignments AssistantDoctorCoverageAssignment[]
+  therapySessions              TherapySession[]
+  userRoles                    UserRole[]
+  waitlistEntries              WaitlistEntry[]
+  ReceptionistsAtClinic        ReceptionistsAtClinic[]
+  locations                    ClinicLocation[]
+  createdByUser                User                                @relation("UserCreatedClinics", fields: [createdBy], references: [id])
+  primaryUsers                 User[]                              @relation("UserPrimaryClinic")
+  videoConsultations           VideoConsultation[]
+  users                        User[]                              @relation("UserClinics")
+  checkIns                     CheckIn[]
+  locationHeads                LocationHead[]
+  emailSuppressions            EmailSuppressionList[]
+  whatsappSuppressions         WhatsAppSuppressionList[]
+  suppliers                    Supplier[]
+  clinicExpenses               ClinicExpense[]
+  insuranceClaims              InsuranceClaim[]
+  communicationTemplates       CommunicationTemplate[]
 
   @@index([app_name])
   @@index([isActive])
@@ -378,27 +379,29 @@ model LocationHead {
 }
 
 model Doctor {
-  id                   String                @id @default(uuid())
-  userId               String                @unique
-  specialization       String
-  experience           Int
-  qualification        String?
-  consultationFee      Float?
-  rating               Float?                @default(0.0)
-  isAvailable          Boolean               @default(true)
-  workingHours         Json?
-  createdAt            DateTime              @default(now())
-  appointments         Appointment[]
-  appointmentTemplates AppointmentTemplate[]
-  user                 User                  @relation(fields: [userId], references: [id])
-  clinics              DoctorClinic[]
-  healthRecords        HealthRecord[]
-  prescriptions        Prescription[]
-  reviews              Review[]
-  therapySessions      TherapySession[]
-  waitlistEntries      WaitlistEntry[]
-  videoConsultations   VideoConsultation[]
-  followUpPlans        FollowUpPlan[]
+  id                           String                              @id @default(uuid())
+  userId                       String                              @unique
+  specialization               String
+  experience                   Int
+  qualification                String?
+  consultationFee              Float?
+  rating                       Float?                              @default(0.0)
+  isAvailable                  Boolean                             @default(true)
+  workingHours                 Json?
+  createdAt                    DateTime                            @default(now())
+  appointments                 Appointment[]
+  appointmentTemplates         AppointmentTemplate[]
+  user                         User                                @relation(fields: [userId], references: [id])
+  clinics                      DoctorClinic[]
+  healthRecords                HealthRecord[]
+  prescriptions                Prescription[]
+  reviews                      Review[]
+  therapySessions              TherapySession[]
+  waitlistEntries              WaitlistEntry[]
+  videoConsultations           VideoConsultation[]
+  followUpPlans                FollowUpPlan[]
+  primaryCoverageAssignments   AssistantDoctorCoverageAssignment[] @relation("AssistantCoveragePrimaryDoctor")
+  assistantCoverageAssignments AssistantDoctorCoverageAssignment[] @relation("AssistantCoverageAssistantDoctor")
 }
 
 model Patient {
@@ -1964,6 +1967,25 @@ model QueueEntry {
   @@index([position])
 }
 
+model AssistantDoctorCoverageAssignment {
+  id                String   @id @default(uuid())
+  clinicId          String
+  assistantDoctorId String
+  primaryDoctorId   String
+  isActive          Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  clinic            Clinic   @relation(fields: [clinicId], references: [id])
+  assistantDoctor   Doctor   @relation("AssistantCoverageAssistantDoctor", fields: [assistantDoctorId], references: [id])
+  primaryDoctor     Doctor   @relation("AssistantCoveragePrimaryDoctor", fields: [primaryDoctorId], references: [id])
+
+  @@unique([clinicId, assistantDoctorId, primaryDoctorId])
+  @@index([clinicId])
+  @@index([assistantDoctorId])
+  @@index([primaryDoctorId])
+  @@index([clinicId, isActive])
+}
+
 model CheckInLocation {
   id             String          @id @default(uuid())
   clinicId       String
@@ -2036,7 +2058,6 @@ enum Gender {
 
 enum AppointmentStatus {
   SCHEDULED
-  CHECKED_IN
   CONFIRMED
   IN_PROGRESS
   COMPLETED

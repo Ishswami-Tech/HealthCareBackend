@@ -18,7 +18,6 @@ export enum UserStatus {
  */
 export enum AppointmentStatus {
   SCHEDULED = 'SCHEDULED',
-  CHECKED_IN = 'CHECKED_IN',
   CONFIRMED = 'CONFIRMED',
   IN_PROGRESS = 'IN_PROGRESS',
   COMPLETED = 'COMPLETED',

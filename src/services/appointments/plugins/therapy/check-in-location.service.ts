@@ -12,6 +12,7 @@ import { LocationCacheService } from '@infrastructure/cache/services/location-ca
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import { AppointmentQueueService } from '@infrastructure/queue';
 import type { ClinicLocationResponseDto } from '@core/types/clinic.types';
 import type {
   CheckInLocation,
@@ -22,10 +23,6 @@ import type {
   VerifyCheckInDto,
   CheckInValidation,
 } from '@core/types/appointment.types';
-import type {
-  PrismaTransactionClientWithDelegates,
-  PrismaDelegateArgs,
-} from '@core/types/prisma.types';
 
 @Injectable()
 export class CheckInLocationService {
@@ -36,6 +33,8 @@ export class CheckInLocationService {
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => AppointmentQueueService))
+    private readonly appointmentQueueService: AppointmentQueueService,
     @Optional()
     @Inject(forwardRef(() => LocationCacheService))
     private readonly locationCacheService?: LocationCacheService,
@@ -43,6 +42,33 @@ export class CheckInLocationService {
     @Inject(forwardRef(() => ClinicLocationService))
     private readonly clinicLocationService?: ClinicLocationService
   ) {}
+
+  private async ensureActiveInPersonCoverage(appointment: {
+    clinicId?: string | null;
+    subscriptionId?: string | null;
+    isSubscriptionBased?: boolean | null;
+  }): Promise<void> {
+    if (!appointment.subscriptionId || !appointment.isSubscriptionBased) {
+      throw new BadRequestException(
+        'This in-person appointment is not linked to an active subscription'
+      );
+    }
+
+    const subscription = await this.databaseService.findSubscriptionByIdSafe(
+      appointment.subscriptionId
+    );
+    if (!subscription || subscription.clinicId !== appointment.clinicId) {
+      throw new BadRequestException('Linked subscription was not found for this appointment');
+    }
+
+    if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
+      throw new BadRequestException('Linked subscription is no longer active');
+    }
+
+    if (subscription.currentPeriodEnd < new Date()) {
+      throw new BadRequestException('Linked subscription coverage period has ended');
+    }
+  }
 
   /**
    * Create a new check-in location
@@ -591,7 +617,7 @@ export class CheckInLocationService {
         throw new NotFoundException(`Appointment with ID ${data.appointmentId} not found`);
       }
 
-      // Check if already checked in using executeHealthcareRead
+      // Check if arrival has already been recorded using executeHealthcareRead
       const existingCheckIn = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
@@ -607,7 +633,7 @@ export class CheckInLocationService {
       });
 
       if (existingCheckIn) {
-        throw new BadRequestException('Appointment already checked in');
+        throw new BadRequestException('Appointment arrival is already confirmed');
       }
 
       // Get location details using executeHealthcareRead
@@ -731,26 +757,7 @@ export class CheckInLocationService {
         throw new NotFoundException(`Appointment ${data.appointmentId} not found`);
       }
 
-      // Check if queue already exists (before creating/updating)
-      let existingQueue: { id: string } | null = null;
-      try {
-        existingQueue = await this.databaseService.executeHealthcareRead<{ id: string } | null>(
-          async client => {
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-              queue: {
-                findUnique: <T>(args: T) => Promise<{ id: string } | null>;
-              };
-            };
-            return await typedClient.queue.findUnique({
-              where: { appointmentId: data.appointmentId } as PrismaDelegateArgs,
-              select: { id: true } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }
-        );
-      } catch {
-        // Queue doesn't exist yet, will create new one
-        existingQueue = null;
-      }
+      await this.ensureActiveInPersonCoverage(appointmentRecord);
 
       // Update appointment status using executeHealthcareWrite
       await this.databaseService.executeHealthcareWrite(
@@ -762,7 +769,7 @@ export class CheckInLocationService {
             where: { id: data.appointmentId },
             data: {
               checkedInAt: new Date(),
-              status: 'CHECKED_IN',
+              status: 'CONFIRMED',
             },
           });
         },
@@ -773,69 +780,21 @@ export class CheckInLocationService {
           operation: 'UPDATE',
           resourceId: data.appointmentId,
           userRole: 'patient',
-          details: { status: 'CHECKED_IN' },
+          details: { status: 'CONFIRMED' },
         }
       );
 
-      // Create or update Queue record with locationId
-      await this.databaseService.executeHealthcareWrite(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-            queue: {
-              findMany: <T>(args: T) => Promise<Array<{ queueNumber?: number }>>;
-              update: <T>(args: T) => Promise<unknown>;
-              create: <T>(args: T) => Promise<unknown>;
-            };
-          };
-
-          // Count existing queues for this location to calculate queue number
-          const locationQueues = await typedClient.queue.findMany({
-            where: {
-              locationId: data.locationId,
-              status: { in: ['WAITING', 'IN_PROGRESS'] },
-            } as PrismaDelegateArgs,
-            orderBy: { queueNumber: 'desc' } as PrismaDelegateArgs,
-            take: 1,
-          } as PrismaDelegateArgs);
-
-          const queueNumber =
-            locationQueues.length > 0
-              ? ((locationQueues[0] as { queueNumber?: number })?.queueNumber ?? 0) + 1
-              : 1;
-
-          if (existingQueue) {
-            // Update existing queue
-            return await typedClient.queue.update({
-              where: { appointmentId: data.appointmentId } as PrismaDelegateArgs,
-              data: {
-                locationId: data.locationId,
-                status: 'WAITING',
-                queueNumber: queueNumber,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          } else {
-            // Create new queue record
-            return await typedClient.queue.create({
-              data: {
-                appointmentId: data.appointmentId,
-                clinicId: location.clinicId,
-                locationId: data.locationId,
-                queueNumber: queueNumber,
-                status: 'WAITING',
-                estimatedWaitTime: queueNumber * 10, // 10 minutes per position
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }
-        },
+      // Use the shared live queue service so QR/manual/reception flows converge on one queue path.
+      await this.appointmentQueueService.checkIn(
         {
-          userId: data.patientId,
-          clinicId: location?.clinicId || '',
-          resourceType: 'QUEUE',
-          operation: existingQueue ? 'UPDATE' : 'CREATE',
-          resourceId: data.appointmentId,
-          userRole: 'patient',
-          details: { appointmentId: data.appointmentId, locationId: data.locationId },
-        }
+          appointmentId: data.appointmentId,
+          doctorId: appointmentRecord.doctorId,
+          patientId: data.patientId,
+          clinicId: location.clinicId,
+          appointmentType: appointmentRecord.type,
+          locationId: data.locationId,
+        },
+        'clinic'
       );
 
       // Invalidate cache using proper method
