@@ -2426,11 +2426,16 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         # Verify schema using base64 encoding to avoid shell escaping issues
         # CRITICAL: Run from /app root and use direct node call to avoid npx path resolution issues
         # This matches how run-prisma.js executes the CLI
-        if docker exec "${CONTAINER_PREFIX}api" sh -c "
+        validation_output=$(docker exec "${CONTAINER_PREFIX}api" sh -c "
             export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
             unset DIRECT_URL
             cd /app && node scripts/run-prisma.js validate
-        " 2>&1; then
+        " 2>&1)
+        validation_exit_code=$?
+        
+        echo "$validation_output"
+        
+        if [[ $validation_exit_code -eq 0 ]]; then
             log_success "Schema validation passed"
             return 0
         else
