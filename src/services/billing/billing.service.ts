@@ -1029,6 +1029,34 @@ export class BillingService {
 
     await this.eventService.emit('billing.payment.updated', { paymentId: id });
 
+    const paymentMetadata =
+      payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
+        ? (payment.metadata as Record<string, unknown>)
+        : {};
+    const paymentFor =
+      typeof paymentMetadata['paymentFor'] === 'string' ? paymentMetadata['paymentFor'] : '';
+    if (
+      String(data.status || payment.status) === String(PaymentStatus.COMPLETED) &&
+      paymentFor.toUpperCase() === 'PRESCRIPTION_DISPENSE'
+    ) {
+      await this.eventService.emit('pharmacy.medicine_desk.updated', {
+        clinicId: payment.clinicId,
+        paymentId: id,
+        prescriptionId:
+          typeof paymentMetadata['prescriptionId'] === 'string'
+            ? paymentMetadata['prescriptionId']
+            : null,
+        action: 'PAYMENT_UPDATED',
+        queueCategory:
+          typeof paymentMetadata['queueCategory'] === 'string'
+            ? paymentMetadata['queueCategory']
+            : 'MEDICINE_DESK',
+        paymentStatus: 'PAID',
+        pendingAmount: 0,
+        queueStatus: 'PENDING',
+      });
+    }
+
     // Invalidate cache if payment has userId
     if ('userId' in payment && payment.userId) {
       await this.cacheService.invalidateCacheByTag(`user_payments:${payment.userId}`);

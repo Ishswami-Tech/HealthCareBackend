@@ -58,8 +58,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   // Check-In Errors
   [ErrorCode.CHECKIN_NO_APPOINTMENT_FOUND]:
     'No appointment found for this location. Please ensure you have a scheduled appointment.',
-  [ErrorCode.CHECKIN_ALREADY_CHECKED_IN]:
-    'You have already checked in for this appointment. Please wait for your turn.',
+  [ErrorCode.CHECKIN_ALREADY_CONFIRMED]:
+    'Your clinic arrival is already confirmed for this appointment. Please wait for your turn.',
   [ErrorCode.CHECKIN_WRONG_LOCATION]:
     'This appointment is scheduled for a different location. Please go to the correct location.',
   [ErrorCode.CHECKIN_APPOINTMENT_EXPIRED]:

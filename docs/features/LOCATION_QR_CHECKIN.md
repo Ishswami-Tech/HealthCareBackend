@@ -1,6 +1,7 @@
 # 📍 Static Location-Based QR Code Check-In System
 
 ## 📋 Table of Contents
+
 1. [Overview](#overview)
 2. [Complete Patient Journey](#complete-patient-journey)
 3. [Real-World Example](#real-world-example-aadesh-ayurveda)
@@ -18,10 +19,12 @@
 ### 🔑 What is Static Location QR?
 
 A **static location-based QR code** check-in system where:
+
 - ✅ Each physical clinic location gets **ONE permanent QR code**
 - ✅ QR code is **static** (never changes, can be printed and displayed)
 - ✅ **All patients** at that location scan the **SAME QR code**
-- ✅ System **automatically finds** each patient's appointment for that specific location
+- ✅ System **automatically finds** each patient's appointment for that specific
+  location
 - ✅ Patient must physically visit the location where they booked appointment
 
 ### How It Works
@@ -61,7 +64,7 @@ A **static location-based QR code** check-in system where:
 │    ↓                                                          │
 │  Validates: ✓ Date is today                                  │
 │            ✓ Status is CONFIRMED                             │
-│            ✓ Not already checked in                          │
+│            ✓ Arrival not already confirmed                   │
 │    ↓                                                          │
 │  ✅ CHECK-IN SUCCESSFUL                                       │
 │    ↓                                                          │
@@ -78,6 +81,7 @@ A **static location-based QR code** check-in system where:
 #### Stage 1: Appointment Booking (Mobile App/Web)
 
 **Patient Action**:
+
 1. Opens Aadesh Ayurveda mobile app
 2. Clicks "Book Appointment"
 3. Fills form:
@@ -91,6 +95,7 @@ A **static location-based QR code** check-in system where:
 4. Confirms booking
 
 **System Action**:
+
 ```typescript
 // Appointment created with location
 {
@@ -108,6 +113,7 @@ A **static location-based QR code** check-in system where:
 #### Stage 2: Appointment Day - Physical Visit
 
 **Patient Action**:
+
 1. Arrives at **Pune Branch** physical clinic (Shop No. 5, FC Road, Pune)
 2. Sees QR code poster at reception desk
 3. Opens mobile app
@@ -115,6 +121,7 @@ A **static location-based QR code** check-in system where:
 5. Scans Pune QR code
 
 **Mobile App**:
+
 ```typescript
 // Scan QR and send to backend
 const qrCode = await scanQRCode(); // "CHK-aadesh-pune-1234567890-abc"
@@ -122,20 +129,21 @@ const qrCode = await scanQRCode(); // "CHK-aadesh-pune-1234567890-abc"
 const response = await fetch('/api/appointments/check-in/scan-qr', {
   method: 'POST',
   headers: {
-    'Authorization': `Bearer ${userToken}`,  // User identity
+    Authorization: `Bearer ${userToken}`, // User identity
     'X-Clinic-ID': 'aadesh-ayurveda',
-    'Content-Type': 'application/json'
+    'Content-Type': 'application/json',
   },
   body: JSON.stringify({
     qrCode,
-    coordinates: await getGPS()  // Optional geofencing
-  })
+    coordinates: await getGPS(), // Optional geofencing
+  }),
 });
 ```
 
 #### Stage 3: Backend Processing
 
 **System Process**:
+
 ```
 1. Extract QR code → "CHK-aadesh-pune-1234567890-abc"
 2. Find location → "Pune Branch" (id: pune-location-id)
@@ -148,14 +156,15 @@ const response = await fetch('/api/appointments/check-in/scan-qr', {
    AND status IN ('CONFIRMED', 'SCHEDULED')
 
 5. Found: Appointment with Dr. Patil at 10:00 AM
-6. Validate: Not already checked in
+6. Validate: Arrival not already confirmed
 7. Create CheckIn record
-8. Update appointment status → 'CHECKED_IN'
+8. Update appointment status → 'CONFIRMED'
 9. Add to Dr. Patil's queue
 10. Calculate queue position
 ```
 
 **Response to Patient**:
+
 ```json
 {
   "success": true,
@@ -173,6 +182,7 @@ const response = await fetch('/api/appointments/check-in/scan-qr', {
 ```
 
 **Patient App Display**:
+
 ```
 ┌─────────────────────────────────────────┐
 │  ✅ Check-In Successful!                │
@@ -194,8 +204,8 @@ const response = await fetch('/api/appointments/check-in/scan-qr', {
 
 ### Clinic Setup
 
-**Clinic Name**: Aadesh Ayurveda
-**Multiple Branches**:
+**Clinic Name**: Aadesh Ayurveda **Multiple Branches**:
+
 - 📍 **Pune Branch** - Shop No. 5, FC Road, Pune, Maharashtra 411004
 - 📍 **Mumbai Branch** - Andheri West, Mumbai, Maharashtra 400053
 
@@ -231,6 +241,7 @@ Response:
 ```
 
 **QR Code Display**:
+
 - Pune QR → Printed A4 poster at Pune reception
 - Mumbai QR → Printed A4 poster at Mumbai reception
 
@@ -238,10 +249,10 @@ Response:
 
 #### ✅ Scenario 1: Correct Location
 
-**Patient**: Rahul Sharma
-**Appointment**: Pune Branch, Dr. Patil, 10:00 AM
+**Patient**: Rahul Sharma **Appointment**: Pune Branch, Dr. Patil, 10:00 AM
 
 **Flow**:
+
 1. **Books appointment** → Selects "Pune Branch"
 2. **Arrives at Pune clinic** → Physically visits Pune
 3. **Scans Pune QR** → "CHK-aadesh-pune-..."
@@ -250,10 +261,10 @@ Response:
 
 #### ✅ Scenario 2: Another Patient, Same Location
 
-**Patient**: Priya Desai
-**Appointment**: Pune Branch, Dr. Sharma, 11:00 AM
+**Patient**: Priya Desai **Appointment**: Pune Branch, Dr. Sharma, 11:00 AM
 
 **Flow**:
+
 1. **Books appointment** → Selects "Pune Branch"
 2. **Arrives at Pune clinic** → Same physical location as Rahul
 3. **Scans SAME Pune QR** → Same QR code as Rahul scanned
@@ -262,10 +273,10 @@ Response:
 
 #### ✅ Scenario 3: Different Location
 
-**Patient**: Amit Patel
-**Appointment**: Mumbai Branch, Dr. Joshi, 2:00 PM
+**Patient**: Amit Patel **Appointment**: Mumbai Branch, Dr. Joshi, 2:00 PM
 
 **Flow**:
+
 1. **Books appointment** → Selects "Mumbai Branch"
 2. **Arrives at Mumbai clinic** → Physically visits Mumbai
 3. **Scans Mumbai QR** → "CHK-aadesh-mumbai-..."
@@ -274,10 +285,10 @@ Response:
 
 #### ❌ Scenario 4: Wrong Location (Error)
 
-**Patient**: Suresh Kumar
-**Appointment**: Pune Branch, Dr. Patil, 3:00 PM
+**Patient**: Suresh Kumar **Appointment**: Pune Branch, Dr. Patil, 3:00 PM
 
 **Flow**:
+
 1. **Books appointment** → Selects "Pune Branch"
 2. **Goes to Mumbai by mistake** → Wrong physical location!
 3. **Scans Mumbai QR** → "CHK-aadesh-mumbai-..."
@@ -285,6 +296,7 @@ Response:
 5. **❌ Error**: "No appointment found for this location"
 
 **Error Response**:
+
 ```json
 {
   "success": false,
@@ -299,7 +311,8 @@ Response:
 }
 ```
 
-**Patient Action**: Realizes mistake, travels to Pune, scans Pune QR → ✅ Success
+**Patient Action**: Realizes mistake, travels to Pune, scans Pune QR → ✅
+Success
 
 ---
 
@@ -307,19 +320,20 @@ Response:
 
 ### ✅ 100% Complete - Production Ready
 
-| Component | Status | File Location |
-|-----------|--------|---------------|
-| **Services** | ✅ Complete | `src/services/appointments/plugins/` |
-| **Controller** | ✅ Complete | `check-in.controller.ts` |
-| **DTOs** | ✅ Complete | `src/libs/dtos/appointment.dto.ts` |
-| **Database Models** | ✅ Complete | Prisma schema |
-| **QR Generation** | ✅ Complete | `src/libs/utils/QR/` |
-| **Error Handling** | ✅ Complete | 7 error codes |
-| **Documentation** | ✅ Complete | This file |
+| Component           | Status      | File Location                        |
+| ------------------- | ----------- | ------------------------------------ |
+| **Services**        | ✅ Complete | `src/services/appointments/plugins/` |
+| **Controller**      | ✅ Complete | `check-in.controller.ts`             |
+| **DTOs**            | ✅ Complete | `src/libs/dtos/appointment.dto.ts`   |
+| **Database Models** | ✅ Complete | Prisma schema                        |
+| **QR Generation**   | ✅ Complete | `src/libs/utils/QR/`                 |
+| **Error Handling**  | ✅ Complete | 7 error codes                        |
+| **Documentation**   | ✅ Complete | This file                            |
 
 ### Services Implemented
 
 #### 1. CheckInLocationService
+
 - ✅ `createCheckInLocation()` - Create location with QR
 - ✅ `getLocationByQRCode()` - Find location by QR
 - ✅ `getClinicLocations()` - List all locations
@@ -328,6 +342,7 @@ Response:
 - ✅ Full CRUD operations
 
 #### 2. CheckInService
+
 - ✅ `checkIn()` - Manual check-in
 - ✅ `processCheckIn()` - QR-based check-in
 - ✅ `findUserAppointmentsForLocation()` - Smart appointment matching
@@ -335,10 +350,12 @@ Response:
 - ✅ Ayurvedic therapy support
 
 #### 3. QrService
+
 - ✅ `generateQR()` - Generate QR image (base64/PNG)
 - ✅ Supports multiple formats
 
 #### 4. AppointmentQueueService
+
 - ✅ Queue position tracking
 - ✅ Estimated wait time calculation
 - ✅ Queue reordering
@@ -394,6 +411,7 @@ model CheckIn {
 **Auth**: Required (JWT) - Patient/Doctor/Receptionist
 
 **Request**:
+
 ```json
 {
   "qrCode": "CHK-aadesh-pune-1234567890-abc",
@@ -409,6 +427,7 @@ model CheckIn {
 ```
 
 **Success Response** (200):
+
 ```json
 {
   "success": true,
@@ -427,26 +446,30 @@ model CheckIn {
 
 **Error Responses**:
 
-| Code | Status | Description |
-|------|--------|-------------|
-| NO_APPOINTMENT_FOUND | 404 | No appointment at this location |
-| ALREADY_CHECKED_IN | 400 | Already checked in |
-| LOCATION_NOT_FOUND | 404 | Invalid QR code |
-| LOCATION_INACTIVE | 400 | Location disabled |
+| Code                 | Status | Description                     |
+| -------------------- | ------ | ------------------------------- |
+| NO_APPOINTMENT_FOUND | 404    | No appointment at this location |
+| ALREADY_CONFIRMED    | 400    | Arrival already confirmed       |
+| LOCATION_NOT_FOUND   | 404    | Invalid QR code                 |
+| LOCATION_INACTIVE    | 400    | Location disabled               |
 
 ### 2. Get Location QR Image
 
 **Endpoint**: `GET /api/appointments/locations/:locationId/qr-code`
 
-**Note**: The endpoint path is `/appointments/locations/:locationId/qr-code` (not `/appointments/check-in/locations/:locationId/qr-code`) to maintain consistency with the controller routing structure.
+**Note**: The endpoint path is `/appointments/locations/:locationId/qr-code`
+(not `/appointments/check-in/locations/:locationId/qr-code`) to maintain
+consistency with the controller routing structure.
 
 **Auth**: Required - Admin/Receptionist/Doctor
 
 **Query Params**:
+
 - `format` (optional): `base64` (default), `png`, `svg`
 - `size` (optional): `300` (default)
 
 **Response**:
+
 ```json
 {
   "qrCode": "data:image/png;base64,iVBORw0KGgo...",
@@ -463,9 +486,11 @@ model CheckIn {
 **Auth**: Required - Admin/Receptionist/Doctor
 
 **Query Params**:
+
 - `isActive` (optional): `true` / `false`
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -492,6 +517,7 @@ model CheckIn {
 **Auth**: Required - Clinic Admin only
 
 **Request**:
+
 ```json
 {
   "clinicId": "aadesh-ayurveda-id",
@@ -505,6 +531,7 @@ model CheckIn {
 ```
 
 **Response**:
+
 ```json
 {
   "success": true,
@@ -716,7 +743,7 @@ export default function CheckInScreen() {
 - [ ] Admin can download QR code image
 - [ ] Patient with valid appointment can check in
 - [ ] Patient at wrong location gets error
-- [ ] Already checked-in patient gets error
+- [ ] Already-confirmed patient gets idempotent response/error
 - [ ] Patient without appointment gets error
 - [ ] Queue position is calculated correctly
 - [ ] Geofencing works if GPS provided
@@ -756,16 +783,18 @@ curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
 ### Issue: "No appointment found for this location"
 
 **Causes**:
+
 1. Patient doesn't have appointment at this location
 2. Appointment is for different date
 3. Appointment status is not CONFIRMED/SCHEDULED
 
 **Solutions**:
+
 1. Check appointment booking - verify location selected
 2. Ensure appointment is for today or upcoming
 3. Confirm appointment status in database
 
-### Issue: "Appointment already checked in"
+### Issue: "Appointment arrival is already confirmed"
 
 **Cause**: Patient scanned QR twice
 
@@ -774,11 +803,13 @@ curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
 ### Issue: QR scanner not working
 
 **Causes**:
+
 1. Camera permissions denied
 2. QR code image quality poor
 3. Scanner library issues
 
 **Solutions**:
+
 1. Request camera permissions
 2. Regenerate QR with higher resolution
 3. Test with different QR scanner library
@@ -788,6 +819,7 @@ curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
 **Cause**: GPS validation failed
 
 **Solutions**:
+
 1. Increase geofencing radius
 2. Disable GPS validation if not needed
 3. Check if patient is physically at location
@@ -810,6 +842,7 @@ curl http://localhost:8088/api/appointments/locations/LOCATION_ID/qr-code \
 ## QR Code Format
 
 ### Structure
+
 ```
 CHK-{clinicPrefix}-{locationHash}-{timestamp}-{random}
 
@@ -825,6 +858,7 @@ Components:
 ```
 
 ### Properties
+
 - **Type**: Plain string (not JSON)
 - **Lifetime**: Permanent (never expires)
 - **Uniqueness**: Guaranteed unique per location
@@ -865,7 +899,5 @@ Components:
 
 ---
 
-**Version**: 2.0.0
-**Last Updated**: 2024-12-15
-**Status**: ✅ **Production Ready - 100% Complete**
-**Maintained By**: Healthcare Backend Team
+**Version**: 2.0.0 **Last Updated**: 2024-12-15 **Status**: ✅ **Production
+Ready - 100% Complete** **Maintained By**: Healthcare Backend Team

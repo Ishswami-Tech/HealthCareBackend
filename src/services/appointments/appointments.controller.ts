@@ -12,6 +12,7 @@ import {
   Request,
   HttpStatus,
   HttpCode,
+  HttpException,
   ParseUUIDPipe,
   ValidationPipe,
   UsePipes,
@@ -26,6 +27,7 @@ import {
   ApiTags,
   ApiOperation,
   ApiResponse,
+  ApiOkResponse,
   ApiParam,
   ApiQuery,
   ApiBearerAuth,
@@ -72,10 +74,15 @@ import {
   RecurringSeriesResponseDto,
   UpdateFollowUpPlanDto,
   UpdateAppointmentStatusDto,
+  ReassignAppointmentDoctorDto,
+  AppointmentReassignmentCandidatesResponseDto,
+  UpdateAssistantDoctorCoverageDto,
+  AssistantDoctorCoverageResponseDto,
   ProcessCheckInDto,
   StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
+  AppointmentServiceCatalogResponseDto,
 } from '@dtos/appointment.dto';
 import {
   VideoTokenResponseDto,
@@ -270,6 +277,87 @@ export class AppointmentsController {
 
       throw _error;
     }
+  }
+
+  @Get('services/catalog')
+  @Public()
+  @ApiOperation({
+    summary: 'Get backend-owned appointment service catalog',
+    description:
+      'Returns bookable appointment and treatment metadata used by frontend booking, queue, and role dashboards.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Appointment service catalog retrieved successfully',
+    type: AppointmentServiceCatalogResponseDto,
+  })
+  getAppointmentServiceCatalog(): ServiceResponse<AppointmentServiceCatalogResponseDto> {
+    const services = this.appointmentService.getAppointmentServiceCatalog();
+
+    return {
+      success: true,
+      data: { services },
+      message: 'Appointment service catalog retrieved successfully',
+    };
+  }
+
+  @Get('assistant-coverage')
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @ClinicRoute()
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 30, duration: 60 })
+  @ApiOperation({
+    summary: 'Get assistant doctor coverage configuration',
+    description:
+      'Returns clinic-level assistant-doctor coverage assignments using the normalized relational model.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Assistant doctor coverage fetched successfully',
+    type: AssistantDoctorCoverageResponseDto,
+  })
+  async getAssistantDoctorCoverage(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AssistantDoctorCoverageResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId || '';
+    const entries = await this.appointmentService.getClinicAssistantDoctorCoverage(clinicId);
+
+    return {
+      success: true,
+      data: { entries },
+      message: 'Assistant doctor coverage fetched successfully',
+    };
+  }
+
+  @Put('assistant-coverage')
+  @Roles(Role.CLINIC_ADMIN)
+  @ClinicRoute()
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Persist assistant doctor coverage configuration',
+    description:
+      'Stores clinic-level assistant-doctor coverage assignments in the normalized relational model.',
+  })
+  @ApiBody({ type: UpdateAssistantDoctorCoverageDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Assistant doctor coverage saved successfully',
+    type: AssistantDoctorCoverageResponseDto,
+  })
+  async updateAssistantDoctorCoverage(
+    @Body(ValidationPipe) dto: UpdateAssistantDoctorCoverageDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AssistantDoctorCoverageResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId || '';
+    await this.appointmentService.syncClinicAssistantDoctorCoverage(clinicId, dto.entries);
+    const entries = await this.appointmentService.getClinicAssistantDoctorCoverage(clinicId);
+
+    return {
+      success: true,
+      data: { entries },
+      message: 'Assistant doctor coverage saved successfully',
+    };
   }
 
   @Post('video/propose')
@@ -2607,12 +2695,101 @@ export class AppointmentsController {
         }
       );
 
-      if (error instanceof HealthcareError) {
+      if (error instanceof HealthcareError || error instanceof HttpException) {
         throw error;
       }
 
       throw this.errors.internalServerError(context);
     }
+  }
+
+  @Get(':id/reassignment-candidates')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 40, duration: 60 })
+  @ApiOperation({
+    summary: 'Get eligible servicing doctor candidates for an appointment',
+    description:
+      'Returns doctor and assistant-doctor candidates filtered by clinic assignment, location, service eligibility, and assistant coverage configuration.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiOkResponse({
+    description: 'Reassignment candidates resolved successfully',
+    type: AppointmentReassignmentCandidatesResponseDto,
+  })
+  async getAppointmentReassignmentCandidates(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentReassignmentCandidatesResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId || '';
+    const candidates = await this.appointmentService.getAppointmentReassignmentCandidates(
+      appointmentId,
+      clinicId
+    );
+
+    return {
+      success: true,
+      data: {
+        candidates,
+      },
+      message: 'Appointment reassignment candidates fetched successfully',
+    };
+  }
+
+  @Post(':id/reassign-doctor')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update', {
+    requireOwnership: false,
+  })
+  @UseGuards(JwtAuthGuard, RolesGuard, ClinicGuard, RbacGuard)
+  @RateLimitAPI({ points: 20, duration: 60 })
+  @ApiOperation({
+    summary: 'Reassign an appointment to another servicing doctor',
+    description:
+      'Preserves the original booked doctor in metadata and updates the active servicing doctor for queue and consultation flow.',
+  })
+  @ApiParam({
+    name: 'id',
+    description: 'ID of the appointment',
+    type: 'string',
+  })
+  @ApiBody({
+    type: ReassignAppointmentDoctorDto,
+  })
+  @InvalidateAppointmentCache()
+  async reassignAppointmentDoctor(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) reassignDto: ReassignAppointmentDoctorDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<unknown>> {
+    const userId = req.user?.id || '';
+    const clinicId = req.clinicContext?.clinicId || '';
+
+    const result = await this.appointmentService.reassignDoctor(
+      appointmentId,
+      reassignDto.doctorId,
+      userId,
+      clinicId,
+      req.user?.role || 'USER',
+      reassignDto.reason
+    );
+
+    return {
+      success: true,
+      data: result,
+      message: 'Appointment reassigned successfully',
+    };
   }
 
   /**
@@ -2714,7 +2891,7 @@ export class AppointmentsController {
    * POST /appointments/:id/check-in
    */
   /**
-   * @deprecated Use PATCH /appointments/:id/status with status=CHECKED_IN instead
+   * @deprecated Use PATCH /appointments/:id/status with status=CONFIRMED instead
    */
   @Post(':id/check-in')
   @HttpCode(HttpStatus.OK)
@@ -2800,7 +2977,7 @@ export class AppointmentsController {
   }
 
   /**
-   * @deprecated Use PATCH /appointments/:id/status with status=CHECKED_IN (with override) instead
+   * @deprecated Use PATCH /appointments/:id/status with status=CONFIRMED (with override) instead
    */
   @Post(':id/force-check-in')
   @HttpCode(HttpStatus.OK)
@@ -2903,9 +3080,9 @@ export class AppointmentsController {
         throw this.errors.appointmentNotFound(appointmentId, context);
       }
 
-      // Check if already checked in
+      // Check if arrival is already confirmed
       if (appointment.checkedInAt) {
-        throw this.errors.checkInAlreadyCheckedIn(appointmentId, context);
+        throw this.errors.checkInAlreadyConfirmed(appointmentId, context);
       }
 
       // Get location (use provided locationId or appointment locationId)
@@ -3133,7 +3310,7 @@ export class AppointmentsController {
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
-    description: 'Invalid QR code, wrong location, or already checked in',
+    description: 'Invalid QR code, wrong location, or arrival already confirmed',
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -3237,11 +3414,123 @@ export class AppointmentsController {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
 
-      // Filter out already checked-in appointments
+      // Appointments without a recorded clinic arrival can still be confirmed into queue
       const eligibleAppointments = appointments.filter(a => !a.checkedInAt);
+      const alreadyConfirmedAppointments = appointments.filter(a => !!a.checkedInAt);
 
       if (eligibleAppointments.length === 0) {
-        throw this.errors.checkInNoAppointmentFound(location.id, context);
+        const existingAppointment = scanDto.appointmentId
+          ? alreadyConfirmedAppointments.find(a => a.id === scanDto.appointmentId)
+          : alreadyConfirmedAppointments.length === 1
+            ? alreadyConfirmedAppointments[0]
+            : null;
+
+        if (!existingAppointment && alreadyConfirmedAppointments.length > 1) {
+          const sortedExistingAppointments = alreadyConfirmedAppointments.sort((a, b) => {
+            const dateA = new Date(a.date);
+            const dateB = new Date(b.date);
+
+            const aIsToday = dateA.toDateString() === today.toDateString();
+            const bIsToday = dateB.toDateString() === today.toDateString();
+
+            if (aIsToday && !bIsToday) return -1;
+            if (!aIsToday && bIsToday) return 1;
+            if (dateA.getTime() !== dateB.getTime()) return dateA.getTime() - dateB.getTime();
+            return a.time.localeCompare(b.time);
+          });
+
+          return {
+            success: false,
+            data: {
+              requiresSelection: true,
+              eligibleAppointments: sortedExistingAppointments.map(a => ({
+                id: a.id,
+                date: a.date,
+                time: a.time,
+                doctor: a.doctor
+                  ? { id: a.doctor.id, name: a.doctor.user?.name || 'Doctor' }
+                  : undefined,
+                type: a.type,
+                status: a.status,
+              })),
+              message: `Multiple confirmed appointments found. Please select one to view queue status.`,
+            } as unknown as {
+              appointmentId: string;
+              locationId: string;
+              locationName: string;
+              checkedInAt: string;
+              queuePosition: number;
+              totalInQueue: number;
+              estimatedWaitTime: number;
+              doctorId: string;
+              doctorName: string;
+            },
+          };
+        }
+
+        if (!existingAppointment) {
+          throw this.errors.checkInNoAppointmentFound(location.id, context);
+        }
+
+        let queuePosition: {
+          position: number;
+          totalInQueue: number;
+          estimatedWaitTime: number;
+        } | null = null;
+
+        try {
+          const queueResponse = await this.appointmentQueueService.getPatientQueuePosition(
+            existingAppointment.id,
+            clinicId,
+            'healthcare'
+          );
+
+          if (queueResponse && typeof queueResponse === 'object' && 'position' in queueResponse) {
+            const response = queueResponse as {
+              position?: number;
+              totalInQueue?: number;
+              estimatedWaitTime?: number;
+            };
+            queuePosition = {
+              position: response.position || 0,
+              totalInQueue: response.totalInQueue || 0,
+              estimatedWaitTime: response.estimatedWaitTime || 0,
+            };
+          }
+        } catch (queueError) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Failed to get queue position for already confirmed appointment',
+            context,
+            {
+              appointmentId: existingAppointment.id,
+              error: queueError instanceof Error ? queueError.message : String(queueError),
+            }
+          );
+        }
+
+        const doctorName = existingAppointment.doctor?.user?.name || 'Doctor';
+        const doctorId =
+          (existingAppointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
+          existingAppointment.doctor?.id ||
+          '';
+
+        return {
+          success: true,
+          data: {
+            appointmentId: existingAppointment.id,
+            locationId: location.id,
+            locationName: location.locationName,
+            checkedInAt: existingAppointment.checkedInAt?.toISOString() || new Date().toISOString(),
+            queuePosition: queuePosition?.position || 0,
+            totalInQueue: queuePosition?.totalInQueue || 0,
+            estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
+            doctorId,
+            doctorName,
+          },
+          message: 'Appointment already confirmed and in queue',
+        };
       }
 
       // If appointmentId is provided, use that specific appointment
@@ -3317,9 +3606,9 @@ export class AppointmentsController {
         throw this.errors.checkInWrongLocation(appointment.locationId, location.id, context);
       }
 
-      // Check if already checked in
+      // Check if arrival is already confirmed
       if (appointment.checkedInAt) {
-        throw this.errors.checkInAlreadyCheckedIn(appointment.id, context);
+        throw this.errors.checkInAlreadyConfirmed(appointment.id, context);
       }
 
       // Step 4.5: Validate time window for check-in (30 min before to 2 hours after)

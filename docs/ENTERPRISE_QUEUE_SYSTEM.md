@@ -1079,7 +1079,7 @@ setInterval(async () => {
 
 **What Receptionists See:**
 
-- ✅ All queues by category (only checked-in patients)
+- ✅ All queues by category (only arrived patients)
 - ✅ QR code scanner interface
 - ✅ Patient check-in status (SCHEDULED vs CONFIRMED)
 - ✅ Queue management dashboard
@@ -1099,7 +1099,7 @@ setInterval(async () => {
 **What Doctors See:**
 
 - ✅ Their assigned category queues **at their assigned location(s)** (only
-  checked-in patients)
+  arrived patients)
 - ✅ Next patient to call (filtered by category + location)
 - ✅ Patient check-in status
 - ✅ Patient history
@@ -1107,7 +1107,7 @@ setInterval(async () => {
 
 **Important**: Doctors only see patients who have:
 
-- ✅ Scanned QR code and checked in
+- ✅ Confirmed arrival through QR/manual/reception flow
 - ✅ Appointment status: CONFIRMED
 - ✅ Queue status: WAITING
 - ✅ Matching doctor's assigned category
@@ -1123,7 +1123,7 @@ setInterval(async () => {
 **Automated Features:**
 
 ```typescript
-// Auto-suggest next patient (only checked-in patients)
+// Auto-suggest next patient (only arrived patients)
 async getSuggestedNextPatient(doctorId: string): Promise<Queue | null> {
   const doctor = await this.getDoctor(doctorId);
   const categories = doctor.assignedCategories;
@@ -1215,7 +1215,7 @@ private async canDoctorHandleCategoryAtLocation(
   return locationAssignment.assignedCategories.includes(category);
 }
 
-// Get queue by category and location (only checked-in patients)
+// Get queue by category and location (only arrived patients)
 async getQueueByCategory(
   clinicId: string,
   clinicLocationId: string, // REQUIRED: Location filter
@@ -1236,7 +1236,7 @@ async getQueueByCategory(
         AND q."clinicLocationId" = ${clinicLocationId}
         AND q.category = ${category}
         AND q.status = 'WAITING'
-        AND a.status = 'CONFIRMED'  -- Only checked-in patients
+        AND a.status = 'CONFIRMED'  -- Only arrived patients
       ORDER BY q."globalPosition"
     `;
   });

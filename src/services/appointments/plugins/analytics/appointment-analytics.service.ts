@@ -1335,7 +1335,7 @@ export class AppointmentAnalyticsService {
             },
             ...(locationId && { locationId }),
             status: {
-              in: ['SCHEDULED', 'CONFIRMED', 'CHECKED_IN', 'COMPLETED', 'NO_SHOW', 'CANCELLED'],
+              in: ['SCHEDULED', 'CONFIRMED', 'COMPLETED', 'NO_SHOW', 'CANCELLED'],
             },
           },
           select: {

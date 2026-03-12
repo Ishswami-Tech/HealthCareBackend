@@ -43,6 +43,29 @@ import {
 export class ClinicService {
   private readonly eventService: IEventService;
 
+  private sanitizeClinicSettings(
+    settings?: Record<string, unknown>
+  ): Record<string, unknown> | undefined {
+    if (!settings) {
+      return undefined;
+    }
+
+    const sanitizedSettings = { ...settings };
+    const appointmentSettings =
+      sanitizedSettings['appointmentSettings'] &&
+      typeof sanitizedSettings['appointmentSettings'] === 'object' &&
+      !Array.isArray(sanitizedSettings['appointmentSettings'])
+        ? { ...(sanitizedSettings['appointmentSettings'] as Record<string, unknown>) }
+        : undefined;
+
+    if (appointmentSettings) {
+      delete appointmentSettings['assistantDoctorCoverage'];
+      sanitizedSettings['appointmentSettings'] = appointmentSettings;
+    }
+
+    return sanitizedSettings;
+  }
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
@@ -545,6 +568,7 @@ export class ClinicService {
     try {
       // Extract communicationConfig from data
       const { communicationConfig, ...clinicUpdateData } = data;
+      const sanitizedSettings = this.sanitizeClinicSettings(clinicUpdateData.settings);
 
       // Use executeHealthcareWrite for update with full optimization layers
       const clinic = await this.databaseService.executeHealthcareWrite<Clinic>(
@@ -554,7 +578,7 @@ export class ClinicService {
             where: { id } as PrismaDelegateArgs,
             data: {
               ...clinicUpdateData,
-              ...(clinicUpdateData.settings && { settings: clinicUpdateData.settings as never }),
+              ...(sanitizedSettings && { settings: sanitizedSettings as never }),
               updatedAt: new Date(),
             } as PrismaDelegateArgs,
             include: {

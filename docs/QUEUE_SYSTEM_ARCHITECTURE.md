@@ -965,7 +965,7 @@ async getQueueByCategory(
         category,         // Category filter
         status: 'WAITING',
         appointment: {
-          status: 'CONFIRMED' // Only checked-in patients
+          status: 'CONFIRMED' // Only arrived patients
         }
       },
       orderBy: { queueNumber: 'asc' }

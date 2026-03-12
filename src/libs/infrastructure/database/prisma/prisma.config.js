@@ -10,6 +10,23 @@
  * @see https://www.prisma.io/docs/orm/reference/prisma-schema-reference#prisma-config-file
  */
 
+const path = require('path');
+const fs = require('fs');
+
+const prismaArgs = process.argv.slice(2);
+const prismaCommand = prismaArgs[0] || '';
+const commandsThatNeedDatabaseUrl = new Set([
+  'db',
+  'migrate',
+  'studio',
+  'introspect',
+  'validate',
+]);
+
+function commandNeedsDatabaseUrl() {
+  return commandsThatNeedDatabaseUrl.has(prismaCommand);
+}
+
 // Simple function to get DATABASE_URL from environment
 // CRITICAL: This function is called at module load time, so process.env must be set BEFORE requiring this file
 function getCleanDatabaseUrl() {
@@ -86,16 +103,19 @@ function getCleanDatabaseUrl() {
   }
 
   // No valid database URL found
-  console.error(
-    '[prisma.config.js] ERROR: Neither DATABASE_URL nor DIRECT_URL is set or valid in process.env'
+  const messagePrefix = commandNeedsDatabaseUrl()
+    ? '[prisma.config.js] ERROR'
+    : '[prisma.config.js] INFO';
+  console[commandNeedsDatabaseUrl() ? 'error' : 'log'](
+    `${messagePrefix}: Neither DATABASE_URL nor DIRECT_URL is set or valid in process.env`
   );
-  console.error(
+  console[commandNeedsDatabaseUrl() ? 'error' : 'log'](
     '[prisma.config.js] DATABASE_URL present:',
     !!process.env.DATABASE_URL,
     'DIRECT_URL present:',
     !!process.env.DIRECT_URL
   );
-  console.error(
+  console[commandNeedsDatabaseUrl() ? 'error' : 'log'](
     '[prisma.config.js] Available env vars:',
     Object.keys(process.env)
       .filter(k => k.includes('DATABASE') || k.includes('DIRECT'))
@@ -112,11 +132,13 @@ const databaseUrl = getCleanDatabaseUrl();
 
 // Validate that we have a valid URL before exporting
 if (!databaseUrl || databaseUrl.trim() === '') {
-  const errorMsg =
-    '[prisma.config.js] FATAL: No valid DATABASE_URL or DIRECT_URL found. ' +
-    'Please ensure DATABASE_URL is set in the environment before running Prisma commands.';
-  console.error(errorMsg);
-  // Don't throw here - let Prisma CLI handle the error with a clearer message
+  const message =
+    '[prisma.config.js] No valid DATABASE_URL or DIRECT_URL found. ' +
+    (commandNeedsDatabaseUrl()
+      ? 'Please ensure DATABASE_URL is set in the environment before running Prisma commands that access the database.'
+      : `Continuing because "${prismaCommand || 'this command'}" can run without a live database connection.`);
+  console[commandNeedsDatabaseUrl() ? 'error' : 'log'](message);
+  // Don't throw here - let Prisma CLI handle true DB-required failures
 } else {
   // Debug logging to help diagnose connection issues
   // Only log in non-production or when explicitly debugging
@@ -143,11 +165,13 @@ if (!databaseUrl || databaseUrl.trim() === '') {
 // Note: The URL is evaluated at module load time, so process.env must be set before this file is required
 // CRITICAL: If databaseUrl is empty, Prisma will try to read from environment variables as fallback
 // This provides a safety net if the config file can't read the URL
-const path = require('path');
-
 // Helper to get absolute path based on environment
 const getAbsolutePath = (relativePath) => {
-  if (process.env.content === 'docker' || process.env.IS_DOCKER === 'true' || require('fs').existsSync('/.dockerenv')) {
+  if (
+    process.env.content === 'docker' ||
+    process.env.IS_DOCKER === 'true' ||
+    fs.existsSync('/.dockerenv')
+  ) {
     return path.join('/app', relativePath);
   }
   return path.resolve(process.cwd(), relativePath);

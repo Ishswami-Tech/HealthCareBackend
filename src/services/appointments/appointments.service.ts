@@ -41,6 +41,10 @@ import {
   AppointmentStatus,
   AppointmentType,
   TreatmentType,
+  AppointmentServiceCategory,
+  AppointmentQueueCategory,
+  AppointmentBillingMode,
+  AppointmentServiceMetadataDto,
   AppointmentPriority,
   ProcessCheckInDto,
   CompleteAppointmentDto,
@@ -61,6 +65,273 @@ import { BillingService } from '@services/billing/billing.service';
 
 // Use centralized types
 import type { AppointmentWithRelations } from '@core/types/database.types';
+import type { PrismaDelegateArgs } from '@core/types/prisma.types';
+
+type AssistantDoctorCoverageEntry = {
+  assistantDoctorId: string;
+  primaryDoctorIds: string[];
+  isActive: boolean;
+};
+
+type AssistantDoctorCoverageAssignmentRecord = {
+  assistantDoctorId: string;
+  primaryDoctorId: string;
+  isActive: boolean;
+};
+
+const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
+  {
+    treatmentType: TreatmentType.GENERAL_CONSULTATION,
+    label: 'General Consultation',
+    description: 'Comprehensive health assessment and treatment planning',
+    category: AppointmentServiceCategory.CONSULTATION,
+    defaultDurationMinutes: 30,
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'GENERAL',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+    videoConsultationFee: 500,
+  },
+  {
+    treatmentType: TreatmentType.FOLLOW_UP,
+    label: 'Follow-up Consultation',
+    description: 'Progress review and treatment adjustments',
+    category: AppointmentServiceCategory.CONSULTATION,
+    defaultDurationMinutes: 20,
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'FOLLOW_UP',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+    videoConsultationFee: 300,
+  },
+  {
+    treatmentType: TreatmentType.THERAPY,
+    label: 'Therapy Session',
+    description: 'Therapy-focused in-clinic treatment session',
+    category: AppointmentServiceCategory.THERAPY,
+    defaultDurationMinutes: 45,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'THERAPY',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+    videoConsultationFee: 1000,
+  },
+  {
+    treatmentType: TreatmentType.SURGERY,
+    label: 'Surgical Procedure',
+    description: 'Minor surgical or interventional care under clinical supervision',
+    category: AppointmentServiceCategory.SURGERY,
+    defaultDurationMinutes: 60,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'SURGICAL',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.LAB_TEST,
+    label: 'Lab Test',
+    description: 'Diagnostic sample collection or lab-linked appointment',
+    category: AppointmentServiceCategory.DIAGNOSIS,
+    defaultDurationMinutes: 20,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'DIAGNOSTIC',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.IMAGING,
+    label: 'Imaging',
+    description: 'Imaging-linked appointment for diagnostic review or scan workflow',
+    category: AppointmentServiceCategory.DIAGNOSIS,
+    defaultDurationMinutes: 30,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'DIAGNOSTIC',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.VACCINATION,
+    label: 'Vaccination',
+    description: 'Vaccination and preventive immunization visit',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 20,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'PREVENTIVE',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+    videoConsultationFee: 800,
+  },
+  {
+    treatmentType: TreatmentType.VIDDHAKARMA,
+    label: 'Viddhakarma',
+    description: 'Therapeutic puncture-based Ayurvedic procedural care',
+    category: AppointmentServiceCategory.SURGERY,
+    defaultDurationMinutes: 60,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'VIDDHAKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.AGNIKARMA,
+    label: 'Agnikarma',
+    description: 'Therapeutic heat procedure for musculoskeletal pain relief',
+    category: AppointmentServiceCategory.SURGERY,
+    defaultDurationMinutes: 45,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'AGNIKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.PANCHAKARMA,
+    label: 'Panchakarma Therapy',
+    description: 'Traditional detoxification and rejuvenation treatment',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 90,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'PANCHAKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.NADI_PARIKSHA,
+    label: 'Nadi Pariksha',
+    description: 'Traditional pulse diagnosis to assess dosha imbalances',
+    category: AppointmentServiceCategory.DIAGNOSIS,
+    defaultDurationMinutes: 45,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'DIAGNOSIS',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.DOSHA_ANALYSIS,
+    label: 'Dosha Analysis',
+    description: 'Constitutional analysis with lifestyle and treatment recommendations',
+    category: AppointmentServiceCategory.DIAGNOSIS,
+    defaultDurationMinutes: 60,
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'DIAGNOSIS',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.SHIRODHARA,
+    label: 'Shirodhara',
+    description: 'Continuous oil flow on the forehead for stress and anxiety care',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 45,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'SHIRODHARA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.VIRECHANA,
+    label: 'Virechana',
+    description: 'Therapeutic purgation as part of Panchakarma care',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 90,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'PANCHAKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.ABHYANGA,
+    label: 'Abhyanga Massage',
+    description: 'Full-body Ayurvedic therapeutic oil massage',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 60,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'ABHYANGA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.SWEDANA,
+    label: 'Swedana Steam Therapy',
+    description: 'Herbal steam therapy for detoxification and relaxation',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 30,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'SWEDANA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.BASTI,
+    label: 'Basti',
+    description: 'Therapeutic medicated enema under Ayurvedic care plan',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 45,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'PANCHAKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.NASYA,
+    label: 'Nasya',
+    description: 'Nasal administration therapy as part of Ayurvedic treatment',
+    category: AppointmentServiceCategory.TREATMENT,
+    defaultDurationMinutes: 30,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'PANCHAKARMA',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+  {
+    treatmentType: TreatmentType.RAKTAMOKSHANA,
+    label: 'Raktamokshana',
+    description: 'Therapeutic bloodletting procedure under supervised care',
+    category: AppointmentServiceCategory.SURGERY,
+    defaultDurationMinutes: 60,
+    appointmentModes: [AppointmentType.IN_PERSON],
+    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
+    serviceBucket: 'SURGICAL',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: false,
+    active: true,
+  },
+];
 
 /**
  * Enhanced Appointments Service
@@ -157,6 +428,431 @@ export class AppointmentsService {
     private readonly billingService: BillingService
   ) {}
 
+  getAppointmentServiceCatalog(): AppointmentServiceMetadataDto[] {
+    return APPOINTMENT_SERVICE_CATALOG.map(service => ({
+      ...service,
+      appointmentModes: [...service.appointmentModes],
+    }));
+  }
+
+  private getAppointmentServiceMetadata(
+    treatmentType?: TreatmentType | string | null
+  ): AppointmentServiceMetadataDto {
+    return (
+      APPOINTMENT_SERVICE_CATALOG.find(service => service.treatmentType === treatmentType) ||
+      APPOINTMENT_SERVICE_CATALOG.find(
+        service => service.treatmentType === TreatmentType.GENERAL_CONSULTATION
+      )!
+    );
+  }
+
+  private asMetadataRecord(metadata: unknown): Record<string, unknown> {
+    return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? { ...(metadata as Record<string, unknown>) }
+      : {};
+  }
+
+  private mapCoverageAssignmentsToEntries(
+    assignments: AssistantDoctorCoverageAssignmentRecord[]
+  ): AssistantDoctorCoverageEntry[] {
+    const grouped = new Map<string, AssistantDoctorCoverageEntry>();
+
+    for (const assignment of assignments) {
+      const existing = grouped.get(assignment.assistantDoctorId) || {
+        assistantDoctorId: assignment.assistantDoctorId,
+        primaryDoctorIds: [],
+        isActive: assignment.isActive,
+      };
+
+      existing.isActive = existing.isActive || assignment.isActive;
+      if (!existing.primaryDoctorIds.includes(assignment.primaryDoctorId)) {
+        existing.primaryDoctorIds.push(assignment.primaryDoctorId);
+      }
+
+      grouped.set(assignment.assistantDoctorId, existing);
+    }
+
+    return Array.from(grouped.values()).sort((left, right) =>
+      left.assistantDoctorId.localeCompare(right.assistantDoctorId)
+    );
+  }
+
+  async syncClinicAssistantDoctorCoverage(
+    clinicId: string,
+    coverageEntries: AssistantDoctorCoverageEntry[]
+  ): Promise<void> {
+    const normalizedAssignments = coverageEntries
+      .flatMap(entry =>
+        entry.primaryDoctorIds.map(primaryDoctorId => ({
+          assistantDoctorId: entry.assistantDoctorId,
+          primaryDoctorId,
+          isActive: entry.isActive,
+        }))
+      )
+      .filter(
+        assignment =>
+          assignment.assistantDoctorId &&
+          assignment.primaryDoctorId &&
+          assignment.assistantDoctorId !== assignment.primaryDoctorId
+      );
+
+    // Validate doctor roles before saving
+    const doctorIds = [
+      ...normalizedAssignments.map(a => a.assistantDoctorId),
+      ...normalizedAssignments.map(a => a.primaryDoctorId),
+    ];
+
+    const doctors = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.doctor.findMany({
+        where: {
+          id: { in: doctorIds },
+          user: {
+            role: {
+              in: [Role.DOCTOR, Role.ASSISTANT_DOCTOR],
+            },
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              role: true,
+            },
+          },
+        },
+      });
+    });
+
+    const doctorRoleMap = new Map<string, Role>();
+    for (const doctor of doctors) {
+      doctorRoleMap.set(doctor.id, doctor.user?.role as Role);
+    }
+
+    // Filter out invalid assignments (doctors with wrong roles or not found)
+    const validatedAssignments = normalizedAssignments.filter(assignment => {
+      const assistantRole = doctorRoleMap.get(assignment.assistantDoctorId);
+      const primaryRole = doctorRoleMap.get(assignment.primaryDoctorId);
+
+      if (!assistantRole || assistantRole !== Role.ASSISTANT_DOCTOR) {
+        return false;
+      }
+      if (!primaryRole || primaryRole !== Role.DOCTOR) {
+        return false;
+      }
+
+      return true;
+    });
+
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as Prisma.TransactionClient & {
+          assistantDoctorCoverageAssignment: {
+            deleteMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+            createMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+          };
+        };
+
+        await typedClient.assistantDoctorCoverageAssignment.deleteMany({
+          where: { clinicId },
+        });
+
+        if (validatedAssignments.length > 0) {
+          await typedClient.assistantDoctorCoverageAssignment.createMany({
+            data: validatedAssignments.map(assignment => ({
+              clinicId,
+              assistantDoctorId: assignment.assistantDoctorId,
+              primaryDoctorId: assignment.primaryDoctorId,
+              isActive: assignment.isActive,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        return { count: validatedAssignments.length };
+      },
+      {
+        userId: 'system',
+        clinicId,
+        resourceType: 'CLINIC_SETTINGS',
+        operation: 'UPDATE',
+        resourceId: clinicId,
+        userRole: 'system',
+        details: {
+          coverageAssignments: validatedAssignments.length,
+        },
+      }
+    );
+  }
+
+  async getClinicAssistantDoctorCoverage(
+    clinicId: string
+  ): Promise<AssistantDoctorCoverageEntry[]> {
+    // Single-source: Only read from relational AssistantDoctorCoverageAssignment model
+    // Removed fallback to clinic.settings JSON for data consistency
+    const relationalCoverage = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient & {
+        assistantDoctorCoverageAssignment: {
+          findMany: (
+            args: PrismaDelegateArgs
+          ) => Promise<AssistantDoctorCoverageAssignmentRecord[]>;
+        };
+      };
+
+      return await typedClient.assistantDoctorCoverageAssignment.findMany({
+        where: { clinicId },
+        select: {
+          assistantDoctorId: true,
+          primaryDoctorId: true,
+          isActive: true,
+        },
+        orderBy: [{ assistantDoctorId: 'asc' }, { primaryDoctorId: 'asc' }],
+      });
+    });
+
+    if (relationalCoverage.length === 0) {
+      // Return empty array if no relational coverage exists
+      // Clinic admin should configure coverage via dedicated endpoints
+      return [];
+    }
+
+    // Validate that doctors have correct roles
+    const doctorIds = [
+      ...relationalCoverage.map(r => r.assistantDoctorId),
+      ...relationalCoverage.map(r => r.primaryDoctorId),
+    ];
+
+    const doctors = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.doctor.findMany({
+        where: {
+          id: { in: doctorIds },
+          user: {
+            role: {
+              in: [Role.DOCTOR, Role.ASSISTANT_DOCTOR],
+            },
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              role: true,
+            },
+          },
+        },
+      });
+    });
+
+    const doctorRoleMap = new Map<string, Role>();
+    for (const doctor of doctors) {
+      doctorRoleMap.set(doctor.id, doctor.user?.role as Role);
+    }
+
+    // Filter coverage to only include valid role assignments
+    const validatedCoverage = relationalCoverage.filter(assignment => {
+      const assistantRole = doctorRoleMap.get(assignment.assistantDoctorId);
+      const primaryRole = doctorRoleMap.get(assignment.primaryDoctorId);
+
+      // Assistant must have ASSISTANT_DOCTOR role
+      if (!assistantRole || assistantRole !== Role.ASSISTANT_DOCTOR) {
+        return false;
+      }
+
+      // Primary must have DOCTOR role
+      if (!primaryRole || primaryRole !== Role.DOCTOR) {
+        return false;
+      }
+
+      // Self-coverage should not exist (assistantDoctorId === primaryDoctorId)
+      if (assignment.assistantDoctorId === assignment.primaryDoctorId) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return this.mapCoverageAssignmentsToEntries(validatedCoverage);
+  }
+
+  private isAssistantDoctorCoveredForPrimaryDoctor(
+    coverageEntries: AssistantDoctorCoverageEntry[],
+    assistantDoctorId: string,
+    primaryDoctorId: string
+  ): boolean {
+    return coverageEntries.some(
+      entry =>
+        entry.isActive &&
+        entry.assistantDoctorId === assistantDoctorId &&
+        entry.primaryDoctorIds.includes(primaryDoctorId)
+    );
+  }
+
+  async getAppointmentReassignmentCandidates(appointmentId: string, clinicId: string) {
+    const appointment = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.appointment.findUnique({
+        where: { id: appointmentId },
+        select: {
+          id: true,
+          doctorId: true,
+          treatmentType: true,
+          clinicId: true,
+          locationId: true,
+          metadata: true,
+        },
+      });
+    });
+
+    if (!appointment || appointment.clinicId !== clinicId) {
+      throw this.errors.recordNotFound(
+        'appointment',
+        'AppointmentsService.getAppointmentReassignmentCandidates'
+      );
+    }
+
+    const currentMetadata = this.asMetadataRecord(appointment.metadata);
+    const primaryDoctorId =
+      typeof currentMetadata['primaryDoctorId'] === 'string' && currentMetadata['primaryDoctorId']
+        ? currentMetadata['primaryDoctorId']
+        : appointment.doctorId;
+    const serviceMetadata = this.getAppointmentServiceMetadata(appointment.treatmentType);
+    const assistantCoverage = await this.getClinicAssistantDoctorCoverage(clinicId);
+
+    const doctors = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.doctor.findMany({
+        where: {
+          clinics: {
+            some: {
+              clinicId,
+            },
+          },
+          user: {
+            role: {
+              in: [Role.DOCTOR, Role.ASSISTANT_DOCTOR],
+            },
+          },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              name: true,
+              role: true,
+            },
+          },
+          clinics: {
+            where: { clinicId },
+            select: {
+              clinicId: true,
+              locationId: true,
+            },
+          },
+        },
+        orderBy: {
+          user: {
+            name: 'asc',
+          },
+        },
+      });
+    });
+
+    return doctors.map(doctor => {
+      const doctorRole = doctor.user?.role as Role;
+      const doctorName = doctor.user?.name || 'Unknown Doctor';
+      const locationLink = Array.isArray(doctor.clinics) ? doctor.clinics[0] : null;
+      let eligible = true;
+      let reason: string | undefined;
+
+      if (!locationLink) {
+        eligible = false;
+        reason = 'Doctor is not assigned to this clinic';
+      } else if (
+        appointment.locationId &&
+        locationLink.locationId &&
+        appointment.locationId !== locationLink.locationId
+      ) {
+        eligible = false;
+        reason = 'Doctor is not assigned to the appointment location';
+      } else if (doctorRole === Role.ASSISTANT_DOCTOR && !serviceMetadata.assistantDoctorEligible) {
+        eligible = false;
+        reason = `${serviceMetadata.label} cannot be delegated to an assistant doctor`;
+      } else if (
+        doctorRole === Role.ASSISTANT_DOCTOR &&
+        !this.isAssistantDoctorCoveredForPrimaryDoctor(
+          assistantCoverage,
+          doctor.id,
+          primaryDoctorId
+        )
+      ) {
+        eligible = false;
+        reason = 'Assistant coverage is not configured for this primary doctor';
+      }
+
+      return {
+        id: doctor.id,
+        name: doctorName,
+        role: doctorRole,
+        eligible,
+        ...(reason ? { reason } : {}),
+        isCurrent: doctor.id === appointment.doctorId,
+        isPrimary: doctor.id === primaryDoctorId,
+      };
+    });
+  }
+
+  private async resolveEligibleInPersonSubscription(
+    patientId: string,
+    clinicId: string
+  ): Promise<{ subscriptionId: string; patientUserId: string } | null> {
+    const patient = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.patient.findUnique({
+        where: { id: patientId },
+        select: { id: true, userId: true },
+      });
+    });
+
+    if (!patient?.userId) {
+      return null;
+    }
+
+    const subscriptions = await this.databaseService.findSubscriptionsSafe({
+      userId: patient.userId,
+      clinicId,
+    });
+
+    const eligibleSubscriptions = subscriptions
+      .filter(
+        subscription =>
+          (String(subscription.status) === 'ACTIVE' ||
+            String(subscription.status) === 'TRIALING') &&
+          subscription.currentPeriodEnd > new Date()
+      )
+      .sort((left, right) => {
+        const leftUnlimited = left.plan?.isUnlimitedAppointments ? 1 : 0;
+        const rightUnlimited = right.plan?.isUnlimitedAppointments ? 1 : 0;
+        if (leftUnlimited !== rightUnlimited) {
+          return rightUnlimited - leftUnlimited;
+        }
+
+        return right.currentPeriodEnd.getTime() - left.currentPeriodEnd.getTime();
+      });
+
+    for (const subscription of eligibleSubscriptions) {
+      const coverage = await this.billingService.canBookAppointment(subscription.id, 'IN_PERSON');
+      if (coverage.allowed) {
+        return {
+          subscriptionId: subscription.id,
+          patientUserId: patient.userId,
+        };
+      }
+    }
+
+    return null;
+  }
+
   // Note: Use DatabaseService safe methods instead of direct Prisma access
   // Example: await this.databaseService.findAppointmentByIdSafe(id)
   // Example: await this.databaseService.findUserByIdSafe(userId)
@@ -200,6 +896,24 @@ export class AppointmentsService {
       patientId: createDto.patientId,
     };
 
+    const requiresSubscriptionCoverage =
+      createDto.type === AppointmentType.IN_PERSON && !isVideoCallAppointmentType(createDto.type);
+
+    let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
+    if (requiresSubscriptionCoverage) {
+      resolvedInPersonCoverage = await this.resolveEligibleInPersonSubscription(
+        createDto.patientId,
+        clinicId
+      );
+
+      if (!resolvedInPersonCoverage) {
+        throw this.errors.businessRuleViolation(
+          'Active in-person subscription coverage is required before creating this appointment',
+          'AppointmentsService.createAppointment'
+        );
+      }
+    }
+
     // Database layer will enforce clinic_id filtering on all queries
     const result = await this.coreAppointmentService.createAppointment(createDto, context);
 
@@ -226,6 +940,18 @@ export class AppointmentsService {
         createDto.doctorId,
         clinicId
       );
+
+      if (requiresSubscriptionCoverage && resolvedInPersonCoverage) {
+        await this.billingService.bookAppointmentWithSubscription(
+          resolvedInPersonCoverage.subscriptionId,
+          (result.data as Record<string, unknown>)?.['id'] as string,
+          {
+            userId: resolvedInPersonCoverage.patientUserId,
+            role: 'PATIENT',
+            clinicId,
+          }
+        );
+      }
 
       // Hot path: Trigger notification plugin (direct injection for performance)
       // Notification is sent on every appointment creation - high frequency operation
@@ -974,9 +1700,11 @@ export class AppointmentsService {
       clinicId
     )) as AppointmentWithRelations;
 
+    const normalizedStatus = updateDto.status;
+
     // 2. Dispatch based on new status
-    switch (updateDto.status) {
-      case AppointmentStatus.CHECKED_IN:
+    switch (normalizedStatus) {
+      case AppointmentStatus.CONFIRMED:
         return this.processCheckIn(
           {
             appointmentId,
@@ -1079,7 +1807,7 @@ export class AppointmentsService {
         return this.updateAppointment(
           appointmentId,
           {
-            status: updateDto.status,
+            status: normalizedStatus,
             ...(updateDto.notes && { notes: updateDto.notes }),
           },
           userId,
@@ -1092,7 +1820,7 @@ export class AppointmentsService {
         return this.updateAppointment(
           appointmentId,
           {
-            status: updateDto.status,
+            status: normalizedStatus,
             ...(updateDto.notes && { notes: updateDto.notes }),
           },
           userId,
@@ -1100,6 +1828,224 @@ export class AppointmentsService {
           role
         );
     }
+  }
+
+  async reassignDoctor(
+    appointmentId: string,
+    newDoctorId: string,
+    userId: string,
+    clinicId: string,
+    role: string,
+    reason?: string
+  ): Promise<unknown> {
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations & { metadata?: unknown };
+
+    if (
+      [
+        AppointmentStatus.COMPLETED,
+        AppointmentStatus.CANCELLED,
+        AppointmentStatus.NO_SHOW,
+      ].includes(appointment.status as AppointmentStatus)
+    ) {
+      throw this.errors.businessRuleViolation(
+        'Completed, cancelled, or no-show appointments cannot be reassigned',
+        'AppointmentsService.reassignDoctor'
+      );
+    }
+
+    if (appointment.doctorId === newDoctorId) {
+      return {
+        success: true,
+        data: appointment,
+        message: 'Appointment is already assigned to this doctor',
+      };
+    }
+
+    const targetDoctor = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      return await typedClient.doctor.findUnique({
+        where: { id: newDoctorId },
+        include: {
+          user: {
+            select: {
+              id: true,
+              role: true,
+              name: true,
+            },
+          },
+          clinics: {
+            where: { clinicId },
+            select: {
+              clinicId: true,
+              locationId: true,
+            },
+          },
+        },
+      });
+    });
+
+    if (!targetDoctor?.user) {
+      throw this.errors.recordNotFound('doctor', 'AppointmentsService.reassignDoctor');
+    }
+
+    const targetDoctorRole = String(targetDoctor.user.role);
+    const isAssistantDoctor = targetDoctorRole === String(Role.ASSISTANT_DOCTOR);
+    const isServicingDoctor =
+      targetDoctorRole === String(Role.DOCTOR) ||
+      targetDoctorRole === String(Role.ASSISTANT_DOCTOR);
+
+    if (!isServicingDoctor) {
+      throw this.errors.businessRuleViolation(
+        'Appointments can only be reassigned to doctor or assistant doctor roles',
+        'AppointmentsService.reassignDoctor'
+      );
+    }
+
+    const currentMetadata = this.asMetadataRecord(appointment.metadata);
+    const primaryDoctorId =
+      typeof currentMetadata['primaryDoctorId'] === 'string' && currentMetadata['primaryDoctorId']
+        ? currentMetadata['primaryDoctorId']
+        : appointment.doctorId;
+
+    if (isAssistantDoctor) {
+      const serviceMetadata = this.getAppointmentServiceMetadata(appointment.treatmentType);
+      if (!serviceMetadata.assistantDoctorEligible) {
+        throw this.errors.businessRuleViolation(
+          `${serviceMetadata.label} cannot be delegated to an assistant doctor`,
+          'AppointmentsService.reassignDoctor'
+        );
+      }
+
+      const assistantCoverage = await this.getClinicAssistantDoctorCoverage(clinicId);
+      if (
+        !this.isAssistantDoctorCoveredForPrimaryDoctor(
+          assistantCoverage,
+          newDoctorId,
+          primaryDoctorId
+        )
+      ) {
+        throw this.errors.businessRuleViolation(
+          'Assistant coverage is not configured for this primary doctor',
+          'AppointmentsService.reassignDoctor'
+        );
+      }
+    }
+
+    const doctorClinicLink = Array.isArray(targetDoctor.clinics) ? targetDoctor.clinics[0] : null;
+    if (!doctorClinicLink) {
+      throw this.errors.businessRuleViolation(
+        'Target doctor is not assigned to this clinic',
+        'AppointmentsService.reassignDoctor'
+      );
+    }
+
+    if (
+      appointment.locationId &&
+      doctorClinicLink.locationId &&
+      appointment.locationId !== doctorClinicLink.locationId
+    ) {
+      throw this.errors.businessRuleViolation(
+        'Target doctor is not assigned to the appointment location',
+        'AppointmentsService.reassignDoctor'
+      );
+    }
+
+    const updatedMetadata = {
+      ...currentMetadata,
+      primaryDoctorId,
+      assignedDoctorId: newDoctorId,
+      lastReassignment: {
+        previousDoctorId: appointment.doctorId,
+        newDoctorId,
+        reassignedBy: userId,
+        reason: reason || 'Operational reassignment',
+        reassignedAt: new Date().toISOString(),
+        reassignedByRole: role,
+      },
+    };
+
+    const updatedAppointment = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as Prisma.TransactionClient;
+        return await typedClient.appointment.update({
+          where: { id: appointmentId },
+          data: {
+            doctorId: newDoctorId,
+            metadata: updatedMetadata,
+          },
+          include: {
+            patient: true,
+            doctor: true,
+            clinic: true,
+            location: true,
+          },
+        });
+      },
+      {
+        userId,
+        clinicId,
+        resourceType: 'APPOINTMENT',
+        operation: 'UPDATE',
+        resourceId: appointmentId,
+        userRole: role,
+        details: {
+          action: 'REASSIGN_DOCTOR',
+          previousDoctorId: appointment.doctorId,
+          newDoctorId,
+          reason: reason || null,
+        },
+      }
+    );
+
+    if (String(appointment.status) === String(AppointmentStatus.CONFIRMED)) {
+      await this.appointmentQueueService.removePatientFromQueue(
+        appointmentId,
+        appointment.doctorId,
+        clinicId,
+        'clinic'
+      );
+      await this.appointmentQueueService.checkIn(
+        {
+          appointmentId,
+          doctorId: newDoctorId,
+          patientId: appointment.patientId,
+          clinicId,
+          appointmentType: appointment.type,
+          ...(appointment.locationId ? { locationId: appointment.locationId } : {}),
+          ...(reason ? { notes: reason } : {}),
+        },
+        'clinic'
+      );
+    }
+
+    await this.eventService.emitEnterprise('appointment.reassigned', {
+      eventId: `appointment-reassigned-${appointmentId}-${Date.now()}`,
+      eventType: 'appointment.reassigned',
+      category: EventCategory.APPOINTMENT,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'AppointmentsService',
+      version: '1.0.0',
+      userId: appointment.patientId,
+      clinicId,
+      payload: {
+        appointmentId,
+        previousDoctorId: appointment.doctorId,
+        newDoctorId,
+        primaryDoctorId,
+        assignedDoctorId: newDoctorId,
+        reason: reason || null,
+      },
+    });
+
+    return {
+      success: true,
+      data: updatedAppointment,
+      message: 'Appointment reassigned successfully',
+    };
   }
 
   /**
@@ -1315,6 +2261,12 @@ export class AppointmentsService {
           checkedInBy: userId,
           checkInData: checkInDto,
         });
+        await this.eventService.emit('appointment.confirmed', {
+          appointmentId: checkInDto.appointmentId,
+          clinicId,
+          confirmedBy: userId,
+          checkInData: checkInDto,
+        });
       }
       return result;
     } catch (_error) {
@@ -1374,6 +2326,34 @@ export class AppointmentsService {
       const result = { success: true, data: completionData };
 
       if (result.success) {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            return await (
+              client as unknown as {
+                appointment: {
+                  update: <T>(args: T) => Promise<unknown>;
+                };
+              }
+            ).appointment.update({
+              where: { id: appointmentId },
+              data: {
+                status: AppointmentStatus.COMPLETED,
+                updatedAt: new Date(),
+              },
+            });
+          },
+          {
+            userId,
+            userRole: _role,
+            clinicId,
+            operation: 'UPDATE_APPOINTMENT',
+            resourceType: 'APPOINTMENT',
+            resourceId: appointmentId,
+            timestamp: new Date(),
+            details: { status: AppointmentStatus.COMPLETED },
+          }
+        );
+
         // Log the completion event
         await this.loggingService.log(
           LogType.BUSINESS,
@@ -1382,6 +2362,32 @@ export class AppointmentsService {
           'AppointmentsService',
           { appointmentId, userId, clinicId }
         );
+
+        // Keep the doctor queue in sync with appointment lifecycle.
+        // On completion, remove the current patient from the live queue and
+        // advance the next waiting patient automatically when one exists.
+        try {
+          await this.appointmentQueueService.removePatientFromQueue(
+            appointmentId,
+            finalDoctorId,
+            clinicId,
+            'clinic'
+          );
+          await this.appointmentQueueService.callNext(finalDoctorId, clinicId, 'clinic');
+        } catch (queueError) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Queue progression after appointment completion failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            'AppointmentsService.completeAppointment',
+            {
+              appointmentId,
+              doctorId: finalDoctorId,
+              clinicId,
+              error: queueError instanceof Error ? queueError.stack : undefined,
+            }
+          );
+        }
 
         // Create follow-up plan if requested
         if (
@@ -2062,7 +3068,7 @@ export class AppointmentsService {
       // - Location ID
       // - Status: CONFIRMED or SCHEDULED
       // - Date: today or future
-      // - Not already checked in
+      // - Arrival not already confirmed
       // Note: We need to query twice (once for each status) since AppointmentFilterDto only supports single status
       const context: AppointmentContext = {
         userId,
@@ -2120,7 +3126,7 @@ export class AppointmentsService {
         allAppointments.push(...scheduledAppointments);
       }
 
-      // Filter for valid appointments: not already checked in and date is today or future
+      // Filter for valid appointments: arrival not already confirmed and date is today or future
       const validAppointments = allAppointments.filter(
         apt => !apt.checkedInAt && new Date(apt.date) >= today
       );
