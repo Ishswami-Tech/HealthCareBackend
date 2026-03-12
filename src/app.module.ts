@@ -48,10 +48,15 @@ import { StaffModule } from './services/staff/staff.module';
     BullBoardModule.forRoot(), // Queue dashboard at /queue-dashboard
     // JWT is configured in AuthModule - no need for global registration here
     // This ensures all JWT operations use the same secret from ConfigService
-    // Core modules must be loaded before communication modules to ensure LoggingService is available
+    // Core modules must be loaded before communication modules to ensure LoggingService and CacheService are available
     LoggingModule,
     LoggingControllersModule, // Separate module for controllers to avoid duplicate registration
+    // CacheModule - Required for caching functionality (Dragonfly/Redis)
+    // Must be loaded BEFORE EventsModule as EventService depends on CacheService
+    // Use forRoot() to conditionally include CacheWarmingService (only in API, not worker)
+    CacheModule.forRoot(),
     // Central event system - must be loaded early for event-driven architecture
+    // EventService depends on LoggingService and CacheService, so they must be loaded first
     EventsModule,
     // Resilience, errors, and security modules
     ResilienceModule,
@@ -62,9 +67,6 @@ import { StaffModule } from './services/staff/staff.module';
     UsersModule,
     // Core modules
     DatabaseModule,
-    // CacheModule - Required for caching functionality (Dragonfly/Redis)
-    // Use forRoot() to conditionally include CacheWarmingService (only in API, not worker)
-    CacheModule.forRoot(),
     // SessionModule - @Global() module providing SessionManagementService for JwtAuthGuard
     // Required for FastifySessionStoreAdapter and session management throughout the app
     SessionModule,
