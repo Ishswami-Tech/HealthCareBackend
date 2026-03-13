@@ -60,7 +60,7 @@ export class UsersController {
   ) {}
 
   @Post()
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('users', 'create')
   @ApiOperation({
     summary: 'Create user',
@@ -94,7 +94,7 @@ export class UsersController {
 
   @Get('all')
   @RateLimitAPI()
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
   @RequireResourcePermission('users', 'read')
   @PatientCache({
     keyTemplate: 'users:all:{role}:{clinicId}',
