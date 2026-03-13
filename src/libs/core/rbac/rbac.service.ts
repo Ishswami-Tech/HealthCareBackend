@@ -879,6 +879,7 @@ export class RbacService {
       switch (context.resource) {
         case 'profile':
         case 'user':
+        case 'users':
           return context.resourceId === context.userId;
 
         case 'appointments':
