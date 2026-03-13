@@ -186,9 +186,9 @@ export class BusinessRulesEngine {
           conditionValue && 'bufferMinutes' in conditionValue
             ? (conditionValue['bufferMinutes'] as number | undefined)
             : undefined;
-        const appointmentTime = new Date(
-          (context.appointment as Record<string, unknown>)?.['date'] as string
-        );
+        const appointmentData = (context.appointment as Record<string, unknown>) || {};
+        const dateInput = (appointmentData['date'] || appointmentData['appointmentDate']) as string;
+        const appointmentTime = new Date(dateInput);
         const hour = appointmentTime.getHours();
         const minute = appointmentTime.getMinutes();
         const appointmentMinutes = hour * 60 + minute;
@@ -213,14 +213,23 @@ export class BusinessRulesEngine {
           appointmentDataRaw && typeof appointmentDataRaw === 'object'
             ? (appointmentDataRaw as Record<string, unknown>)
             : {};
-        const doctorId =
-          'doctorId' in appointmentData
-            ? (appointmentData['doctorId'] as string | undefined)
-            : undefined;
-        const date =
-          'date' in appointmentData ? (appointmentData['date'] as string | undefined) : undefined;
-        const time =
-          'time' in appointmentData ? (appointmentData['time'] as string | undefined) : undefined;
+        const doctorId = appointmentData['doctorId'] as string | undefined;
+        let date = appointmentData['date'] as string | undefined;
+        let time = appointmentData['time'] as string | undefined;
+
+        // Fallback to appointmentDate if date/time are missing
+        if ((!date || !time) && appointmentData['appointmentDate']) {
+          const appointmentDateTime = new Date(appointmentData['appointmentDate'] as string);
+          // Simple IST extraction (UTC + 5:30)
+          const istOffset = 5.5 * 60 * 60 * 1000;
+          const istDate = new Date(appointmentDateTime.getTime() + istOffset);
+          const isoString = istDate.toISOString();
+          const parts = isoString.split('T');
+          date = parts[0];
+          const timePart = parts[1];
+          time = timePart && timePart.length >= 5 ? timePart.substring(0, 5) : '00:00';
+        }
+
         if (!doctorId || !date || !time) return false;
 
         // Check for existing appointments using executeHealthcareRead with client parameter
@@ -259,14 +268,23 @@ export class BusinessRulesEngine {
           appointmentDataRaw && typeof appointmentDataRaw === 'object'
             ? (appointmentDataRaw as Record<string, unknown>)
             : {};
-        const locationId =
-          'locationId' in appointmentData
-            ? (appointmentData['locationId'] as string | undefined)
-            : undefined;
-        const date =
-          'date' in appointmentData ? (appointmentData['date'] as string | undefined) : undefined;
-        const time =
-          'time' in appointmentData ? (appointmentData['time'] as string | undefined) : undefined;
+        const locationId = appointmentData['locationId'] as string | undefined;
+        let date = appointmentData['date'] as string | undefined;
+        let time = appointmentData['time'] as string | undefined;
+
+        // Fallback to appointmentDate if date/time are missing
+        if ((!date || !time) && appointmentData['appointmentDate']) {
+          const appointmentDateTime = new Date(appointmentData['appointmentDate'] as string);
+          // Simple IST extraction (UTC + 5:30)
+          const istOffset = 5.5 * 60 * 60 * 1000;
+          const istDate = new Date(appointmentDateTime.getTime() + istOffset);
+          const isoString = istDate.toISOString();
+          const parts = isoString.split('T');
+          date = parts[0];
+          const timePart = parts[1];
+          time = timePart && timePart.length >= 5 ? timePart.substring(0, 5) : '00:00';
+        }
+
         if (!locationId || !date || !time) return false;
 
         // Get location using executeHealthcareRead with client parameter
