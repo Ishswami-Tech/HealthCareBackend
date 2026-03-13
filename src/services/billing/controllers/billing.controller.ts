@@ -53,13 +53,21 @@ import { PaymentProvider } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { AppointmentType } from '@dtos/appointment.dto';
 
+type AppointmentServiceResult = {
+  success: boolean;
+  data?: Record<string, unknown>;
+  error?: string;
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
+
 type AppointmentsServiceLike = {
   createAppointment: (
     payload: Record<string, unknown>,
     userId: string,
     clinicId: string,
     role: string
-  ) => Promise<{ success: boolean; data?: Record<string, unknown>; error?: string }>;
+  ) => Promise<AppointmentServiceResult>;
   cancelAppointment: (
     appointmentId: string,
     reason: string,
@@ -714,7 +722,11 @@ export class BillingController {
     );
 
     if (!result.success || !result.data) {
-      throw new BadRequestException(result.error || 'Failed to create appointment');
+      // Include both error code and detailed violation message for better UX
+      const errorMessage = result.message
+        ? `${result.error}: ${result.message}`
+        : result.error || 'Failed to create appointment';
+      throw new BadRequestException(errorMessage);
     }
 
     const appointmentId = result.data['id'] as string;
