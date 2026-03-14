@@ -23,7 +23,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
-import { HealthService } from '@services/health/health.service';
+// HealthService removed - unused in controller
 import {
   ApiTags,
   ApiOperation,
@@ -142,8 +142,6 @@ export class AppointmentsController {
     private readonly errors: HealthcareErrorsService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
-    @Inject(forwardRef(() => HealthService))
-    private readonly healthService: HealthService,
     private readonly videoService: VideoService,
     @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,
