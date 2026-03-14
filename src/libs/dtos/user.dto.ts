@@ -626,6 +626,30 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsOptional()
   @IsString({ message: 'Clinic token must be a string' })
   clinicToken?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the user profile is complete',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Profile complete must be a boolean' })
+  profileComplete?: boolean;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the user profile is complete (alias for profileComplete)',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Is profile complete must be a boolean' })
+  isProfileComplete?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether the user requires profile completion',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Requires profile completion must be a boolean' })
+  requiresProfileCompletion?: boolean;
 }
 
 /**
