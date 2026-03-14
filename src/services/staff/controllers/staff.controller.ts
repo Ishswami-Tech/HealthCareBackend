@@ -43,7 +43,7 @@ export class StaffController {
   }
 
   @Get()
-  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.CLINIC_ADMIN, Role.SUPER_ADMIN, Role.RECEPTIONIST)
   @ApiOperation({ summary: 'Get all staff members (Receptionists, Nurses, Clinic Admins)' })
   @ApiResponse({ status: 200, description: 'List of staff retrieved successfully' })
   async findAll(@Request() req: ClinicAuthenticatedRequest) {
