@@ -113,6 +113,7 @@ export class RbacModule implements OnModuleInit {
           'billing:read',
           'billing:create',
           'scheduling:*',
+          'prescriptions:read',
         ],
         PATIENT: [
           'appointments:read',
@@ -154,22 +155,43 @@ export class RbacModule implements OnModuleInit {
             }
           }
 
-          // Check if role already has permissions assigned
+          // Sync permissions: add any missing permissions that are defined in defaults
           const existingPermissions = await this.rbacService.getRolePermissions([role.id]);
-          if (existingPermissions.length === 0 && permissionIds.length > 0) {
-            // Only assign if no permissions exist yet
-            await this.roleService.assignPermissionsToRole(role.id, permissionIds);
-            void this.loggingService.log(
-              LogType.AUDIT,
-              LogLevel.INFO,
-              `Assigned ${permissionIds.length} default permissions to role ${roleName}`,
-              'RbacModule',
-              {
-                roleName,
-                roleId: role.id,
-                permissionCount: permissionIds.length,
-              }
-            );
+          const existingPermissionIds = existingPermissions
+            .map(p => permissionMap.get(p))
+            .filter((id): id is string => id !== undefined);
+          const permissionsToAdd = permissionIds.filter(id => !existingPermissionIds.includes(id));
+
+          if (permissionsToAdd.length > 0) {
+            if (existingPermissions.length === 0) {
+              // Initial assignment
+              await this.roleService.assignPermissionsToRole(role.id, permissionIds);
+              void this.loggingService.log(
+                LogType.AUDIT,
+                LogLevel.INFO,
+                `Assigned ${permissionIds.length} default permissions to role ${roleName}`,
+                'RbacModule',
+                {
+                  roleName,
+                  roleId: role.id,
+                  permissionCount: permissionIds.length,
+                }
+              );
+            } else {
+              // Sync missing permissions
+              await this.roleService.assignPermissionsToRole(role.id, permissionsToAdd);
+              void this.loggingService.log(
+                LogType.AUDIT,
+                LogLevel.INFO,
+                `Synced ${permissionsToAdd.length} missing default permissions to role ${roleName}`,
+                'RbacModule',
+                {
+                  roleName,
+                  roleId: role.id,
+                  addedCount: permissionsToAdd.length,
+                }
+              );
+            }
           }
         } catch (roleError) {
           // Log but continue with other roles

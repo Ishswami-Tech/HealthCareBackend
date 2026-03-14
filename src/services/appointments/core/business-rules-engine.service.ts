@@ -100,6 +100,33 @@ export class BusinessRulesEngine {
       return [
         {
           id: 'default-1',
+          name: 'appointment-date-range',
+          description: 'Appointment must be within 3 days from today',
+          priority: 0,
+          isActive: true,
+          category: 'appointment_creation',
+          version: '1.0.0',
+          tags: [],
+          conditions: [
+            {
+              type: 'custom',
+              field: 'date_range_check',
+              value: true,
+              operator: 'AND',
+            },
+          ] as readonly import('@core/types').RuleCondition[],
+          actions: [
+            {
+              type: 'block',
+              message: 'Appointments can only be booked up to 3 days in advance',
+              severity: 'high',
+            },
+          ] as readonly import('@core/types').RuleAction[],
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        {
+          id: 'default-2',
           name: 'appointment-time-validation',
           description: 'Appointment must be during working hours',
           priority: 1,
@@ -126,7 +153,7 @@ export class BusinessRulesEngine {
           updatedAt: new Date(),
         },
         {
-          id: 'default-2',
+          id: 'default-3',
           name: 'double-booking-prevention',
           description: 'Doctor cannot have overlapping appointments',
           priority: 2,
@@ -174,6 +201,42 @@ export class BusinessRulesEngine {
       const firstCondition: RuleCondition | undefined = isRuleCondition(firstConditionRaw)
         ? firstConditionRaw
         : undefined;
+      if (firstCondition && firstCondition.field === 'date_range_check') {
+        // Date range check: appointment must be within 3 days from today
+        const appointmentDataRaw = context.appointment;
+        const appointmentData =
+          appointmentDataRaw && typeof appointmentDataRaw === 'object'
+            ? (appointmentDataRaw as Record<string, unknown>)
+            : {};
+        const dateInput = (appointmentData['date'] || appointmentData['appointmentDate']) as
+          | string
+          | undefined;
+
+        if (!dateInput) return false;
+
+        const appointmentDate = new Date(dateInput);
+
+        // Get today in IST timezone
+        const today = new Date();
+        const istOffset = 5.5 * 60 * 60 * 1000; // UTC + 5:30 hours
+        const todayIST = new Date(today.getTime() + istOffset);
+
+        // Calculate max date (3 days from today in IST)
+        const maxDateIST = new Date(todayIST);
+        maxDateIST.setDate(todayIST.getDate() + 3);
+
+        // Normalize to start of day for comparison
+        const appointmentDay = new Date(appointmentDate);
+        appointmentDay.setHours(0, 0, 0, 0);
+        const todayDay = new Date(todayIST);
+        todayDay.setHours(0, 0, 0, 0);
+        const maxDay = new Date(maxDateIST);
+        maxDay.setHours(0, 0, 0, 0);
+
+        // Check if appointment is within valid range
+        return appointmentDay >= todayDay && appointmentDay <= maxDay;
+      }
+
       if (firstCondition && firstCondition.field === 'time_validation') {
         // Extract working hours from condition value or context
         const conditionValueRaw: unknown = firstCondition.value;

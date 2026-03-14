@@ -23,6 +23,7 @@ import {
   Res,
 } from '@nestjs/common';
 import { AppointmentsService } from './appointments.service';
+import { HealthService } from '@services/health/health.service';
 import {
   ApiTags,
   ApiOperation,
@@ -141,6 +142,8 @@ export class AppointmentsController {
     private readonly errors: HealthcareErrorsService,
     private readonly loggingService: LoggingService,
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => HealthService))
+    private readonly healthService: HealthService,
     private readonly videoService: VideoService,
     @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,
@@ -155,6 +158,55 @@ export class AppointmentsController {
     @Inject(forwardRef(() => AppointmentAnalyticsService))
     private readonly analyticsService: AppointmentAnalyticsService
   ) {}
+
+  /**
+   * Manually trigger no-show cancellation check
+   * Useful for testing or on-demand checks
+   */
+  @Post('noshow/check')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('appointments', 'update')
+  @ApiOperation({
+    summary: 'Trigger manual no-show check',
+    description:
+      'Manually trigger the background no-show cancellation process for missed appointments.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'No-show check executed successfully',
+  })
+  async triggerNoShowCheck(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Body()
+    settings?: {
+      checkDaysBefore?: number;
+      checkStatuses?: string[];
+      sendPatientNotifications?: boolean;
+      clinicId?: string;
+    }
+  ): Promise<{
+    totalChecked: number;
+    cancelled: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      appointmentDate: Date;
+      reason: string;
+    }>;
+  }> {
+    const clinicId = req?.clinicContext?.clinicId;
+
+    const result = await this.appointmentService.processNoShowCancellations({
+      ...settings,
+      ...(clinicId ? { clinicId } : {}),
+    });
+
+    return result;
+  }
 
   @Post()
   @RateLimitAPI()

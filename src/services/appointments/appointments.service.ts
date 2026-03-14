@@ -1,4 +1,5 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
 
 // Infrastructure Services
@@ -32,7 +33,7 @@ import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin'
 import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 
 // DTOs and Types
-import { Prisma } from '@infrastructure/database/prisma/generated/client';
+import { Prisma, $Enums } from '@infrastructure/database/prisma/generated/client';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -427,6 +428,218 @@ export class AppointmentsService {
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService
   ) {}
+
+  // =============================================
+  // NO-SHOW CANCELLATION CRON JOB
+  // =============================================
+
+  private readonly DEFAULT_NO_SHOW_SETTINGS = {
+    checkDaysBefore: 1, // Check yesterday's appointments
+    checkStatuses: ['SCHEDULED', 'CONFIRMED'] as const,
+    sendPatientNotifications: true,
+  };
+
+  @Cron(CronExpression.EVERY_DAY_AT_3AM)
+  async handleNoShowCancellationCron() {
+    await this.processNoShowCancellations();
+  }
+
+  async processNoShowCancellations(settings?: {
+    checkDaysBefore?: number;
+    checkStatuses?: readonly string[];
+    sendPatientNotifications?: boolean;
+    clinicId?: string;
+  }): Promise<{
+    totalChecked: number;
+    cancelled: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      appointmentDate: Date;
+      reason: string;
+    }>;
+  }> {
+    const mergedSettings = { ...this.DEFAULT_NO_SHOW_SETTINGS, ...settings };
+
+    await this.loggingService.log(
+      LogType.BUSINESS,
+      LogLevel.INFO,
+      'Starting no-show cancellation check',
+      'AppointmentsService',
+      { settings: mergedSettings }
+    );
+
+    const today = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const todayIST = new Date(today.getTime() + istOffset);
+    const cutoffDate = new Date(todayIST);
+    cutoffDate.setDate(todayIST.getDate() - mergedSettings.checkDaysBefore);
+    cutoffDate.setHours(0, 0, 0, 0);
+
+    const appointmentsToCheck = await this.databaseService.executeHealthcareRead(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.appointment.findMany({
+        where: {
+          date: { lt: cutoffDate },
+          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+        },
+        select: {
+          id: true,
+          patientId: true,
+          doctorId: true,
+          date: true,
+          time: true,
+          status: true,
+          clinicId: true,
+        },
+        orderBy: { date: 'asc' },
+      });
+    });
+
+    const results: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      appointmentDate: Date;
+      reason: string;
+    }> = [];
+    let cancelledCount = 0;
+    let failedCount = 0;
+
+    for (const appointment of appointmentsToCheck) {
+      try {
+        const hasCheckIn = await this.hasPatientCheckedInForNoShow(
+          appointment.patientId,
+          appointment.date,
+          appointment.clinicId
+        );
+
+        if (!hasCheckIn) {
+          // Robustly cancel appointment using the existing verified service method
+          await this.cancelAppointment(
+            appointment.id,
+            'No-show: Patient did not check in',
+            'system',
+            appointment.clinicId,
+            'SYSTEM'
+          );
+
+          cancelledCount++;
+          results.push({
+            appointmentId: appointment.id,
+            patientId: appointment.patientId,
+            doctorId: appointment.doctorId,
+            appointmentDate: appointment.date,
+            reason: 'No-show: Patient did not check in',
+          });
+
+          if (mergedSettings.sendPatientNotifications) {
+            await this.notifyPatientOfNoShowCancellation(appointment);
+          }
+
+          // Emit event for no-show cancellation reporting
+          await this.eventService.emitEnterprise('appointment.noshow', {
+            eventId: `noshow-${appointment.id}-${Date.now()}`,
+            eventType: 'appointment.noshow',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: 'AppointmentsService',
+            version: '1.0.0',
+            userId: appointment.patientId,
+            clinicId: appointment.clinicId,
+            payload: {
+              appointmentId: appointment.id,
+              doctorId: appointment.doctorId,
+              date: appointment.date,
+              reason: 'No-show',
+            },
+          });
+        }
+      } catch (error) {
+        failedCount++;
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          `Failed to process no-show for appointment ${appointment.id}: ${error instanceof Error ? error.message : String(error)}`,
+          'AppointmentsService'
+        );
+      }
+    }
+
+    return {
+      totalChecked: appointmentsToCheck.length,
+      cancelled: cancelledCount,
+      failed: failedCount,
+      details: results,
+    };
+  }
+
+  private async hasPatientCheckedInForNoShow(
+    patientId: string,
+    appointmentDate: Date,
+    clinicId?: string
+  ): Promise<boolean> {
+    const startOfDay = new Date(appointmentDate);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(appointmentDate);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    return (
+      (await this.databaseService.executeHealthcareRead<number>(async client => {
+        const prismaClient = client as unknown as Prisma.TransactionClient;
+
+        return await prismaClient.checkIn.count({
+          where: {
+            patientId,
+            checkedInAt: { gte: startOfDay },
+            ...(clinicId ? { appointment: { clinicId } } : {}),
+          },
+        });
+      })) > 0
+    );
+  }
+
+  private async notifyPatientOfNoShowCancellation(appointment: {
+    id: string;
+    patientId: string;
+    clinicId: string;
+    date: Date;
+  }): Promise<void> {
+    try {
+      await this.eventService.emitEnterprise('communication.patient.notification', {
+        eventId: `noshow-notify-${appointment.id}-${Date.now()}`,
+        eventType: 'communication.patient.notification',
+        category: EventCategory.NOTIFICATION,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: 'AppointmentsService',
+        version: '1.0.0',
+        userId: appointment.patientId,
+        clinicId: appointment.clinicId,
+        payload: {
+          type: 'SMS',
+          priority: 'high',
+          template: 'noshow_cancellation',
+          data: {
+            appointmentId: appointment.id,
+            appointmentDate: appointment.date,
+            reason: 'No-show: You did not check in for your appointment',
+          },
+        },
+      });
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        `Failed to send no-show notification: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentsService'
+      );
+    }
+  }
 
   getAppointmentServiceCatalog(): AppointmentServiceMetadataDto[] {
     return APPOINTMENT_SERVICE_CATALOG.map(service => ({
