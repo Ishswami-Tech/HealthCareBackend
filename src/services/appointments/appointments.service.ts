@@ -3164,19 +3164,21 @@ export class AppointmentsService {
     clinicId: string,
     userId: string,
     locationId?: string,
-    _role: string = 'USER'
+    _role: string = 'USER',
+    appointmentType?: string
   ): Promise<unknown> {
     // Use CacheService key factory for proper key generation (single source of truth)
     // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
     const keyFactory = this.cacheService.getKeyFactory();
     // Key factory automatically adds 'healthcare' prefix
     const cacheKey = keyFactory.fromTemplate(
-      'doctor:{doctorId}:clinic:{clinicId}:location:{locationId}:availability:{date}',
+      'doctor:{doctorId}:clinic:{clinicId}:location:{locationId}:availability:{date}:type:{appointmentType}',
       {
         doctorId,
         clinicId,
         locationId: locationId || 'all',
         date,
+        appointmentType: appointmentType || 'all',
       }
     );
 
@@ -3193,6 +3195,7 @@ export class AppointmentsService {
             role: _role as Role,
             clinicId,
             ...(locationId && { locationId }),
+            ...(appointmentType && { appointmentType }),
           }
         );
 

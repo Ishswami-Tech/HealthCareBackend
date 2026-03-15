@@ -191,6 +191,47 @@ export class ClinicLocationController {
     return await this.locationService.updateLocation(id, updateData, userId);
   }
 
+  @Put(':id/working-hours')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD, Role.RECEPTIONIST)
+  @RequireResourcePermission('clinics', 'update')
+  @InvalidateClinicCache({
+    tags: ['clinic_locations', 'clinic:{clinicId}', 'clinic_location:{id}'],
+    patterns: ['clinic_locations:*', 'clinic_location:*'],
+  })
+  @ApiOperation({ summary: 'Update clinic location working hours' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        workingHours: {
+          type: 'object',
+          description: 'Working hours configuration',
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'The location working hours have been successfully updated.',
+  })
+  @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
+  @ApiParam({ name: 'id', description: 'ID of the location' })
+  async updateWorkingHours(
+    @Param('id') id: string,
+    @Param('clinicId') _clinicId: string,
+    @Body('workingHours') workingHours: unknown,
+    @Request() req: { user?: { id?: string; sub?: string } }
+  ): Promise<ClinicLocationResponseDto> {
+    const userId = req.user?.id || req.user?.sub || 'system';
+
+    const updateData: ClinicLocationUpdateInput = {
+      workingHours:
+        typeof workingHours === 'string' ? workingHours : JSON.stringify(workingHours || {}),
+    };
+
+    return await this.locationService.updateLocation(id, updateData, userId);
+  }
+
   @Delete(':id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.CLINIC_LOCATION_HEAD)
   @RequireResourcePermission('clinics', 'delete')

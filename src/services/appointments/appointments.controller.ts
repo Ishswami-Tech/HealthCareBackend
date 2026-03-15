@@ -1039,6 +1039,7 @@ export class AppointmentsController {
     @Param('doctorId') doctorIdParam: string,
     @Query('date') date: string,
     @Query('locationId') locationId: string | undefined,
+    @Query('type') appointmentType: string | undefined,
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<DoctorAvailabilityResponseDto> {
     try {
@@ -1120,7 +1121,8 @@ export class AppointmentsController {
         clinicId,
         req.user?.sub || '',
         locationId,
-        req.user?.role || Role.PATIENT
+        req.user?.role || Role.PATIENT,
+        appointmentType
       );
 
       // Extract data from result (service returns { success: true, data: availabilityData })

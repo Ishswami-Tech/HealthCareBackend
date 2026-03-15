@@ -88,6 +88,7 @@ export interface AppointmentContext {
   locationId?: string;
   doctorId?: string;
   patientId?: string;
+  appointmentType?: string;
 }
 
 /**

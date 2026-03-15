@@ -252,8 +252,13 @@ export class BusinessRulesEngine {
         const appointmentData = (context.appointment as Record<string, unknown>) || {};
         const dateInput = (appointmentData['date'] || appointmentData['appointmentDate']) as string;
         const appointmentTime = new Date(dateInput);
-        const hour = appointmentTime.getHours();
-        const minute = appointmentTime.getMinutes();
+
+        // Convert to IST to accurately extract hours/minutes regardless of server timezone
+        const istOffset = 5.5 * 60 * 60 * 1000; // UTC + 5:30 hours
+        const istTime = new Date(appointmentTime.getTime() + istOffset);
+
+        const hour = istTime.getUTCHours();
+        const minute = istTime.getUTCMinutes();
         const appointmentMinutes = hour * 60 + minute;
 
         const startMinutes = this.timeToMinutes(
