@@ -1183,6 +1183,11 @@ export class CoreAppointmentService {
       const workingHours = { ...defaultWorkingHours };
       let sessionWindows: SessionWindow[] = [];
       let slotDuration = 30;
+      if (_context?.appointmentType === 'VIDEO_CALL') {
+        slotDuration = 10;
+      } else if (_context?.appointmentType === 'IN_PERSON' || !_context?.appointmentType) {
+        slotDuration = 3;
+      }
       let clinicPaused = false;
       let doctorPaused = false;
       let emergencyOnly = false;
