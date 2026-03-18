@@ -137,6 +137,7 @@ export class HttpService {
   ): Promise<HttpResponse<T>> {
     const startTime = Date.now();
     const requestId = `${method}-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    let errorAlreadyLogged = false;
 
     // Merge options with defaults
     const retryConfig: RetryConfig = {
@@ -153,6 +154,7 @@ export class HttpService {
       exponentialBackoff: _exponentialBackoff,
       shouldRetry: _shouldRetry,
       logRequest: _logRequest,
+      suppressErrorLogging: _suppressErrorLogging,
       headers: _customHeaders,
       timeout: _customTimeout,
       ...axiosConfigBase
@@ -241,7 +243,7 @@ export class HttpService {
           return throwError(() => error);
         }
 
-        if (this.loggingService) {
+        if (!options?.suppressErrorLogging && this.loggingService) {
           void this.loggingService.log(
             logType,
             logLevel,
@@ -266,6 +268,7 @@ export class HttpService {
               isConnectionError,
             }
           );
+          errorAlreadyLogged = true;
         }
         return throwError(() => error);
       })
@@ -417,7 +420,7 @@ export class HttpService {
       const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
 
       // Log detailed error for debugging (especially for connection errors)
-      if (this.loggingService) {
+      if (!options?.suppressErrorLogging && !errorAlreadyLogged && this.loggingService) {
         void this.loggingService.log(
           logType,
           logLevel,

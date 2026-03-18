@@ -795,6 +795,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
           // This prevents HttpService from logging errors for these status codes
           response = await Promise.race([
             this.httpService.get(rootEndpoint, {
+              logRequest: false,
+              suppressErrorLogging: true,
               timeout: healthCheckTimeout,
               validateStatus: (status: number) => {
                 // Treat 2xx, 3xx, 403, and 401 as valid responses
@@ -821,6 +823,8 @@ export class OpenViduVideoProvider implements IVideoProvider {
               // Use validateStatus to treat 403/401 as valid responses (not errors)
               response = await Promise.race([
                 this.httpService.get<{ version?: string; [key: string]: unknown }>(configEndpoint, {
+                  logRequest: false,
+                  suppressErrorLogging: true,
                   timeout: healthCheckTimeout,
                   validateStatus: (status: number) => {
                     // Treat 2xx, 3xx, 403, and 401 as valid responses

@@ -1081,7 +1081,10 @@ export class AppointmentsService {
     createDto: CreateAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER'
+    role: string = 'USER',
+    options?: {
+      skipInPersonSubscriptionAutoLink?: boolean;
+    }
   ): Promise<AppointmentResult> {
     // SECURITY: clinicId in body is allowed by DTO but ignored here in favor of context
     // We rely on the clinicId passed as argument (from ClinicGuard/Context)
@@ -1111,6 +1114,7 @@ export class AppointmentsService {
 
     const requiresSubscriptionCoverage =
       createDto.type === AppointmentType.IN_PERSON && !isVideoCallAppointmentType(createDto.type);
+    const shouldAutoLinkInPersonSubscription = !options?.skipInPersonSubscriptionAutoLink;
 
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
     if (requiresSubscriptionCoverage) {
@@ -1154,7 +1158,11 @@ export class AppointmentsService {
         clinicId
       );
 
-      if (requiresSubscriptionCoverage && resolvedInPersonCoverage) {
+      if (
+        requiresSubscriptionCoverage &&
+        shouldAutoLinkInPersonSubscription &&
+        resolvedInPersonCoverage
+      ) {
         await this.billingService.bookAppointmentWithSubscription(
           resolvedInPersonCoverage.subscriptionId,
           (result.data as Record<string, unknown>)?.['id'] as string,

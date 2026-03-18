@@ -4,7 +4,6 @@
 // Note: This file is excluded from TypeScript checking in tsconfig.json
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { Pool } from 'pg';
 import { faker } from '@faker-js/faker';
 import * as bcrypt from 'bcryptjs'; // Use bcryptjs to match AuthService
 import * as fs from 'fs';
@@ -94,8 +93,7 @@ if (connectionString.includes('supabase') || connectionString.includes('pooler.s
 }
 
 console.log('Initializing PrismaClient with adapter...');
-const pool = new Pool(poolConfig);
-const adapter = new PrismaPg(pool);
+const adapter = new PrismaPg(poolConfig);
 
 // Create PrismaClient with adapter - simplified initialization
 // Clear require cache to ensure fresh PrismaClient

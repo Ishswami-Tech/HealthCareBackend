@@ -161,6 +161,11 @@ export interface HttpRequestOptions extends Partial<AxiosRequestConfig> {
    */
   logRequest?: boolean;
   /**
+   * Whether to suppress error logging for expected failures handled by the caller.
+   * The request still fails normally; this only prevents noisy transport logs.
+   */
+  suppressErrorLogging?: boolean;
+  /**
    * Custom timeout in milliseconds
    */
   timeout?: number;
