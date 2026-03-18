@@ -57,6 +57,7 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
   private cacheHitTimes: number[] = [];
   private cacheMissTimes: number[] = [];
   private readonly maxCacheTimeHistory = 1000; // Keep last 1000 cache operation times
+  private readonly lowCacheHitRateAlertKey = 'warning-low-cache-hit-rate';
 
   // Alert throttling to prevent log spam
   private readonly alertCooldowns = new Map<string, number>(); // Map of alert key -> last log timestamp
@@ -373,25 +374,40 @@ export class DatabaseMetricsService implements OnModuleInit, OnModuleDestroy {
       totalCacheOps > 100 &&
       this.currentMetrics.performance.cacheHitRate < this.minCacheHitRate
     ) {
-      void this.loggingService.log(
-        LogType.DATABASE,
-        LogLevel.WARN,
-        `Low cache hit rate detected: ${(this.currentMetrics.performance.cacheHitRate * 100).toFixed(1)}% (threshold: ${(this.minCacheHitRate * 100).toFixed(1)}%)`,
-        this.serviceName,
-        {
-          cacheHitRate: this.currentMetrics.performance.cacheHitRate,
-          cacheHits: this.cacheHits,
-          cacheMisses: this.cacheMisses,
-          totalCacheOps,
-          recommendations: [
-            'Review cache TTL settings - may be too short',
-            'Check cache invalidation strategy - may be too aggressive',
-            'Consider increasing cache size limits',
-            'Review cache key patterns for optimization',
-            'Enable cache warming for frequently accessed data',
-          ],
-        }
-      );
+      const cacheHitRatePercent = Math.floor(this.currentMetrics.performance.cacheHitRate * 100);
+      const alertHash = JSON.stringify({
+        cacheHitRatePercent,
+        belowThreshold: true,
+      });
+      const now = Date.now();
+      const lastLogTime = this.alertCooldowns.get(this.lowCacheHitRateAlertKey) || 0;
+      const lastHash = this.lastAlertHash.get(this.lowCacheHitRateAlertKey) || '';
+      const cooldownPassed = now - lastLogTime >= this.alertCooldownMs * 2;
+      const alertChanged = alertHash !== lastHash;
+
+      if (cooldownPassed || alertChanged) {
+        void this.loggingService.log(
+          LogType.DATABASE,
+          LogLevel.WARN,
+          `Low cache hit rate detected: ${(this.currentMetrics.performance.cacheHitRate * 100).toFixed(1)}% (threshold: ${(this.minCacheHitRate * 100).toFixed(1)}%)`,
+          this.serviceName,
+          {
+            cacheHitRate: this.currentMetrics.performance.cacheHitRate,
+            cacheHits: this.cacheHits,
+            cacheMisses: this.cacheMisses,
+            totalCacheOps,
+            recommendations: [
+              'Review cache TTL settings - may be too short',
+              'Check cache invalidation strategy - may be too aggressive',
+              'Consider increasing cache size limits',
+              'Review cache key patterns for optimization',
+              'Enable cache warming for frequently accessed data',
+            ],
+          }
+        );
+        this.alertCooldowns.set(this.lowCacheHitRateAlertKey, now);
+        this.lastAlertHash.set(this.lowCacheHitRateAlertKey, alertHash);
+      }
     }
   }
 

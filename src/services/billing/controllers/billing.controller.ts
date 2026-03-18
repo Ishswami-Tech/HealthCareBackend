@@ -66,7 +66,10 @@ type AppointmentsServiceLike = {
     payload: Record<string, unknown>,
     userId: string,
     clinicId: string,
-    role: string
+    role: string,
+    options?: {
+      skipInPersonSubscriptionAutoLink?: boolean;
+    }
   ) => Promise<AppointmentServiceResult>;
   cancelAppointment: (
     appointmentId: string,
@@ -718,7 +721,10 @@ export class BillingController {
       },
       userId,
       clinicId,
-      role
+      role,
+      {
+        skipInPersonSubscriptionAutoLink: true,
+      }
     );
 
     if (!result.success || !result.data) {

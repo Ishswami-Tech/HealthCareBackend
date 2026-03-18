@@ -532,7 +532,8 @@ export class HealthcareErrorsService {
       ErrorCode.BUSINESS_RULE_VIOLATION,
       HttpStatus.BAD_REQUEST,
       context,
-      rule ? { rule } : undefined
+      rule ? { rule } : undefined,
+      rule
     );
   }
 
