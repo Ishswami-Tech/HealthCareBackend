@@ -352,93 +352,28 @@ export class VideoHealthIndicator extends BaseHealthIndicator<VideoHealthStatus>
               }),
         };
       } catch (error) {
-        // Direct health check failed - try VideoService as fallback
+        // Direct health check failed. Avoid VideoService fallback here because it
+        // re-enters the same OpenVidu health path and duplicates retries/logs.
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         const errorStack = error instanceof Error ? error.stack : undefined;
 
-        // Log error for debugging
         if (this.loggingService) {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.WARN,
-            'VideoHealthIndicator: Direct OpenVidu health check failed, trying VideoService fallback',
+            'VideoHealthIndicator: Direct OpenVidu health check failed',
             'VideoHealthIndicator.getHealthStatus',
             {
               error: errorMessage,
               stack: errorStack,
-              willTryVideoService: !!this.videoService,
             }
           );
         }
 
-        // If VideoService is available, try it as fallback
-        if (this.videoService) {
-          try {
-            const fallbackStartTime = Date.now();
-            const isHealthy = await this.videoService.isHealthy();
-            const fallbackResponseTime = Date.now() - fallbackStartTime;
-            const primaryProvider = this.videoService.getCurrentProvider() || 'openvidu';
-            const fallbackProvider = this.videoService.getFallbackProvider();
-
-            if (this.loggingService) {
-              void this.loggingService.log(
-                isHealthy ? LogType.SYSTEM : LogType.ERROR,
-                isHealthy ? LogLevel.INFO : LogLevel.WARN,
-                `VideoHealthIndicator: VideoService fallback health check ${isHealthy ? 'succeeded' : 'failed'}`,
-                'VideoHealthIndicator.getHealthStatus',
-                {
-                  isHealthy,
-                  primaryProvider,
-                  fallbackProvider,
-                  responseTime: fallbackResponseTime,
-                  usedFallback: true,
-                  originalError: errorMessage,
-                }
-              );
-            }
-
-            return {
-              isHealthy,
-              primaryProvider,
-              fallbackProvider,
-              responseTime: fallbackResponseTime,
-              ...(isHealthy
-                ? {}
-                : { errorMessage: `VideoService health check failed: ${errorMessage}` }),
-            };
-          } catch (serviceError) {
-            const serviceErrorMessage =
-              serviceError instanceof Error ? serviceError.message : 'Unknown error';
-
-            // Both direct check and VideoService failed
-            if (this.loggingService) {
-              void this.loggingService.log(
-                LogType.ERROR,
-                LogLevel.ERROR,
-                'VideoHealthIndicator: Both direct OpenVidu check and VideoService fallback failed',
-                'VideoHealthIndicator.getHealthStatus',
-                {
-                  directCheckError: errorMessage,
-                  videoServiceError: serviceErrorMessage,
-                  usedFallback: true,
-                }
-              );
-            }
-
-            return {
-              isHealthy: false,
-              primaryProvider: 'openvidu',
-              fallbackProvider: 'jitsi',
-              errorMessage: `Direct OpenVidu check failed: ${errorMessage}. VideoService check also failed: ${serviceErrorMessage}`,
-            };
-          }
-        }
-
-        // Direct check failed and VideoService not available
         return {
           isHealthy: false,
           primaryProvider: 'openvidu',
-          fallbackProvider: 'jitsi',
+          fallbackProvider: null,
           errorMessage: `Direct OpenVidu health check failed: ${errorMessage}`,
         };
       }

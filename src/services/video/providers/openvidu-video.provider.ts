@@ -37,9 +37,13 @@ import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 export class OpenViduVideoProvider implements IVideoProvider {
   readonly providerName: VideoProviderType = 'openvidu';
   private readonly MEETING_CACHE_TTL = 3600; // 1 hour
+  private readonly HEALTH_CHECK_COOLDOWN_MS = 60000;
   private readonly apiUrl: string;
   private readonly secret: string;
   private readonly domain: string;
+  private lastHealthCheckAt = 0;
+  private lastHealthCheckResult: boolean | null = null;
+  private lastHealthCheckErrorMessage: string | null = null;
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -756,6 +760,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
       return false;
     }
 
+    const now = Date.now();
+    if (
+      this.lastHealthCheckResult === false &&
+      now - this.lastHealthCheckAt < this.HEALTH_CHECK_COOLDOWN_MS
+    ) {
+      return false;
+    }
+
     // Real-time health check with retry logic - NO AUTHENTICATION
     // According to OpenVidu documentation (https://docs.openvidu.io):
     // 1. Root URL should show "Welcome to OpenVidu" message (default behavior for all editions)
@@ -880,6 +892,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
         if (isUp) {
           // Don't log successful health checks - reduces log noise
           // Only log failures to keep logs focused on issues
+          this.lastHealthCheckAt = Date.now();
+          this.lastHealthCheckResult = true;
+          this.lastHealthCheckErrorMessage = null;
           return true;
         }
 
@@ -896,6 +911,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
             }
           );
           // Don't retry if OpenVidu explicitly says it's unavailable
+          this.lastHealthCheckAt = Date.now();
+          this.lastHealthCheckResult = false;
+          this.lastHealthCheckErrorMessage = `OpenVidu reported HTTP ${response.status}`;
           return false;
         }
       } catch (error) {
@@ -999,6 +1017,10 @@ export class OpenViduVideoProvider implements IVideoProvider {
         note: 'OpenVidu container may not be running, not ready yet, or network issue. API will continue without video support.',
       }
     );
+
+    this.lastHealthCheckAt = Date.now();
+    this.lastHealthCheckResult = false;
+    this.lastHealthCheckErrorMessage = detailedErrorMessage;
 
     // Throw error with detailed message so health indicator can capture it
     throw new HealthcareError(

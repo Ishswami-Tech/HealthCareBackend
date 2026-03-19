@@ -136,13 +136,19 @@ export class ChatBackupService implements OnModuleInit {
         'ChatBackupService'
       );
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const missingFirebaseConfig =
+        errorMessage.includes('FIREBASE_') ||
+        errorMessage.toLowerCase().includes('credential') ||
+        errorMessage.toLowerCase().includes('private key');
+
       void this.loggingService.log(
         LogType.SYSTEM,
-        LogLevel.ERROR,
+        missingFirebaseConfig ? LogLevel.WARN : LogLevel.ERROR,
         'Failed to initialize Firebase Realtime Database',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
