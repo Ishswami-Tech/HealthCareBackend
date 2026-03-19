@@ -42,9 +42,9 @@ export class SNSBackupService implements OnModuleInit {
 
   private initializeAWSSNS(): void {
     try {
-      const awsRegion = this.configService.get<string>('AWS_REGION');
-      const awsAccessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID');
-      const awsSecretAccessKey = this.configService.get<string>('AWS_SECRET_ACCESS_KEY');
+      const awsRegion = this.configService.getEnv('AWS_REGION');
+      const awsAccessKeyId = this.configService.getEnv('AWS_ACCESS_KEY_ID');
+      const awsSecretAccessKey = this.configService.getEnv('AWS_SECRET_ACCESS_KEY');
 
       if (!awsRegion || !awsAccessKeyId || !awsSecretAccessKey) {
         void this.loggingService.log(

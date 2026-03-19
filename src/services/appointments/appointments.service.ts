@@ -1115,9 +1115,11 @@ export class AppointmentsService {
     const requiresSubscriptionCoverage =
       createDto.type === AppointmentType.IN_PERSON && !isVideoCallAppointmentType(createDto.type);
     const shouldAutoLinkInPersonSubscription = !options?.skipInPersonSubscriptionAutoLink;
+    const shouldResolveInPersonCoverageBeforeCreate =
+      requiresSubscriptionCoverage && shouldAutoLinkInPersonSubscription;
 
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
-    if (requiresSubscriptionCoverage) {
+    if (shouldResolveInPersonCoverageBeforeCreate) {
       resolvedInPersonCoverage = await this.resolveEligibleInPersonSubscription(
         createDto.patientId,
         clinicId
@@ -1158,11 +1160,7 @@ export class AppointmentsService {
         clinicId
       );
 
-      if (
-        requiresSubscriptionCoverage &&
-        shouldAutoLinkInPersonSubscription &&
-        resolvedInPersonCoverage
-      ) {
+      if (shouldResolveInPersonCoverageBeforeCreate && resolvedInPersonCoverage) {
         await this.billingService.bookAppointmentWithSubscription(
           resolvedInPersonCoverage.subscriptionId,
           (result.data as Record<string, unknown>)?.['id'] as string,
