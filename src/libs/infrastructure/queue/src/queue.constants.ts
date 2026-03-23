@@ -1,49 +1,14 @@
-// Centralized queue name management for robustness and consistency
-export const APPOINTMENT_QUEUE = 'appointment-queue';
-export const EMAIL_QUEUE = 'email-queue';
-export const NOTIFICATION_QUEUE = 'notification-queue';
-export const SERVICE_QUEUE = 'service-queue';
-export const VIDHAKARMA_QUEUE = 'vidhakarma-queue';
-export const PANCHAKARMA_QUEUE = 'panchakarma-queue';
-export const CHEQUP_QUEUE = 'chequp-queue';
+/**
+ * QUEUE CONSTANTS — Single Source of Truth
+ * =========================================
+ * All background jobs route through HEALTHCARE_QUEUE.
+ * Job routing is handled by the JobType enum in @core/types/queue.types.ts.
+ */
 
-// Enhanced appointment management queues
-export const ENHANCED_APPOINTMENT_QUEUE = 'enhanced-appointment-queue';
-export const DOCTOR_AVAILABILITY_QUEUE = 'doctor-availability-queue';
-export const QUEUE_MANAGEMENT_QUEUE = 'queue-management-queue';
-export const WAITING_LIST_QUEUE = 'waiting-list-queue';
-export const PAYMENT_PROCESSING_QUEUE = 'payment-processing-queue';
-export const CALENDAR_SYNC_QUEUE = 'calendar-sync-queue';
-export const AYURVEDA_THERAPY_QUEUE = 'ayurveda-therapy-queue';
-export const PATIENT_PREFERENCE_QUEUE = 'patient-preference-queue';
-export const ANALYTICS_QUEUE = 'analytics-queue';
-export const REMINDER_QUEUE = 'reminder-queue';
-export const FOLLOW_UP_QUEUE = 'follow-up-queue';
-export const RECURRING_APPOINTMENT_QUEUE = 'recurring-appointment-queue';
+// The single, unified BullMQ queue for all backend background tasks
+export const HEALTHCARE_QUEUE = 'healthcare-queue';
 
-// Removed unused fashion-specific queues - healthcare application only uses general queues
-
-// Additional queue constants for enterprise queue service
-export const PAYMENT_QUEUE = 'payment-queue';
-export const EMERGENCY_QUEUE = 'emergency-queue';
-export const VIP_QUEUE = 'vip-queue';
-
-// EHR Module Queues
-export const LAB_REPORT_QUEUE = 'lab-report-queue';
-export const IMAGING_QUEUE = 'imaging-queue';
-export const BULK_EHR_IMPORT_QUEUE = 'bulk-ehr-import-queue';
-
-// Billing Module Queues
-export const INVOICE_PDF_QUEUE = 'invoice-pdf-queue';
-export const BULK_INVOICE_QUEUE = 'bulk-invoice-queue';
-export const PAYMENT_RECONCILIATION_QUEUE = 'payment-reconciliation-queue';
-
-// Video Module Queues
-export const VIDEO_RECORDING_QUEUE = 'video-recording-queue';
-export const VIDEO_TRANSCODING_QUEUE = 'video-transcoding-queue';
-export const VIDEO_ANALYTICS_QUEUE = 'video-analytics-queue';
-
-// Queue priorities and configuration
+// Queue priorities
 export const QUEUE_PRIORITIES = {
   CRITICAL: 10,
   HIGH: 7,
@@ -52,6 +17,7 @@ export const QUEUE_PRIORITIES = {
   BACKGROUND: 1,
 } as const;
 
+// Queue delays
 export const QUEUE_DELAYS = {
   IMMEDIATE: 0,
   SHORT: 5000, // 5 seconds

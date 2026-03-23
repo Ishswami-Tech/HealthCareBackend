@@ -12,6 +12,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { SocketService } from '@communication/channels/socket/socket.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { QueueService } from '@queue/src/queue.service';
+import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -734,7 +735,7 @@ export class VideoWaitingRoomService {
   ): Promise<void> {
     if (this.queueService) {
       await this.queueService.addJob(
-        this.NOTIFICATION_QUEUE,
+        JobType.NOTIFICATION,
         'waiting_room_notification',
         {
           consultationId,
@@ -763,7 +764,7 @@ export class VideoWaitingRoomService {
   private async notifyPatient(userId: string, consultationId: string): Promise<void> {
     if (this.queueService) {
       await this.queueService.addJob(
-        this.NOTIFICATION_QUEUE,
+        JobType.NOTIFICATION,
         'waiting_room_admission',
         {
           consultationId,

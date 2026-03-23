@@ -101,7 +101,8 @@ export class BusinessRulesEngine {
         {
           id: 'default-1',
           name: 'appointment-date-range',
-          description: 'Appointment must be within 3 days from today',
+          // description: 'Appointment must be within 3 days from today',
+          description: 'Testing mode: appointment date range restriction disabled',
           priority: 0,
           isActive: true,
           category: 'appointment_creation',
@@ -118,7 +119,8 @@ export class BusinessRulesEngine {
           actions: [
             {
               type: 'block',
-              message: 'Appointments can only be booked up to 3 days in advance',
+              // message: 'Appointments can only be booked up to 3 days in advance',
+              message: 'Testing mode: appointment date range restriction disabled',
               severity: 'high',
             },
           ] as readonly import('@core/types').RuleAction[],
@@ -202,39 +204,42 @@ export class BusinessRulesEngine {
         ? firstConditionRaw
         : undefined;
       if (firstCondition && firstCondition.field === 'date_range_check') {
-        // Date range check: appointment must be within 3 days from today
-        const appointmentDataRaw = context.appointment;
-        const appointmentData =
-          appointmentDataRaw && typeof appointmentDataRaw === 'object'
-            ? (appointmentDataRaw as Record<string, unknown>)
-            : {};
-        const dateInput = (appointmentData['date'] || appointmentData['appointmentDate']) as
-          | string
-          | undefined;
+        // Date range check: appointment must be within 3 days from today (Commented for testing)
+        // const appointmentDataRaw = context.appointment;
+        // const appointmentData =
+        //   appointmentDataRaw && typeof appointmentDataRaw === 'object'
+        //     ? (appointmentDataRaw as Record<string, unknown>)
+        //     : {};
+        // const dateInput = (appointmentData['date'] || appointmentData['appointmentDate']) as
+        //   | string
+        //   | undefined;
+        //
+        // if (!dateInput) return false;
+        //
+        // const appointmentDate = new Date(dateInput);
+        //
+        // // Get today in IST timezone
+        // const today = new Date();
+        // const istOffset = 5.5 * 60 * 60 * 1000; // UTC + 5:30 hours
+        // const todayIST = new Date(today.getTime() + istOffset);
+        //
+        // // Calculate max date (3 days from today in IST)
+        // const maxDateIST = new Date(todayIST);
+        // maxDateIST.setDate(todayIST.getDate() + 3);
+        //
+        // // Normalize to start of day for comparison
+        // const appointmentDay = new Date(appointmentDate);
+        // appointmentDay.setHours(0, 0, 0, 0);
+        // const todayDay = new Date(todayIST);
+        // todayDay.setHours(0, 0, 0, 0);
+        // const maxDay = new Date(maxDateIST);
+        // maxDay.setHours(0, 0, 0, 0);
+        //
+        // // Check if appointment is within valid range
+        // return appointmentDay >= todayDay && appointmentDay <= maxDay;
 
-        if (!dateInput) return false;
-
-        const appointmentDate = new Date(dateInput);
-
-        // Get today in IST timezone
-        const today = new Date();
-        const istOffset = 5.5 * 60 * 60 * 1000; // UTC + 5:30 hours
-        const todayIST = new Date(today.getTime() + istOffset);
-
-        // Calculate max date (3 days from today in IST)
-        const maxDateIST = new Date(todayIST);
-        maxDateIST.setDate(todayIST.getDate() + 3);
-
-        // Normalize to start of day for comparison
-        const appointmentDay = new Date(appointmentDate);
-        appointmentDay.setHours(0, 0, 0, 0);
-        const todayDay = new Date(todayIST);
-        todayDay.setHours(0, 0, 0, 0);
-        const maxDay = new Date(maxDateIST);
-        maxDay.setHours(0, 0, 0, 0);
-
-        // Check if appointment is within valid range
-        return appointmentDay >= todayDay && appointmentDay <= maxDay;
+        // Testing mode: bypass the default booking date-range restriction.
+        return true;
       }
 
       if (firstCondition && firstCondition.field === 'time_validation') {

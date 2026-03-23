@@ -7,6 +7,7 @@ import {
   forwardRef,
   Optional,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -19,7 +20,7 @@ import {
   EventPriority,
   EnterpriseEventPayload,
 } from '@core/types';
-import { INVOICE_PDF_QUEUE } from '@queue/src/queue.constants';
+import { JobType } from '@core/types/queue.types';
 // Future use: BULK_INVOICE_QUEUE, PAYMENT_RECONCILIATION_QUEUE
 import { SubscriptionStatus, InvoiceStatus, PaymentStatus } from '@core/types/enums.types';
 import {
@@ -35,6 +36,11 @@ import {
   CreateInsuranceClaimDto,
   UpdateInsuranceClaimDto,
 } from '@dtos/billing.dto';
+import {
+  AppointmentServiceMetadataDto,
+  AppointmentType,
+  TreatmentType,
+} from '@dtos/appointment.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PaymentService } from '@payment/payment.service';
@@ -59,8 +65,14 @@ import type {
 import type { InvoicePDFData } from '@core/types/billing.types';
 import type { AppointmentWithRelations } from '@core/types';
 
+type AppointmentsServiceLike = {
+  getAppointmentServiceCatalog: () => AppointmentServiceMetadataDto[];
+};
+
 @Injectable()
 export class BillingService {
+  private appointmentsServiceRef: AppointmentsServiceLike | null = null;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly cacheService: CacheService,
@@ -70,10 +82,55 @@ export class BillingService {
     private readonly whatsAppService: WhatsAppService,
     private readonly paymentService: PaymentService,
     private readonly configService: ConfigService,
+    private readonly moduleRef: ModuleRef,
     @Optional()
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
   ) {}
+
+  private getAppointmentsService(): AppointmentsServiceLike {
+    if (!this.appointmentsServiceRef) {
+      this.appointmentsServiceRef = this.moduleRef.get<AppointmentsServiceLike>(
+        'APPOINTMENTS_SERVICE',
+        { strict: false }
+      );
+    }
+
+    if (!this.appointmentsServiceRef) {
+      throw new Error('APPOINTMENTS_SERVICE is not available');
+    }
+
+    return this.appointmentsServiceRef;
+  }
+
+  private resolveVideoConsultationService(
+    treatmentType?: TreatmentType | string | null
+  ): AppointmentServiceMetadataDto {
+    const serviceCatalog = this.getAppointmentsService().getAppointmentServiceCatalog();
+    const matchedService = serviceCatalog.find(service => service.treatmentType === treatmentType);
+
+    if (!matchedService) {
+      throw new BadRequestException('Unsupported appointment service for VIDEO_CALL payment');
+    }
+
+    if (!matchedService.appointmentModes.includes(AppointmentType.VIDEO_CALL)) {
+      throw new BadRequestException(
+        `${matchedService.label} is not eligible for VIDEO_CALL payment`
+      );
+    }
+
+    if (
+      typeof matchedService.videoConsultationFee !== 'number' ||
+      !Number.isFinite(matchedService.videoConsultationFee) ||
+      matchedService.videoConsultationFee <= 0
+    ) {
+      throw new BadRequestException(
+        `No video consultation fee configured for ${matchedService.label}`
+      );
+    }
+
+    return matchedService;
+  }
 
   private isSoleProprietorModeEnabled(): boolean {
     const raw =
@@ -763,7 +820,7 @@ export class BillingService {
       if (this.queueService) {
         void this.queueService
           .addJob(
-            INVOICE_PDF_QUEUE as string,
+            JobType.INVOICE_PDF,
             'generate_pdf',
             {
               invoiceId: invoice.id,
@@ -1461,7 +1518,7 @@ export class BillingService {
   private getDefaultAppointmentPrice(appointmentType: string): number {
     const prices: Record<string, number> = {
       IN_PERSON: 500,
-      VIDEO_CALL: 1000,
+      VIDEO_CALL: 500,
       HOME_VISIT: 1500,
     };
     return prices[appointmentType] || 500;
@@ -1730,14 +1787,11 @@ export class BillingService {
    */
   async processAppointmentPayment(
     appointmentId: string,
-    amount: number,
     appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
     provider?: PaymentProvider
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
-    if (appointmentType === 'IN_PERSON') {
-      throw new BadRequestException(
-        'IN_PERSON appointments are covered by subscription. Please use an active subscription to book.'
-      );
+    if (appointmentType !== 'VIDEO_CALL') {
+      throw new BadRequestException('Only VIDEO_CALL appointments require per-appointment payment');
     }
 
     const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
@@ -1751,6 +1805,11 @@ export class BillingService {
         `Appointment type mismatch. Expected ${appointmentType}, got ${appointment.type}`
       );
     }
+
+    const serviceMetadata = this.resolveVideoConsultationService(
+      appointment.treatmentType as TreatmentType | string | null
+    );
+    const amount = serviceMetadata.videoConsultationFee as number;
 
     // Get user details
     const user = await this.databaseService.findUserByIdSafe(appointment.patientId);
@@ -1767,7 +1826,7 @@ export class BillingService {
       lineItems: {
         items: [
           {
-            description: `${appointmentType} Appointment`,
+            description: `${serviceMetadata.label} Appointment`,
             amount,
             quantity: 1,
           },
@@ -1797,7 +1856,7 @@ export class BillingService {
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
       ...(user?.name && { customerName: user.name }),
-      description: `Payment for ${appointmentType} appointment`,
+      description: `Payment for ${serviceMetadata.label} appointment`,
       appointmentId: appointment.id,
       appointmentType,
       clinicId: appointment.clinicId,
@@ -1847,7 +1906,7 @@ export class BillingService {
       appointmentId: appointment.id,
       invoiceId: invoice.id,
       ...(paymentId && { transactionId: paymentId }),
-      description: `Payment for ${appointmentType} appointment`,
+      description: `Payment for ${serviceMetadata.label} appointment`,
       metadata: {
         paymentIntentId: paymentId,
         orderId,
@@ -1870,6 +1929,8 @@ export class BillingService {
         paymentId: payment.id,
         amount,
         appointmentType,
+        treatmentType: appointment.treatmentType,
+        serviceLabel: serviceMetadata.label,
       }
     );
 

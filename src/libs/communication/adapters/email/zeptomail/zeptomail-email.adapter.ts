@@ -250,7 +250,30 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
    */
   async send(options: EmailOptions): Promise<EmailResult> {
     if (!this.sendMailToken || !this.fromEmail) {
+      // IN DEVELOPMENT: Allow mock sending if credentials are missing
+      if (process.env['NODE_ENV'] === 'development') {
+        await this.logger.log(
+          LogType.EMAIL,
+          LogLevel.INFO,
+          'ZEPTOMAIL MOCK SEND (Missing Credentials)',
+          'ZeptoMailEmailAdapter',
+          { to: options.to, subject: options.subject }
+        );
+        return this.createSuccessResult(`mock-msg-${Date.now()}`);
+      }
       return this.createErrorResult('ZeptoMail adapter not initialized');
+    }
+
+    // Handle explicit MOCK token
+    if (this.sendMailToken === 'MOCK') {
+      await this.logger.log(
+        LogType.EMAIL,
+        LogLevel.INFO,
+        'ZEPTOMAIL MOCK SEND (Explicit Mock Token)',
+        'ZeptoMailEmailAdapter',
+        { to: options.to, subject: options.subject }
+      );
+      return this.createSuccessResult(`mock-msg-${Date.now()}`);
     }
 
     try {

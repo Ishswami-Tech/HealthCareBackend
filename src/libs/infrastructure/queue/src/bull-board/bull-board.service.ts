@@ -10,61 +10,19 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
 
-import {
-  SERVICE_QUEUE,
-  APPOINTMENT_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-} from '@queue/src/queue.constants';
+import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
 
 /**
  * Bull Board Service for Queue Management
  *
  * Provides comprehensive queue monitoring, statistics, and health checks
- * for all healthcare system queues. Integrates with Bull Board dashboard
+ * for the unified HEALTHCARE_QUEUE. Integrates with Bull Board dashboard
  * for real-time queue visualization and management.
- *
- * @class BullBoardService
- * @description Enterprise-grade queue monitoring service with health checks and statistics
- * @example
- * ```typescript
- * // Inject the service
- * constructor(private readonly bullBoardService: BullBoardService) {}
- *
- * // Get queue statistics
- * const stats = await this.bullBoardService.getQueueStats();
- *
- * // Check queue health
- * const health = await this.bullBoardService.getQueueHealth();
- * ```
  */
 @Injectable()
 export class BullBoardService {
-  /**
-   * Constructor for BullBoardService
-   *
-   * @param loggingService - Logging service for structured logging
-   * @param serviceQueue - Service queue instance (optional)
-   * @param appointmentQueue - Appointment queue instance (optional)
-   * @param emailQueue - Email queue instance (optional)
-   * @param notificationQueue - Notification queue instance (optional)
-   * @param vidhakarmaQueue - Vidhakarma queue instance (optional)
-   * @param panchakarmaQueue - Panchakarma queue instance (optional)
-   * @param chequpQueue - Chequp queue instance (optional)
-   */
   constructor(
-    @Optional() @InjectQueue(SERVICE_QUEUE) private serviceQueue: Queue | null,
-    @Optional() @InjectQueue(APPOINTMENT_QUEUE) private appointmentQueue: Queue | null,
-    @Optional() @InjectQueue(EMAIL_QUEUE) private emailQueue: Queue | null,
-    @Optional()
-    @InjectQueue(NOTIFICATION_QUEUE)
-    private notificationQueue: Queue | null,
-    @Optional() @InjectQueue(VIDHAKARMA_QUEUE) private vidhakarmaQueue: Queue | null,
-    @Optional() @InjectQueue(PANCHAKARMA_QUEUE) private panchakarmaQueue: Queue | null,
-    @Optional() @InjectQueue(CHEQUP_QUEUE) private chequpQueue: Queue | null,
+    @Optional() @InjectQueue(HEALTHCARE_QUEUE) private healthcareQueue: Queue | null,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService
@@ -72,27 +30,15 @@ export class BullBoardService {
 
   /**
    * Get all registered queues for BullBoard
-   *
-   * @returns Record of queue names to queue instances
-   * @description Returns all available queue instances for dashboard display
    */
   getQueues(): Record<string, Queue | undefined> {
     const queues: Record<string, Queue | undefined> = {};
-    if (this.serviceQueue) queues[SERVICE_QUEUE] = this.serviceQueue;
-    if (this.appointmentQueue) queues[APPOINTMENT_QUEUE] = this.appointmentQueue;
-    if (this.emailQueue) queues[EMAIL_QUEUE] = this.emailQueue;
-    if (this.notificationQueue) queues[NOTIFICATION_QUEUE] = this.notificationQueue;
-    if (this.vidhakarmaQueue) queues[VIDHAKARMA_QUEUE] = this.vidhakarmaQueue;
-    if (this.panchakarmaQueue) queues[PANCHAKARMA_QUEUE] = this.panchakarmaQueue;
-    if (this.chequpQueue) queues[CHEQUP_QUEUE] = this.chequpQueue;
+    if (this.healthcareQueue) queues[HEALTHCARE_QUEUE] = this.healthcareQueue;
     return queues;
   }
 
   /**
    * Get queue statistics for monitoring
-   *
-   * @returns Promise resolving to queue statistics
-   * @description Collects comprehensive statistics from all registered queues
    */
   async getQueueStats() {
     const queues = this.getQueues();
@@ -179,9 +125,9 @@ export class BullBoardService {
         delayed: delayed.length,
         total: waiting.length + active.length + completed.length + failed.length + delayed.length,
         jobs: {
-          waiting: waiting.slice(0, 10), // First 10 waiting jobs
-          active: active.slice(0, 10), // First 10 active jobs
-          failed: failed.slice(0, 10), // First 10 failed jobs
+          waiting: waiting.slice(0, 10),
+          active: active.slice(0, 10),
+          failed: failed.slice(0, 10),
         },
       };
     } catch (error) {
@@ -230,7 +176,6 @@ export class BullBoardService {
 
     try {
       if (jobIds && jobIds.length > 0) {
-        // Retry specific jobs
         const results = [];
         for (const jobId of jobIds) {
           const job = await queue.getJob(jobId);
@@ -243,7 +188,6 @@ export class BullBoardService {
         }
         return results;
       } else {
-        // Retry all failed jobs
         const failedJobs = await queue.getFailed();
         const results = [];
         for (const job of failedJobs) {

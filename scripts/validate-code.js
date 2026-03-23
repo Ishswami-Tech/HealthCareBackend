@@ -283,9 +283,9 @@ function checkOutdated() {
     return { success: true, count: 0 };
   }
 
-  // Separate semver-compatible updates from major-version jumps
+  // Separate semver-compatible updates from updates that exceed the package.json range
   const semverUpdates = outdatedPackages.filter(p => p.current !== p.wanted);
-  const majorUpdates = outdatedPackages.filter(
+  const outOfRangeUpdates = outdatedPackages.filter(
     p => p.current === p.wanted && p.wanted !== p.latest
   );
 
@@ -300,13 +300,14 @@ function checkOutdated() {
     if (semverUpdates.length > 10) log(`    ... and ${semverUpdates.length - 10} more`, 'yellow');
   }
 
-  if (majorUpdates.length > 0) {
-    log('\n  Major version jumps (review breaking changes first):', 'yellow');
-    majorUpdates.slice(0, 10).forEach(({ name, current, latest, type }) => {
+  if (outOfRangeUpdates.length > 0) {
+    log('\n  Version jumps outside package.json range (review for breaking changes):', 'yellow');
+    outOfRangeUpdates.slice(0, 10).forEach(({ name, current, latest, type }) => {
       const tag = type === 'devDependencies' ? ' (dev)' : '';
       log(`    ${name}${tag}: ${current} → ${latest}`, 'yellow');
     });
-    if (majorUpdates.length > 10) log(`    ... and ${majorUpdates.length - 10} more`, 'yellow');
+    if (outOfRangeUpdates.length > 10)
+      log(`    ... and ${outOfRangeUpdates.length - 10} more`, 'yellow');
   }
 
   log('');

@@ -13,6 +13,7 @@ import { SocketService } from '@communication/channels/socket/socket.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { EHRService } from '@services/ehr/ehr.service';
 import { QueueService } from '@queue/src/queue.service';
+import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { PrismaTransactionClient } from '@core/types/database.types';
 
@@ -141,7 +142,7 @@ export class VideoTranscriptionService {
       // Queue for processing (medical term extraction, etc.)
       if (this.queueService) {
         await this.queueService.addJob(
-          this.TRANSCRIPTION_QUEUE,
+          JobType.ANALYTICS,
           'process_transcription',
           {
             transcriptionId: transcriptionResult.id,

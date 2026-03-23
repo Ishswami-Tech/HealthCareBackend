@@ -316,6 +316,8 @@ export class SecurityConfigService {
         'Sec-Fetch-Site',
         'Sec-Fetch-Mode',
         'Sec-Fetch-Dest',
+        'X-Request-ID',
+        'x-request-id',
       ],
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400, // 24 hours
@@ -360,9 +362,14 @@ export class SecurityConfigService {
           if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
             replyTyped.header('Access-Control-Allow-Origin', origin);
             replyTyped.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+            // Previous configuration before adding X-Request-ID:
+            // replyTyped.header(
+            //   'Access-Control-Allow-Headers',
+            //   'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest'
+            // );
             replyTyped.header(
               'Access-Control-Allow-Headers',
-              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest'
+              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id'
             );
             replyTyped.header('Access-Control-Allow-Credentials', 'true');
             replyTyped.header('Access-Control-Max-Age', '86400');

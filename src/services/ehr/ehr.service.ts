@@ -11,8 +11,9 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { QueueService } from '@queue/src/queue.service';
+import { JobType } from '@core/types/queue.types';
 import { LogLevel, LogType, type IEventService, isEventService } from '@core/types';
-import { LAB_REPORT_QUEUE, IMAGING_QUEUE } from '@queue/src/queue.constants';
+// Legacy queue constants removed — uses JobType.LAB_REPORT / JobType.IMAGING via HEALTHCARE_QUEUE
 
 import {
   addDateRangeFilter,
@@ -696,7 +697,7 @@ export class EHRService {
     if (this.queueService) {
       void this.queueService
         .addJob(
-          LAB_REPORT_QUEUE,
+          JobType.LAB_REPORT,
           'process_analysis',
           {
             reportId: typedReport.id,
@@ -906,7 +907,7 @@ export class EHRService {
     if (this.queueService) {
       void this.queueService
         .addJob(
-          IMAGING_QUEUE,
+          JobType.IMAGING,
           'process_imaging',
           {
             reportId: typedReport.id,

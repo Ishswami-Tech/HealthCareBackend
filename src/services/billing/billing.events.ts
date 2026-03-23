@@ -230,6 +230,20 @@ export class BillingEventsListener {
         const appointmentId = payload.appointmentId;
         const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
 
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.INFO,
+          'Evaluating appointment status transition after payment completion',
+          'BillingEventsListener',
+          {
+            appointmentId,
+            paymentId: payload.paymentId,
+            clinicId: payload.clinicId,
+            appointmentType: appointment ? String(appointment.type) : 'NOT_FOUND',
+            currentStatus: appointment ? String(appointment.status) : 'NOT_FOUND',
+          }
+        );
+
         if (appointment) {
           const isVideoCall = String(appointment.type) === 'VIDEO_CALL';
           const isAwaitingSlot = String(appointment.status) === 'AWAITING_SLOT_CONFIRMATION';
@@ -251,6 +265,36 @@ export class BillingEventsListener {
             return;
           }
         }
+
+        if (!appointment) {
+          await this.loggingService.log(
+            LogType.APPOINTMENT,
+            LogLevel.WARN,
+            'Payment completed event received but appointment was not found for status transition',
+            'BillingEventsListener',
+            {
+              appointmentId,
+              paymentId: payload.paymentId,
+              clinicId: payload.clinicId,
+            }
+          );
+          return;
+        }
+
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.INFO,
+          'Updating appointment status after payment completion',
+          'BillingEventsListener',
+          {
+            appointmentId,
+            paymentId: payload.paymentId,
+            clinicId: payload.clinicId,
+            previousStatus: String(appointment.status),
+            nextStatus: String(AppointmentStatus.CONFIRMED),
+            appointmentType: String(appointment.type),
+          }
+        );
 
         // For non-video or non-awaiting-slot: update appointment status to CONFIRMED
         await this.databaseService.executeHealthcareWrite(
@@ -293,6 +337,9 @@ export class BillingEventsListener {
             appointmentId: payload.appointmentId,
             paymentId: payload.paymentId,
             clinicId: payload.clinicId,
+            previousStatus: String(appointment.status),
+            nextStatus: String(AppointmentStatus.CONFIRMED),
+            appointmentType: String(appointment.type),
           }
         );
       }

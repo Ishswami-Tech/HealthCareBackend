@@ -26,6 +26,7 @@ import {
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { Prisma } from '@infrastructure/database/prisma/generated/client';
+import { JobType } from '@core/types/queue.types';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@queue/src/queue.service';
@@ -38,7 +39,7 @@ import { VideoProviderFactory } from '@services/video/providers/video-provider.f
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
-import { VIDEO_RECORDING_QUEUE } from '@queue/src/queue.constants';
+// Legacy queue constant removed — uses JobType.VIDEO_RECORDING via HEALTHCARE_QUEUE
 // Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -374,6 +375,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // 4. Validate Payment
       // Strict Prepaid Rule: Must be COMPLETED
       // Only applies if it's a VIDEO_CALL (which it is)
+      // Strict prepaid rule: video appointments require a completed payment before join.
       if (appointment.type === 'VIDEO_CALL') {
         const payment = appointment.payment;
         // If no payment record or not completed
@@ -382,15 +384,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           // But let's be strict. If database says PENDING, deny access.
           // However, legacy data might not have payment linked?
           // For "hardening", we enforce it.
-          if (process.env['NODE_ENV'] !== 'development' || payment?.status === 'PENDING') {
-            throw new HealthcareError(
-              ErrorCode.OPERATION_NOT_ALLOWED,
-              'Payment must be completed before joining the session.',
-              undefined,
-              { appointmentId, paymentStatus: payment?.status },
-              'VideoService.generateMeetingToken'
-            );
-          }
+          // if (process.env['NODE_ENV'] !== 'development' || payment?.status === 'PENDING') {
+          //   throw new HealthcareError(
+          //     ErrorCode.OPERATION_NOT_ALLOWED,
+          //     'Payment must be completed before joining the session.',
+          //     undefined,
+          //     { appointmentId, paymentStatus: payment?.status },
+          //     'VideoService.generateMeetingToken'
+          //   );
+          // }
+          throw new HealthcareError(
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            'Payment must be completed before joining the session.',
+            undefined,
+            { appointmentId, paymentStatus: payment?.status },
+            'VideoService.generateMeetingToken'
+          );
         }
       }
 
@@ -2257,7 +2266,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (this.queueService && recording.url) {
         void this.queueService
           .addJob(
-            VIDEO_RECORDING_QUEUE as string,
+            JobType.VIDEO_RECORDING,
             'process_recording',
             {
               appointmentId,

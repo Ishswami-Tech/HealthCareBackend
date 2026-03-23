@@ -22,44 +22,20 @@ import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
-import {
-  SERVICE_QUEUE as SERVICE_QUEUE_CONST,
-  APPOINTMENT_QUEUE as APPOINTMENT_QUEUE_CONST,
-  VIDHAKARMA_QUEUE as VIDHAKARMA_QUEUE_CONST,
-  PANCHAKARMA_QUEUE as PANCHAKARMA_QUEUE_CONST,
-  CHEQUP_QUEUE as CHEQUP_QUEUE_CONST,
-  EMAIL_QUEUE as EMAIL_QUEUE_CONST,
-  NOTIFICATION_QUEUE as NOTIFICATION_QUEUE_CONST,
-  DOCTOR_AVAILABILITY_QUEUE as DOCTOR_AVAILABILITY_QUEUE_CONST,
-  QUEUE_MANAGEMENT_QUEUE as QUEUE_MANAGEMENT_QUEUE_CONST,
-  PAYMENT_PROCESSING_QUEUE as PAYMENT_PROCESSING_QUEUE_CONST,
-  ANALYTICS_QUEUE as ANALYTICS_QUEUE_CONST,
-  ENHANCED_APPOINTMENT_QUEUE as ENHANCED_APPOINTMENT_QUEUE_CONST,
-  WAITING_LIST_QUEUE as WAITING_LIST_QUEUE_CONST,
-  CALENDAR_SYNC_QUEUE as CALENDAR_SYNC_QUEUE_CONST,
-  AYURVEDA_THERAPY_QUEUE as AYURVEDA_THERAPY_QUEUE_CONST,
-  PATIENT_PREFERENCE_QUEUE as PATIENT_PREFERENCE_QUEUE_CONST,
-  REMINDER_QUEUE as REMINDER_QUEUE_CONST,
-  FOLLOW_UP_QUEUE as FOLLOW_UP_QUEUE_CONST,
-  RECURRING_APPOINTMENT_QUEUE as RECURRING_APPOINTMENT_QUEUE_CONST,
-} from './queue.constants';
+import { HEALTHCARE_QUEUE } from './queue.constants';
 
 // Internal imports - Types
-import type {
+import {
+  JobType,
+  JobPriorityLevel,
+  CanonicalJobEnvelope,
   DetailedQueueMetrics,
   QueueHealthStatus,
-  JobData,
   QueueFilters,
   ClientSession,
   EnterpriseJobOptions,
   BulkJobData,
-  AuditAction,
 } from '@core/types/queue.types';
-
-// Re-export types for convenience
-export type JobType = string;
-export type { JobData, QueueFilters, ClientSession, EnterpriseJobOptions, BulkJobData };
-export { AuditAction };
 
 // Job priority enum (keep local as it's queue-specific)
 export enum JobPriority {
@@ -69,10 +45,119 @@ export enum JobPriority {
   CRITICAL = 'critical',
 }
 
-// Domain type enum (keep local as it's queue-specific)
-export enum DomainType {
-  CLINIC = 'clinic',
-  WORKER = 'worker',
+// Domain is always 'clinic' — single-application healthcare system
+
+interface QueueConfigState {
+  queueName: string;
+  clinicId?: string;
+  maxWaitTime: number;
+  averageConsultationTime: number;
+  autoCallNext: boolean;
+  allowWalkIns: boolean;
+  priorityEnabled: boolean;
+  updatedAt: string;
+}
+
+interface QueueCapacityState {
+  queueName: string;
+  clinicId?: string;
+  capacity: number;
+  defaultCapacity: number;
+  activeJobs: number;
+  waitingJobs: number;
+  currentLoad: number;
+  availableSlots: number;
+  utilizationPercent: number;
+  metrics: DetailedQueueMetrics;
+  updatedAt: string;
+}
+
+interface QueueConfigUpdateInput {
+  queueName?: string;
+  queueType?: string;
+  clinicId?: string;
+  maxWaitTime?: number;
+  averageConsultationTime?: number;
+  autoCallNext?: boolean;
+  allowWalkIns?: boolean;
+  priorityEnabled?: boolean;
+}
+
+interface QueueCapacityUpdateInput {
+  queueName?: string;
+  queueType?: string;
+  clinicId?: string;
+  capacity: number;
+}
+
+interface QueueExportFilters {
+  queueName?: string;
+  queueType?: string;
+  type?: string;
+  clinicId?: string;
+  domain?: 'clinic';
+  startDate?: string;
+  endDate?: string;
+  status?: string;
+  format?: 'json' | 'csv' | 'excel' | 'pdf';
+  limit?: string;
+}
+
+interface QueueExportEntry {
+  id: string;
+  queueName: string;
+  queueType: string;
+  queueCategory: string;
+  clinicId?: string;
+  patientId?: string;
+  doctorId?: string;
+  appointmentId?: string;
+  queueOwnerId?: string;
+  locationId?: string;
+  status: string;
+  priority?: number;
+  timestamp?: string;
+  processedAt?: string;
+  finishedAt?: string;
+  position: number;
+  queuePosition: number;
+  totalInQueue: number;
+  raw: Record<string, unknown>;
+}
+
+interface QueueExportPayload {
+  metadata: {
+    exportedAt: string;
+    clinicId?: string;
+    domain?: 'clinic';
+    format: 'json' | 'csv' | 'excel' | 'pdf';
+    queueNames: string[];
+    totalQueues: number;
+    totalEntries: number;
+    filters: Omit<QueueExportFilters, 'clinicId'> & { clinicId?: string };
+    queueSummaries: Array<{
+      queueName: string;
+      entries: number;
+      waiting: number;
+      active: number;
+      completed: number;
+      failed: number;
+      delayed: number;
+      capacity: QueueCapacityState;
+      config: QueueConfigState;
+    }>;
+    liveStatuses: Record<string, unknown>;
+  };
+  entries: QueueExportEntry[];
+}
+
+interface QueueConfigSnapshot {
+  clinicId?: string;
+  queueNames: string[];
+  defaults: QueueConfigState;
+  queues: Record<string, QueueConfigState>;
+  liveStatuses: Record<string, unknown>;
+  updatedAt: string;
 }
 
 // Types moved to @core/types
@@ -121,45 +206,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   // STATIC PROPERTIES - SINGLE SOURCE OF TRUTH
   // ========================================
   // These static properties expose all queue constants and configurations
-  // Access via: QueueService.ANALYTICS_QUEUE, QueueService.PRIORITIES, etc.
+  // Access via: QueueService.HEALTHCARE_QUEUE, QueueService.PRIORITIES, etc.
 
-  // Queue Names - Single source of truth
-  // These values match QUEUE_NAMES from @core/types/queue.types.ts for consistency
-  // Using string literals directly for proper type inference
-  static readonly APPOINTMENT_QUEUE = 'appointment-queue';
-  static readonly EMAIL_QUEUE = 'email-queue';
-  static readonly NOTIFICATION_QUEUE = 'notification-queue';
-  static readonly SERVICE_QUEUE = 'service-queue';
-  static readonly VIDHAKARMA_QUEUE = 'vidhakarma-queue';
-  static readonly PANCHAKARMA_QUEUE = 'panchakarma-queue';
-  static readonly CHEQUP_QUEUE = 'chequp-queue';
-  static readonly DOCTOR_AVAILABILITY_QUEUE = 'doctor-availability-queue';
-  static readonly QUEUE_MANAGEMENT_QUEUE = 'queue-management-queue';
-  static readonly PAYMENT_PROCESSING_QUEUE = 'payment-processing-queue';
-  static readonly ANALYTICS_QUEUE = 'analytics-queue';
-  static readonly ENHANCED_APPOINTMENT_QUEUE = 'enhanced-appointment-queue';
-  static readonly WAITING_LIST_QUEUE = 'waiting-list-queue';
-  static readonly CALENDAR_SYNC_QUEUE = 'calendar-sync-queue';
-  static readonly AYURVEDA_THERAPY_QUEUE = 'ayurveda-therapy-queue';
-  static readonly PATIENT_PREFERENCE_QUEUE = 'patient-preference-queue';
-  static readonly REMINDER_QUEUE = 'reminder-queue';
-  static readonly FOLLOW_UP_QUEUE = 'follow-up-queue';
-  static readonly RECURRING_APPOINTMENT_QUEUE = 'recurring-appointment-queue';
-
-  // EHR Module Queues
-  static readonly LAB_REPORT_QUEUE = 'lab-report-queue';
-  static readonly IMAGING_QUEUE = 'imaging-queue';
-  static readonly BULK_EHR_IMPORT_QUEUE = 'bulk-ehr-import-queue';
-
-  // Billing Module Queues
-  static readonly INVOICE_PDF_QUEUE = 'invoice-pdf-queue';
-  static readonly BULK_INVOICE_QUEUE = 'bulk-invoice-queue';
-  static readonly PAYMENT_RECONCILIATION_QUEUE = 'payment-reconciliation-queue';
-
-  // Video Module Queues
-  static readonly VIDEO_RECORDING_QUEUE = 'video-recording-queue';
-  static readonly VIDEO_TRANSCODING_QUEUE = 'video-transcoding-queue';
-  static readonly VIDEO_ANALYTICS_QUEUE = 'video-analytics-queue';
+  // Queue Name — Single canonical physical queue
+  static readonly HEALTHCARE_QUEUE = HEALTHCARE_QUEUE;
 
   // Queue Priorities - Access via QueueService.PRIORITIES
   // These values match QUEUE_PRIORITIES from @core/types/queue.types.ts for consistency
@@ -179,6 +229,18 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   private readonly queueMetrics: Map<string, DetailedQueueMetrics> = new Map<
     string,
     DetailedQueueMetrics
+  >();
+  private readonly queueConfigDefaults: Map<string, QueueConfigState> = new Map<
+    string,
+    QueueConfigState
+  >();
+  private readonly queueConfigOverrides: Map<string, QueueConfigState> = new Map<
+    string,
+    QueueConfigState
+  >();
+  private readonly queueCapacityOverrides: Map<string, QueueCapacityState> = new Map<
+    string,
+    QueueCapacityState
   >();
   private healthCheckInterval!: NodeJS.Timeout;
   private metricsUpdateInterval!: NodeJS.Timeout;
@@ -256,98 +318,19 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     this.metricsUpdateInterval = setInterval(() => {
       void this.updateQueueMetrics();
     }, 5000); // Every 5 seconds for real-time monitoring
-
-    // Auto-scaling based on queue load
-    this.autoScalingInterval = setInterval(() => {
-      void this.autoScaleWorkers();
-    }, 30000); // Every 30 seconds
   }
 
-  private getCurrentDomain(): DomainType {
-    // Use ConfigService (which uses dotenv) for environment variable access
-    const serviceName = this.configService.getEnv('SERVICE_NAME', 'clinic');
-    switch (serviceName) {
-      case 'clinic':
-        return DomainType.CLINIC;
-      case 'worker':
-        return DomainType.WORKER;
-      default:
-        return DomainType.CLINIC;
-    }
+  // Domain is always 'clinic' — single-application healthcare system
+  private getCurrentDomain(): string {
+    return 'clinic';
   }
 
   /**
    * Get available queues for current domain
    */
   private getAvailableQueues(): string[] {
-    const baseQueues = [
-      SERVICE_QUEUE_CONST,
-      EMAIL_QUEUE_CONST,
-      NOTIFICATION_QUEUE_CONST,
-      ANALYTICS_QUEUE_CONST,
-      PAYMENT_PROCESSING_QUEUE_CONST,
-      QUEUE_MANAGEMENT_QUEUE_CONST,
-    ];
-
-    const currentDomain = this.getCurrentDomain();
-
-    switch (currentDomain) {
-      case DomainType.CLINIC:
-        return [
-          ...baseQueues,
-          APPOINTMENT_QUEUE_CONST,
-          VIDHAKARMA_QUEUE_CONST,
-          PANCHAKARMA_QUEUE_CONST,
-          CHEQUP_QUEUE_CONST,
-          DOCTOR_AVAILABILITY_QUEUE_CONST,
-          ENHANCED_APPOINTMENT_QUEUE_CONST,
-          WAITING_LIST_QUEUE_CONST,
-          CALENDAR_SYNC_QUEUE_CONST,
-          AYURVEDA_THERAPY_QUEUE_CONST,
-          PATIENT_PREFERENCE_QUEUE_CONST,
-          REMINDER_QUEUE_CONST,
-          FOLLOW_UP_QUEUE_CONST,
-          RECURRING_APPOINTMENT_QUEUE_CONST,
-          // EHR Module Queues
-          'lab-report-queue',
-          'imaging-queue',
-          'bulk-ehr-import-queue',
-          // Billing Module Queues
-          'invoice-pdf-queue',
-          'bulk-invoice-queue',
-          'payment-reconciliation-queue',
-          // Video Module Queues
-          'video-recording-queue',
-          'video-transcoding-queue',
-          'video-analytics-queue',
-        ];
-      // FASHION domain removed - healthcare application only
-      case DomainType.WORKER:
-        // Worker can access all queues
-        return [
-          ...baseQueues,
-          APPOINTMENT_QUEUE_CONST,
-          VIDHAKARMA_QUEUE_CONST,
-          PANCHAKARMA_QUEUE_CONST,
-          CHEQUP_QUEUE_CONST,
-          DOCTOR_AVAILABILITY_QUEUE_CONST,
-          ENHANCED_APPOINTMENT_QUEUE_CONST,
-          WAITING_LIST_QUEUE_CONST,
-          CALENDAR_SYNC_QUEUE_CONST,
-          AYURVEDA_THERAPY_QUEUE_CONST,
-          PATIENT_PREFERENCE_QUEUE_CONST,
-          REMINDER_QUEUE_CONST,
-          FOLLOW_UP_QUEUE_CONST,
-          RECURRING_APPOINTMENT_QUEUE_CONST,
-          APPOINTMENT_QUEUE_CONST,
-          NOTIFICATION_QUEUE_CONST,
-          EMAIL_QUEUE_CONST,
-          PAYMENT_PROCESSING_QUEUE_CONST,
-          ANALYTICS_QUEUE_CONST,
-        ];
-      default:
-        return baseQueues;
-    }
+    // All jobs route through a single unified queue
+    return [HEALTHCARE_QUEUE];
   }
 
   private initializeQueues(): void {
@@ -522,21 +505,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
    * @throws {Error} When queue is not found or domain access is denied
    */
   async addJob<T = unknown>(
-    queueName: string,
-    jobType: string,
+    jobType: JobType,
+    action: string,
     data: T,
     options: EnterpriseJobOptions = {}
   ): Promise<Job> {
     const startTime = Date.now();
 
     try {
-      const queue = this.queues.get(queueName);
+      const queue = this.queues.get(HEALTHCARE_QUEUE);
       if (!queue) {
         throw new HealthcareError(
           ErrorCode.QUEUE_NOT_FOUND,
-          `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          `Queue ${HEALTHCARE_QUEUE} not found for domain ${this.getCurrentDomain()}`,
           undefined,
-          { queueName, domain: this.getCurrentDomain() },
+          { queueName: HEALTHCARE_QUEUE, domain: this.getCurrentDomain() },
           'QueueService'
         );
       }
@@ -557,28 +540,44 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         // Enhanced metadata for 1M users - stored in job data instead
       };
 
-      const job = await queue.add(
-        jobType,
-        {
-          ...data,
-          _domain: this.getCurrentDomain(),
-          _tenantId: options.tenantId,
-          _correlationId: options.correlationId,
+      // Determine priority level (with fallback to normal)
+      const priorityEnumVal = options.priority
+        ? this.mapNumericToPriorityLevel(options.priority)
+        : JobPriorityLevel.NORMAL;
+
+      // Construct Canonical Envelope
+      const canonicalPayload: CanonicalJobEnvelope<T> = {
+        jobType: jobType,
+        priority: priorityEnumVal,
+        domain: 'clinic',
+        ...(options.tenantId && { tenantId: options.tenantId }),
+        action: action,
+        data: data,
+        metadata: {
+          domain: this.getCurrentDomain(),
+          ...(options.tenantId && { tenantId: options.tenantId }),
+          auditLevel: options.auditLevel || 'basic',
+          classification: options.classification || 'internal',
+          createdAt: new Date(),
+          ...(options.correlationId && { correlationId: options.correlationId }),
         },
-        enhancedOptions
-      );
+      };
+
+      // Note: passing jobType explicitly here is important for the Generic Worker Router
+      const job = await queue.add(jobType, canonicalPayload, enhancedOptions);
 
       // Update monitoring metrics
-      void this.updateMonitoringMetrics(queueName);
+      void this.updateMonitoringMetrics(HEALTHCARE_QUEUE);
 
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Job added to queue ${queueName}: ${job.id} for domain ${this.getCurrentDomain()}`,
+        `Job added to canonical queue ${HEALTHCARE_QUEUE}: ${job.id} for domain ${this.getCurrentDomain()}`,
         'QueueService',
         {
           jobId: job.id,
-          queueName,
+          jobType,
+          queueName: HEALTHCARE_QUEUE,
           domain: this.getCurrentDomain(),
           responseTime: Date.now() - startTime,
         }
@@ -589,10 +588,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.ERROR,
-        `Failed to add job to queue ${queueName}`,
+        `Failed to add job to queue ${HEALTHCARE_QUEUE}`,
         'QueueService',
         {
-          queueName,
+          queueName: HEALTHCARE_QUEUE,
           domain: this.getCurrentDomain(),
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -604,66 +603,75 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Add multiple jobs in bulk for high-throughput operations
+   * Add multiple jobs in bulk for high-throughput operations natively routing to the unified queue.
    */
-  async addBulkJobs<T = unknown>(queueName: string, jobs: BulkJobData<T>[]): Promise<Job[]> {
+  async addBulkJobs<T = unknown>(jobType: JobType, jobs: BulkJobData<T>[]): Promise<Job[]> {
     const startTime = Date.now();
 
     try {
-      const queue = this.queues.get(queueName);
+      const queue = this.queues.get(HEALTHCARE_QUEUE);
       if (!queue) {
         throw new HealthcareError(
           ErrorCode.QUEUE_NOT_FOUND,
-          `Queue ${queueName} not found for domain ${this.getCurrentDomain()}`,
+          `Queue ${HEALTHCARE_QUEUE} not found for domain ${this.getCurrentDomain()}`,
           undefined,
-          { queueName, domain: this.getCurrentDomain() },
+          { queueName: HEALTHCARE_QUEUE, domain: this.getCurrentDomain() },
           'QueueService'
         );
       }
 
       // Enhanced bulk job processing for 1M users
-      const enhancedJobs = jobs.map(job => ({
-        name: job.jobType,
-        data: {
-          ...job.data,
-          _domain: this.getCurrentDomain(),
-          _tenantId: job.options?.tenantId,
-          _correlationId: job.options?.correlationId,
-        },
-        opts: {
-          priority: this.getJobPriority(job.options?.priority),
-          delay: job.options?.delay || 0,
-          attempts: job.options?.attempts || 3,
-          backoff: {
-            type: 'exponential',
-            delay: 2000,
-          },
-          removeOnComplete: job.options?.removeOnComplete ?? 100,
-          removeOnFail: job.options?.removeOnFail ?? 50,
-          timeout: job.options?.timeout || 30000,
-          ...(job.options?.correlationId && {
-            jobId: job.options.correlationId,
-          }),
+      const enhancedJobs = jobs.map(job => {
+        const priorityEnumVal = job.options?.priority
+          ? this.mapNumericToPriorityLevel(job.options.priority)
+          : JobPriorityLevel.NORMAL;
+        const canonicalPayload: CanonicalJobEnvelope<T> = {
+          jobType: jobType,
+          priority: priorityEnumVal,
+          domain: 'clinic',
+          ...(job.options?.tenantId && { tenantId: job.options.tenantId }),
+          action: job.jobType, // what legacy calls jobType is actually action string
+          data: job.data,
           metadata: {
             domain: this.getCurrentDomain(),
-            tenantId: job.options?.tenantId,
+            ...(job.options?.tenantId && { tenantId: job.options.tenantId }),
             auditLevel: job.options?.auditLevel || 'basic',
             classification: job.options?.classification || 'internal',
             createdAt: new Date().toISOString(),
-            correlationId: job.options?.correlationId,
+            ...(job.options?.correlationId && { correlationId: job.options.correlationId }),
           },
-        },
-      }));
+        };
+
+        return {
+          name: job.jobType,
+          data: canonicalPayload,
+          opts: {
+            priority: this.getJobPriority(job.options?.priority),
+            delay: job.options?.delay || 0,
+            attempts: job.options?.attempts || 3,
+            backoff: {
+              type: 'exponential',
+              delay: 2000,
+            },
+            removeOnComplete: job.options?.removeOnComplete ?? 100,
+            removeOnFail: job.options?.removeOnFail ?? 50,
+            timeout: job.options?.timeout || 30000,
+            ...(job.options?.correlationId && {
+              jobId: job.options.correlationId,
+            }),
+          },
+        };
+      });
 
       const addedJobs = await queue.addBulk(enhancedJobs);
 
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
-        `Bulk jobs added to queue ${queueName}: ${addedJobs.length} jobs for domain ${this.getCurrentDomain()}`,
+        `Bulk jobs added to queue ${HEALTHCARE_QUEUE}: ${addedJobs.length} jobs for domain ${this.getCurrentDomain()}`,
         'QueueService',
         {
-          queueName,
+          queueName: HEALTHCARE_QUEUE,
           domain: this.getCurrentDomain(),
           jobCount: addedJobs.length,
           responseTime: Date.now() - startTime,
@@ -675,10 +683,10 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.ERROR,
-        `Failed to add bulk jobs to queue ${queueName}`,
+        `Failed to add bulk jobs to queue ${HEALTHCARE_QUEUE}`,
         'QueueService',
         {
-          queueName,
+          queueName: HEALTHCARE_QUEUE,
           domain: this.getCurrentDomain(),
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
@@ -755,6 +763,414 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       );
       // Return empty array instead of throwing to prevent health check failures
       return [];
+    }
+  }
+
+  /**
+   * Get the names of all registered queues
+   */
+  getQueueNames(): string[] {
+    return Array.from(this.queues.keys());
+  }
+
+  private pick(...values: Array<string | undefined>): string {
+    const value = values.find(item => typeof item === 'string' && item.trim().length > 0);
+    return value?.trim() || '';
+  }
+
+  // ========================================
+  // JOB TYPE MAPPERS (For Queue Unification)
+  // ========================================
+
+  private isLegacyQueue(queueName: string): boolean {
+    return queueName !== 'healthcare-queue' && Object.values(QueueService).includes(queueName);
+  }
+
+  private mapLegacyToJobType(queueName: string): JobType {
+    if (queueName === 'appointment-queue' || queueName === 'enhanced-appointment-queue')
+      return JobType.APPOINTMENT;
+    if (queueName === 'email-queue') return JobType.EMAIL;
+    if (queueName === 'notification-queue') return JobType.NOTIFICATION;
+    if (queueName === 'payment-processing-queue' || queueName === 'payment-reconciliation-queue')
+      return JobType.PAYMENT_PROCESSING;
+    if (queueName === 'lab-report-queue') return JobType.LAB_REPORT;
+    if (queueName === 'imaging-queue') return JobType.IMAGING;
+    if (queueName === 'bulk-ehr-import-queue') return JobType.BULK_EHR_IMPORT;
+    if (queueName === 'invoice-pdf-queue') return JobType.INVOICE_PDF;
+    if (queueName === 'bulk-invoice-queue') return JobType.BULK_INVOICE;
+    if (queueName === 'video-recording-queue') return JobType.VIDEO_RECORDING;
+    if (queueName === 'video-transcoding-queue') return JobType.VIDEO_TRANSCODING;
+    if (queueName === 'video-analytics-queue') return JobType.VIDEO_ANALYTICS;
+    if (queueName === 'analytics-queue') return JobType.ANALYTICS;
+    if (queueName === 'vidhakarma-queue') return JobType.VIDHAKARMA;
+    if (queueName === 'panchakarma-queue') return JobType.PANCHAKARMA;
+    if (queueName === 'chequp-queue') return JobType.CHEQUP;
+    if (queueName === 'calendar-sync-queue') return JobType.CALENDAR_SYNC;
+
+    return JobType.UNKNOWN;
+  }
+
+  private mapNumericToPriorityLevel(numericPriority: number): JobPriorityLevel {
+    if (numericPriority >= 10) return JobPriorityLevel.CRITICAL;
+    if (numericPriority >= 7) return JobPriorityLevel.HIGH;
+    if (numericPriority >= 5) return JobPriorityLevel.NORMAL;
+    if (numericPriority >= 3) return JobPriorityLevel.LOW;
+    return JobPriorityLevel.BACKGROUND;
+  }
+
+  private asString(value: unknown): string | undefined {
+    return typeof value === 'string' ? value : undefined;
+  }
+
+  private recordString(data: Record<string, unknown>, key: string): string | undefined {
+    return this.asString(data[key]);
+  }
+
+  private jobData(job: Job): Record<string, unknown> {
+    return typeof job.data === 'object' && job.data !== null
+      ? (job.data as Record<string, unknown>)
+      : {};
+  }
+
+  private toQueueCategory(type: string): string {
+    return type
+      .trim()
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, '_');
+  }
+
+  /**
+   * Get queue configuration snapshot for the current in-process state.
+   */
+  async getQueueConfig(clinicId?: string): Promise<QueueConfigSnapshot> {
+    const queueNames = this.getTrackedQueueNames();
+    const defaults = this.getStoredQueueDefaults(clinicId);
+    const queues = queueNames.reduce<Record<string, QueueConfigState>>((acc, queueName) => {
+      acc[queueName] = this.getEffectiveQueueConfig(queueName, clinicId);
+      return acc;
+    }, {});
+
+    const snapshot: QueueConfigSnapshot = {
+      queueNames,
+      defaults,
+      queues,
+      liveStatuses: await this.getAllQueueStatuses(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (clinicId) snapshot.clinicId = clinicId;
+    return snapshot;
+  }
+
+  /**
+   * Persist queue configuration in memory and return the updated snapshot.
+   */
+  async updateQueueConfig(
+    update: QueueConfigUpdateInput,
+    clinicId?: string
+  ): Promise<QueueConfigSnapshot> {
+    const scopeClinicId = this.pick(update.clinicId, clinicId);
+    const scopeKey = this.scopeKey(scopeClinicId);
+    const queueName = this.resolveQueueName(update.queueName || update.queueType);
+    const effectiveQueueName = queueName || HEALTHCARE_QUEUE;
+    const normalizedUpdate = this.normalizeQueueConfigUpdate(
+      update,
+      effectiveQueueName,
+      scopeClinicId
+    );
+
+    if (queueName) {
+      const current = this.getEffectiveQueueConfig(effectiveQueueName, scopeClinicId);
+      this.queueConfigOverrides.set(this.buildConfigKey(scopeKey, effectiveQueueName), {
+        ...current,
+        ...normalizedUpdate,
+        queueName: effectiveQueueName,
+        ...(scopeClinicId ? { clinicId: scopeClinicId } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      const current = this.getStoredQueueDefaults(scopeClinicId);
+      this.queueConfigDefaults.set(scopeKey, {
+        ...current,
+        ...normalizedUpdate,
+        queueName: current.queueName,
+        ...(scopeClinicId ? { clinicId: scopeClinicId } : {}),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+
+    return this.getQueueConfig(scopeClinicId);
+  }
+
+  /**
+   * Get queue capacity for one queue or all queues.
+   */
+  async getQueueCapacity(
+    queueType?: string,
+    clinicId?: string
+  ): Promise<QueueCapacityState | QueueCapacityState[]> {
+    const scopeClinicId = clinicId?.trim() || undefined;
+    if (queueType) {
+      const queueName = this.resolveQueueName(queueType) || queueType.trim();
+      return this.buildQueueCapacityState(queueName, scopeClinicId);
+    }
+
+    const queueNames = this.getTrackedQueueNames();
+    return Promise.all(
+      queueNames.map(queueName => this.buildQueueCapacityState(queueName, scopeClinicId))
+    );
+  }
+
+  /**
+   * Persist queue capacity in memory and return the updated record.
+   */
+  async updateQueueCapacity(
+    update: QueueCapacityUpdateInput,
+    clinicId?: string
+  ): Promise<QueueCapacityState> {
+    if (!this.isPositiveNumber(update.capacity)) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_NUMBER_OUT_OF_RANGE,
+        'capacity must be a positive number',
+        undefined,
+        { capacity: update.capacity },
+        'QueueService'
+      );
+    }
+
+    const requestedCapacity = Math.max(1, Math.floor(update.capacity ?? 0));
+    const scopeClinicId = this.pick(update.clinicId, clinicId);
+    const queueName = this.resolveQueueName(update.queueName || update.queueType);
+    const effectiveQueueName = queueName || HEALTHCARE_QUEUE;
+    const current = await this.buildQueueCapacityState(effectiveQueueName, scopeClinicId);
+    const next: QueueCapacityState = {
+      ...current,
+      capacity: requestedCapacity,
+      availableSlots: Math.max(0, requestedCapacity - current.currentLoad),
+      utilizationPercent:
+        requestedCapacity > 0
+          ? Math.min(100, Math.round((current.currentLoad / requestedCapacity) * 100))
+          : 0,
+      updatedAt: new Date().toISOString(),
+    };
+    this.queueCapacityOverrides.set(this.buildCapacityKey(scopeClinicId, effectiveQueueName), next);
+    return next;
+  }
+
+  /**
+   * Export queue data using live BullMQ reads plus metadata snapshots.
+   */
+  async exportQueueData(
+    filters: QueueExportFilters = {},
+    clinicId?: string
+  ): Promise<QueueExportPayload> {
+    const scopeClinicId = this.pick(filters.clinicId, clinicId);
+    const queueNames = this.resolveQueueNamesForExport(
+      filters.queueName || filters.queueType || filters.type
+    );
+    const format = filters.format || 'json';
+    const statuses = this.parseExportStatuses(filters.status);
+    const exportStart = filters.startDate ? new Date(filters.startDate) : null;
+    const exportEnd = filters.endDate ? new Date(filters.endDate) : null;
+    const liveStatuses = await this.getAllQueueStatuses();
+    const queueSummaries = await Promise.all(
+      queueNames.map(async queueName => {
+        const jobFilters: QueueFilters = { status: statuses };
+        if (filters.domain) {
+          jobFilters.domain = filters.domain;
+        }
+        const jobs = await this.getJobs(queueName, jobFilters);
+        const filteredJobs = jobs.filter(job => this.jobIsWithinRange(job, exportStart, exportEnd));
+        const capacity = await this.buildQueueCapacityState(queueName, scopeClinicId);
+        const config = this.getEffectiveQueueConfig(queueName, scopeClinicId);
+        const metrics = await this.getQueueMetrics(queueName);
+        return {
+          queueName,
+          entries: filteredJobs.length,
+          waiting: metrics.waiting,
+          active: metrics.active,
+          completed: metrics.completed,
+          failed: metrics.failed,
+          delayed: metrics.delayed,
+          capacity,
+          config,
+          jobs: filteredJobs,
+        };
+      })
+    );
+
+    const entries = queueSummaries.flatMap((summary, queueIndex) =>
+      summary.jobs.map((job, index) =>
+        this.toExportEntry(
+          summary.queueName,
+          job,
+          index + 1,
+          summary.jobs.length,
+          scopeClinicId,
+          queueIndex
+        )
+      )
+    );
+
+    const metadata: QueueExportPayload['metadata'] = {
+      exportedAt: new Date().toISOString(),
+      format,
+      queueNames,
+      totalQueues: queueNames.length,
+      totalEntries: entries.length,
+      filters: {
+        ...(filters.queueName ? { queueName: filters.queueName } : {}),
+        ...(filters.queueType ? { queueType: filters.queueType } : {}),
+        ...(filters.type ? { type: filters.type } : {}),
+        ...(filters.domain ? { domain: filters.domain } : {}),
+        ...(filters.startDate ? { startDate: filters.startDate } : {}),
+        ...(filters.endDate ? { endDate: filters.endDate } : {}),
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.format ? { format: filters.format } : {}),
+        ...(filters.limit ? { limit: filters.limit } : {}),
+        ...(scopeClinicId ? { clinicId: scopeClinicId } : {}),
+      },
+      queueSummaries: queueSummaries.map(summary => ({
+        queueName: summary.queueName,
+        entries: summary.entries,
+        waiting: summary.waiting,
+        active: summary.active,
+        completed: summary.completed,
+        failed: summary.failed,
+        delayed: summary.delayed,
+        capacity: summary.capacity,
+        config: summary.config,
+      })),
+      liveStatuses,
+    };
+    if (scopeClinicId) metadata.clinicId = scopeClinicId;
+    if (filters.domain) metadata.domain = filters.domain;
+    return { metadata, entries };
+  }
+
+  /**
+   * Get a single job from a specific queue
+   */
+  async getJob(queueName: string, jobId: string): Promise<Job | null> {
+    try {
+      const queue = this.queues.get(queueName);
+      if (!queue) {
+        return null;
+      }
+
+      const job = await queue.getJob(jobId);
+      return job ?? null;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `Failed to get job ${jobId} from queue ${queueName}`,
+        'QueueService',
+        {
+          queueName,
+          jobId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Remove a job from a specific queue
+   */
+  async removeJob(queueName: string, jobId: string): Promise<boolean> {
+    try {
+      const queue = this.queues.get(queueName);
+      if (!queue) {
+        return false;
+      }
+
+      await queue.remove(jobId);
+      return true;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.WARN,
+        `Failed to remove job ${jobId} from queue ${queueName}`,
+        'QueueService',
+        {
+          queueName,
+          jobId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Patch an existing job payload without removing and recreating the job when the
+   * underlying BullMQ job supports in-place data updates.
+   */
+  async patchJobData(
+    queueName: string,
+    jobId: string,
+    patch: Record<string, unknown>
+  ): Promise<Job | null> {
+    try {
+      const queue = this.queues.get(queueName);
+      if (!queue) {
+        return null;
+      }
+
+      const job = await queue.getJob(jobId);
+      if (!job) {
+        return null;
+      }
+
+      const currentData =
+        typeof job.data === 'object' && job.data !== null
+          ? (job.data as Record<string, unknown>)
+          : {};
+
+      // If this is a canonical envelope { jobType, action, data, metadata },
+      // patch the inner .data field to avoid corrupting the envelope shape.
+      const isCanonicalEnvelope =
+        typeof currentData['jobType'] === 'string' &&
+        typeof currentData['action'] === 'string' &&
+        typeof currentData['data'] === 'object' &&
+        currentData['data'] !== null;
+
+      const nextData = isCanonicalEnvelope
+        ? {
+            ...currentData,
+            data: {
+              ...(currentData['data'] as Record<string, unknown>),
+              ...patch,
+            },
+          }
+        : { ...currentData, ...patch };
+
+      const updatableJob = job as Job & {
+        updateData?: (data: Record<string, unknown>) => Promise<void>;
+      };
+
+      if (typeof updatableJob.updateData === 'function') {
+        await updatableJob.updateData(nextData);
+      } else {
+        await queue.remove(jobId);
+        await queue.add(job.name, nextData, job.opts);
+      }
+
+      return (await queue.getJob(jobId)) ?? null;
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to patch job ${jobId} in queue ${queueName}`,
+        'QueueService',
+        {
+          queueName,
+          jobId,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+      throw _error;
     }
   }
 
@@ -874,6 +1290,304 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private getTrackedQueueNames(): string[] {
+    const names = new Set<string>(this.getQueueNames());
+    if (names.size === 0) {
+      for (const queueName of this.getAvailableQueues()) {
+        names.add(queueName);
+      }
+    }
+    for (const key of this.queueConfigOverrides.keys()) {
+      names.add(this.extractQueueNameFromKey(key));
+    }
+    for (const key of this.queueCapacityOverrides.keys()) {
+      names.add(this.extractQueueNameFromKey(key));
+    }
+    return Array.from(names);
+  }
+
+  private scopeKey(clinicId?: string): string {
+    return clinicId && clinicId.trim().length > 0 ? `clinic:${clinicId.trim()}` : 'global';
+  }
+
+  private buildConfigKey(scopeKey: string, queueName: string): string {
+    return `${scopeKey}::${queueName}`;
+  }
+
+  private buildCapacityKey(clinicId: string | undefined, queueName: string): string {
+    return `${this.scopeKey(clinicId)}::${queueName}`;
+  }
+
+  private extractQueueNameFromKey(key: string): string {
+    const segments = key.split('::');
+    return segments[segments.length - 1] || key;
+  }
+
+  private getStoredQueueDefaults(clinicId?: string): QueueConfigState {
+    const scopeKey = this.scopeKey(clinicId);
+    const stored = this.queueConfigDefaults.get(scopeKey);
+    if (stored) return stored;
+    const defaults = this.defaultQueueConfig('global', clinicId);
+    this.queueConfigDefaults.set(scopeKey, defaults);
+    return defaults;
+  }
+
+  private getEffectiveQueueConfig(queueName: string, clinicId?: string): QueueConfigState {
+    const scopeKey = this.scopeKey(clinicId);
+    const defaults = this.getStoredQueueDefaults(clinicId);
+    const base = this.defaultQueueConfig(queueName, scopeKey);
+    const overrideKey = this.buildConfigKey(scopeKey, queueName);
+    const override = this.queueConfigOverrides.get(overrideKey);
+    const effective: QueueConfigState = {
+      ...base,
+      ...defaults,
+      ...(override || {}),
+      queueName,
+      updatedAt: override?.updatedAt || defaults.updatedAt || base.updatedAt,
+    };
+    if (clinicId) effective.clinicId = clinicId;
+    return effective;
+  }
+
+  private normalizeQueueConfigUpdate(
+    update: QueueConfigUpdateInput,
+    queueName: string,
+    clinicId?: string
+  ): Partial<QueueConfigState> {
+    const result: Partial<QueueConfigState> = { queueName };
+    if (clinicId) result.clinicId = clinicId;
+    if (typeof update.maxWaitTime === 'number' && this.isPositiveNumber(update.maxWaitTime)) {
+      result.maxWaitTime = Math.floor(update.maxWaitTime);
+    }
+    if (
+      typeof update.averageConsultationTime === 'number' &&
+      this.isPositiveNumber(update.averageConsultationTime)
+    ) {
+      result.averageConsultationTime = Math.floor(update.averageConsultationTime);
+    }
+    if (typeof update.autoCallNext === 'boolean') {
+      result.autoCallNext = update.autoCallNext;
+    }
+    if (typeof update.allowWalkIns === 'boolean') {
+      result.allowWalkIns = update.allowWalkIns;
+    }
+    if (typeof update.priorityEnabled === 'boolean') {
+      result.priorityEnabled = update.priorityEnabled;
+    }
+    return result;
+  }
+
+  private defaultQueueConfig(queueName: string, clinicId?: string): QueueConfigState {
+    const updatedAt = new Date().toISOString();
+    const defaults: QueueConfigState = {
+      queueName,
+      maxWaitTime: 30,
+      averageConsultationTime: 15,
+      autoCallNext: true,
+      allowWalkIns: true,
+      priorityEnabled: true,
+      updatedAt,
+    };
+    const scopedDefaults = clinicId ? { ...defaults, clinicId } : defaults;
+
+    switch (queueName) {
+      case 'email-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 10,
+          averageConsultationTime: 2,
+          autoCallNext: false,
+          allowWalkIns: false,
+          priorityEnabled: false,
+        };
+      case 'notification-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 5,
+          averageConsultationTime: 1,
+          autoCallNext: false,
+          allowWalkIns: false,
+          priorityEnabled: false,
+        };
+      case 'payment-processing-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 20,
+          averageConsultationTime: 5,
+          autoCallNext: false,
+          allowWalkIns: false,
+        };
+      case 'analytics-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 45,
+          averageConsultationTime: 20,
+          autoCallNext: false,
+          allowWalkIns: false,
+        };
+      default:
+        return defaults;
+    }
+  }
+
+  private defaultQueueCapacity(queueName: string): number {
+    switch (queueName) {
+      case 'appointment-queue':
+      case 'enhanced-appointment-queue':
+        return 120;
+      case 'email-queue':
+        return 5000;
+      case 'notification-queue':
+        return 10000;
+      case 'payment-processing-queue':
+        return 500;
+      case 'analytics-queue':
+        return 250;
+      case 'reminder-queue':
+      case 'follow-up-queue':
+        return 1000;
+      default:
+        return 250;
+    }
+  }
+
+  private async buildQueueCapacityState(
+    queueName: string,
+    clinicId?: string
+  ): Promise<QueueCapacityState> {
+    const overrideKey = this.buildCapacityKey(clinicId, queueName);
+    const override = this.queueCapacityOverrides.get(overrideKey);
+    const metrics = await this.getQueueMetrics(queueName);
+    const defaultCapacity = this.defaultQueueCapacity(queueName);
+    const capacity = Math.max(1, Math.floor(override?.capacity || defaultCapacity));
+    const currentLoad = metrics.active + metrics.waiting;
+    const availableSlots = Math.max(0, capacity - currentLoad);
+    const utilizationPercent = Math.min(100, Math.round((currentLoad / capacity) * 100));
+    const baseState: QueueCapacityState = {
+      queueName,
+      capacity,
+      defaultCapacity,
+      activeJobs: metrics.active,
+      waitingJobs: metrics.waiting,
+      currentLoad,
+      availableSlots,
+      utilizationPercent,
+      metrics,
+      updatedAt: override?.updatedAt || new Date().toISOString(),
+    };
+    const scopedBaseState = clinicId?.trim()
+      ? { ...baseState, clinicId: clinicId.trim() }
+      : baseState;
+    if (!override) {
+      this.queueCapacityOverrides.set(overrideKey, scopedBaseState);
+    }
+    return scopedBaseState;
+  }
+
+  private resolveQueueName(queueName?: string): string | undefined {
+    const value = queueName?.trim();
+    if (!value) return undefined;
+    const exactMatch = this.getTrackedQueueNames().find(
+      name => name.toLowerCase() === value.toLowerCase()
+    );
+    if (exactMatch) return exactMatch;
+
+    const lower = value.toLowerCase();
+    if (lower.includes('notification')) return 'notification-queue';
+    if (lower.includes('email')) return 'email-queue';
+    if (lower.includes('payment')) return 'payment-processing-queue';
+    if (lower.includes('service')) return 'service-queue';
+    if (lower.includes('analytics')) return 'analytics-queue';
+    if (lower.includes('follow')) return 'follow-up-queue';
+    if (lower.includes('reminder')) return 'reminder-queue';
+    if (lower.includes('appointment')) return 'appointment-queue';
+    return value;
+  }
+
+  private resolveQueueNamesForExport(queueName?: string): string[] {
+    const resolved = this.resolveQueueName(queueName);
+    if (resolved) return [resolved];
+    return this.getTrackedQueueNames();
+  }
+
+  private parseExportStatuses(status?: string): JobState[] {
+    const statuses = (status || 'waiting,active,completed,failed,delayed')
+      .split(',')
+      .map(item => item.trim().toLowerCase())
+      .filter(Boolean) as JobState[];
+    return statuses.length > 0 ? statuses : ['waiting', 'active', 'completed', 'failed', 'delayed'];
+  }
+
+  private jobIsWithinRange(job: Job, startDate: Date | null, endDate: Date | null): boolean {
+    if (!startDate && !endDate) return true;
+    const timestamp = job.timestamp || job.processedOn || job.finishedOn;
+    if (!timestamp) return false;
+    const jobDate = new Date(timestamp);
+    if (Number.isNaN(jobDate.getTime())) return false;
+    if (startDate && jobDate < startDate) return false;
+    if (endDate && jobDate > endDate) return false;
+    return true;
+  }
+
+  private toExportEntry(
+    queueName: string,
+    job: Job,
+    position: number,
+    totalInQueue: number,
+    clinicId?: string,
+    queueIndex?: number
+  ): QueueExportEntry {
+    const data = this.jobData(job);
+    const queueType = this.pick(
+      this.recordString(data, 'queueType'),
+      this.recordString(data, 'type'),
+      this.recordString(data, 'queueCategory'),
+      job.name,
+      queueName
+    );
+    const patientId = this.recordString(data, 'patientId');
+    const doctorId = this.recordString(data, 'doctorId');
+    const appointmentId = this.recordString(data, 'appointmentId');
+    const queueOwnerId = this.recordString(data, 'queueOwnerId');
+    const locationId = this.recordString(data, 'locationId');
+    const priority = typeof job.opts.priority === 'number' ? job.opts.priority : undefined;
+    const timestamp =
+      typeof job.timestamp === 'number' ? new Date(job.timestamp).toISOString() : undefined;
+    const processedAt =
+      typeof job.processedOn === 'number' ? new Date(job.processedOn).toISOString() : undefined;
+    const finishedAt =
+      typeof job.finishedOn === 'number' ? new Date(job.finishedOn).toISOString() : undefined;
+    const status = this.pick(this.recordString(data, 'status'), 'WAITING');
+    return {
+      id: typeof job.id === 'string' ? job.id : `${queueName}-${queueIndex ?? 0}-${position}`,
+      queueName,
+      queueType,
+      queueCategory: this.pick(
+        this.recordString(data, 'queueCategory'),
+        this.toQueueCategory(queueType)
+      ),
+      ...(clinicId ? { clinicId } : {}),
+      ...(patientId ? { patientId } : {}),
+      ...(doctorId ? { doctorId } : {}),
+      ...(appointmentId ? { appointmentId } : {}),
+      ...(queueOwnerId ? { queueOwnerId } : {}),
+      ...(locationId ? { locationId } : {}),
+      status,
+      ...(typeof priority === 'number' ? { priority } : {}),
+      ...(timestamp ? { timestamp } : {}),
+      ...(processedAt ? { processedAt } : {}),
+      ...(finishedAt ? { finishedAt } : {}),
+      position,
+      queuePosition: position,
+      totalInQueue,
+      raw: data,
+    };
+  }
+
+  private isPositiveNumber(value: number | undefined): boolean {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0;
+  }
+
   /**
    * Get health status for domain-specific monitoring
    */
@@ -946,10 +1660,25 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       }
 
       // Update job data
-      job.data = {
-        ...(job.data as Record<string, unknown>),
-        ...(data as Record<string, unknown>),
-      };
+      const currentData = job.data as Record<string, unknown>;
+      const isCanonicalEnvelope =
+        typeof currentData['jobType'] === 'string' &&
+        typeof currentData['action'] === 'string' &&
+        typeof currentData['data'] === 'object' &&
+        currentData['data'] !== null;
+
+      job.data = isCanonicalEnvelope
+        ? {
+            ...currentData,
+            data: {
+              ...(currentData['data'] as Record<string, unknown>),
+              ...(data as Record<string, unknown>),
+            },
+          }
+        : {
+            ...currentData,
+            ...(data as Record<string, unknown>),
+          };
 
       // Remove old job and add updated one
       await queue.remove(jobId);
@@ -991,7 +1720,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
-        domain: domain as DomainType,
+        domain: 'clinic',
       });
 
       const queue = jobs
@@ -1015,7 +1744,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       return {
         doctorId,
         date,
-        domain,
+        domain: 'clinic',
         queue,
         totalLength: queue.length,
         averageWaitTime: this.calculateAppointmentQueueAverageWaitTime(queue),
@@ -1040,7 +1769,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
-        domain: domain as DomainType,
+        domain: 'clinic',
       });
 
       const job = jobs.find(
@@ -1064,7 +1793,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         position,
         totalInQueue: jobs.length,
         estimatedWaitTime,
-        domain,
+        domain: 'clinic',
         doctorId: (job.data as { doctorId: string }).doctorId,
       };
     } catch (_error) {
@@ -1086,7 +1815,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
-        domain: domain as DomainType,
+        domain: 'clinic',
       });
 
       const job = jobs.find(
@@ -1133,7 +1862,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
-        domain: domain as DomainType,
+        domain: 'clinic',
       });
 
       const job = jobs.find(
@@ -1211,7 +1940,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const queueName = this.getAppointmentQueueName(domain);
       const jobs = await this.getJobs(queueName, {
-        domain: domain as DomainType,
+        domain: 'clinic',
       });
 
       const job = jobs.find(
@@ -1265,7 +1994,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
         );
         return {
           locationId,
-          domain,
+          domain: 'clinic',
           stats: {
             totalWaiting: 0,
             averageWaitTime: 0,
@@ -1282,7 +2011,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       let jobs: Job[] = [];
       try {
         jobs = await this.getJobs(queueName, {
-          domain: domain as DomainType,
+          domain: 'clinic',
         });
       } catch (getJobsError) {
         void this.loggingService.log(
@@ -1380,13 +2109,12 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
   // Helper methods for appointment queues
   private getAppointmentQueueName(_domain: string): string {
-    // Use standard queue name from QueueService constants
-    // All domains use the same appointment queue
-    return APPOINTMENT_QUEUE_CONST;
+    // All jobs route through the unified HEALTHCARE_QUEUE
+    return HEALTHCARE_QUEUE;
   }
 
   private calculateEstimatedWaitTime(position: number, domain: string): number {
-    const baseWaitTime = domain === 'healthcare' ? 15 : 10; // minutes
+    const baseWaitTime = domain === 'clinic' ? 15 : 10; // minutes
     return position * baseWaitTime;
   }
 
@@ -1479,8 +2207,8 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   /**
    * Domain validation removed - single application access
    */
-  private validateDomainAccess(_queueName: string, _requestedDomain?: DomainType): void {
-    // No domain restrictions - single application can access all queues
+  private validateDomainAccess(_queueName: string, _requestedDomain?: string): void {
+    // No domain restrictions — single clinic application
     return;
   }
 
@@ -1721,137 +2449,6 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Auto-scale workers based on queue load for 10 lakh+ users
-   */
-  private async autoScaleWorkers(): Promise<void> {
-    try {
-      // Skip auto-scaling if ConfigService is not available
-      if (!this.configService) {
-        return;
-      }
-
-      for (const [queueName, _queue] of Array.from(this.queues.entries())) {
-        try {
-          const metrics = await this.getQueueMetrics(queueName);
-          const currentWorkers = this.workers.get(queueName)?.length || 0;
-
-          // Scale up if queue is overloaded
-          if (metrics.waiting > 100 && currentWorkers < 10) {
-            await this.scaleUpWorkers(queueName, Math.min(2, 10 - currentWorkers));
-          }
-
-          // Scale down if queue is underutilized
-          if (metrics.waiting < 10 && currentWorkers > 2) {
-            await this.scaleDownWorkers(queueName, Math.min(1, currentWorkers - 2));
-          }
-        } catch (queueError) {
-          // Log but continue with other queues
-          void this.loggingService.log(
-            LogType.QUEUE,
-            LogLevel.WARN,
-            `Auto-scaling failed for queue ${queueName}`,
-            'QueueService',
-            {
-              queueName,
-              error: queueError instanceof Error ? queueError.message : String(queueError),
-            }
-          );
-        }
-      }
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        'Auto-scaling failed',
-        'QueueService',
-        { error: error instanceof Error ? error.message : String(error) }
-      );
-    }
-  }
-
-  /**
-   * Scale up workers for a specific queue
-   */
-  private scaleUpWorkers(queueName: string, count: number): Promise<void> {
-    try {
-      for (let i = 0; i < count; i++) {
-        const worker = new Worker(
-          queueName,
-          (_job: Job) => {
-            // Worker logic will be handled by existing processors
-            return Promise.resolve({ processed: true, timestamp: new Date() });
-          },
-          {
-            connection: (() => {
-              // Use ConfigService (which uses dotenv) for environment variable access
-              const password = this.configService.getCachePassword();
-              return {
-                host: this.configService.getCacheHost(),
-                port: this.configService.getCachePort(),
-                ...(password ? { password } : {}),
-              };
-            })(),
-            concurrency: 5,
-          }
-        );
-
-        if (!this.workers.has(queueName)) {
-          this.workers.set(queueName, []);
-        }
-        this.workers.get(queueName)!.push(worker);
-      }
-
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.INFO,
-        `Scaled up ${count} workers for queue: ${queueName}`,
-        'QueueService',
-        { queueName, count }
-      );
-      return Promise.resolve();
-    } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to scale up workers for ${queueName}`,
-        'QueueService',
-        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
-      );
-      return Promise.reject(_error instanceof Error ? _error : new Error(String(_error)));
-    }
-  }
-
-  /**
-   * Scale down workers for a specific queue
-   */
-  private async scaleDownWorkers(queueName: string, count: number): Promise<void> {
-    try {
-      const queueWorkers = this.workers.get(queueName) || [];
-      const workersToRemove = queueWorkers.splice(-count);
-
-      for (const worker of workersToRemove) {
-        await worker.close();
-      }
-
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.INFO,
-        `Scaled down ${count} workers for queue: ${queueName}`,
-        'QueueService',
-        { queueName, count }
-      );
-    } catch (_error) {
-      void this.loggingService.log(
-        LogType.QUEUE,
-        LogLevel.ERROR,
-        `Failed to scale down workers for ${queueName}`,
-        'QueueService',
-        { queueName, error: _error instanceof Error ? _error.message : String(_error) }
-      );
-    }
-  }
-
-  /**
    * Batch process jobs for better performance
    */
   async batchProcessJobs<T>(
@@ -1863,8 +2460,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
 
     for (let i = 0; i < jobs.length; i += batchSize) {
       const batch = jobs.slice(i, i + batchSize);
+      const jobType = this.mapLegacyToJobType(queueName);
       const batchPromises = batch.map(job =>
-        this.addJob(queueName, 'batch-job', job.data, job.options)
+        this.addJob(jobType, 'batch-job', job.data, job.options)
       );
 
       const batchResults = await Promise.allSettled(batchPromises);

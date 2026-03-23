@@ -11,8 +11,6 @@ import { getEnvWithDefault } from '../../../../config/environment/utils';
 // InvoicePDFService is injected via token in QueueProcessor
 
 // Internal imports - Core
-import { HealthcareError } from '@core/errors';
-import { ErrorCode } from '@core/errors/error-codes.enum';
 import { QueueService } from './queue.service';
 import { QueueProcessor } from './queue.processor';
 import { SharedWorkerService } from './shared-worker.service';
@@ -24,41 +22,13 @@ import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ResilienceModule } from '@core/resilience/resilience.module';
 import { QueueHealthMonitorService } from './queue-health-monitor.service';
-import {
-  APPOINTMENT_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  SERVICE_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-  DOCTOR_AVAILABILITY_QUEUE,
-  QUEUE_MANAGEMENT_QUEUE,
-  PAYMENT_PROCESSING_QUEUE,
-  ANALYTICS_QUEUE,
-  ENHANCED_APPOINTMENT_QUEUE,
-  WAITING_LIST_QUEUE,
-  CALENDAR_SYNC_QUEUE,
-  AYURVEDA_THERAPY_QUEUE,
-  PATIENT_PREFERENCE_QUEUE,
-  REMINDER_QUEUE,
-  FOLLOW_UP_QUEUE,
-  RECURRING_APPOINTMENT_QUEUE,
-  LAB_REPORT_QUEUE,
-  IMAGING_QUEUE,
-  BULK_EHR_IMPORT_QUEUE,
-  INVOICE_PDF_QUEUE,
-  BULK_INVOICE_QUEUE,
-  PAYMENT_RECONCILIATION_QUEUE,
-  VIDEO_RECORDING_QUEUE,
-  VIDEO_TRANSCODING_QUEUE,
-  VIDEO_ANALYTICS_QUEUE,
-} from './queue.constants';
+import { HEALTHCARE_QUEUE } from './queue.constants';
 import { Queue, Worker, Job } from 'bullmq';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import type { JobData } from '@core/types/queue.types';
+import { JobType } from '@core/types/queue.types';
 import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
 
@@ -106,39 +76,7 @@ export class QueueModule {
     const serviceName = getEnvWithDefault('SERVICE_NAME', 'clinic');
 
     // Define service-specific queues with domain prefixes
-    const clinicQueues = [
-      APPOINTMENT_QUEUE,
-      EMAIL_QUEUE,
-      NOTIFICATION_QUEUE,
-      SERVICE_QUEUE,
-      VIDHAKARMA_QUEUE,
-      PANCHAKARMA_QUEUE,
-      CHEQUP_QUEUE,
-      DOCTOR_AVAILABILITY_QUEUE,
-      QUEUE_MANAGEMENT_QUEUE,
-      PAYMENT_PROCESSING_QUEUE,
-      ANALYTICS_QUEUE,
-      ENHANCED_APPOINTMENT_QUEUE,
-      WAITING_LIST_QUEUE,
-      CALENDAR_SYNC_QUEUE,
-      AYURVEDA_THERAPY_QUEUE,
-      PATIENT_PREFERENCE_QUEUE,
-      REMINDER_QUEUE,
-      FOLLOW_UP_QUEUE,
-      RECURRING_APPOINTMENT_QUEUE,
-      // EHR Module Queues
-      LAB_REPORT_QUEUE,
-      IMAGING_QUEUE,
-      BULK_EHR_IMPORT_QUEUE,
-      // Billing Module Queues
-      INVOICE_PDF_QUEUE,
-      BULK_INVOICE_QUEUE,
-      PAYMENT_RECONCILIATION_QUEUE,
-      // Video Module Queues
-      VIDEO_RECORDING_QUEUE,
-      VIDEO_TRANSCODING_QUEUE,
-      VIDEO_ANALYTICS_QUEUE,
-    ];
+    const clinicQueues = [HEALTHCARE_QUEUE];
 
     // Select appropriate queues based on service
     const queueNames = clinicQueues; // All services use clinic queues for now
@@ -268,7 +206,10 @@ export class QueueModule {
             const domainQueues = queues.filter(queue => {
               const queueName = queue.name;
               if (serviceName === 'clinic') {
-                return queueName.includes('clinic');
+                // Clinic API service should expose all registered queues it owns.
+                // Queue names are domain-agnostic (e.g., appointment-queue, notification-queue),
+                // so filtering by name substring "clinic" incorrectly hides valid queues.
+                return queueNames.includes(queueName);
               } else if (serviceName === 'worker') {
                 return true; // Worker sees all queues
               }
@@ -332,77 +273,81 @@ export class QueueModule {
                         queueName,
                         async (job: Job<JobData, unknown, string>) => {
                           const typedJob = job;
-                          switch (job.name) {
-                            case 'create':
-                              return await Promise.resolve(
-                                queueProcessor.processCreateJob(typedJob)
-                              );
-                            case 'update':
-                              return await Promise.resolve(
-                                queueProcessor.processUpdateJob(typedJob)
-                              );
-                            case 'confirm':
-                              return await Promise.resolve(
-                                queueProcessor.processConfirmJob(typedJob)
-                              );
-                            case 'complete':
-                              return await Promise.resolve(
-                                queueProcessor.processCompleteJob(typedJob)
-                              );
-                            case 'notify':
-                              return await Promise.resolve(
-                                queueProcessor.processNotifyJob(typedJob)
-                              );
-                            case 'process':
-                              // Generic job processing - delegate to appropriate method based on job data
-                              return await Promise.resolve(
-                                queueProcessor.processCreateJob(typedJob)
-                              );
+                          switch (job.name as JobType) {
                             // EHR Module Job Types
-                            case 'process_analysis':
+                            case JobType.LAB_REPORT:
                               return await Promise.resolve(
                                 queueProcessor.processLabReport(typedJob)
                               );
-                            case 'process_imaging':
+                            case JobType.IMAGING:
                               return await Promise.resolve(queueProcessor.processImaging(typedJob));
-                            case 'bulk_import':
+                            case JobType.BULK_EHR_IMPORT:
                               return await Promise.resolve(
                                 queueProcessor.processBulkEHRImport(typedJob)
                               );
+
                             // Billing Module Job Types
-                            case 'generate_pdf':
+                            case JobType.INVOICE_PDF:
                               return await Promise.resolve(
                                 queueProcessor.processInvoicePDF(typedJob)
                               );
-                            case 'bulk_invoice':
+                            case JobType.BULK_INVOICE:
                               return await Promise.resolve(
                                 queueProcessor.processBulkInvoice(typedJob)
                               );
-                            case 'reconcile_payments':
+                            case JobType.PAYMENT_RECONCILIATION:
                               return await Promise.resolve(
                                 queueProcessor.processPaymentReconciliation(typedJob)
                               );
+
                             // Video Module Job Types
-                            case 'process_recording':
+                            case JobType.VIDEO_RECORDING:
                               return await Promise.resolve(
                                 queueProcessor.processVideoRecording(typedJob)
                               );
-                            case 'transcode_video':
+                            case JobType.VIDEO_TRANSCODING:
                               return await Promise.resolve(
                                 queueProcessor.processVideoTranscoding(typedJob)
                               );
-                            case 'process_analytics':
+                            case JobType.VIDEO_ANALYTICS:
                               return await Promise.resolve(
                                 queueProcessor.processVideoAnalytics(typedJob)
                               );
-                            default:
-                              throw new HealthcareError(
-                                ErrorCode.QUEUE_OPERATION_FAILED,
-                                `Unknown job type: ${job.name}`,
-                                undefined,
-                                { jobType: job.name },
-                                'QueueModule'
-                              );
+
+                            // Domain Action Types Fallback
+                            default: {
+                              // Expected payload is CanonicalJobEnvelope when coming through QueueService.addJob
+                              // For generic tasks (appointment, notifications), use action-based router
+                              const action =
+                                (job.data as Record<string, unknown>)['action'] || 'process';
+                              switch (action) {
+                                case 'create':
+                                  return await Promise.resolve(
+                                    queueProcessor.processCreateJob(typedJob)
+                                  );
+                                case 'update':
+                                  return await Promise.resolve(
+                                    queueProcessor.processUpdateJob(typedJob)
+                                  );
+                                case 'confirm':
+                                  return await Promise.resolve(
+                                    queueProcessor.processConfirmJob(typedJob)
+                                  );
+                                case 'complete':
+                                  return await Promise.resolve(
+                                    queueProcessor.processCompleteJob(typedJob)
+                                  );
+                                case 'notify':
+                                case 'notification_send':
+                                  return await Promise.resolve(
+                                    queueProcessor.processNotifyJob(typedJob)
+                                  );
+                                default:
+                                  return await Promise.resolve(
+                                    queueProcessor.processCreateJob(typedJob)
+                                  );
+                              }
+                            }
                           }
                         },
                         {
@@ -479,37 +424,7 @@ export class QueueModule {
         forwardRef(() => DatabaseModule),
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         BullModule.registerQueue({
-          name: SERVICE_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: APPOINTMENT_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: EMAIL_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: NOTIFICATION_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: VIDHAKARMA_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: PANCHAKARMA_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: CHEQUP_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: DOCTOR_AVAILABILITY_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: QUEUE_MANAGEMENT_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: PAYMENT_PROCESSING_QUEUE,
-        }),
-        BullModule.registerQueue({
-          name: ANALYTICS_QUEUE,
+          name: HEALTHCARE_QUEUE,
         }),
       ],
       providers: [

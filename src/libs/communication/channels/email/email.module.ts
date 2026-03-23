@@ -8,7 +8,7 @@ import { ConfigModule } from '@config/config.module';
 import { HttpModule } from '@infrastructure/http';
 // LoggingModule is @Global() - LoggingService is available without explicit import
 import { BullModule } from '@nestjs/bullmq';
-import { QueueService } from '@infrastructure/queue';
+import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
 import { CommunicationAdaptersModule } from '@communication/adapters/adapters.module';
 import { CommunicationConfigModule } from '@communication/config/communication-config.module';
 import { EmailServicesModule } from '@communication/adapters/email/email-services.module';
@@ -47,7 +47,7 @@ function isCacheEnabledSafe(): boolean {
     ...(isCacheEnabledSafe()
       ? [
           BullModule.registerQueue({
-            name: QueueService.EMAIL_QUEUE,
+            name: HEALTHCARE_QUEUE,
           }),
         ]
       : []),

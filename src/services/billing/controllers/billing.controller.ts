@@ -892,14 +892,13 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processAppointmentPayment(
     @Param('id') appointmentId: string,
-    @Body() body: { amount: number; appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
+    @Body() body: { appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
     @Query('provider') provider?: string
   ) {
     const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
-      body.amount,
       body.appointmentType,
       paymentProvider
     );

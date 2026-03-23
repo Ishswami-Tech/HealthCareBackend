@@ -13,14 +13,14 @@
 //
 // QueueService provides:
 //   - All queue operations (addJob, getJob, etc.)
-//   - Queue constants (QueueService.ANALYTICS_QUEUE, etc.)
-//   - Queue priorities (QueueService.PRIORITIES, etc.)
+//   - Single unified queue (QueueService.HEALTHCARE_QUEUE)
+//   - Queue priorities (QueueService.PRIORITIES)
 //   - All types and interfaces
 //   - Health monitoring
 //   - Metrics and monitoring
 //
 // Example:
-//   await queueService.addJob(QueueService.ANALYTICS_QUEUE, 'job-type', data, {
+//   await queueService.addJob(JobType.ANALYTICS, 'process-data', data, {
 //     priority: QueueService.PRIORITIES.NORMAL
 //   });
 
@@ -42,35 +42,15 @@ export type {
 } from '@core/types/queue.types';
 
 export { AuditAction } from '@core/types/queue.types';
-export { JobPriority, DomainType } from './src/queue.service';
+export { JobPriority } from './src/queue.service';
 
-// Re-export queue constants for convenience
-// Note: Prefer using QueueService static properties (QueueService.ANALYTICS_QUEUE, etc.)
-// These are exported here for direct access when needed
+// Re-export queue constants — unified single queue
+// All jobs route through HEALTHCARE_QUEUE with JobType-based routing
 export {
-  APPOINTMENT_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  SERVICE_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-  DOCTOR_AVAILABILITY_QUEUE,
-  QUEUE_MANAGEMENT_QUEUE,
-  PAYMENT_PROCESSING_QUEUE,
-  ANALYTICS_QUEUE,
-  ENHANCED_APPOINTMENT_QUEUE,
-  WAITING_LIST_QUEUE,
-  CALENDAR_SYNC_QUEUE,
-  AYURVEDA_THERAPY_QUEUE,
-  PATIENT_PREFERENCE_QUEUE,
-  REMINDER_QUEUE,
-  FOLLOW_UP_QUEUE,
-  RECURRING_APPOINTMENT_QUEUE,
-  PAYMENT_QUEUE,
-  EMERGENCY_QUEUE,
-  VIP_QUEUE,
+  HEALTHCARE_QUEUE,
   QUEUE_PRIORITIES,
+  QUEUE_DELAYS,
+  HEALTHCARE_QUEUE_CONFIG,
 } from './src/queue.constants';
 
 // Internal exports - Only for module registration, not for direct use

@@ -4,7 +4,7 @@
  * @description All appointment-related types and interfaces for the healthcare system
  */
 
-import { AppointmentType } from './enums.types';
+import { AppointmentType, LaneType } from './enums.types';
 import type { AppointmentBase } from './database.types';
 
 /**
@@ -1342,6 +1342,7 @@ export interface QueueEntryData {
   type?: string;
   notes?: string;
   queueCategory?: string;
+  laneType?: LaneType | string; // Phase 6: Formalized Lane Semantics
   queueOwnerId?: string;
   primaryDoctorId?: string;
   assignedDoctorId?: string;
@@ -1367,6 +1368,7 @@ export interface CanonicalQueueEntry {
   totalInQueue: number;
   status: string; // WAITING, IN_PROGRESS, COMPLETED, etc.
   serviceBucket?: string; // GENERAL, FOLLOW_UP, THERAPY, etc.
+  laneType?: LaneType | string; // Phase 6: Formalized Lane Semantics
   treatmentType?: string;
   estimatedWaitTime?: number;
   paymentStatus?: string; // PAID, PENDING (for medicine desk)

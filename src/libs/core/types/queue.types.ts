@@ -131,7 +131,78 @@ export interface ReconciliationJobData {
   metadata?: JobMetadata;
 }
 
-// Generic queue job data with domain
+// ============================================================================
+// Queue Unification Types (New)
+// ============================================================================
+
+export enum JobType {
+  APPOINTMENT = 'appointment',
+  EMAIL = 'email',
+  NOTIFICATION = 'notification',
+  SERVICE = 'service',
+  VIDHAKARMA = 'vidhakarma',
+  PANCHAKARMA = 'panchakarma',
+  CHEQUP = 'chequp',
+  DOCTOR_AVAILABILITY = 'doctor_availability',
+  QUEUE_MANAGEMENT = 'queue_management',
+  PAYMENT_PROCESSING = 'payment_processing',
+  ANALYTICS = 'analytics',
+  ENHANCED_APPOINTMENT = 'enhanced_appointment',
+  WAITING_LIST = 'waiting_list',
+  CALENDAR_SYNC = 'calendar_sync',
+  AYURVEDA_THERAPY = 'ayurveda_therapy',
+  PATIENT_PREFERENCE = 'patient_preference',
+  REMINDER = 'reminder',
+  FOLLOW_UP = 'follow_up',
+  RECURRING_APPOINTMENT = 'recurring_appointment',
+  EMERGENCY = 'emergency',
+  VIP = 'vip',
+  LAB_REPORT = 'lab_report',
+  IMAGING = 'imaging',
+  BULK_EHR_IMPORT = 'bulk_ehr_import',
+  INVOICE_PDF = 'invoice_pdf',
+  BULK_INVOICE = 'bulk_invoice',
+  PAYMENT_RECONCILIATION = 'payment_reconciliation',
+  VIDEO_RECORDING = 'video_recording',
+  VIDEO_TRANSCODING = 'video_transcoding',
+  VIDEO_ANALYTICS = 'video_analytics',
+  // Represents old generic/fallback actions
+  UNKNOWN = 'unknown',
+}
+
+export enum JobPriorityLevel {
+  CRITICAL = 10,
+  HIGH = 7,
+  NORMAL = 5,
+  LOW = 3,
+  BACKGROUND = 1,
+}
+
+// The unified Canonical Job Envelope payload structure
+export interface CanonicalJobEnvelope<T = unknown> {
+  // Routing layer
+  jobType: JobType;
+  priority: JobPriorityLevel;
+  domain: 'clinic';
+  clinicId?: string;
+  tenantId?: string;
+
+  // Context layer
+  context?: {
+    locationId?: string;
+    doctorId?: string;
+    patientId?: string;
+    laneType?: string; // Optional lane specific queueCategory
+    appointmentId?: string;
+  };
+
+  // Payload layer
+  action: string;
+  data: T;
+  metadata?: JobMetadata;
+}
+
+// Generic queue job data with domain (Deprecated - map to CanonicalJobEnvelope)
 export interface QueueJobData<T = unknown> {
   domain: 'clinic';
   action: string;
@@ -296,7 +367,7 @@ export interface QueueFilters {
   status?: string[];
   priority?: string[];
   tenantId?: string;
-  domain?: 'clinic' | 'worker';
+  domain?: 'clinic';
   dateRange?: {
     from: string;
     to: string;
@@ -311,7 +382,7 @@ export interface ClientSession {
   clientId: string;
   tenantId: string;
   userId: string;
-  domain: 'clinic' | 'worker';
+  domain: 'clinic';
   connectedAt: Date;
   subscribedQueues: Set<string>;
   messageCount: number;
@@ -333,7 +404,7 @@ export interface EnterpriseJobOptions {
   attempts?: number;
   removeOnComplete?: boolean | number;
   removeOnFail?: boolean | number;
-  domain?: 'clinic' | 'worker';
+  domain?: 'clinic';
 }
 
 /**

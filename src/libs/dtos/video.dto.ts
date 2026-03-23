@@ -1113,6 +1113,13 @@ export class JoinWaitingRoomDto {
   userId!: string;
 }
 
+export class LeaveWaitingRoomDto {
+  @ApiProperty()
+  @IsUUID('4')
+  @IsNotEmpty()
+  consultationId!: string;
+}
+
 export class AdmitPatientDto {
   @ApiProperty()
   @IsUUID('4')
