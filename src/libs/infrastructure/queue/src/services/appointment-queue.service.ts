@@ -5,6 +5,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { IEventService } from '@core/types';
 import { isEventService } from '@core/types';
+import { LaneType } from '@core/types/enums.types';
 
 import type { AppointmentQueueStats } from '@core/types';
 import type {
@@ -53,14 +54,15 @@ export class AppointmentQueueService {
       queueOwnerId: string;
       patientId: string;
       clinicId: string;
-      appointmentId?: string;
-      assignedDoctorId?: string;
-      primaryDoctorId?: string;
-      locationId?: string;
+      appointmentId?: string | undefined;
+      assignedDoctorId?: string | undefined;
+      primaryDoctorId?: string | undefined;
+      locationId?: string | undefined;
       queueCategory: string;
-      type?: string;
-      notes?: string;
-      estimatedWaitTime?: number;
+      laneType?: string | undefined;
+      type?: string | undefined;
+      notes?: string | undefined;
+      estimatedWaitTime?: number | undefined;
     },
     domain: string
   ): Promise<OperationResponse> {
@@ -75,6 +77,10 @@ export class AppointmentQueueService {
 
       if (exists) {
         return { success: true, message: 'Queue item already exists' };
+      }
+
+      if (queueData.laneType && !Object.values(LaneType).includes(queueData.laneType as LaneType)) {
+        throw new Error(`Invalid laneType: ${queueData.laneType}`);
       }
 
       const queueEntry: QueueEntryData = {
@@ -93,6 +99,7 @@ export class AppointmentQueueService {
         ...(queueData.notes && { notes: queueData.notes }),
         ...(queueData.locationId && { locationId: queueData.locationId }),
         queueCategory: queueData.queueCategory,
+        ...(queueData.laneType && { laneType: queueData.laneType }),
         queueOwnerId: queueData.queueOwnerId,
         ...(queueData.primaryDoctorId && { primaryDoctorId: queueData.primaryDoctorId }),
         ...(queueData.assignedDoctorId && { assignedDoctorId: queueData.assignedDoctorId }),
@@ -1128,7 +1135,8 @@ export class AppointmentQueueService {
   async callNext(
     doctorId: string,
     clinicId: string,
-    domain: string
+    domain: string,
+    appointmentId: string
   ): Promise<OperationResponse & { nextPatient?: QueueEntryData }> {
     const date = new Date().toISOString().split('T')[0];
     // P1 FIX: Include clinicId
@@ -1137,14 +1145,14 @@ export class AppointmentQueueService {
     try {
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
-      // Find first WAITING patient
+      // Find the specific patient being called
       const nextIndex = entries.findIndex(entry => {
         const data = JSON.parse(entry) as QueueEntryData;
-        return data.status === 'WAITING';
+        return data.appointmentId === appointmentId;
       });
 
       if (nextIndex === -1) {
-        return { success: false, message: 'No waiting patients in queue' };
+        return { success: false, message: 'Patient not found in queue' };
       }
 
       const entryData = JSON.parse(entries[nextIndex] || '{}') as QueueEntryData;

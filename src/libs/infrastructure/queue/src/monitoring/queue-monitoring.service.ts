@@ -1,4 +1,10 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Inject,
+  NotFoundException,
+  forwardRef,
+} from '@nestjs/common';
 import { EventService } from '@infrastructure/events/event.service';
 
 // Internal imports - Infrastructure
@@ -17,6 +23,42 @@ import {
   EventPriority,
 } from '@core/types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
+
+export interface ManualQueueAlertCreateInput {
+  id?: string;
+  queueName: string;
+  type: QueueAlert['type'];
+  severity: QueueAlert['severity'];
+  message: string;
+  threshold: number;
+  currentValue: number;
+  resolved?: boolean;
+}
+
+export interface ManualQueueAlertUpdateInput {
+  queueName?: string;
+  type?: QueueAlert['type'];
+  severity?: QueueAlert['severity'];
+  message?: string;
+  threshold?: number;
+  currentValue?: number;
+  resolved?: boolean;
+}
+
+const MANUAL_ALERT_TYPES = [
+  'error_rate_high',
+  'throughput_low',
+  'queue_size_large',
+  'processing_time_high',
+  'health_degraded',
+] as const satisfies readonly QueueAlert['type'][];
+
+const MANUAL_ALERT_SEVERITIES = [
+  'low',
+  'medium',
+  'high',
+  'critical',
+] as const satisfies readonly QueueAlert['severity'][];
 
 /**
  * Enterprise Queue Monitoring Service
@@ -219,6 +261,152 @@ export class QueueMonitoringService {
       { alertId, queueName: alert.queueName }
     );
     return true;
+  }
+
+  /**
+   * Create a manual queue alert
+   */
+  async createAlertManual(input: ManualQueueAlertCreateInput): Promise<QueueAlert> {
+    const queueName = this.requireString(input.queueName, 'queueName');
+    const type = this.requireAlertType(input.type);
+    const severity = this.requireAlertSeverity(input.severity);
+    const message = this.requireString(input.message, 'message');
+    const threshold = this.requireFiniteNumber(input.threshold, 'threshold', true);
+    const currentValue = this.requireFiniteNumber(input.currentValue, 'currentValue');
+    const id = this.pick(input.id, this.generateManualAlertId(queueName, type));
+
+    if (this.alerts.has(id)) {
+      throw new BadRequestException(`Alert ${id} already exists`);
+    }
+
+    const alert: QueueAlert = {
+      id,
+      queueName,
+      type,
+      severity,
+      message,
+      threshold,
+      currentValue,
+      timestamp: new Date(),
+      resolved: Boolean(input.resolved),
+      ...(input.resolved ? { resolvedAt: new Date() } : {}),
+    };
+
+    this.alerts.set(id, alert);
+    await this.emitManualAlertEvent('queue.alert.manual.created', alert, 'created');
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Created manual alert ${id} for queue ${queueName}`,
+      'QueueMonitoringService',
+      { alertId: id, queueName, type, severity }
+    );
+
+    return alert;
+  }
+
+  /**
+   * Update a manual queue alert
+   */
+  async updateAlertManual(
+    alertId: string,
+    input: ManualQueueAlertUpdateInput
+  ): Promise<QueueAlert> {
+    const normalizedAlertId = this.requireString(alertId, 'alertId');
+    const existingAlert = this.alerts.get(normalizedAlertId);
+    if (!existingAlert) {
+      throw new NotFoundException(`Alert ${normalizedAlertId} not found`);
+    }
+
+    const updatedAlert: QueueAlert = { ...existingAlert };
+    let hasUpdates = false;
+
+    if (typeof input.queueName !== 'undefined') {
+      updatedAlert.queueName = this.requireString(input.queueName, 'queueName');
+      hasUpdates = true;
+    }
+    if (typeof input.type !== 'undefined') {
+      updatedAlert.type = this.requireAlertType(input.type);
+      hasUpdates = true;
+    }
+    if (typeof input.severity !== 'undefined') {
+      updatedAlert.severity = this.requireAlertSeverity(input.severity);
+      hasUpdates = true;
+    }
+    if (typeof input.message !== 'undefined') {
+      updatedAlert.message = this.requireString(input.message, 'message');
+      hasUpdates = true;
+    }
+    if (typeof input.threshold !== 'undefined') {
+      updatedAlert.threshold = this.requireFiniteNumber(input.threshold, 'threshold', true);
+      hasUpdates = true;
+    }
+    if (typeof input.currentValue !== 'undefined') {
+      updatedAlert.currentValue = this.requireFiniteNumber(input.currentValue, 'currentValue');
+      hasUpdates = true;
+    }
+
+    if (typeof input.resolved !== 'undefined') {
+      updatedAlert.resolved = input.resolved;
+      if (input.resolved) {
+        updatedAlert.resolvedAt = existingAlert.resolvedAt || new Date();
+      } else {
+        delete updatedAlert.resolvedAt;
+      }
+      hasUpdates = true;
+    }
+
+    if (!hasUpdates) {
+      throw new BadRequestException('At least one alert field must be provided for update');
+    }
+
+    this.alerts.set(normalizedAlertId, updatedAlert);
+    await this.emitManualAlertEvent(
+      'queue.alert.manual.updated',
+      updatedAlert,
+      'updated',
+      existingAlert
+    );
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Updated manual alert ${normalizedAlertId} for queue ${updatedAlert.queueName}`,
+      'QueueMonitoringService',
+      {
+        alertId: normalizedAlertId,
+        queueName: updatedAlert.queueName,
+        type: updatedAlert.type,
+        severity: updatedAlert.severity,
+      }
+    );
+
+    return updatedAlert;
+  }
+
+  /**
+   * Delete a manual queue alert
+   */
+  async deleteAlertManual(alertId: string): Promise<QueueAlert> {
+    const normalizedAlertId = this.requireString(alertId, 'alertId');
+    const existingAlert = this.alerts.get(normalizedAlertId);
+    if (!existingAlert) {
+      throw new NotFoundException(`Alert ${normalizedAlertId} not found`);
+    }
+
+    this.alerts.delete(normalizedAlertId);
+    await this.emitManualAlertEvent('queue.alert.manual.deleted', existingAlert, 'deleted');
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Deleted manual alert ${normalizedAlertId} for queue ${existingAlert.queueName}`,
+      'QueueMonitoringService',
+      { alertId: normalizedAlertId, queueName: existingAlert.queueName }
+    );
+
+    return existingAlert;
   }
 
   /**
@@ -581,6 +769,97 @@ export class QueueMonitoringService {
       timestamp: new Date(),
       resolved: false,
     };
+  }
+
+  private async emitManualAlertEvent(
+    eventType:
+      | 'queue.alert.manual.created'
+      | 'queue.alert.manual.updated'
+      | 'queue.alert.manual.deleted',
+    alert: QueueAlert,
+    action: 'created' | 'updated' | 'deleted',
+    previousAlert?: QueueAlert
+  ): Promise<void> {
+    if (!this.typedEventService) {
+      return;
+    }
+
+    try {
+      await this.typedEventService.emitEnterprise(eventType, {
+        eventId: `queue_manual_alert_${action}_${alert.id}_${Date.now()}`,
+        eventType,
+        category: EventCategory.QUEUE,
+        priority: this.mapSeverityToPriority(alert.severity),
+        timestamp: new Date().toISOString(),
+        source: 'QueueMonitoringService',
+        version: '1.0.0',
+        payload: {
+          alert,
+          ...(previousAlert ? { previousAlert } : {}),
+          action,
+          manual: true,
+        },
+      } as EnterpriseEventPayload);
+    } catch (_error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Failed to emit ${eventType} event`,
+        'QueueMonitoringService',
+        {
+          alertId: alert.id,
+          queueName: alert.queueName,
+          error: _error instanceof Error ? _error.message : String(_error),
+        }
+      );
+    }
+  }
+
+  private mapSeverityToPriority(severity: QueueAlert['severity']): EventPriority {
+    if (severity === 'critical') return EventPriority.CRITICAL;
+    if (severity === 'high') return EventPriority.HIGH;
+    if (severity === 'medium') return EventPriority.NORMAL;
+    return EventPriority.LOW;
+  }
+
+  private requireAlertType(value: QueueAlert['type']): QueueAlert['type'] {
+    if (!MANUAL_ALERT_TYPES.includes(value)) {
+      throw new BadRequestException(`Invalid alert type: ${value}`);
+    }
+    return value;
+  }
+
+  private requireAlertSeverity(value: QueueAlert['severity']): QueueAlert['severity'] {
+    if (!MANUAL_ALERT_SEVERITIES.includes(value)) {
+      throw new BadRequestException(`Invalid alert severity: ${value}`);
+    }
+    return value;
+  }
+
+  private requireFiniteNumber(value: number, fieldName: string, nonNegative = false): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new BadRequestException(`${fieldName} must be a finite number`);
+    }
+    if (nonNegative && value < 0) {
+      throw new BadRequestException(`${fieldName} must be greater than or equal to 0`);
+    }
+    return value;
+  }
+
+  private generateManualAlertId(queueName: string, type: QueueAlert['type']): string {
+    return `manual-${queueName}-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  }
+
+  private requireString(value: string | undefined, fieldName: string): string {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      throw new BadRequestException(`${fieldName} is required`);
+    }
+    return value.trim();
+  }
+
+  private pick(...values: Array<string | undefined>): string {
+    const v = values.find(item => typeof item === 'string' && item.trim().length > 0);
+    return v?.trim() || '';
   }
 
   /**

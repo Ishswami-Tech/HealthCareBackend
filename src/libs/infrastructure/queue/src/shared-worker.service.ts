@@ -30,28 +30,7 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
 
-// Queue constants
-import {
-  SERVICE_QUEUE,
-  APPOINTMENT_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-  ENHANCED_APPOINTMENT_QUEUE,
-  DOCTOR_AVAILABILITY_QUEUE,
-  QUEUE_MANAGEMENT_QUEUE,
-  WAITING_LIST_QUEUE,
-  PAYMENT_PROCESSING_QUEUE,
-  CALENDAR_SYNC_QUEUE,
-  AYURVEDA_THERAPY_QUEUE,
-  PATIENT_PREFERENCE_QUEUE,
-  ANALYTICS_QUEUE,
-  REMINDER_QUEUE,
-  FOLLOW_UP_QUEUE,
-  RECURRING_APPOINTMENT_QUEUE,
-} from './queue.constants';
+// Queue constants removed — SharedWorkerService no longer spawns individual workers
 
 // Redis connection configuration
 interface RedisConnection {
@@ -153,31 +132,11 @@ export class SharedWorkerService implements OnModuleInit, OnModuleDestroy {
         }),
       };
 
-      // Define all queues with their configurations
-      const queueConfigs = [
-        // Clinic queues
-        { name: APPOINTMENT_QUEUE, concurrency: 50 },
-        { name: ENHANCED_APPOINTMENT_QUEUE, concurrency: 30 },
-        { name: NOTIFICATION_QUEUE, concurrency: 100 },
-        { name: EMAIL_QUEUE, concurrency: 80 },
-        { name: VIDHAKARMA_QUEUE, concurrency: 20 },
-        { name: PANCHAKARMA_QUEUE, concurrency: 20 },
-        { name: CHEQUP_QUEUE, concurrency: 25 },
-        { name: AYURVEDA_THERAPY_QUEUE, concurrency: 15 },
-        { name: SERVICE_QUEUE, concurrency: 40 },
-        { name: DOCTOR_AVAILABILITY_QUEUE, concurrency: 30 },
-        { name: QUEUE_MANAGEMENT_QUEUE, concurrency: 20 },
-        { name: WAITING_LIST_QUEUE, concurrency: 25 },
-        { name: PAYMENT_PROCESSING_QUEUE, concurrency: 35 },
-        { name: CALENDAR_SYNC_QUEUE, concurrency: 20 },
-        { name: PATIENT_PREFERENCE_QUEUE, concurrency: 15 },
-        { name: ANALYTICS_QUEUE, concurrency: 25 },
-        { name: REMINDER_QUEUE, concurrency: 40 },
-        { name: FOLLOW_UP_QUEUE, concurrency: 30 },
-        { name: RECURRING_APPOINTMENT_QUEUE, concurrency: 20 },
-      ];
+      // Legacy physical queues are now deprecated and handled by QueueModule's single universal worker.
+      // SharedWorkerService no longer spawns independent BullMQ workers to prevent double-dispatch.
+      const queueConfigs: { name: string; concurrency: number }[] = [];
 
-      // Initialize workers for each queue
+      // Initialize workers for each queue (array is now empty)
       for (const config of queueConfigs) {
         this.createWorker(config.name, config.concurrency, redisConnection);
       }

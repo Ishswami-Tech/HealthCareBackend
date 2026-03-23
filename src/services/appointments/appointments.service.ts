@@ -80,13 +80,15 @@ type AssistantDoctorCoverageAssignmentRecord = {
   isActive: boolean;
 };
 
+const TEST_APPOINTMENT_DURATION_MINUTES = 3;
+
 const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   {
     treatmentType: TreatmentType.GENERAL_CONSULTATION,
     label: 'General Consultation',
     description: 'Comprehensive health assessment and treatment planning',
     category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: 30,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
     serviceBucket: 'GENERAL',
@@ -100,7 +102,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Follow-up Consultation',
     description: 'Progress review and treatment adjustments',
     category: AppointmentServiceCategory.CONSULTATION,
-    defaultDurationMinutes: 20,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
     serviceBucket: 'FOLLOW_UP',
@@ -114,7 +116,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Therapy Session',
     description: 'Therapy-focused in-clinic treatment session',
     category: AppointmentServiceCategory.THERAPY,
-    defaultDurationMinutes: 45,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'THERAPY',
@@ -128,7 +130,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Surgical Procedure',
     description: 'Minor surgical or interventional care under clinical supervision',
     category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: 60,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'SURGICAL',
@@ -141,7 +143,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Lab Test',
     description: 'Diagnostic sample collection or lab-linked appointment',
     category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: 20,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'DIAGNOSTIC',
@@ -154,7 +156,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Imaging',
     description: 'Imaging-linked appointment for diagnostic review or scan workflow',
     category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: 30,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'DIAGNOSTIC',
@@ -167,7 +169,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Vaccination',
     description: 'Vaccination and preventive immunization visit',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 20,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'PREVENTIVE',
@@ -181,7 +183,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Viddhakarma',
     description: 'Therapeutic puncture-based Ayurvedic procedural care',
     category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: 60,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'VIDDHAKARMA',
@@ -194,7 +196,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Agnikarma',
     description: 'Therapeutic heat procedure for musculoskeletal pain relief',
     category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: 45,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'AGNIKARMA',
@@ -207,7 +209,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Panchakarma Therapy',
     description: 'Traditional detoxification and rejuvenation treatment',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 90,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'PANCHAKARMA',
@@ -220,7 +222,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Nadi Pariksha',
     description: 'Traditional pulse diagnosis to assess dosha imbalances',
     category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: 45,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
     serviceBucket: 'DIAGNOSIS',
@@ -233,7 +235,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Dosha Analysis',
     description: 'Constitutional analysis with lifestyle and treatment recommendations',
     category: AppointmentServiceCategory.DIAGNOSIS,
-    defaultDurationMinutes: 60,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
     serviceBucket: 'DIAGNOSIS',
@@ -246,7 +248,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Shirodhara',
     description: 'Continuous oil flow on the forehead for stress and anxiety care',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 45,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'SHIRODHARA',
@@ -259,7 +261,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Virechana',
     description: 'Therapeutic purgation as part of Panchakarma care',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 90,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'PANCHAKARMA',
@@ -272,7 +274,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Abhyanga Massage',
     description: 'Full-body Ayurvedic therapeutic oil massage',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 60,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'ABHYANGA',
@@ -285,7 +287,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Swedana Steam Therapy',
     description: 'Herbal steam therapy for detoxification and relaxation',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 30,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'SWEDANA',
@@ -298,7 +300,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Basti',
     description: 'Therapeutic medicated enema under Ayurvedic care plan',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 45,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'PANCHAKARMA',
@@ -311,7 +313,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Nasya',
     description: 'Nasal administration therapy as part of Ayurvedic treatment',
     category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: 30,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'PANCHAKARMA',
@@ -324,7 +326,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     label: 'Raktamokshana',
     description: 'Therapeutic bloodletting procedure under supervised care',
     category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: 60,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
     serviceBucket: 'SURGICAL',
@@ -409,7 +411,7 @@ export class AppointmentsService {
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
     // Queue Service - BullMQ-based queue system
     // Use QueueService from @infrastructure/queue (migrated from Bull to BullMQ)
-    // Standard queue names: QueueService.APPOINTMENT_QUEUE, QueueService.NOTIFICATION_QUEUE, etc.
+    // All jobs now route through HEALTHCARE_QUEUE via JobType enum
     @Inject(forwardRef(() => QueueService)) private readonly queueService: QueueService,
     private readonly appointmentQueueService: AppointmentQueueService,
     @Inject(forwardRef(() => EventService)) private readonly eventService: EventService,
@@ -1324,8 +1326,8 @@ export class AppointmentsService {
         'AppointmentsService.proposeVideoAppointment'
       );
     }
-    const minAdvanceMs = 48 * 60 * 60 * 1000;
-    const now = Date.now();
+    // const minAdvanceMs = 48 * 60 * 60 * 1000;
+    // const now = Date.now();
     const uniqueDates = new Set<string>();
 
     if (dto.proposedSlots.length < 3) {
@@ -1361,16 +1363,17 @@ export class AppointmentsService {
         );
       }
 
-      // 1. Enforce 2-day advance rule
-      if (slotDateTime.getTime() - now < minAdvanceMs) {
-        throw this.errors.validationError(
-          'proposedSlots',
-          `Slot ${slot.date} ${slot.time} is too soon. Video appointments must be booked at least 2 days in advance.`,
-          'AppointmentsService.proposeVideoAppointment'
-        );
-      }
+      // Production policy: Enforce 2-day advance rule
+      // if (slotDateTime.getTime() - now < minAdvanceMs) {
+      //   throw this.errors.validationError(
+      //     'proposedSlots',
+      //     `Slot ${slot.date} ${slot.time} is too soon. Video appointments must be booked at least 2 days in advance.`,
+      //     'AppointmentsService.proposeVideoAppointment'
+      //   );
+      // }
 
-      // 2. Check for conflicts / availability
+      // Testing mode: skip the 2-day advance rule and keep only slot availability validation.
+      // 1. Check for conflicts / availability
       const availableSlots = availabilityMap.get(slot.date);
       if (!availableSlots || !availableSlots.includes(slot.time)) {
         throw this.errors.appointmentSlotUnavailable(
@@ -1661,20 +1664,21 @@ export class AppointmentsService {
       );
     }
 
-    // Policy: Allow rescheduling up to 24h before
-    const appointmentDateTime = new Date(
-      `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
-    );
-    const now = new Date();
-    const minNoticeMs = 24 * 60 * 60 * 1000;
-
-    if (appointmentDateTime.getTime() - now.getTime() < minNoticeMs) {
-      throw this.errors.validationError(
-        'date',
-        'Rescheduling is only allowed at least 24 hours in advance.',
-        'AppointmentsService.rescheduleAppointment'
-      );
-    }
+    // Production policy: Allow rescheduling up to 24h before.
+    // Temporarily disabled for testing so short-notice appointment changes can be exercised.
+    // const appointmentDateTime = new Date(
+    //   `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+    // );
+    // const now = new Date();
+    // const minNoticeMs = 24 * 60 * 60 * 1000;
+    //
+    // if (appointmentDateTime.getTime() - now.getTime() < minNoticeMs) {
+    //   throw this.errors.validationError(
+    //     'date',
+    //     'Rescheduling is only allowed at least 24 hours in advance.',
+    //     'AppointmentsService.rescheduleAppointment'
+    //   );
+    // }
 
     // Policy: Limit number of reschedules (e.g. max 2 times)
     const metadata = (appointment.metadata as Record<string, unknown>) || {};
@@ -1776,9 +1780,11 @@ export class AppointmentsService {
     const filtersHash = JSON.stringify(filters);
     // Key factory automatically adds 'healthcare' prefix, so we don't need to include it
     const cacheKey = keyFactory.fromTemplate(
-      'clinic:{clinicId}:appointments:list:{filters}:{page}:{limit}',
+      'clinic:{clinicId}:appointments:list:{userId}:{role}:{filters}:{page}:{limit}',
       {
         clinicId,
+        userId,
+        role: _role,
         filters: filtersHash,
         page: String(page),
         limit: String(limit),
@@ -1790,7 +1796,7 @@ export class AppointmentsService {
       () => this.coreAppointmentService.getAppointments(filters, context, page, limit),
       {
         ttl: 300, // 5 minutes - optimized for 10M+ users (balance freshness vs load)
-        tags: ['appointments', 'clinic_appointments', `clinic:${clinicId}`],
+        tags: ['appointments', 'clinic_appointments', `clinic:${clinicId}`, `user:${userId}`],
         priority: 'normal',
         enableSwr: true, // Stale-while-revalidate for better performance
         containsPHI: true,
@@ -1978,24 +1984,21 @@ export class AppointmentsService {
         );
 
       case AppointmentStatus.CANCELLED:
-        // Enforce 4-hour cancellation policy
-        // If doctor cancels, no policy? "Doctor cancellation: Full refund".
-        // If patient cancels, check 4h.
-        // Role check:
-        if (role === 'PATIENT') {
-          const apptTime = new Date(
-            `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
-          );
-          const nowTime = new Date();
-          const fourHoursMs = 4 * 60 * 60 * 1000;
-          if (apptTime.getTime() - nowTime.getTime() < fourHoursMs) {
-            // "Cancellation requires at least 4 hours notice"
-            throw this.errors.businessRuleViolation(
-              'Cancellation requires at least 4 hours notice.',
-              'AppointmentsService.updateStatus'
-            );
-          }
-        }
+        // Production policy: enforce 4-hour cancellation notice for patients.
+        // Temporarily disabled for testing so near-term appointments can be cancelled.
+        // if (role === 'PATIENT') {
+        //   const apptTime = new Date(
+        //     `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+        //   );
+        //   const nowTime = new Date();
+        //   const fourHoursMs = 4 * 60 * 60 * 1000;
+        //   if (apptTime.getTime() - nowTime.getTime() < fourHoursMs) {
+        //     throw this.errors.businessRuleViolation(
+        //       'Cancellation requires at least 4 hours notice.',
+        //       'AppointmentsService.updateStatus'
+        //     );
+        //   }
+        // }
 
         if (!updateDto.reason) {
           throw this.errors.validationError(
@@ -2592,7 +2595,10 @@ export class AppointmentsService {
             clinicId,
             'clinic'
           );
-          await this.appointmentQueueService.callNext(finalDoctorId, clinicId, 'clinic');
+          // Removed automatic callNext since callNext now requires explicit appointmentId
+          // to advance a specific patient. await this.appointmentQueueService.callNext(finalDoctorId, clinicId, 'clinic');
+          // The doctor will manually click Call Next from the queue UI instead of it
+          // implicitly pulling the next patient off the queue.
         } catch (queueError) {
           await this.loggingService.log(
             LogType.SYSTEM,

@@ -4,6 +4,8 @@ import { Queue, Job } from 'bullmq';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { QueueService } from '@infrastructure/queue';
+import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
+import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel } from '@core/types';
 
 export interface EmailQueueData {
@@ -50,7 +52,7 @@ export interface EmailQueueStats {
 export class EmailQueueService {
   constructor(
     @Optional()
-    @InjectQueue(QueueService.EMAIL_QUEUE as string)
+    @InjectQueue(HEALTHCARE_QUEUE)
     private readonly emailQueue: Queue<EmailQueueData> | null,
     private readonly queueService: QueueService,
     @Inject(forwardRef(() => LoggingService))
@@ -71,7 +73,7 @@ export class EmailQueueService {
     try {
       const priorityString = options?.priority || emailData.priority || 'normal';
       const job = await this.queueService.addJob<EmailQueueData>(
-        QueueService.EMAIL_QUEUE as string,
+        JobType.EMAIL,
         'send-email',
         emailData,
         {
@@ -134,7 +136,7 @@ export class EmailQueueService {
 
         for (const emailData of batch) {
           const job = await this.queueService.addJob<EmailQueueData>(
-            QueueService.EMAIL_QUEUE as string,
+            JobType.EMAIL,
             'send-bulk-email',
             {
               ...emailData,
@@ -339,7 +341,7 @@ export class EmailQueueService {
 
   async getQueueStats(): Promise<EmailQueueStats> {
     try {
-      // Using string literal that matches QueueService.EMAIL_QUEUE
+      // Using HEALTHCARE_QUEUE for all job routing
       const metrics = await this.queueService.getQueueMetrics('email-queue');
       return {
         waiting: metrics.waiting,
@@ -373,7 +375,7 @@ export class EmailQueueService {
 
   async getFailedJobs(start = 0, end = -1): Promise<Job<EmailQueueData>[]> {
     try {
-      const jobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE, {
+      const jobs = await this.queueService.getJobs(QueueService.HEALTHCARE_QUEUE, {
         status: ['failed'],
       });
       // Apply start/end range if specified
@@ -439,9 +441,12 @@ export class EmailQueueService {
 
   async clearCompletedJobs(): Promise<number> {
     try {
-      const completedJobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE as string, {
-        status: ['completed'],
-      });
+      const completedJobs = await this.queueService.getJobs(
+        QueueService.HEALTHCARE_QUEUE as string,
+        {
+          status: ['completed'],
+        }
+      );
       let clearedCount = 0;
 
       for (const job of completedJobs) {
@@ -584,8 +589,10 @@ export class EmailQueueService {
   }> {
     try {
       const stats = await this.getQueueStats();
-      const metrics = await this.queueService.getQueueMetrics(QueueService.EMAIL_QUEUE as string);
-      const jobs = await this.queueService.getJobs(QueueService.EMAIL_QUEUE, {
+      const metrics = await this.queueService.getQueueMetrics(
+        QueueService.HEALTHCARE_QUEUE as string
+      );
+      const jobs = await this.queueService.getJobs(QueueService.HEALTHCARE_QUEUE, {
         status: ['completed'],
       });
       const completed = jobs.slice(0, 99);

@@ -8,6 +8,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { QueueService } from '@infrastructure/queue';
+import { JobType } from '@core/types/queue.types';
 import { DatabaseService } from '@infrastructure/database';
 import { HealthcareErrorsService } from '@core/errors';
 
@@ -933,9 +934,9 @@ export class CoreAppointmentService {
     operation: string = 'CREATE'
   ): Promise<void> {
     try {
-      // Queue notification job using QueueService
+      // Queue notification job using canonical JobType
       await this.queueService.addJob(
-        QueueService.NOTIFICATION_QUEUE as string,
+        JobType.NOTIFICATION,
         'APPOINTMENT_NOTIFICATION',
         {
           appointmentId: appointment.id,
@@ -949,9 +950,9 @@ export class CoreAppointmentService {
         }
       );
 
-      // Queue analytics job using QueueService
+      // Queue analytics job using canonical JobType
       await this.queueService.addJob(
-        QueueService.ANALYTICS_QUEUE as string,
+        JobType.ANALYTICS,
         'APPOINTMENT_ANALYTICS',
         {
           appointmentId: appointment.id,
@@ -965,9 +966,9 @@ export class CoreAppointmentService {
         }
       );
 
-      // Queue appointment processing job using QueueService
+      // Queue appointment processing job using canonical JobType
       await this.queueService.addJob(
-        QueueService.APPOINTMENT_QUEUE as string,
+        JobType.APPOINTMENT,
         'APPOINTMENT_PROCESSING',
         {
           appointmentId: appointment.id,

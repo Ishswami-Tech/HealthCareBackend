@@ -5,6 +5,8 @@ import { ConfigService } from '@config/config.service';
 import type { CacheService } from '@infrastructure/cache/cache.service';
 import type { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@infrastructure/queue';
+import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
+import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggerLike } from '@core/types';
 
@@ -105,7 +107,7 @@ export class CacheWarmingService implements OnModuleInit {
         // For large numbers of clinics, use queue to avoid blocking
         try {
           await this.queueService.addBulkJobs(
-            QueueService.ANALYTICS_QUEUE,
+            JobType.ANALYTICS,
             activeClinics.map(clinicId => ({
               jobType: 'warm-clinic-cache',
               data: {
@@ -127,7 +129,7 @@ export class CacheWarmingService implements OnModuleInit {
             this.serviceName,
             {
               clinicsQueued: activeClinics.length,
-              queue: QueueService.ANALYTICS_QUEUE,
+              queue: HEALTHCARE_QUEUE,
             }
           );
         } catch (queueError) {
@@ -208,7 +210,7 @@ export class CacheWarmingService implements OnModuleInit {
         if (this.queueService) {
           try {
             await this.queueService.addBulkJobs(
-              QueueService.ANALYTICS_QUEUE,
+              JobType.ANALYTICS,
               activeDoctors.map(doctorId => ({
                 jobType: 'warm-doctor-schedule',
                 data: {
@@ -232,7 +234,7 @@ export class CacheWarmingService implements OnModuleInit {
               this.serviceName,
               {
                 doctorsQueued: activeDoctors.length,
-                queue: QueueService.ANALYTICS_QUEUE,
+                queue: HEALTHCARE_QUEUE,
               }
             );
           } catch (queueError) {

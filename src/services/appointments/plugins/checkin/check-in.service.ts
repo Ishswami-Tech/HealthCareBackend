@@ -3,6 +3,7 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
+  NotImplementedException,
   forwardRef,
   Inject,
 } from '@nestjs/common';
@@ -26,11 +27,8 @@ import type {
   CheckInAppointment,
   CheckedInAppointmentsResponse,
   LocationQueueResponse,
+  QueueEntryData,
 } from '@core/types/appointment.types';
-import type {
-  PrismaTransactionClientWithDelegates,
-  PrismaDelegateArgs,
-} from '@core/types/prisma.types';
 type Appointment = AppointmentBase;
 type Patient = PatientBase;
 
@@ -58,18 +56,21 @@ export interface AppointmentWithRelations extends Appointment {
   location: ClinicLocation;
 }
 
-interface QueueRecord {
+interface QueueReorderContext {
+  doctorId: string;
+  date: string;
+}
+
+interface CheckInVerificationRecord {
   id: string;
   appointmentId: string;
-  queueNumber: number;
-  status: string;
-  appointment?:
-    | {
-        id: string;
-        patient?: { user?: { name: string } | undefined } | undefined;
-        doctor?: { user?: { name: string } | undefined } | undefined;
-      }
-    | undefined;
+  locationId: string;
+  checkedInAt: Date;
+  isVerified: boolean;
+  verifiedBy: string | null;
+  notes: string | null;
+  appointment?: { id: string; clinicId: string } | null;
+  location?: { clinicId: string } | null;
 }
 
 @Injectable()
@@ -180,15 +181,56 @@ export class CheckInService {
       // 2. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const appointmentDelegate = client['appointment'] as {
-            update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+          const typedClient = client as unknown as {
+            appointment: {
+              update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+            };
+            checkIn: {
+              findFirst: (args: {
+                where: { appointmentId: string; clinicId: string };
+              }) => Promise<{ id: string } | null>;
+              create: (args: {
+                data: {
+                  appointmentId: string;
+                  locationId: string;
+                  patientId: string;
+                  clinicId: string;
+                  checkedInAt: Date;
+                  coordinates?: Record<string, number> | null;
+                  deviceInfo?: Record<string, unknown> | null;
+                  isVerified: boolean;
+                  verifiedBy?: string | null;
+                  notes?: string | null;
+                };
+              }) => Promise<unknown>;
+            };
           };
-          return await appointmentDelegate.update({
+          const existingCheckIn = await typedClient.checkIn.findFirst({
+            where: { appointmentId: appointment.id, clinicId },
+          });
+          if (existingCheckIn) {
+            throw new BadRequestException('Appointment arrival is already confirmed');
+          }
+
+          await typedClient.appointment.update({
             where: { id: appointment.id },
             data: {
               status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
+            },
+          });
+
+          return await typedClient.checkIn.create({
+            data: {
+              appointmentId: appointment.id,
+              locationId: appointment.locationId,
+              patientId: appointment.patientId,
+              clinicId,
+              checkedInAt: now,
+              isVerified: false,
+              verifiedBy: null,
+              notes: 'Manual receptionist check-in',
             },
           });
         },
@@ -283,7 +325,6 @@ export class CheckInService {
         return JSON.parse(cached as string) as CheckedInAppointmentsResponse;
       }
 
-      // Get arrived appointments from database (placeholder implementation)
       const appointments = await this.fetchCheckedInAppointments(clinicId);
 
       const result: CheckedInAppointmentsResponse = {
@@ -382,15 +423,56 @@ export class CheckInService {
       // 1. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
         async client => {
-          const appointmentDelegate = client['appointment'] as {
-            update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+          const typedClient = client as unknown as {
+            appointment: {
+              update: (args: { where: { id: string }; data: unknown }) => Promise<unknown>;
+            };
+            checkIn: {
+              findFirst: (args: {
+                where: { appointmentId: string; clinicId: string };
+              }) => Promise<{ id: string } | null>;
+              create: (args: {
+                data: {
+                  appointmentId: string;
+                  locationId: string;
+                  patientId: string;
+                  clinicId: string;
+                  checkedInAt: Date;
+                  coordinates?: Record<string, number> | null;
+                  deviceInfo?: Record<string, unknown> | null;
+                  isVerified: boolean;
+                  verifiedBy?: string | null;
+                  notes?: string | null;
+                };
+              }) => Promise<unknown>;
+            };
           };
-          return await appointmentDelegate.update({
+          const existingCheckIn = await typedClient.checkIn.findFirst({
+            where: { appointmentId: appointment.id, clinicId },
+          });
+          if (existingCheckIn) {
+            throw new BadRequestException('Appointment arrival is already confirmed');
+          }
+
+          await typedClient.appointment.update({
             where: { id: appointment.id },
             data: {
               status: 'CONFIRMED',
               checkedInAt: now,
               updatedAt: now,
+            },
+          });
+
+          return await typedClient.checkIn.create({
+            data: {
+              appointmentId: appointment.id,
+              locationId: appointment.locationId,
+              patientId: appointment.patientId,
+              clinicId,
+              checkedInAt: now,
+              isVerified: false,
+              verifiedBy: null,
+              notes: 'Manual receptionist QR check-in',
             },
           });
         },
@@ -485,7 +567,7 @@ export class CheckInService {
         return JSON.parse(cached as string);
       }
 
-      // Get queue position from database (placeholder implementation)
+      // Resolve the queue position from the active queue cache
       const queuePosition = await this.fetchQueuePosition(appointmentId, clinicId);
 
       if (!queuePosition) {
@@ -619,7 +701,7 @@ export class CheckInService {
         return JSON.parse(cached as string);
       }
 
-      // Get active queue from database (placeholder implementation)
+      // Resolve the active queue from the queue cache
       const queue = await this.fetchDoctorActiveQueue(doctorId, clinicId);
 
       const result = {
@@ -668,10 +750,10 @@ export class CheckInService {
 
     try {
       // Validate all appointments exist and are checked in
-      await this.validateAppointmentOrder(appointmentOrder, clinicId);
+      const reorderContext = await this.validateAppointmentOrder(appointmentOrder, clinicId);
 
-      // Reorder queue in database (placeholder implementation)
-      await this.performQueueReorder(clinicId, appointmentOrder);
+      // Reorder the active queue in cache
+      await this.performQueueReorder(clinicId, appointmentOrder, reorderContext);
 
       // Invalidate cache
       await this.cacheService.invalidateByPattern(`queue:doctor:*:${clinicId}`);
@@ -721,7 +803,7 @@ export class CheckInService {
 
       const result: LocationQueueResponse = {
         locationId: locationId,
-        queue: queue as AppointmentQueuePosition[],
+        queue,
         total: queue.length,
         retrievedAt: new Date().toISOString(),
       };
@@ -878,8 +960,7 @@ export class CheckInService {
   }
 
   private async updateAppointmentStatus(appointmentId: string, status: string): Promise<void> {
-    // This would integrate with the actual appointment service
-    // For now, just log
+    // Log the status transition until the workflow service takes ownership.
     await this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
@@ -889,26 +970,12 @@ export class CheckInService {
   }
 
   private performConsultationStart(_appointmentId: string, _clinicId: string): Promise<unknown> {
-    // This would integrate with the actual consultation service
-    // For now, return mock result
-    return Promise.resolve({
-      success: true,
-      appointmentId: _appointmentId,
-      consultationStartedAt: new Date().toISOString(),
-      message: 'Consultation started',
-    });
+    throw new NotImplementedException(
+      'Consultation start helper is not implemented in the appointment check-in plugin'
+    );
   }
 
   private async removeFromQueue(appointmentId: string, clinicId: string): Promise<void> {
-    // We need doctorId to remove from queue.
-    // We might need to fetch appointment to get doctorId if not passed.
-    // For now, let's try to find appointment or assume we can't easily remove without doctorId.
-    // But wait, CheckInService.startConsultation calls this.
-    // StartConsultation logic should handle queue update (IN_PROGRESS).
-    // So explicit removal might not be needed if startConsultation does it.
-    // However, if we MUST remove, we need doctorId.
-
-    // I will call appointmentQueueService.removePatientFromQueue if I can get doctorId.
     const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
     if (appointment && appointment.doctorId) {
       await this.appointmentQueueService.removePatientFromQueue(
@@ -920,18 +987,89 @@ export class CheckInService {
     }
   }
 
-  private fetchCheckedInAppointments(_clinicId: string): Promise<unknown[]> {
-    // This would integrate with the actual database
-    // For now, return mock data
-    return Promise.resolve([
-      {
-        id: 'app-1',
-        patientName: 'John Doe',
-        doctorName: 'Dr. Smith',
-        checkInTime: new Date().toISOString(),
-        status: 'CONFIRMED',
-      },
-    ]);
+  private async fetchCheckedInAppointments(clinicId: string): Promise<unknown[]> {
+    const appointments = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        checkIn: {
+          findMany: (args: {
+            where: { clinicId: string };
+            include: {
+              appointment: {
+                include: {
+                  patient: {
+                    include: {
+                      user: { select: { name: boolean } };
+                    };
+                  };
+                  doctor: {
+                    include: {
+                      user: { select: { name: boolean } };
+                    };
+                  };
+                };
+              };
+            };
+            orderBy: { checkedInAt: 'desc' };
+          }) => Promise<
+            Array<{
+              id: string;
+              appointmentId: string;
+              patientId: string;
+              clinicId: string;
+              locationId: string;
+              checkedInAt: Date;
+              isVerified: boolean;
+              verifiedBy: string | null;
+              notes: string | null;
+              appointment: {
+                id: string;
+                doctorId: string;
+                patientId: string;
+                locationId: string;
+                type: string;
+                status: string;
+                patient: { user?: { name: string | null } | null };
+                doctor: { user?: { name: string | null } | null };
+              };
+            }>
+          >;
+        };
+      };
+
+      return await typedClient.checkIn.findMany({
+        where: { clinicId },
+        include: {
+          appointment: {
+            include: {
+              patient: {
+                include: {
+                  user: { select: { name: true } },
+                },
+              },
+              doctor: {
+                include: {
+                  user: { select: { name: true } },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { checkedInAt: 'desc' },
+      });
+    });
+
+    return appointments.map(checkIn => ({
+      id: checkIn.appointmentId,
+      patientId: checkIn.patientId,
+      doctorId: checkIn.appointment.doctorId,
+      locationId: checkIn.appointment.locationId,
+      type: checkIn.appointment.type,
+      status: checkIn.appointment.status,
+      domain: 'clinic',
+      checkedInAt: checkIn.checkedInAt.toISOString(),
+      patientName: checkIn.appointment.patient?.user?.name || 'Unknown',
+      doctorName: checkIn.appointment.doctor?.user?.name || 'Unknown',
+    }));
   }
 
   private async fetchQueuePosition(
@@ -970,104 +1108,161 @@ export class CheckInService {
   private async validateAppointmentOrder(
     appointmentOrder: string[],
     clinicId: string
-  ): Promise<void> {
-    // This would validate that all appointments exist and are checked in
-    // For now, just log
+  ): Promise<QueueReorderContext> {
+    if (appointmentOrder.length === 0) {
+      throw new BadRequestException('Appointment order cannot be empty');
+    }
+
+    const appointments = await this.databaseService.executeHealthcareRead(async client => {
+      const appointmentDelegate = client['appointment'] as {
+        findMany: (args: {
+          where: {
+            id: { in: string[] };
+            clinicId: string;
+          };
+          select: {
+            id: boolean;
+            doctorId: boolean;
+            date: boolean;
+            checkedInAt: boolean;
+            status: boolean;
+            locationId: boolean;
+          };
+        }) => Promise<
+          Array<{
+            id: string;
+            doctorId: string;
+            date: Date;
+            checkedInAt: Date | null;
+            status: string;
+            locationId: string;
+          }>
+        >;
+      };
+
+      return await appointmentDelegate.findMany({
+        where: {
+          id: { in: appointmentOrder },
+          clinicId,
+        },
+        select: {
+          id: true,
+          doctorId: true,
+          date: true,
+          checkedInAt: true,
+          status: true,
+          locationId: true,
+        },
+      });
+    });
+
+    if (appointments.length !== appointmentOrder.length) {
+      throw new NotFoundException('One or more appointments in the requested order were not found');
+    }
+
+    const firstAppointment = appointments[0];
+    if (!firstAppointment) {
+      throw new BadRequestException('Appointment order cannot be empty');
+    }
+
+    const doctorId = firstAppointment.doctorId;
+    const queueDate = firstAppointment.date.toISOString().split('T')[0];
+    if (!queueDate) {
+      throw new BadRequestException('Unable to determine queue date');
+    }
+
+    for (const appointment of appointments) {
+      if (appointment.doctorId !== doctorId) {
+        throw new BadRequestException('All reordered appointments must belong to the same doctor');
+      }
+
+      if (appointment.date.toISOString().split('T')[0] !== queueDate) {
+        throw new BadRequestException('All reordered appointments must belong to the same date');
+      }
+
+      if (!appointment.checkedInAt) {
+        throw new BadRequestException('Only checked-in appointments can be reordered');
+      }
+    }
+
     await this.loggingService.log(
       LogType.BUSINESS,
       LogLevel.INFO,
-      `Validating appointment order: ${appointmentOrder.join(', ')} for clinic ${clinicId}`,
-      'CheckInService'
+      `Validated appointment order for clinic ${clinicId}`,
+      'CheckInService',
+      {
+        clinicId,
+        doctorId,
+        queueDate,
+        orderLength: appointmentOrder.length,
+      }
     );
+
+    return { doctorId, date: queueDate };
   }
 
-  private async performQueueReorder(clinicId: string, appointmentOrder: string[]): Promise<void> {
-    // We need doctorId to reorder. But CheckInService.reorderQueue takes only clinicId and list.
-    // Assuming list belongs to SAME doctor.
-    // We need to find doctorId from one of the appointments or passed in?
-    // The plugin interface reorderQueue(clinicId, appointmentOrder) doesn't pass doctorId.
-    // This is a limitation.
-    // We'll throw error or try to infer.
-    // For now, let's assume we can't reorder without doctorId.
-    // Or we find doctorId from first appointment.
-
-    if (appointmentOrder.length === 0) return;
-    const firstApptId = appointmentOrder[0];
-    if (!firstApptId) return;
-    const appt = await this.databaseService.findAppointmentByIdSafe(firstApptId);
-    if (!appt || !appt.doctorId) throw new Error('Cannot determine doctor for reorder');
+  private async performQueueReorder(
+    clinicId: string,
+    appointmentOrder: string[],
+    context: QueueReorderContext
+  ): Promise<void> {
+    if (appointmentOrder.length === 0) {
+      return;
+    }
 
     await this.appointmentQueueService.reorderQueue(
       {
-        doctorId: appt.doctorId,
+        doctorId: context.doctorId,
         clinicId,
-        date: new Date().toISOString().split('T')[0] || '',
+        date: context.date,
         newOrder: appointmentOrder,
       },
       'clinic'
     );
   }
 
-  private async fetchLocationQueue(locationId: string, clinicId?: string): Promise<unknown[]> {
-    // Fetch queue entries for the specific location from database
-    try {
-      const queueEntries = await this.databaseService.executeHealthcareRead<QueueRecord[]>(
-        async client => {
-          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-            queue: {
-              findMany: (args: PrismaDelegateArgs) => Promise<QueueRecord[]>;
-            };
-          };
-          // Query Queue model filtered by locationId
-          const queues = await typedClient.queue.findMany({
-            where: {
-              locationId: locationId,
-              ...(clinicId && { clinicId: clinicId }),
-              status: { in: ['WAITING', 'IN_PROGRESS'] },
-            } as PrismaDelegateArgs,
-            include: {
-              appointment: {
-                include: {
-                  patient: {
-                    include: {
-                      user: {
-                        select: { name: true } as PrismaDelegateArgs,
-                      } as PrismaDelegateArgs,
-                    } as PrismaDelegateArgs,
-                  } as PrismaDelegateArgs,
-                  doctor: {
-                    include: {
-                      user: {
-                        select: { name: true } as PrismaDelegateArgs,
-                      } as PrismaDelegateArgs,
-                    } as PrismaDelegateArgs,
-                  } as PrismaDelegateArgs,
-                } as PrismaDelegateArgs,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs,
-            orderBy: {
-              queueNumber: 'asc',
-            } as PrismaDelegateArgs,
-          } as PrismaDelegateArgs);
+  private async fetchLocationQueue(
+    locationId: string,
+    clinicId?: string
+  ): Promise<AppointmentQueuePosition[]> {
+    if (!clinicId) {
+      return [];
+    }
 
-          return queues.map((q: QueueRecord) => ({
-            id: q.id,
-            appointmentId: q.appointmentId,
-            queueNumber: q.queueNumber,
-            status: q.status,
-            appointment: q.appointment,
-          }));
-        }
+    try {
+      const queueKeys = await this.cacheService.keys(`queue:*:${clinicId}:*`);
+      const queues = await Promise.all(
+        queueKeys.map(async key => {
+          const [, domain, keyClinicId, doctorId, date] = key.split(':');
+          if (!domain || !keyClinicId || !doctorId || !date || keyClinicId !== clinicId) {
+            return [] as AppointmentQueuePosition[];
+          }
+
+          try {
+            const queue = await this.appointmentQueueService.getDoctorQueue(
+              doctorId,
+              clinicId,
+              date,
+              domain,
+              locationId
+            );
+
+            return queue.queue
+              .filter((entry: QueueEntryData) => entry.locationId === locationId)
+              .map((entry: QueueEntryData) => ({
+                doctorId: entry.doctorId,
+                locationId: entry.locationId || locationId,
+                position: entry.position ?? 0,
+                totalInQueue: queue.totalLength,
+                estimatedWaitTime: entry.estimatedWaitTime ?? queue.estimatedNextWaitTime,
+              }));
+          } catch {
+            return [];
+          }
+        })
       );
 
-      return queueEntries.map(entry => ({
-        appointmentId: entry.appointmentId,
-        patientName: entry.appointment?.patient?.user?.name || 'Unknown',
-        doctorName: entry.appointment?.doctor?.user?.name || 'Unknown',
-        position: entry.queueNumber,
-        status: entry.status,
-        estimatedWaitTime: entry.queueNumber * 10,
-      }));
+      return queues.flat();
     } catch (error) {
       void this.loggingService.log(
         LogType.ERROR,
@@ -1080,7 +1275,6 @@ export class CheckInService {
           error: error instanceof Error ? error.stack : undefined,
         }
       );
-      // Return empty array on error
       return [];
     }
   }
@@ -1092,158 +1286,23 @@ export class CheckInService {
   /**
    * Process Ayurvedic therapy check-in with location validation
    */
-  async processAyurvedicCheckIn(
-    appointmentId: string,
-    clinicId: string,
-    checkInData: CheckInData
+  processAyurvedicCheckIn(
+    _appointmentId: string,
+    _clinicId: string,
+    _checkInData: CheckInData
   ): Promise<CheckInResult> {
-    const startTime = Date.now();
-
-    try {
-      // Validate appointment exists and belongs to clinic
-      const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
-
-      // Check if it's an Ayurvedic appointment type
-      const ayurvedicTypes: string[] = [
-        'VIDDHAKARMA',
-        'AGNIKARMA',
-        'PANCHAKARMA',
-        'NADI_PARIKSHA',
-        'DOSHA_ANALYSIS',
-        'SHIRODHARA',
-        'VIRECHANA',
-        'ABHYANGA',
-        'SWEDANA',
-        'BASTI',
-        'NASYA',
-        'RAKTAMOKSHANA',
-      ];
-
-      if (!ayurvedicTypes.includes(appointment.type)) {
-        throw new BadRequestException('This is not an Ayurvedic appointment');
-      }
-
-      // Validate location if coordinates provided
-      if (checkInData.coordinates) {
-        const isValidLocation = await this.validateAyurvedicLocation(
-          checkInData.coordinates,
-          checkInData.locationId,
-          clinicId
-        );
-
-        if (!isValidLocation) {
-          throw new BadRequestException(
-            'Patient is not within the required radius of the therapy location'
-          );
-        }
-      }
-
-      // Process the check-in
-      const result: CheckInResult = {
-        success: true,
-        appointmentId: checkInData.appointmentId,
-        message: 'Check-in successful',
-        checkedInAt: checkInData.timestamp,
-      };
-
-      // Add to therapy-specific queue if needed
-      if (appointment.domain === 'healthcare') {
-        const queuePosition = await this.addToTherapyQueue(
-          appointmentId,
-          appointment.doctorId,
-          appointment.locationId,
-          appointment.type
-        );
-        result.queuePosition = queuePosition.position;
-        result.estimatedWaitTime = queuePosition.estimatedWaitTime;
-      }
-
-      void this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'Ayurvedic check-in successful',
-        'CheckInService',
-        {
-          appointmentId,
-          clinicId,
-          therapyType: appointment.type,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      return result;
-    } catch (_error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to process Ayurvedic check-in: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'CheckInService',
-        {
-          appointmentId,
-          clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
-    }
+    throw new NotImplementedException(
+      'Ayurvedic check-in queue processing is not implemented in the appointment check-in plugin'
+    );
   }
 
   /**
    * Get therapy-specific queue for Ayurvedic appointments
    */
-  async getTherapyQueue(therapyType: string, clinicId: string): Promise<unknown> {
-    const startTime = Date.now();
-    const cacheKey = `therapy-queue:${therapyType}:${clinicId}`;
-
-    try {
-      // Try to get from cache first
-      const cached = await this.cacheService.get(cacheKey);
-      if (cached) {
-        return JSON.parse(cached as string);
-      }
-
-      // Get therapy queue from database (placeholder implementation)
-      const queue = await this.fetchTherapyQueue(therapyType, clinicId);
-
-      const result = {
-        therapyType,
-        clinicId,
-        queue,
-        total: queue.length,
-        retrievedAt: new Date().toISOString(),
-      };
-
-      // Cache the result
-      await this.cacheService.set(cacheKey, JSON.stringify(result), this.QUEUE_CACHE_TTL);
-
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Therapy queue retrieved successfully',
-        'CheckInService',
-        {
-          therapyType,
-          clinicId,
-          queueLength: queue.length,
-          responseTime: Date.now() - startTime,
-        }
-      );
-
-      return result;
-    } catch (_error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to get therapy queue: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'CheckInService',
-        {
-          therapyType,
-          clinicId,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
-    }
+  getTherapyQueue(therapyType: string, _clinicId: string): Promise<unknown> {
+    throw new NotImplementedException(
+      `Therapy queue retrieval is not implemented for therapy type ${therapyType} in this plugin`
+    );
   }
 
   /**
@@ -1254,9 +1313,9 @@ export class CheckInService {
     _locationId: string,
     _clinicId: string
   ): Promise<boolean> {
-    // This would integrate with the actual location service
-    // For now, return mock validation
-    return Promise.resolve(true);
+    throw new NotImplementedException(
+      'Ayurvedic location validation is not implemented in the appointment check-in plugin'
+    );
   }
 
   /**
@@ -1264,42 +1323,28 @@ export class CheckInService {
    */
   private addToTherapyQueue(
     appointmentId: string,
-    doctorId: string,
-    locationId: string,
+    _doctorId: string,
+    _locationId: string,
     _therapyType: string
   ): Promise<AppointmentQueuePosition> {
-    // This would integrate with the actual therapy queue service
-    // For now, return mock queue position
-    return Promise.resolve({
-      position: 1,
-      totalInQueue: 3,
-      estimatedWaitTime: 20,
-      doctorId,
-      locationId,
-    });
+    throw new NotImplementedException(
+      `Therapy queue insertion is not implemented for appointment ${appointmentId}`
+    );
   }
 
   /**
    * Fetch therapy-specific queue
    */
   private fetchTherapyQueue(therapyType: string, _clinicId: string): Promise<unknown[]> {
-    // This would integrate with the actual therapy queue service
-    // For now, return mock data
-    return Promise.resolve([
-      {
-        appointmentId: 'app-1',
-        patientName: 'John Doe',
-        therapyType,
-        position: 1,
-        estimatedWaitTime: 15,
-      },
-    ]);
+    throw new NotImplementedException(
+      `Therapy queue fetch is not implemented for therapy type ${therapyType}`
+    );
   }
 
   /**
    * Verify check-in
    */
-  verifyCheckIn(
+  async verifyCheckIn(
     checkInId: string,
     verifiedBy: string
   ): Promise<{
@@ -1311,44 +1356,85 @@ export class CheckInService {
   }> {
     const startTime = Date.now();
 
-    try {
-      // This would implement check-in verification logic
-      // For now, return a placeholder response
-      const result = {
-        success: true,
-        checkInId,
-        verifiedBy,
-        verifiedAt: new Date().toISOString(),
-        message: 'Check-in verified successfully',
+    const checkIn = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as {
+        checkIn: {
+          findUnique: (args: {
+            where: { id: string };
+            include: { appointment: true; location: true };
+          }) => Promise<CheckInVerificationRecord | null>;
+        };
       };
 
-      void this.loggingService.log(
-        LogType.BUSINESS,
-        LogLevel.INFO,
-        'Check-in verified successfully',
-        'CheckInService',
-        {
-          checkInId,
-          verifiedBy,
-          responseTime: Date.now() - startTime,
-        }
-      );
+      return await typedClient.checkIn.findUnique({
+        where: { id: checkInId },
+        include: { appointment: true, location: true },
+      });
+    });
 
-      return Promise.resolve(result);
-    } catch (_error) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to verify check-in: ${_error instanceof Error ? _error.message : String(_error)}`,
-        'CheckInService',
-        {
-          checkInId,
-          verifiedBy,
-          _error: _error instanceof Error ? _error.stack : undefined,
-        }
-      );
-      throw _error;
+    if (!checkIn) {
+      throw new NotFoundException(`Check-in ${checkInId} not found`);
     }
+
+    const clinicId = checkIn.appointment?.clinicId || checkIn.location?.clinicId || '';
+
+    return this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as {
+          checkIn: {
+            update: (args: {
+              where: { id: string };
+              data: { isVerified: boolean; verifiedBy: string };
+            }) => Promise<{
+              id: string;
+              appointmentId: string;
+              locationId: string;
+              checkedInAt: Date;
+              isVerified: boolean;
+              verifiedBy: string | null;
+              notes: string | null;
+            }>;
+          };
+        };
+
+        const updated = await typedClient.checkIn.update({
+          where: { id: checkInId },
+          data: {
+            isVerified: true,
+            verifiedBy,
+          },
+        });
+
+        void this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          'Check-in verified successfully',
+          'CheckInService',
+          {
+            checkInId,
+            verifiedBy,
+            responseTime: Date.now() - startTime,
+          }
+        );
+
+        return {
+          success: true,
+          checkInId: updated.id,
+          verifiedBy,
+          verifiedAt: new Date().toISOString(),
+          message: 'Check-in verified successfully',
+        };
+      },
+      {
+        userId: verifiedBy,
+        clinicId,
+        resourceType: 'CHECK_IN',
+        operation: 'UPDATE',
+        resourceId: checkInId,
+        userRole: 'system',
+        details: { verifiedBy },
+      }
+    );
   }
 
   /**

@@ -268,13 +268,13 @@ export class CreateAppointmentDto {
   appointmentDate!: string;
 
   @ApiProperty({
-    example: 30,
+    example: 3,
     description: 'Appointment duration in minutes',
-    minimum: 15,
+    minimum: 3,
     maximum: 480,
   })
   @IsNumber({}, { message: 'Duration must be a number' })
-  @Min(15, { message: 'Duration must be at least 15 minutes' })
+  @Min(3, { message: 'Duration must be at least 3 minutes' })
   @Max(480, { message: 'Duration cannot exceed 8 hours' })
   duration!: number;
 
@@ -457,12 +457,12 @@ export class UpdateAppointmentDto {
   appointmentDate?: string;
 
   @ApiPropertyOptional({
-    example: 45,
+    example: 3,
     description: 'New appointment duration in minutes',
   })
   @IsOptional()
   @IsNumber({}, { message: 'Duration must be a number' })
-  @Min(15, { message: 'Duration must be at least 15 minutes' })
+  @Min(3, { message: 'Duration must be at least 3 minutes' })
   @Max(480, { message: 'Duration cannot exceed 8 hours' })
   duration?: number;
 
@@ -914,9 +914,9 @@ export class ProposeVideoSlotsDto {
   @IsNotEmpty()
   clinicId!: string;
 
-  @ApiProperty({ example: 30, minimum: 15, maximum: 120 })
+  @ApiProperty({ example: 3, minimum: 3, maximum: 120 })
   @IsNumber()
-  @Min(15)
+  @Min(3)
   @Max(120)
   duration!: number;
 

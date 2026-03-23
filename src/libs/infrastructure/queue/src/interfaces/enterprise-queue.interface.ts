@@ -1,4 +1,5 @@
 import { Job } from 'bullmq';
+import { JobType } from '@core/types/queue.types';
 
 /**
  * Enterprise Queue Service Interface
@@ -7,13 +8,13 @@ import { Job } from 'bullmq';
 export interface IEnterpriseQueueService {
   // Core job management
   addJob<T = unknown>(
-    queueName: string,
-    jobType: string,
+    jobType: JobType,
+    action: string,
     data: T,
     options?: EnterpriseJobOptions
-  ): Promise<EnterpriseJob<T>>;
+  ): Promise<Job>;
 
-  addBulkJobs<T = unknown>(queueName: string, jobs: BulkJobData<T>[]): Promise<EnterpriseJob<T>[]>;
+  addBulkJobs<T = unknown>(jobType: JobType, jobs: BulkJobData<T>[]): Promise<Job[]>;
 
   getJob<T = unknown>(jobId: string, queueName?: string): Promise<EnterpriseJob<T> | null>;
   removeJob(jobId: string, queueName?: string): Promise<boolean>;

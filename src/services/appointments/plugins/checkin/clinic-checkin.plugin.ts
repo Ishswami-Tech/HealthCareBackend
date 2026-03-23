@@ -1,4 +1,4 @@
-import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { CheckInService } from './check-in.service';
 import type { CheckInData } from '@core/types/appointment.types';
@@ -21,6 +21,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   readonly name = 'clinic-checkin-plugin';
   readonly version = '1.0.0';
   readonly features = ['check-in', 'queue-management', 'consultation-start'];
+  private readonly unsupportedOperations = new Set(['processAyurvedicCheckIn', 'getTherapyQueue']);
 
   constructor(
     private readonly checkInService: CheckInService,
@@ -31,11 +32,33 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     super(loggingService);
   }
 
+  getSupportedOperations(): string[] {
+    return [
+      'checkIn',
+      'getCheckedInAppointments',
+      'processCheckIn',
+      'getPatientQueuePosition',
+      'startConsultation',
+      'getDoctorActiveQueue',
+      'reorderQueue',
+      'getLocationQueue',
+    ];
+  }
+
   async process(data: unknown): Promise<unknown> {
     const pluginData = data as CheckInPluginData;
     await this.logPluginAction('Processing clinic check-in operation', {
       operation: pluginData.operation,
     });
+
+    if (this.unsupportedOperations.has(pluginData.operation)) {
+      await this.logPluginError('Unsupported check-in operation requested', {
+        operation: pluginData.operation,
+      });
+      throw new BadRequestException(
+        `Operation ${pluginData.operation} is disabled in clinic-checkin-plugin`
+      );
+    }
 
     // Delegate to existing check-in service - no functionality change
     switch (pluginData.operation) {
@@ -105,26 +128,6 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
           pluginData.clinicId
         );
 
-      // NEW AYURVEDIC OPERATIONS
-      case 'processAyurvedicCheckIn':
-        if (!pluginData.appointmentId || !pluginData.clinicId || !pluginData.checkInData) {
-          throw new Error('Missing required fields for processAyurvedicCheckIn');
-        }
-        return await this.checkInService.processAyurvedicCheckIn(
-          pluginData.appointmentId,
-          pluginData.clinicId,
-          pluginData.checkInData
-        );
-
-      case 'getTherapyQueue':
-        if (!pluginData.therapyType || !pluginData.clinicId) {
-          throw new Error('Missing required fields for getTherapyQueue');
-        }
-        return await this.checkInService.getTherapyQueue(
-          pluginData.therapyType,
-          pluginData.clinicId
-        );
-
       default:
         await this.logPluginError('Unknown check-in operation', {
           operation: pluginData.operation,
@@ -135,6 +138,13 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
 
   async validate(data: unknown): Promise<boolean> {
     const pluginData = data as CheckInPluginData;
+    if (this.unsupportedOperations.has(pluginData.operation)) {
+      await this.logPluginError('Unsupported check-in operation requested', {
+        operation: pluginData.operation,
+      });
+      return false;
+    }
+
     // Validate that required fields are present for each operation
     const requiredFields: Record<string, string[]> = {
       checkIn: ['appointmentId', 'userId'],
@@ -145,9 +155,6 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
       getDoctorActiveQueue: ['doctorId', 'clinicId'],
       reorderQueue: ['clinicId', 'appointmentOrder'],
       getLocationQueue: ['locationId'],
-      // NEW AYURVEDIC FIELDS
-      processAyurvedicCheckIn: ['appointmentId', 'clinicId', 'checkInData'],
-      getTherapyQueue: ['therapyType', 'clinicId'],
     };
 
     const operation = pluginData.operation;

@@ -131,15 +131,11 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
 
         // Video consultation operations (OpenVidu primary, Jitsi fallback)
         case 'createConsultationRoom':
-          return await this.videoService.generateMeetingToken(
+          return await this.videoService.createVideoCall(
             videoData.appointmentId!,
             videoData.patientId!,
-            'patient',
-            {
-              displayName: videoData.displayName?.name || 'User',
-              email: '',
-              // ...(videoData.avatar && { avatar: videoData.avatar }),
-            }
+            videoData.doctorId!,
+            videoData.clinicId!
           );
 
         case 'generateJoinToken':

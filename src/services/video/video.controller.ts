@@ -97,6 +97,7 @@ import {
   ChatMessageResponseDto,
   UpdateTypingIndicatorDto,
   JoinWaitingRoomDto,
+  LeaveWaitingRoomDto,
   AdmitPatientDto,
   WaitingRoomEntryResponseDto,
   CreateMedicalNoteDto,
@@ -261,6 +262,37 @@ export class VideoController {
       return this.extractVideoConsultationSession(value);
     }
     return null;
+  }
+
+  private getAuthenticatedVideoUser(req: ClinicAuthenticatedRequest): {
+    userId: string;
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin';
+  } {
+    const userId = req.user?.id || req.user?.sub;
+    const role = req.user?.role;
+
+    if (!userId) {
+      throw this.errors.validationError(
+        'userId',
+        'Authenticated user ID is required',
+        'VideoController.getAuthenticatedVideoUser'
+      );
+    }
+
+    switch (role) {
+      case Role.PATIENT:
+        return { userId, userRole: 'patient' };
+      case Role.DOCTOR:
+      case Role.ASSISTANT_DOCTOR:
+        return { userId, userRole: 'doctor' };
+      case Role.RECEPTIONIST:
+        return { userId, userRole: 'receptionist' };
+      case Role.CLINIC_ADMIN:
+      case Role.SUPER_ADMIN:
+        return { userId, userRole: 'clinic_admin' };
+      default:
+        throw this.errors.insufficientPermissions('VideoController.getAuthenticatedVideoUser');
+    }
   }
 
   private createVideoTokenResponseDto(
@@ -455,13 +487,14 @@ export class VideoController {
   })
   async generateToken(
     @Body() body: GenerateVideoTokenDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoTokenResponseDto> {
     try {
+      const authenticatedUser = this.getAuthenticatedVideoUser(req);
       const tokenResponseResult: unknown = await this.videoService.generateMeetingToken(
         body.appointmentId,
-        body.userId,
-        body.userRole,
+        authenticatedUser.userId,
+        authenticatedUser.userRole,
         {
           displayName: body.userInfo.displayName,
           email: body.userInfo.email,
@@ -492,7 +525,7 @@ export class VideoController {
         version: '1.0.0',
         payload: {
           appointmentId: body.appointmentId,
-          userId: body.userId,
+          userId: authenticatedUser.userId,
           provider: this.videoService.getCurrentProvider(),
         },
       });
@@ -557,13 +590,14 @@ export class VideoController {
   })
   async startConsultation(
     @Body() body: StartVideoConsultationDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
     try {
+      const authenticatedUser = this.getAuthenticatedVideoUser(req);
       const sessionResult: unknown = await this.videoService.startConsultation(
         body.appointmentId,
-        body.userId,
-        body.userRole
+        authenticatedUser.userId,
+        authenticatedUser.userRole
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
         throw this.errors.internalServerError('VideoController.endConsultation');
@@ -595,8 +629,8 @@ export class VideoController {
         payload: {
           appointmentId: body.appointmentId,
           sessionId,
-          userId: body.userId,
-          userRole: body.userRole,
+          userId: authenticatedUser.userId,
+          userRole: authenticatedUser.userRole,
           provider: this.videoService.getCurrentProvider(),
         },
       });
@@ -667,13 +701,14 @@ export class VideoController {
   })
   async endConsultation(
     @Body() body: EndVideoConsultationDto,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
     try {
+      const authenticatedUser = this.getAuthenticatedVideoUser(req);
       const sessionResult: unknown = await this.videoService.endConsultation(
         body.appointmentId,
-        body.userId,
-        body.userRole,
+        authenticatedUser.userId,
+        authenticatedUser.userRole,
         body.meetingNotes
       );
       if (!this.isVideoConsultationSession(sessionResult)) {
@@ -979,47 +1014,8 @@ export class VideoController {
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoCallHistoryResponseDto> {
     try {
-      const queryValue: unknown = query;
-      const queryUserIdValue: string | undefined =
-        typeof queryValue === 'object' &&
-        queryValue !== null &&
-        'userId' in queryValue &&
-        (typeof (queryValue as { userId: unknown }).userId === 'string' ||
-          (queryValue as { userId: unknown }).userId === undefined)
-          ? (queryValue as { userId: string | undefined }).userId
-          : undefined;
-      const reqUserValue: unknown = req.user;
-      const reqUserSubValue: unknown =
-        typeof reqUserValue === 'object' &&
-        reqUserValue !== null &&
-        'sub' in reqUserValue &&
-        typeof (reqUserValue as { sub: unknown }).sub === 'string'
-          ? (reqUserValue as { sub: string }).sub
-          : undefined;
-      const userId: string =
-        queryUserIdValue || (typeof reqUserSubValue === 'string' ? reqUserSubValue : '');
-      const queryClinicIdValue: string | undefined =
-        typeof queryValue === 'object' &&
-        queryValue !== null &&
-        'clinicId' in queryValue &&
-        (typeof (queryValue as { clinicId: unknown }).clinicId === 'string' ||
-          (queryValue as { clinicId: unknown }).clinicId === undefined)
-          ? (queryValue as { clinicId: string | undefined }).clinicId
-          : undefined;
-      const reqClinicContextValue: unknown = req.clinicContext;
-      const reqClinicContextClinicIdValue: unknown =
-        typeof reqClinicContextValue === 'object' &&
-        reqClinicContextValue !== null &&
-        'clinicId' in reqClinicContextValue &&
-        (typeof (reqClinicContextValue as { clinicId: unknown }).clinicId === 'string' ||
-          (reqClinicContextValue as { clinicId: unknown }).clinicId === undefined)
-          ? (reqClinicContextValue as { clinicId: string | undefined }).clinicId
-          : undefined;
-      const clinicId: string | undefined =
-        queryClinicIdValue ||
-        (typeof reqClinicContextClinicIdValue === 'string'
-          ? reqClinicContextClinicIdValue
-          : undefined);
+      const userId = req.user?.id || req.user?.sub || '';
+      const clinicId = req.clinicContext?.clinicId || query.clinicId;
 
       if (!userId) {
         throw this.errors.validationError(
@@ -1683,6 +1679,31 @@ export class VideoController {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.joinWaitingRoom');
+    }
+  }
+
+  @Post('waiting-room/leave')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Leave waiting room',
+    description: 'Leave the waiting room for a video consultation',
+  })
+  @ApiResponse({ status: 200, type: SuccessResponseDto })
+  async leaveWaitingRoom(
+    @Body() dto: LeaveWaitingRoomDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<SuccessResponseDto> {
+    try {
+      const authenticatedUser = this.getAuthenticatedVideoUser(req);
+      await this.waitingRoomService.leaveWaitingRoom(dto.consultationId, authenticatedUser.userId);
+      return new SuccessResponseDto('Left waiting room successfully');
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.leaveWaitingRoom');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.leaveWaitingRoom');
     }
   }
 

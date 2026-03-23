@@ -13,15 +13,7 @@ import { ConfigService } from '@config/config.service';
 import { isCacheEnabled } from '@config/cache.config';
 import { LoggingModule } from '@infrastructure/logging';
 import { BullBoardService } from './bull-board.service';
-import {
-  SERVICE_QUEUE,
-  APPOINTMENT_QUEUE,
-  EMAIL_QUEUE,
-  NOTIFICATION_QUEUE,
-  VIDHAKARMA_QUEUE,
-  PANCHAKARMA_QUEUE,
-  CHEQUP_QUEUE,
-} from '@queue/src/queue.constants';
+import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
 
 /**
  * Bull Board Module for Queue Monitoring
@@ -95,31 +87,7 @@ export class BullBoardModule {
           inject: [ConfigService],
         }),
         BullBoardNestModule.forFeature({
-          name: SERVICE_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: APPOINTMENT_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: EMAIL_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: NOTIFICATION_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: VIDHAKARMA_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: PANCHAKARMA_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-        BullBoardNestModule.forFeature({
-          name: CHEQUP_QUEUE,
+          name: HEALTHCARE_QUEUE,
           adapter: BullMQAdapter,
         }),
       ],

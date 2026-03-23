@@ -2588,10 +2588,18 @@ export class AppointmentsController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['newDate', 'newTime'],
+      description:
+        'Supports both {newDate,newTime} and legacy {date,time}. Also accepts newAppointmentDate (ISO) for backward compatibility.',
       properties: {
         newDate: { type: 'string', format: 'date', example: '2025-03-15' },
         newTime: { type: 'string', example: '14:00' },
+        date: { type: 'string', format: 'date', example: '2025-03-15' },
+        time: { type: 'string', example: '14:00' },
+        newAppointmentDate: {
+          type: 'string',
+          format: 'date-time',
+          example: '2025-03-15T08:30:00.000Z',
+        },
       },
     },
   })
@@ -2604,12 +2612,38 @@ export class AppointmentsController {
   @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
   async rescheduleAppointment(
     @Param('id', ParseUUIDPipe) appointmentId: string,
-    @Body('newDate') newDate: string,
-    @Body('newTime') newTime: string,
+    @Body()
+    payload: {
+      newDate?: string;
+      newTime?: string;
+      date?: string;
+      time?: string;
+      newAppointmentDate?: string;
+    },
     @Request() req: ClinicAuthenticatedRequest
   ): Promise<ServiceResponse<AppointmentResponseDto>> {
     const clinicId = req.clinicContext?.clinicId;
     const userId = req.user?.sub;
+    let newDate = payload.newDate || payload.date;
+    let newTime = payload.newTime || payload.time;
+
+    if ((!newDate || !newTime) && payload.newAppointmentDate) {
+      const parsed = new Date(payload.newAppointmentDate);
+      if (!Number.isNaN(parsed.getTime())) {
+        newDate = new Intl.DateTimeFormat('en-CA', {
+          timeZone: 'Asia/Kolkata',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(parsed);
+        newTime = new Intl.DateTimeFormat('en-GB', {
+          timeZone: 'Asia/Kolkata',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+        }).format(parsed);
+      }
+    }
 
     if (!clinicId || !userId) {
       throw new BadRequestException('Clinic context and user ID are required');

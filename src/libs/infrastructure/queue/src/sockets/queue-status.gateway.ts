@@ -146,41 +146,51 @@ export class QueueStatusGateway
 
   private handleQueueUpdate(event: EnterpriseEventPayload) {
     try {
-      const { doctorId, domain, action, queuePositions } = event.payload as {
-        doctorId: string;
-        domain: string;
-        action: string;
-        queuePositions: unknown[];
+      const payload = event.payload as {
+        doctorId?: string;
+        domain?: string;
+        action?: string;
+        queuePositions?: unknown[];
+        clinicId?: string;
+        locationId?: string;
       };
-      // We assume queueName follows a pattern or is derived.
-      // For now, let's broadcast to subscribers of specific "doctor queues" or "custom queue names"
-      // Since QueueService uses specific queue names, we need to map doctorId to queueName if possible,
-      // or simply broadcast to relevant rooms.
-      // However, current QueueService uses arbitrary strings.
-      // We'll broadcast to any client subscribed to `queue:${domain}:${doctorId}` pattern essentially.
 
-      // Actually, let's use the payload details to determine target.
-      // If we have queuePositions, we can broadcast updates.
+      const { doctorId, domain, action, queuePositions, clinicId, locationId } = payload;
 
-      // Broadcast to doctor-specific room/subscribers
-      // Note: This matches the key format used in `queue-status.gateway.ts` originally?
-      // No, originally it used simple queue names.
-      // Let's assume queueName = `queue:${domain}:${doctorId}`.
-      const queueName = `queue:${domain}:${doctorId}`;
+      if (domain && doctorId) {
+        const queueName = `queue:${domain}:${doctorId}`;
+        this.broadcastQueueMetrics(queueName, {
+          action,
+          queuePositions,
+          timestamp: new Date().toISOString(),
+        });
+      }
 
-      this.broadcastQueueMetrics(queueName, {
-        action,
-        queuePositions,
-        timestamp: new Date().toISOString(),
-      });
+      // Room-based broadcasting
+      if (clinicId) this.server.to(`clinic:${clinicId}`).emit('queue.updated', payload);
+      if (locationId) this.server.to(`location:${locationId}`).emit('queue.updated', payload);
+      if (doctorId) this.server.to(`doctor:${doctorId}`).emit('queue.updated', payload);
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueueUpdate');
     }
   }
 
-  private handleQueuePositionUpdate(_event: EnterpriseEventPayload) {
-    // Broadcast specific position updates if needed
-    // Typically `handleQueueUpdate` covers the general list refresh.
+  private handleQueuePositionUpdate(event: EnterpriseEventPayload) {
+    try {
+      const payload = event.payload as {
+        clinicId?: string;
+        locationId?: string;
+        doctorId?: string;
+      };
+      const { clinicId, locationId, doctorId } = payload;
+
+      if (clinicId) this.server.to(`clinic:${clinicId}`).emit('queue.position.updated', payload);
+      if (locationId)
+        this.server.to(`location:${locationId}`).emit('queue.position.updated', payload);
+      if (doctorId) this.server.to(`doctor:${doctorId}`).emit('queue.position.updated', payload);
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueuePositionUpdate');
+    }
   }
 
   handleConnection(client: Socket) {
@@ -212,6 +222,14 @@ export class QueueStatusGateway
       this.connectionMetrics.totalConnections++;
 
       void client.join(`tenant:${tenantId}`);
+
+      const clinicId = client.handshake.query['clinicId'] as string;
+      const locationId = client.handshake.query['locationId'] as string;
+      const doctorId = client.handshake.query['doctorId'] as string;
+
+      if (clinicId) void client.join(`clinic:${clinicId}`);
+      if (locationId) void client.join(`location:${locationId}`);
+      if (doctorId) void client.join(`doctor:${doctorId}`);
 
       safeLog(
         this.loggingService,
@@ -290,6 +308,13 @@ export class QueueStatusGateway
       }
       this.queueSubscriptions.get(queueName)!.add(client.id);
       session.subscribedQueues.add(queueName);
+
+      // Dynamic room joining based on filters
+      const dynamicFilters = filters as Record<string, string>;
+      if (dynamicFilters['clinicId']) void client.join(`clinic:${dynamicFilters['clinicId']}`);
+      if (dynamicFilters['locationId'])
+        void client.join(`location:${dynamicFilters['locationId']}`);
+      if (dynamicFilters['doctorId']) void client.join(`doctor:${dynamicFilters['doctorId']}`);
 
       // Send immediate update if possible
       // Since we removed polling, we rely on events.

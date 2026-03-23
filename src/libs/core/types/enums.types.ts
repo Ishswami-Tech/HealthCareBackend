@@ -159,6 +159,19 @@ export enum QueueStatus {
 }
 
 /**
+ * Physical/Virtual Lane Types for appointment queues
+ */
+export enum LaneType {
+  WAITING_ROOM = 'WAITING_ROOM',
+  FOLLOW_UP = 'FOLLOW_UP',
+  AGNIKARMA = 'AGNIKARMA',
+  PANCHAKARMA = 'PANCHAKARMA',
+  VIDDHAKARMA = 'VIDDHAKARMA',
+  GENERAL_CONSULTATION = 'GENERAL_CONSULTATION',
+  VIP = 'VIP',
+}
+
+/**
  * Notification type enumeration
  */
 export enum NotificationType {
