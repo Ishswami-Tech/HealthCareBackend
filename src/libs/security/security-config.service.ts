@@ -318,6 +318,8 @@ export class SecurityConfigService {
         'Sec-Fetch-Dest',
         'X-Request-ID',
         'x-request-id',
+        'X-Client-Version',
+        'x-client-version',
       ],
       exposedHeaders: ['Set-Cookie', 'Authorization'],
       maxAge: 86400, // 24 hours
@@ -369,7 +371,7 @@ export class SecurityConfigService {
             // );
             replyTyped.header(
               'Access-Control-Allow-Headers',
-              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id'
+              'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id, X-Client-Version, x-client-version'
             );
             replyTyped.header('Access-Control-Allow-Credentials', 'true');
             replyTyped.header('Access-Control-Max-Age', '86400');

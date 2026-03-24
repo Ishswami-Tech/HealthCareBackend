@@ -2,6 +2,7 @@ import { Job } from 'bullmq';
 import { Inject, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { EHRService } from '../../../../services/ehr/ehr.service';
+import { AppointmentQueueService } from './services/appointment-queue.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -107,6 +108,8 @@ export class QueueProcessor {
           return this.processPaymentNotification(job as unknown as Job<JobData>);
         case JobType.PAYMENT_RECONCILIATION:
           return await this.processPaymentReconciliation(job as unknown as Job<JobData>);
+        case JobType.APPOINTMENT:
+          return await this.processAppointmentJob(job as unknown as Job<JobData>);
         default: {
           // Fallback for legacy actions or unrecognized job types
           const action = data?.action || job.name;
@@ -152,6 +155,124 @@ export class QueueProcessor {
         }
       );
       throw error; // Re-throw to indicate job failure to BullMQ
+    }
+  }
+
+  // ============ Appointment Module (Unified Queue) ============
+
+  async processAppointmentJob(job: Job<JobData>): Promise<unknown> {
+    const action = (job.data?.['action'] || job.name) as string;
+    const { clinicId, patientId, doctorId, appointmentId, queueOwnerId } = job.data;
+    const domain = job.data['domain'] || 'clinic';
+    const service = this.moduleRef?.get(AppointmentQueueService, { strict: false });
+
+    if (!service) {
+      throw new Error('AppointmentQueueService not available in QueueProcessor');
+    }
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Processing appointment job: ${action}`,
+      'QueueProcessor',
+      { jobId: safeStringify(job.id), action, clinicId, patientId, doctorId }
+    );
+
+    try {
+      switch (action) {
+        case 'queue.enqueue':
+        case 'create':
+          return await service.enqueueOperationalItem(
+            {
+              entryId: (appointmentId || patientId) as string,
+              patientId: patientId as string,
+              clinicId: clinicId as string,
+              queueOwnerId: (queueOwnerId || doctorId) as string,
+              appointmentId: appointmentId as string,
+              assignedDoctorId: doctorId as string,
+              queueCategory: (job.data['queueType'] ||
+                job.data['queueCategory'] ||
+                'DOCTOR_CONSULTATION') as string,
+              notes: job.data['notes'] as string | undefined,
+              type: (job.data['queueType'] || 'CONSULTATION') as string,
+            },
+            domain as string
+          );
+
+        case 'queue.confirm':
+        case 'confirm':
+          return await service.confirmAppointment(
+            (appointmentId || patientId) as string,
+            clinicId as string,
+            domain as string
+          );
+
+        case 'queue.start_consultation':
+        case 'start':
+          return await service.startConsultation(
+            (appointmentId || patientId) as string,
+            doctorId as string,
+            clinicId as string,
+            domain as string
+          );
+
+        case 'queue.remove':
+        case 'queue.complete':
+        case 'queue.cancel':
+        case 'queue.no_show':
+        case 'complete':
+        case 'cancel':
+          return await service.removePatientFromQueue(
+            (appointmentId || patientId) as string,
+            doctorId as string,
+            clinicId as string,
+            domain as string
+          );
+
+        case 'queue.call_next':
+          return await service.callNext(
+            doctorId as string,
+            clinicId as string,
+            domain as string,
+            appointmentId as string
+          );
+
+        case 'queue.pause':
+          return await service.pauseQueue(doctorId as string, clinicId as string, domain as string);
+
+        case 'queue.resume':
+          return await service.resumeQueue(
+            doctorId as string,
+            clinicId as string,
+            domain as string
+          );
+
+        case 'queue.reorder':
+          return await service.reorderQueue(
+            {
+              doctorId: doctorId as string,
+              clinicId: clinicId as string,
+              date: job.data['date'] as string,
+              newOrder: job.data['newOrder'] as string[],
+            },
+            domain as string
+          );
+
+        default:
+          throw new Error(`Unsupported appointment queue action: ${action}`);
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.QUEUE,
+        LogLevel.ERROR,
+        `Error processing appointment job ${action}`,
+        'QueueProcessor',
+        {
+          jobId: safeStringify(job.id),
+          error: error instanceof Error ? error.message : safeStringify(error),
+        }
+      );
+      throw error;
     }
   }
 

@@ -242,22 +242,23 @@ export class QueueController {
 
     const queueOwnerId = this.pick(body.queueOwnerId, body.doctorId);
     if (queueOwnerId) {
-      const result = await this.appointmentQueueService.enqueueOperationalItem(
+      const job = await this.queueService.addJob(
+        JobType.APPOINTMENT,
+        'queue.enqueue',
         {
-          entryId: body.appointmentId || body.patientId,
-          queueOwnerId,
+          appointmentId: body.appointmentId || body.patientId,
           patientId: body.patientId,
           clinicId,
-          appointmentId: body.appointmentId || body.patientId,
-          assignedDoctorId: body.doctorId,
-          locationId: body.locationId,
+          doctorId: body.doctorId,
+          queueOwnerId,
           queueCategory: this.toQueueCategory(body.queueType),
           notes: body.notes,
-          type: body.queueType,
+          queueType: body.queueType,
+          domain,
         },
-        domain
+        { priority: this.jobPriority(body.priority) }
       );
-      return { success: true, data: result, message: result.message };
+      return { success: true, data: { jobId: job.id }, message: 'Added to queue' };
     }
 
     const queueName = this.queueNameFromType(body.queueType);
@@ -306,30 +307,35 @@ export class QueueController {
     const context = await this.safeContext(patientId, clinicId, domain);
     if (context?.doctorId) {
       if (status === 'CONFIRMED') {
-        const data = await this.appointmentQueueService.confirmAppointment(
+        const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.confirm', {
           patientId,
           clinicId,
-          domain
-        );
-        return { success: true, data, message: 'Queue status updated' };
+          domain,
+        });
+        return { success: true, data: { jobId: job.id }, message: 'Queue status update enqueued' };
       }
       if (status === 'IN_PROGRESS') {
-        const data = await this.appointmentQueueService.startConsultation(
-          patientId,
-          context.doctorId,
-          clinicId,
-          domain
+        const job = await this.queueService.addJob(
+          JobType.APPOINTMENT,
+          'queue.start_consultation',
+          { patientId, doctorId: context.doctorId, clinicId, domain }
         );
-        return { success: true, data, message: 'Queue status updated' };
+        return { success: true, data: { jobId: job.id }, message: 'Queue status update enqueued' };
       }
       if (status === 'COMPLETED' || status === 'CANCELLED' || status === 'NO_SHOW') {
-        const data = await this.appointmentQueueService.removePatientFromQueue(
+        const action =
+          status === 'CANCELLED'
+            ? 'queue.cancel'
+            : status === 'NO_SHOW'
+              ? 'queue.no_show'
+              : 'queue.complete';
+        const job = await this.queueService.addJob(JobType.APPOINTMENT, action, {
           patientId,
-          context.doctorId,
+          doctorId: context.doctorId,
           clinicId,
-          domain
-        );
-        return { success: true, data, message: 'Queue status updated' };
+          domain,
+        });
+        return { success: true, data: { jobId: job.id }, message: 'Queue status update enqueued' };
       }
     }
 
@@ -363,14 +369,14 @@ export class QueueController {
     this.requireString(body.doctorId, 'doctorId');
     this.requireString(body.appointmentId, 'appointmentId');
     const clinicId = this.requireClinicId(req);
-    const data = await this.appointmentQueueService.callNext(
-      body.doctorId,
+    const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.call_next', {
+      doctorId: body.doctorId,
       clinicId,
-      'clinic',
-      body.appointmentId
-    );
+      domain: 'clinic',
+      appointmentId: body.appointmentId,
+    });
 
-    return { success: true, data, message: data.message };
+    return { success: true, data: { jobId: job.id }, message: 'Call next enqueued' };
   }
 
   @Post('reorder')
@@ -391,15 +397,14 @@ export class QueueController {
     if (!Array.isArray(body.newOrder) || body.newOrder.length === 0)
       throw new BadRequestException('newOrder is required');
     const clinicId = this.requireClinicId(req);
-    return this.appointmentQueueService.reorderQueue(
-      {
-        doctorId: body.doctorId,
-        clinicId,
-        date: this.safeDate(body.date),
-        newOrder: body.newOrder,
-      },
-      'clinic'
-    );
+    const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.reorder', {
+      doctorId: body.doctorId,
+      clinicId,
+      date: this.safeDate(body.date),
+      newOrder: body.newOrder,
+      domain: 'clinic',
+    });
+    return { success: true, data: { jobId: job.id }, message: 'Reorder enqueued' };
   }
 
   @Delete(':queueId')
@@ -424,13 +429,13 @@ export class QueueController {
     const context = await this.safeContext(queueId, clinicId, normalizedDomain);
     const resolvedDoctorId = this.pick(doctorId, context?.doctorId);
     if (resolvedDoctorId) {
-      const data = await this.appointmentQueueService.removePatientFromQueue(
-        queueId,
-        resolvedDoctorId,
+      const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.remove', {
+        patientId: queueId,
+        doctorId: resolvedDoctorId,
         clinicId,
-        normalizedDomain
-      );
-      return { success: true, data, message: data.message };
+        domain: normalizedDomain,
+      });
+      return { success: true, data: { jobId: job.id }, message: 'Remove enqueued' };
     }
     const jobHit = await this.findJob(queueId);
     if (!jobHit) throw new BadRequestException('Queue entry not found');
@@ -606,9 +611,13 @@ export class QueueController {
   ): Promise<{ success: true; data: unknown }> {
     this.requireString(body.doctorId, 'doctorId');
     const clinicId = this.requireClinicId(req);
-    const data = await this.appointmentQueueService.pauseQueue(body.doctorId, clinicId, 'clinic');
+    const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.pause', {
+      doctorId: body.doctorId,
+      clinicId,
+      domain: 'clinic',
+    });
 
-    return { success: true, data };
+    return { success: true, data: { jobId: job.id } };
   }
 
   @Post('resume')
@@ -626,9 +635,13 @@ export class QueueController {
   ): Promise<{ success: true; data: unknown }> {
     this.requireString(body.doctorId, 'doctorId');
     const clinicId = this.requireClinicId(req);
-    const data = await this.appointmentQueueService.resumeQueue(body.doctorId, clinicId, 'clinic');
+    const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.resume', {
+      doctorId: body.doctorId,
+      clinicId,
+      domain: 'clinic',
+    });
 
-    return { success: true, data };
+    return { success: true, data: { jobId: job.id } };
   }
 
   @Get('alerts')
