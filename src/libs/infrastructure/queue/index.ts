@@ -30,6 +30,9 @@ export { QueueModule } from './src/queue.module';
 export { AppointmentQueueService } from './src/services/appointment-queue.service';
 export { QueueController } from './src/controllers/queue.controller';
 
+// Expose standard Queue Interface for loose coupling
+export type { IQueueService } from './src/interfaces/queue-service.interface';
+
 // Re-export types from @core/types for convenience
 export type {
   JobData,
@@ -37,12 +40,10 @@ export type {
   ClientSession,
   EnterpriseJobOptions,
   BulkJobData,
-  QueueName,
-  QueuePriority,
 } from '@core/types/queue.types';
 
 export { AuditAction } from '@core/types/queue.types';
-export { JobPriority } from './src/queue.service';
+export { JobPriority } from './src/interfaces/queue-service.interface';
 
 // Re-export queue constants — unified single queue
 // All jobs route through HEALTHCARE_QUEUE with JobType-based routing

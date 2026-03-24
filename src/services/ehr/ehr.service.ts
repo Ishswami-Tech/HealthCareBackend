@@ -44,6 +44,7 @@ import {
   HealthRecordSummaryDto,
   EHRAISummaryDto,
   CreatePrescriptionDto,
+  BulkEHRImportDto,
 } from '@dtos/ehr.dto';
 import type {
   MedicalHistoryResponse,
@@ -3780,5 +3781,132 @@ export class EHRService {
       result.stress = typedRecord.stress;
     }
     return result;
+  }
+
+  /**
+   * Processes a bulk EHR import job with batching and audit logging
+   * @param data Bulk import data including records and context
+   */
+  async processBulkImport(
+    data: BulkEHRImportDto
+  ): Promise<{ success: boolean; imported: number; failed: number }> {
+    const { userId, clinicId, importId = 'internal', records = [] } = data;
+    let importedCount = 0;
+    let failedCount = 0;
+    const batchSize = 50;
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Starting bulk EHR import processing`,
+      'EHRService',
+      { importId, totalRecords: records.length, clinicId }
+    );
+
+    for (let i = 0; i < records.length; i += batchSize) {
+      const batch = records.slice(i, i + batchSize);
+
+      try {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              medicalHistory: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+              medication: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+              allergy: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+              vital: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+            };
+
+            // Local type for EHR import records (opaque shape coming from queue job data)
+            type EhrImportRecord = {
+              type?: string;
+              date?: string | Date;
+              startDate?: string | Date;
+              endDate?: string | Date;
+              diagnosedDate?: string | Date;
+              recordedAt?: string | Date;
+              [key: string]: unknown;
+            };
+
+            for (const rawRecord of batch) {
+              const record = rawRecord as EhrImportRecord;
+              const type = record.type ?? 'MEDICAL_HISTORY';
+              const recordData: EhrImportRecord = { ...record, userId, clinicId };
+              delete recordData.type;
+
+              switch (type) {
+                case 'MEDICAL_HISTORY':
+                  await typedClient.medicalHistory.create({
+                    data: {
+                      ...recordData,
+                      date: new Date(recordData.date ?? new Date()),
+                    } as PrismaDelegateArgs,
+                  });
+                  break;
+                case 'MEDICATION':
+                  await typedClient.medication.create({
+                    data: {
+                      ...recordData,
+                      startDate: new Date(recordData.startDate ?? new Date()),
+                      endDate: recordData.endDate ? new Date(recordData.endDate) : null,
+                    } as PrismaDelegateArgs,
+                  });
+                  break;
+                case 'ALLERGY':
+                  await typedClient.allergy.create({
+                    data: {
+                      ...recordData,
+                      diagnosedDate: new Date(recordData.diagnosedDate ?? new Date()),
+                    } as PrismaDelegateArgs,
+                  });
+                  break;
+                case 'VITAL':
+                  await typedClient.vital.create({
+                    data: {
+                      ...recordData,
+                      recordedAt: new Date(recordData.recordedAt ?? new Date()),
+                    } as PrismaDelegateArgs,
+                  });
+                  break;
+                default:
+                  void this.loggingService.log(
+                    LogType.SYSTEM,
+                    LogLevel.WARN,
+                    `Unknown record type in bulk import: ${type}`,
+                    'EHRService',
+                    { importId }
+                  );
+              }
+            }
+          },
+          {
+            userId,
+            clinicId,
+            resourceType: 'EHR_IMPORT',
+            operation: 'BATCH_CREATE',
+            resourceId: importId,
+            userRole: 'system',
+            details: { batchSize: batch.length, batchIndex: i },
+          }
+        );
+        importedCount += batch.length;
+      } catch (error) {
+        failedCount += batch.length;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Batch import failed`,
+          'EHRService',
+          { importId, batchIndex: i, error: error instanceof Error ? error.message : String(error) }
+        );
+      }
+    }
+
+    await this.invalidateUserEHRCache(userId);
+
+    return {
+      success: importedCount > 0,
+      imported: importedCount,
+      failed: failedCount,
+    };
   }
 }

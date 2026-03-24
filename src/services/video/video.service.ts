@@ -23,10 +23,11 @@ import {
   Inject,
   forwardRef,
 } from '@nestjs/common';
+import { ModuleRef as _ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { Prisma } from '@infrastructure/database/prisma/generated/client';
-import { JobType } from '@core/types/queue.types';
+import { JobType, JobPriorityLevel } from '@core/types/queue.types';
 // Use direct import to avoid TDZ issues with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@queue/src/queue.service';
@@ -56,6 +57,7 @@ import {
   getVideoConsultationDelegate,
   getVideoRecordingDelegate,
 } from '@core/types/video-database.types';
+import { RbacService as _RbacService } from '@core/rbac/rbac.service';
 
 export type { VideoCall, VideoCallSettings };
 
@@ -806,9 +808,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Process recording after consultation
+   * Add video recording job to queue
    */
   async processRecording(appointmentId: string, recordingUrl: string): Promise<void> {
+    await this.queueService?.addJob(
+      JobType.VIDEO_RECORDING,
+      'process_recording',
+      { appointmentId, recordingUrl },
+      { priority: JobPriorityLevel.HIGH }
+    );
+  }
+
+  /**
+   * Internal method called by QueueProcessor to actually process the recording
+   */
+  async executeProcessRecording(appointmentId: string, recordingUrl: string): Promise<void> {
     try {
       const session = await this.getConsultationSession(appointmentId);
       if (!session) {
@@ -817,7 +831,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `No video session found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.processRecording'
+          'VideoService.executeProcessRecording'
         );
       }
 
@@ -839,7 +853,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         LogType.BUSINESS,
         LogLevel.INFO,
         `Processing recording for appointment ${appointmentId}`,
-        'VideoService.processRecording',
+        'VideoService.executeProcessRecording',
         {
           recordingUrl,
           appointmentId,
@@ -850,7 +864,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to process recording for appointment ${appointmentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.processRecording',
+        'VideoService.executeProcessRecording',
         {
           error: error instanceof Error ? error.message : String(error),
           appointmentId,

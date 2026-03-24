@@ -1,22 +1,19 @@
 // ========================================
-// ENTERPRISE QUEUE INFRASTRUCTURE EXPORTS
+// QUEUE INFRASTRUCTURE EXPORTS
 // ========================================
 
 // Core queue infrastructure
 export * from './queue.module';
 export { QueueService } from './queue.service';
 export * from './queue.constants';
-export * from './shared-worker.service';
 export { AppointmentQueueService } from './services/appointment-queue.service';
 export { QueueController } from './controllers/queue.controller';
 
-// Advanced feature implementations
-export * from './implementations/advanced-implementations';
-
-// Enterprise interfaces and types available via direct import when needed
-
 // Real-time Socket Gateway
 export { QueueStatusGateway } from './sockets/queue-status.gateway';
+
+// Interfaces
+export { IQueueService } from './interfaces/queue-service.interface';
 
 // Bull Board exports
 export * from './bull-board/bull-board.module';

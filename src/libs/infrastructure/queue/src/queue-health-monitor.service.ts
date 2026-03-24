@@ -12,7 +12,7 @@ import { LogType, LogLevel } from '@core/types';
 import type { QueueHealthMonitorStatus } from '@core/types';
 import { CircuitBreakerService } from '@core/resilience/circuit-breaker.service';
 import { QueueService } from './queue.service';
-import { SharedWorkerService } from './shared-worker.service';
+
 import type { LoggerLike } from '@core/types';
 
 @Injectable()
@@ -50,9 +50,7 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
     @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggerLike,
     @Inject(forwardRef(() => QueueService))
-    private readonly queueService?: QueueService,
-    @Inject(forwardRef(() => SharedWorkerService))
-    private readonly sharedWorkerService?: SharedWorkerService
+    private readonly queueService?: QueueService
   ) {
     // Circuit breaker is managed by CircuitBreakerService using named instances
     // The service will automatically track failures and open/close the circuit
@@ -220,59 +218,6 @@ export class QueueHealthMonitorService implements OnModuleInit, OnModuleDestroy 
           // During startup, mark as connected to avoid false alarms
           status.connection.connected = true;
           status.healthy = true;
-        }
-      }
-
-      // Check for worker errors if SharedWorkerService is available
-      // Only fail health check for persistent errors (errors in last 5 minutes), not transient ones
-      if (
-        this.sharedWorkerService &&
-        typeof this.sharedWorkerService.getWorkerErrorSummary === 'function'
-      ) {
-        try {
-          const workerErrorSummary = this.sharedWorkerService.getWorkerErrorSummary();
-          const now = Date.now();
-          const PERSISTENT_ERROR_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-          const MIN_ERROR_COUNT_FOR_FAILURE = 3; // Require at least 3 errors to consider it persistent
-
-          // Filter for persistent errors (errors in last 5 minutes with multiple occurrences)
-          const persistentErrors = workerErrorSummary.errorDetails.filter(
-            errorDetail =>
-              errorDetail.count >= MIN_ERROR_COUNT_FOR_FAILURE &&
-              now - errorDetail.lastError.getTime() < PERSISTENT_ERROR_THRESHOLD_MS
-          );
-
-          if (persistentErrors.length > 0) {
-            const errorQueues = persistentErrors.slice(0, 5).map(e => e.queueName); // Show first 5 queues with persistent errors
-            const persistentErrorCount = persistentErrors.reduce((sum, e) => sum + e.count, 0);
-            const errorMessage =
-              persistentErrors.length === 1
-                ? `Persistent worker errors on queue: ${errorQueues[0]} (${persistentErrorCount} errors in last 5 minutes)`
-                : `Persistent worker errors on ${persistentErrors.length} queue(s): ${errorQueues.join(', ')}${persistentErrors.length > 5 ? ` (+${persistentErrors.length - 5} more)` : ''} (${persistentErrorCount} total errors in last 5 minutes)`;
-            issues.push(errorMessage);
-            status.healthy = false;
-          } else if (workerErrorSummary.totalErrors > 0) {
-            // Log transient errors but don't fail health check
-            void this.loggingService?.log(
-              LogType.SYSTEM,
-              LogLevel.DEBUG,
-              'Transient worker errors detected (not affecting health)',
-              this.serviceName,
-              {
-                totalErrors: workerErrorSummary.totalErrors,
-                queuesWithErrors: workerErrorSummary.queuesWithErrors,
-              }
-            );
-          }
-        } catch (workerError) {
-          // Don't fail health check if worker error check fails
-          void this.loggingService?.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            'Failed to check worker errors',
-            this.serviceName,
-            { error: workerError instanceof Error ? workerError.message : String(workerError) }
-          );
         }
       }
 

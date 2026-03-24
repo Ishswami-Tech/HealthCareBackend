@@ -12,6 +12,7 @@ import { GuardsModule } from '@core/guards/guards.module';
 import { EmailModule } from '@communication/channels/email/email.module';
 import { WhatsAppModule } from '@communication/channels/whatsapp/whatsapp.module';
 import { LoggingModule } from '@infrastructure/logging/logging.module';
+import { QueueModule } from '@infrastructure/queue/src/queue.module';
 
 // Auth services
 import { AuthService } from './auth.service';
@@ -52,6 +53,7 @@ import { SignOptions } from 'jsonwebtoken';
     GuardsModule,
     EmailModule,
     WhatsAppModule, // WhatsApp OTP support
+    QueueModule, // Async email dispatch support
   ],
   controllers: [AuthController],
   providers: [

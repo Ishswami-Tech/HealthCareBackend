@@ -13,7 +13,7 @@ import { getEnvWithDefault } from '../../../../config/environment/utils';
 // Internal imports - Core
 import { QueueService } from './queue.service';
 import { QueueProcessor } from './queue.processor';
-import { SharedWorkerService } from './shared-worker.service';
+
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { FastifyAdapter } from '@bull-board/fastify';
@@ -27,8 +27,7 @@ import { Queue, Worker, Job } from 'bullmq';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { DatabaseService } from '@infrastructure/database/database.service';
-import type { JobData } from '@core/types/queue.types';
-import { JobType } from '@core/types/queue.types';
+import type { JobData, CanonicalJobEnvelope } from '@core/types/queue.types';
 import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
 
@@ -56,7 +55,6 @@ export class QueueModule {
           QueueService,
           AppointmentQueueService,
           QueueProcessor,
-          SharedWorkerService,
           QueueHealthMonitorService,
           {
             provide: 'BULLMQ_QUEUES',
@@ -67,7 +65,7 @@ export class QueueModule {
             useValue: [], // Empty array when cache is disabled
           },
         ],
-        exports: [QueueService, AppointmentQueueService, QueueProcessor, SharedWorkerService],
+        exports: [QueueService, AppointmentQueueService, QueueProcessor],
       };
     }
 
@@ -192,9 +190,6 @@ export class QueueModule {
         AppointmentQueueService,
         QueueHealthMonitorService,
         QueueProcessor,
-        // Always provide SharedWorkerService (it's optional in QueueHealthMonitorService)
-        // It will only initialize workers when serviceName === 'worker'
-        SharedWorkerService,
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
         {
@@ -272,83 +267,8 @@ export class QueueModule {
                       new Worker(
                         queueName,
                         async (job: Job<JobData, unknown, string>) => {
-                          const typedJob = job;
-                          switch (job.name as JobType) {
-                            // EHR Module Job Types
-                            case JobType.LAB_REPORT:
-                              return await Promise.resolve(
-                                queueProcessor.processLabReport(typedJob)
-                              );
-                            case JobType.IMAGING:
-                              return await Promise.resolve(queueProcessor.processImaging(typedJob));
-                            case JobType.BULK_EHR_IMPORT:
-                              return await Promise.resolve(
-                                queueProcessor.processBulkEHRImport(typedJob)
-                              );
-
-                            // Billing Module Job Types
-                            case JobType.INVOICE_PDF:
-                              return await Promise.resolve(
-                                queueProcessor.processInvoicePDF(typedJob)
-                              );
-                            case JobType.BULK_INVOICE:
-                              return await Promise.resolve(
-                                queueProcessor.processBulkInvoice(typedJob)
-                              );
-                            case JobType.PAYMENT_RECONCILIATION:
-                              return await Promise.resolve(
-                                queueProcessor.processPaymentReconciliation(typedJob)
-                              );
-
-                            // Video Module Job Types
-                            case JobType.VIDEO_RECORDING:
-                              return await Promise.resolve(
-                                queueProcessor.processVideoRecording(typedJob)
-                              );
-                            case JobType.VIDEO_TRANSCODING:
-                              return await Promise.resolve(
-                                queueProcessor.processVideoTranscoding(typedJob)
-                              );
-                            case JobType.VIDEO_ANALYTICS:
-                              return await Promise.resolve(
-                                queueProcessor.processVideoAnalytics(typedJob)
-                              );
-
-                            // Domain Action Types Fallback
-                            default: {
-                              // Expected payload is CanonicalJobEnvelope when coming through QueueService.addJob
-                              // For generic tasks (appointment, notifications), use action-based router
-                              const action =
-                                (job.data as Record<string, unknown>)['action'] || 'process';
-                              switch (action) {
-                                case 'create':
-                                  return await Promise.resolve(
-                                    queueProcessor.processCreateJob(typedJob)
-                                  );
-                                case 'update':
-                                  return await Promise.resolve(
-                                    queueProcessor.processUpdateJob(typedJob)
-                                  );
-                                case 'confirm':
-                                  return await Promise.resolve(
-                                    queueProcessor.processConfirmJob(typedJob)
-                                  );
-                                case 'complete':
-                                  return await Promise.resolve(
-                                    queueProcessor.processCompleteJob(typedJob)
-                                  );
-                                case 'notify':
-                                case 'notification_send':
-                                  return await Promise.resolve(
-                                    queueProcessor.processNotifyJob(typedJob)
-                                  );
-                                default:
-                                  return await Promise.resolve(
-                                    queueProcessor.processCreateJob(typedJob)
-                                  );
-                              }
-                            }
-                          }
+                          const typedJob = job as unknown as Job<CanonicalJobEnvelope>;
+                          return await queueProcessor.processJob(typedJob);
                         },
                         {
                           connection: {
@@ -388,9 +308,11 @@ export class QueueModule {
         // Always provide BULLMQ_QUEUES for QueueService - with error handling
         {
           provide: 'BULLMQ_QUEUES',
-          useFactory: (...queues: unknown[]) => {
+          useFactory: (...queues: Queue[]) => {
             // Filter out any undefined queues and ensure we have valid Queue instances
-            const validQueues = queues.filter(queue => queue && typeof queue === 'object');
+            const validQueues = (queues as unknown[]).filter(
+              queue => queue && typeof queue === 'object'
+            );
             return validQueues;
           },
           inject: queueNames.map((queueName: string) => getQueueToken(queueName)),
@@ -411,7 +333,7 @@ export class QueueModule {
         BullModule,
         // Export health monitor for HealthService
         QueueHealthMonitorService,
-        ...(serviceName === 'worker' ? [SharedWorkerService] : []),
+
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
       ],
     };

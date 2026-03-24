@@ -3,8 +3,8 @@
 /**
  * DEDICATED WORKER BOOTSTRAP
  * ==========================
- * High-performance worker process for 100,000+ concurrent users
- * Runs SharedWorkerService in a separate container for:
+ * High-performance worker process for background job processing.
+ * Runs QueueModule.forRoot() workers in a separate container for:
  * - Better resource isolation
  * - Independent scaling
  * - Optimized queue processing

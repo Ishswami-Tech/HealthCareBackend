@@ -6,6 +6,8 @@ import { ConfigService } from '@config/config.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { EmailTemplate } from '@core/types/common.types';
+import { JobType } from '@core/types/queue.types';
+import { QueueService, JobPriority } from '@infrastructure/queue';
 
 import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 
@@ -17,6 +19,7 @@ export class OtpService {
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     private readonly emailService: EmailService,
+    private readonly queueService: QueueService,
     private readonly whatsAppService: WhatsAppService,
     private readonly configService: ConfigService,
     private readonly loggingService: LoggingService
@@ -83,17 +86,22 @@ export class OtpService {
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
       await this.cacheService.set(cooldownKey, '1', this.config.cooldownMinutes * 60);
 
-      // Send email
-      await this.emailService.sendEmail({
-        to: email,
-        subject: 'Your OTP Code',
-        template: EmailTemplate.OTP_LOGIN,
-        context: {
-          name,
-          otp,
+      // Send email via queue
+      await this.queueService.addJob(
+        JobType.EMAIL,
+        'send_otp',
+        {
+          to: email,
+          subject: 'Your OTP Code',
+          template: EmailTemplate.OTP_LOGIN,
+          context: {
+            name,
+            otp,
+          },
+          ...(clinicId && { clinicId }),
         },
-        ...(clinicId && { clinicId }),
-      });
+        { priority: JobPriority.HIGH as unknown as number, attempts: 3 }
+      );
 
       void this.loggingService.log(
         LogType.AUTH,
