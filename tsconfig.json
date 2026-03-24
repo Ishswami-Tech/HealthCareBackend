@@ -4,6 +4,7 @@
     "types": ["node"],
     "lib": ["es2021", "dom"],
     "module": "commonjs",
+    "ignoreDeprecations": "5.0",
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,

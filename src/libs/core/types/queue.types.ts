@@ -163,9 +163,18 @@ export enum JobType {
   INVOICE_PDF = 'invoice_pdf',
   BULK_INVOICE = 'bulk_invoice',
   PAYMENT_RECONCILIATION = 'payment_reconciliation',
+  PAYMENT_ANALYTICS = 'payment_analytics',
+  PAYMENT_NOTIFICATION = 'payment_notification',
   VIDEO_RECORDING = 'video_recording',
   VIDEO_TRANSCODING = 'video_transcoding',
   VIDEO_ANALYTICS = 'video_analytics',
+  // Standard lifecycle job types
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  CONFIRM = 'confirm',
+  COMPLETE = 'complete',
+  NOTIFY = 'notify',
   // Represents old generic/fallback actions
   UNKNOWN = 'unknown',
 }
@@ -356,6 +365,11 @@ export interface FraudData {
  * @interface JobData
  */
 export interface JobData {
+  userId?: string;
+  clinicId?: string;
+  importId?: string;
+  records?: unknown[];
+  importData?: unknown[];
   [key: string]: unknown;
 }
 
@@ -462,54 +476,506 @@ export interface QueueHealthMonitorStatus {
   issues: string[];
 }
 
-// ============================================================================
-// Queue Constants - Single Source of Truth
-// ============================================================================
+// --- Merged from enterprise-queue.interface.ts ---
+import { Job } from 'bullmq';
 
-/**
- * Queue name constants
- * These are the canonical queue names used throughout the application
- */
-export const QUEUE_NAMES = {
-  APPOINTMENT_QUEUE: 'appointment-queue',
-  EMAIL_QUEUE: 'email-queue',
-  NOTIFICATION_QUEUE: 'notification-queue',
-  SERVICE_QUEUE: 'service-queue',
-  VIDHAKARMA_QUEUE: 'vidhakarma-queue',
-  PANCHAKARMA_QUEUE: 'panchakarma-queue',
-  CHEQUP_QUEUE: 'chequp-queue',
-  DOCTOR_AVAILABILITY_QUEUE: 'doctor-availability-queue',
-  QUEUE_MANAGEMENT_QUEUE: 'queue-management-queue',
-  PAYMENT_PROCESSING_QUEUE: 'payment-processing-queue',
-  ANALYTICS_QUEUE: 'analytics-queue',
-  ENHANCED_APPOINTMENT_QUEUE: 'enhanced-appointment-queue',
-  WAITING_LIST_QUEUE: 'waiting-list-queue',
-  CALENDAR_SYNC_QUEUE: 'calendar-sync-queue',
-  AYURVEDA_THERAPY_QUEUE: 'ayurveda-therapy-queue',
-  PATIENT_PREFERENCE_QUEUE: 'patient-preference-queue',
-  REMINDER_QUEUE: 'reminder-queue',
-  FOLLOW_UP_QUEUE: 'follow-up-queue',
-  RECURRING_APPOINTMENT_QUEUE: 'recurring-appointment-queue',
-} as const;
+export interface EnterpriseJob<T = unknown> extends Omit<Job<T>, 'data'> {
+  id: string;
+  tenantId: string;
+  correlationId: string;
+  parentJobId?: string;
+  sagaId?: string;
+  data: EncryptedPayload<T>;
+  classification: DataClassification;
+  consentTokens: ConsentToken[];
+  dependencies: JobDependency[];
+  workflow?: WorkflowMetadata;
+  traceId: string;
+  spanId: string;
+  metrics: JobMetrics;
+  auditTrail: AuditEvent[];
+  retentionPolicy: RetentionPolicy;
+  region: string;
+  replicationStatus?: ReplicationStatus;
+}
 
-/**
- * Queue priority constants
- * These are the canonical priority values used throughout the application
- */
-export const QUEUE_PRIORITIES = {
-  CRITICAL: 10,
-  HIGH: 7,
-  NORMAL: 5,
-  LOW: 3,
-  BACKGROUND: 1,
-} as const;
+export interface TenantJobOptions extends EnterpriseJobOptions {
+  tenantId: string;
+  quota?: TenantQuota;
+  isolation?: IsolationLevel;
+}
 
-/**
- * Type for queue names
- */
-export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES];
+export interface SagaExecution<T = unknown> {
+  sagaId: string;
+  sagaName: string;
+  status: SagaStatus;
+  currentStep: number;
+  totalSteps: number;
+  data: T;
+  compensationData: unknown[];
+  startedAt: Date;
+  updatedAt: Date;
+  completedAt?: Date;
+  failedAt?: Date;
+  error?: SagaError;
+}
 
-/**
- * Type for queue priorities
- */
-export type QueuePriority = (typeof QUEUE_PRIORITIES)[keyof typeof QUEUE_PRIORITIES];
+export interface SagaOptions {
+  timeout?: number;
+  retryPolicy?: RetryPolicy;
+  compensationTimeout?: number;
+  auditLevel?: AuditLevel;
+  tenantId?: string;
+}
+
+export interface JobDependency {
+  jobId: string;
+  relationship: DependencyRelationship;
+  condition?: DependencyCondition;
+}
+
+export interface WorkflowMetadata {
+  workflowId: string;
+  workflowName: string;
+  version: string;
+  stepName: string;
+  stepIndex: number;
+  totalSteps: number;
+}
+
+export interface EnterpriseQueueMetrics {
+  waiting: number;
+  active: number;
+  completed: number;
+  failed: number;
+  delayed: number;
+  paused: number;
+  throughput: ThroughputMetrics;
+  latency: LatencyMetrics;
+  errorRates: ErrorRateMetrics;
+  memory: MemoryMetrics;
+  cpu: CpuMetrics;
+  network: NetworkMetrics;
+  tenantMetrics: Record<string, TenantMetrics>;
+  regionMetrics: Record<string, RegionMetrics>;
+  auditMetrics: AuditMetrics;
+  dataClassificationMetrics: DataClassificationMetrics;
+}
+
+export interface EncryptedPayload<T = unknown> {
+  encrypted: string;
+  keyId: string;
+  algorithm: EncryptionAlgorithm;
+  iv: string;
+  tag: string;
+  metadata: EncryptionMetadata;
+  _plaintext?: T;
+}
+
+export interface AuditEvent {
+  eventId: string;
+  timestamp: Date;
+  tenantId: string;
+  userId?: string;
+  action: AuditAction;
+  resource: string;
+  resourceId: string;
+  details: Record<string, unknown>;
+  ipAddress?: string;
+  userAgent?: string;
+  signature: string;
+}
+
+export interface ComplianceReport {
+  reportId: string;
+  generatedAt: Date;
+  reportType: ComplianceReportType;
+  period: DateRange;
+  tenantId?: string;
+  summary: ComplianceSummary;
+  violations: ComplianceViolation[];
+  recommendations: ComplianceRecommendation[];
+  evidence: ComplianceEvidence[];
+  signature: string;
+  certification: ComplianceCertification;
+}
+
+export enum DataClassification {
+  PUBLIC = 'public',
+  INTERNAL = 'internal',
+  CONFIDENTIAL = 'confidential',
+  RESTRICTED = 'restricted',
+  PHI = 'phi',
+  PII = 'pii',
+}
+
+export enum SagaStatus {
+  STARTED = 'started',
+  RUNNING = 'running',
+  COMPENSATING = 'compensating',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled',
+}
+
+export enum DependencyRelationship {
+  REQUIRES = 'requires',
+  BLOCKS = 'blocks',
+  FOLLOWS = 'follows',
+  PARALLEL = 'parallel',
+}
+
+export enum AuditLevel {
+  NONE = 'none',
+  BASIC = 'basic',
+  DETAILED = 'detailed',
+  COMPREHENSIVE = 'comprehensive',
+}
+
+export enum EncryptionAlgorithm {
+  AES_256_GCM = 'aes-256-gcm',
+  CHACHA20_POLY1305 = 'chacha20-poly1305',
+}
+
+export enum ComplianceReportType {
+  HIPAA = 'hipaa',
+  GDPR = 'gdpr',
+  SOC2 = 'soc2',
+  PCI_DSS = 'pci-dss',
+}
+
+export enum IsolationLevel {
+  SHARED = 'shared',
+  LOGICAL = 'logical',
+  PHYSICAL = 'physical',
+}
+
+export interface ThroughputMetrics {
+  jobsPerSecond: number;
+  jobsPerMinute: number;
+  jobsPerHour: number;
+  peakThroughput: number;
+  averageThroughput: number;
+}
+
+export interface LatencyMetrics {
+  p50: number;
+  p95: number;
+  p99: number;
+  p999: number;
+  average: number;
+  maximum: number;
+}
+
+export interface ErrorRateMetrics {
+  overall: number;
+  byJobType: Record<string, number>;
+  byTenant: Record<string, number>;
+  byRegion: Record<string, number>;
+}
+
+export interface MemoryMetrics {
+  used: number;
+  available: number;
+  peak: number;
+  gcFrequency: number;
+}
+
+export interface CpuMetrics {
+  utilization: number;
+  loadAverage: number[];
+  processes: number;
+  threads: number;
+}
+
+export interface NetworkMetrics {
+  bytesIn: number;
+  bytesOut: number;
+  packetsIn: number;
+  packetsOut: number;
+  errors: number;
+}
+
+export interface TenantMetrics {
+  tenantId: string;
+  jobsProcessed: number;
+  averageLatency: number;
+  errorRate: number;
+  quotaUtilization: number;
+}
+
+export interface RegionMetrics {
+  region: string;
+  jobsProcessed: number;
+  averageLatency: number;
+  failoverCount: number;
+  replicationLag: number;
+}
+
+export interface HealthIssue {
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  code: string;
+  affectedResources: string[];
+  mitigationSteps: string[];
+}
+
+export interface ConsentToken {
+  purpose: string;
+  granted: boolean;
+  grantedAt?: Date;
+  expiresAt?: Date;
+  restrictions?: string[];
+}
+
+export interface RetentionPolicy {
+  type: 'time-based' | 'event-based' | 'consent-based';
+  duration?: string;
+  condition?: string;
+  actions: RetentionAction[];
+}
+
+export interface RetentionAction {
+  action: 'archive' | 'delete' | 'anonymize' | 'encrypt';
+  delay?: string;
+  configuration?: Record<string, unknown>;
+}
+
+export interface AutoScalingPolicy {
+  enabled: boolean;
+  metrics: ScalingMetric[];
+  rules: ScalingRule[];
+  cooldown: number;
+  limits: ScalingLimits;
+}
+
+export interface ScalingMetric {
+  name: string;
+  threshold: number;
+  comparison: 'greater' | 'less' | 'equal';
+  duration: number;
+}
+
+export interface ScalingRule {
+  condition: string;
+  action: ScalingAction;
+  cooldown?: number;
+}
+
+export interface ScalingAction {
+  type: 'scale-up' | 'scale-down' | 'alert';
+  factor?: number;
+  target?: number;
+}
+
+export interface ScalingLimits {
+  minWorkers: number;
+  maxWorkers: number;
+  maxScaleUpStep: number;
+  maxScaleDownStep: number;
+}
+
+export interface TenantQuota {
+  maxJobsPerSecond: number;
+  maxJobsPerHour: number;
+  maxJobsPerDay: number;
+  maxConcurrentJobs: number;
+  maxJobSize: number;
+  maxRetentionPeriod: string;
+}
+
+export interface BackoffStrategy {
+  type: 'exponential' | 'linear' | 'fixed';
+  delay: number;
+  maxDelay?: number;
+  factor?: number;
+  jitter?: boolean;
+}
+
+export interface RetryPolicy {
+  maxAttempts: number;
+  backoff: BackoffStrategy;
+  retryOn?: string[];
+  skipOn?: string[];
+}
+
+export interface DependencyCondition {
+  type: 'status' | 'data' | 'time' | 'custom';
+  value: unknown;
+  operator?: 'equals' | 'not-equals' | 'greater' | 'less';
+}
+
+export interface SagaError {
+  step: number;
+  error: Error;
+  compensationFailed?: boolean;
+  retryCount: number;
+}
+
+export interface CompensationResult {
+  sagaId: string;
+  status: 'started' | 'completed' | 'failed';
+  compensatedSteps: number[];
+  failedCompensations: number[];
+  errors: Error[];
+}
+
+export interface EncryptionMetadata {
+  createdAt: Date;
+  createdBy: string;
+  version: number;
+  additionalData?: Record<string, unknown>;
+}
+
+export interface JobMetrics {
+  submittedAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
+  duration?: number;
+  attempts: number;
+  memoryUsage?: number;
+  cpuTime?: number;
+}
+
+export interface QueueStatus {
+  name: string;
+  status: 'active' | 'paused' | 'failed' | 'unknown';
+  health: QueueHealthStatus;
+  metrics: EnterpriseQueueMetrics;
+  workers: EnterpriseWorkerStatus[];
+  lastActivity: Date;
+}
+
+export interface EnterpriseWorkerStatus {
+  id: string;
+  status: 'idle' | 'busy' | 'failed';
+  currentJob?: string;
+  processed: number;
+  failed: number;
+  startedAt: Date;
+  lastActivity: Date;
+}
+
+export interface ReplicationStatus {
+  status: 'pending' | 'in-progress' | 'completed' | 'failed';
+  targetRegions: string[];
+  completedRegions: string[];
+  failedRegions: string[];
+  lastReplication: Date;
+}
+
+export interface ReplicationResult {
+  jobId: string;
+  targetRegion: string;
+  status: 'success' | 'failed';
+  replicationId: string;
+  latency: number;
+  error?: Error;
+}
+
+export interface FailoverResult {
+  queueName: string;
+  sourceRegion: string;
+  targetRegion: string;
+  status: 'success' | 'failed';
+  duration: number;
+  affectedJobs: number;
+  error?: Error;
+}
+
+export interface ScalingResult {
+  queueName: string;
+  previousConcurrency: number;
+  newConcurrency: number;
+  status: 'success' | 'failed';
+  duration: number;
+  error?: Error;
+}
+
+export interface TenantQueryOptions {
+  status?: string[];
+  jobTypes?: string[];
+  dateRange?: DateRange;
+  limit?: number;
+  offset?: number;
+  sortBy?: string;
+  sortOrder?: 'asc' | 'desc';
+}
+
+export interface DateRange {
+  from: Date;
+  to: Date;
+}
+
+export interface ComplianceExportOptions {
+  reportType: ComplianceReportType;
+  period: DateRange;
+  tenantId?: string;
+  includeEvidence?: boolean;
+  format?: 'json' | 'pdf' | 'csv';
+}
+
+export interface ComplianceSummary {
+  totalEvents: number;
+  violationCount: number;
+  complianceScore: number;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  lastAssessment: Date;
+}
+
+export interface ComplianceViolation {
+  id: string;
+  type: string;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  affectedResources: string[];
+  detectedAt: Date;
+  resolvedAt?: Date;
+  evidence: string[];
+}
+
+export interface ComplianceRecommendation {
+  id: string;
+  category: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  description: string;
+  implementation: string[];
+  estimatedEffort: string;
+  impact: string;
+}
+
+export interface ComplianceEvidence {
+  id: string;
+  type: string;
+  description: string;
+  dataLocation: string;
+  hash: string;
+  timestamp: Date;
+  retentionUntil: Date;
+}
+
+export interface ComplianceCertification {
+  certifiedBy: string;
+  certificationDate: Date;
+  validUntil: Date;
+  standards: string[];
+  auditor?: string;
+  signature: string;
+}
+
+export interface AuditMetrics {
+  totalEvents: number;
+  eventsByAction: Record<string, number>;
+  eventsByUser: Record<string, number>;
+  eventsByResource: Record<string, number>;
+  anomalousEvents: number;
+  complianceScore: number;
+}
+
+export interface DataClassificationMetrics {
+  totalJobs: number;
+  jobsByClassification: Record<string, number>;
+  encryptedJobs: number;
+  anonymizedJobs: number;
+  retentionCompliance: number;
+}

@@ -21,6 +21,8 @@ import { FastifyReply } from 'fastify';
 import * as fs from 'fs';
 import { BillingService } from '@services/billing/billing.service';
 import { InvoicePDFService } from '@services/billing/invoice-pdf.service';
+import { QueueService } from '@queue/src/queue.service';
+import { JobType, JobPriorityLevel } from '@core/types/queue.types';
 import {
   CreateBillingPlanDto,
   UpdateBillingPlanDto,
@@ -90,6 +92,7 @@ export class BillingController {
   constructor(
     private readonly billingService: BillingService,
     private readonly invoicePDFService: InvoicePDFService,
+    private readonly queueService: QueueService,
     private readonly moduleRef: ModuleRef
   ) {}
 
@@ -817,8 +820,13 @@ export class BillingController {
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('invoices', 'read')
   async generateInvoicePDF(@Param('id') invoiceId: string) {
-    await this.billingService.generateInvoicePDF(invoiceId);
-    return { message: 'Invoice PDF generated successfully' };
+    await this.queueService.addJob(
+      JobType.INVOICE_PDF,
+      'generate_pdf',
+      { invoiceId },
+      { priority: JobPriorityLevel.NORMAL }
+    );
+    return { message: 'Invoice PDF generation triggered successfully' };
   }
 
   @Post('invoices/:id/send-whatsapp')

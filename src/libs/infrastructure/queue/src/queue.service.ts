@@ -14,6 +14,17 @@ import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@
 import { Queue, Job, JobsOptions, Worker, JobState } from 'bullmq';
 import { ConfigService } from '@config/config.service';
 import { QueueMonitoringService } from './monitoring/queue-monitoring.service';
+import {
+  IQueueService,
+  QueueConfigState,
+  QueueCapacityState,
+  QueueConfigUpdateInput,
+  QueueCapacityUpdateInput,
+  QueueExportFilters,
+  QueueExportEntry,
+  QueueExportPayload,
+  QueueConfigSnapshot,
+} from './interfaces/queue-service.interface';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -37,130 +48,7 @@ import {
   BulkJobData,
 } from '@core/types/queue.types';
 
-// Job priority enum (keep local as it's queue-specific)
-export enum JobPriority {
-  LOW = 'low',
-  NORMAL = 'normal',
-  HIGH = 'high',
-  CRITICAL = 'critical',
-}
-
 // Domain is always 'clinic' — single-application healthcare system
-
-interface QueueConfigState {
-  queueName: string;
-  clinicId?: string;
-  maxWaitTime: number;
-  averageConsultationTime: number;
-  autoCallNext: boolean;
-  allowWalkIns: boolean;
-  priorityEnabled: boolean;
-  updatedAt: string;
-}
-
-interface QueueCapacityState {
-  queueName: string;
-  clinicId?: string;
-  capacity: number;
-  defaultCapacity: number;
-  activeJobs: number;
-  waitingJobs: number;
-  currentLoad: number;
-  availableSlots: number;
-  utilizationPercent: number;
-  metrics: DetailedQueueMetrics;
-  updatedAt: string;
-}
-
-interface QueueConfigUpdateInput {
-  queueName?: string;
-  queueType?: string;
-  clinicId?: string;
-  maxWaitTime?: number;
-  averageConsultationTime?: number;
-  autoCallNext?: boolean;
-  allowWalkIns?: boolean;
-  priorityEnabled?: boolean;
-}
-
-interface QueueCapacityUpdateInput {
-  queueName?: string;
-  queueType?: string;
-  clinicId?: string;
-  capacity: number;
-}
-
-interface QueueExportFilters {
-  queueName?: string;
-  queueType?: string;
-  type?: string;
-  clinicId?: string;
-  domain?: 'clinic';
-  startDate?: string;
-  endDate?: string;
-  status?: string;
-  format?: 'json' | 'csv' | 'excel' | 'pdf';
-  limit?: string;
-}
-
-interface QueueExportEntry {
-  id: string;
-  queueName: string;
-  queueType: string;
-  queueCategory: string;
-  clinicId?: string;
-  patientId?: string;
-  doctorId?: string;
-  appointmentId?: string;
-  queueOwnerId?: string;
-  locationId?: string;
-  status: string;
-  priority?: number;
-  timestamp?: string;
-  processedAt?: string;
-  finishedAt?: string;
-  position: number;
-  queuePosition: number;
-  totalInQueue: number;
-  raw: Record<string, unknown>;
-}
-
-interface QueueExportPayload {
-  metadata: {
-    exportedAt: string;
-    clinicId?: string;
-    domain?: 'clinic';
-    format: 'json' | 'csv' | 'excel' | 'pdf';
-    queueNames: string[];
-    totalQueues: number;
-    totalEntries: number;
-    filters: Omit<QueueExportFilters, 'clinicId'> & { clinicId?: string };
-    queueSummaries: Array<{
-      queueName: string;
-      entries: number;
-      waiting: number;
-      active: number;
-      completed: number;
-      failed: number;
-      delayed: number;
-      capacity: QueueCapacityState;
-      config: QueueConfigState;
-    }>;
-    liveStatuses: Record<string, unknown>;
-  };
-  entries: QueueExportEntry[];
-}
-
-interface QueueConfigSnapshot {
-  clinicId?: string;
-  queueNames: string[];
-  defaults: QueueConfigState;
-  queues: Record<string, QueueConfigState>;
-  liveStatuses: Record<string, unknown>;
-  updatedAt: string;
-}
-
-// Types moved to @core/types
 
 /**
  * Enterprise Queue Service for Healthcare Applications
@@ -201,7 +89,7 @@ interface QueueConfigSnapshot {
  * - Dead letter queue management
  */
 @Injectable()
-export class QueueService implements OnModuleInit, OnModuleDestroy {
+export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueService {
   // ========================================
   // STATIC PROPERTIES - SINGLE SOURCE OF TRUTH
   // ========================================
@@ -1598,15 +1486,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy {
       );
 
       const totalJobs = queueMetrics.reduce(
-        (sum, metrics) => sum + metrics.waiting + metrics.active + metrics.delayed,
+        (sum: number, metrics: DetailedQueueMetrics) =>
+          sum + metrics.waiting + metrics.active + metrics.delayed,
         0
       );
 
       const errorRate =
-        queueMetrics.reduce((sum, metrics) => sum + metrics.errorRate, 0) / queueMetrics.length;
+        queueMetrics.reduce(
+          (sum: number, metrics: DetailedQueueMetrics) => sum + metrics.errorRate,
+          0
+        ) / queueMetrics.length;
       const averageResponseTime =
-        queueMetrics.reduce((sum, metrics) => sum + metrics.averageProcessingTime, 0) /
-        queueMetrics.length;
+        queueMetrics.reduce(
+          (sum: number, metrics: DetailedQueueMetrics) => sum + metrics.averageProcessingTime,
+          0
+        ) / queueMetrics.length;
 
       return {
         isHealthy: errorRate < 0.05, // 5% error rate threshold

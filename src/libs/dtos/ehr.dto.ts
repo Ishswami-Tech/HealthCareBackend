@@ -584,3 +584,17 @@ export class EHRAISummaryDto {
   @IsString()
   modelName!: string;
 }
+export class BulkEHRImportDto {
+  @IsString()
+  userId!: string;
+
+  @IsString()
+  clinicId!: string;
+
+  @IsOptional()
+  @IsString()
+  importId?: string;
+
+  @IsOptional()
+  records?: unknown[];
+}

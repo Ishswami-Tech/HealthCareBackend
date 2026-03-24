@@ -4,6 +4,8 @@ import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
+import { QueueService, JobPriority } from '@infrastructure/queue';
+import { JobType } from '@core/types/queue.types';
 import { DatabaseService } from '@infrastructure/database';
 import type {
   FollowUpPlan,
@@ -24,6 +26,7 @@ export class AppointmentFollowUpService {
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
     private readonly notificationService: AppointmentNotificationService,
+    private readonly queueService: QueueService,
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService
   ) {}
@@ -671,33 +674,37 @@ export class AppointmentFollowUpService {
     const reminderDate = new Date(followUp.scheduledFor.getTime() - 24 * 60 * 60 * 1000);
 
     if (reminderDate > new Date()) {
-      await this.notificationService.scheduleNotification(
-        {
-          appointmentId: followUp.appointmentId,
-          patientId: followUp.patientId,
-          doctorId: followUp.doctorId,
-          clinicId: followUp.clinicId,
-          type: 'follow_up',
-          priority: followUp.priority,
-          channels: ['email', 'whatsapp', 'push'] as (
-            | 'socket'
-            | 'push'
-            | 'email'
-            | 'sms'
-            | 'whatsapp'
-          )[],
-          templateData: {
-            patientName: 'Patient', // This should be fetched from user data
-            doctorName: 'Doctor', // This should be fetched from user data
-            appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
-            appointmentTime: '10:00', // This should be fetched from appointment data
-            location: 'Clinic', // This should be fetched from clinic data
-            clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
-            notes: followUp.instructions,
-          },
+      const notificationData = {
+        appointmentId: followUp.appointmentId,
+        patientId: followUp.patientId,
+        doctorId: followUp.doctorId,
+        clinicId: followUp.clinicId,
+        type: 'follow_up' as const,
+        priority: followUp.priority,
+        channels: ['email', 'whatsapp', 'push'] as (
+          | 'socket'
+          | 'push'
+          | 'email'
+          | 'sms'
+          | 'whatsapp'
+        )[],
+        templateData: {
+          patientName: 'Patient', // This should be fetched from user data
+          doctorName: 'Doctor', // This should be fetched from user data
+          appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
+          appointmentTime: '10:00', // This should be fetched from appointment data
+          location: 'Clinic', // This should be fetched from clinic data
+          clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
+          notes: followUp.instructions,
         },
-        reminderDate
-      );
+      };
+
+      const delayMs = reminderDate.getTime() - Date.now();
+      await this.queueService.addJob(JobType.NOTIFICATION, 'follow_up_reminder', notificationData, {
+        delay: Math.max(0, delayMs),
+        priority: JobPriority.NORMAL as unknown as number,
+        attempts: 3,
+      });
     }
   }
 
@@ -738,7 +745,10 @@ export class AppointmentFollowUpService {
         },
       };
 
-      await this.notificationService.sendNotification(notificationData);
+      await this.queueService.addJob(JobType.NOTIFICATION, 'follow_up', notificationData, {
+        priority: JobPriority.NORMAL as unknown as number,
+        attempts: 3,
+      });
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,

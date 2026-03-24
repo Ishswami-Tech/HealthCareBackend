@@ -8,6 +8,8 @@ import { EmailTemplate } from '@core/types/common.types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
 import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
 import { OAuth2Client } from 'google-auth-library';
+import { QueueService, JobPriority } from '@infrastructure/queue';
+import { JobType } from '@core/types/queue.types';
 
 @Injectable()
 export class SocialAuthService {
@@ -18,6 +20,7 @@ export class SocialAuthService {
     private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService,
     private readonly emailService: EmailService,
+    private readonly queueService: QueueService,
     private readonly loggingService: LoggingService
   ) {
     this.initializeProviders();
@@ -229,18 +232,23 @@ export class SocialAuthService {
 
         isNewUser = true;
 
-        // Send welcome email
-        await this.emailService.sendEmail({
-          to: user.email,
-          subject: `Welcome to ${this.configService.getEnv('APP_NAME', 'Healthcare App')}`,
-          template: EmailTemplate.WELCOME,
-          context: {
-            name: `${user.firstName} ${user.lastName}`,
-            role: user.role,
-            isGoogleAccount: socialUser.provider === 'google',
+        // Send welcome email via async queue
+        await this.queueService.addJob(
+          JobType.EMAIL,
+          'send_welcome',
+          {
+            to: user.email,
+            subject: `Welcome to ${this.configService.getEnv('APP_NAME', 'Healthcare App')}`,
+            template: EmailTemplate.WELCOME,
+            context: {
+              name: `${user.firstName} ${user.lastName}`,
+              role: user.role,
+              isGoogleAccount: socialUser.provider === 'google',
+            },
+            ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
           },
-          ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
-        });
+          { priority: JobPriority.NORMAL as unknown as number, attempts: 3 }
+        );
 
         void this.loggingService.log(
           LogType.AUTH,

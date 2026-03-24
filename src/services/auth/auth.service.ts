@@ -12,6 +12,8 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SessionManagementService } from '@core/session/session-management.service';
 import { RbacService } from '@core/rbac/rbac.service';
+import { QueueService, JobPriority } from '@infrastructure/queue';
+import { JobType } from '@core/types/queue.types';
 import { JwtAuthService } from './core/jwt.service';
 import { SocialAuthService } from './core/social-auth.service';
 import { OtpService } from './core/otp.service';
@@ -54,7 +56,8 @@ export class AuthService {
     private readonly rbacService: RbacService,
     private readonly jwtAuthService: JwtAuthService,
     private readonly socialAuthService: SocialAuthService,
-    private readonly otpService: OtpService
+    private readonly otpService: OtpService,
+    private readonly queueService: QueueService
   ) {
     // Defensive check: ensure configService is available
     if (!this.configService) {
@@ -765,31 +768,36 @@ export class AuthService {
         900 // 15 minutes
       );
 
-      // Send reset email
+      // Send reset email via async queue
       // Use user's primary clinic for multi-tenant email routing
-      await this.emailService.sendEmail({
-        to: user.email,
-        subject: 'Password Reset Request',
-        template: EmailTemplate.PASSWORD_RESET,
-        context: {
-          name: `${user.firstName} ${user.lastName}`,
-          resetUrl: (() => {
-            const frontendUrl =
-              this.configService.getUrlsConfig()?.frontend ??
-              this.configService.getEnv('FRONTEND_URL');
+      await this.queueService.addJob(
+        JobType.EMAIL,
+        'password_reset',
+        {
+          to: user.email,
+          subject: 'Password Reset Request',
+          template: EmailTemplate.PASSWORD_RESET,
+          context: {
+            name: `${user.firstName} ${user.lastName}`,
+            resetUrl: (() => {
+              const frontendUrl =
+                this.configService.getUrlsConfig()?.frontend ??
+                this.configService.getEnv('FRONTEND_URL');
 
-            if (!frontendUrl) {
-              throw new Error(
-                'Missing required environment variable: FRONTEND_URL. ' +
-                  'Cannot generate password reset URL without frontend URL.'
-              );
-            }
+              if (!frontendUrl) {
+                throw new Error(
+                  'Missing required environment variable: FRONTEND_URL. ' +
+                    'Cannot generate password reset URL without frontend URL.'
+                );
+              }
 
-            return `${frontendUrl}/reset-password?token=${resetToken}`;
-          })(),
+              return `${frontendUrl}/reset-password?token=${resetToken}`;
+            })(),
+          },
+          ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
         },
-        ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
-      });
+        { priority: JobPriority.HIGH as unknown as number, attempts: 3 }
+      );
 
       // Emit password reset requested event
       await this.eventService.emit('user.password_reset_requested', {
