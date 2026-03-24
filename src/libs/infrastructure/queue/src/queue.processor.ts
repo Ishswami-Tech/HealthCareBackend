@@ -161,7 +161,8 @@ export class QueueProcessor {
   // ============ Appointment Module (Unified Queue) ============
 
   async processAppointmentJob(job: Job<JobData>): Promise<unknown> {
-    const action = (job.data?.['action'] || job.name) as string;
+    const rawAction = job.data?.['action'];
+    const action = typeof rawAction === 'string' ? rawAction : job.name;
     const { clinicId, patientId, doctorId, appointmentId, queueOwnerId } = job.data;
     const domain = job.data['domain'] || 'clinic';
     const service = this.moduleRef?.get(AppointmentQueueService, { strict: false });
