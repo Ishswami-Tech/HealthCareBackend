@@ -210,19 +210,10 @@ function main() {
     stepTimes['Vulnerability Fix'] = vulnFixResult.time;
     if (!vulnFixResult.success) warningCount++;
 
-    // Security audit - fail for production, warn for others
-    if (environment === 'production') {
-      const auditResult = runCommand(
-        'yarn run security:audit',
-        'Security audit (production - strict)'
-      );
-      stepTimes['Security Audit'] = auditResult.time;
-      validationCount++;
-    } else {
-      const auditResult = runCommand('yarn run security:audit', 'Security audit', true);
-      stepTimes['Security Audit'] = auditResult.time;
-      if (!auditResult.success) warningCount++;
-    }
+    // Security audit - fail if vulnerabilities are found
+    const auditResult = runCommand('yarn run security:audit', 'Security audit');
+    stepTimes['Security Audit'] = auditResult.time;
+    validationCount++;
 
     const depsResult = runCommand('yarn run deps:check', 'Dependency check', true);
     stepTimes['Dependency Check'] = depsResult.time;
