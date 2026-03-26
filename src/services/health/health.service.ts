@@ -1017,6 +1017,12 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             this.previousHealthStatus.overall !== currentOverallStatus ||
             this.previousHealthStatus.video !== currentVideoStatus;
 
+          // Compute transitional states BEFORE overriding the previous state cache
+          const videoStatusChangedToUnhealthy =
+            this.previousHealthStatus &&
+            this.previousHealthStatus.video === 'healthy' &&
+            currentVideoStatus === 'unhealthy';
+
           // Update previous status
           this.previousHealthStatus = {
             overall: currentOverallStatus,
@@ -1028,14 +1034,10 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           // Video service failures are optional and should NOT be logged repeatedly (reduces log noise)
           // Only log when critical services fail or when video status changes from healthy to unhealthy (first failure)
           const hasVideoFailure = currentVideoStatus === 'unhealthy';
-          const hasCriticalFailure = currentOverallStatus === 'degraded' && !hasVideoFailure;
-
-          // Only log video failures when transitioning from healthy to unhealthy (first failure)
-          // Don't log if video was already unhealthy (prevents repeated logs)
-          const videoStatusChangedToUnhealthy =
-            this.previousHealthStatus &&
-            this.previousHealthStatus.video === 'healthy' &&
-            currentVideoStatus === 'unhealthy';
+          // A critical failure occurs if ANY service OTHER than 'video' is unhealthy
+          const hasCriticalFailure = Object.entries(services).some(
+            ([key, serviceHealth]) => key !== 'video' && serviceHealth.status === 'unhealthy'
+          );
 
           // Log if:
           // 1. Critical services failed (always log critical failures)
