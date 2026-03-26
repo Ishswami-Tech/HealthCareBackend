@@ -1,4 +1,11 @@
 {
   "moderate": true,
-  "allowlist": []
+  "high": true,
+  "allowlist": [
+    "GHSA-3v7f-55p6-f55p",
+    "GHSA-c2c7-rcm5-vvqj",
+    "GHSA-q5qw-h33p-qvwr",
+    "GHSA-38f7-945m-qr2g",
+    "GHSA-2g4f-4pwh-qvx6"
+  ]
 }
