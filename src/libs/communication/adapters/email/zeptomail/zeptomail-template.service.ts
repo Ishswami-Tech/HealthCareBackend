@@ -51,7 +51,7 @@ interface ZeptoMailTemplateRequest {
 
 @Injectable()
 export class ZeptoMailTemplateService {
-  private readonly apiBaseUrl = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
   private sendMailToken: string = '';
   private fromEmail: string = '';
   private fromName: string = '';
@@ -73,12 +73,22 @@ export class ZeptoMailTemplateService {
     sendMailToken: string,
     fromEmail: string,
     fromName?: string,
-    bounceAddress?: string
+    bounceAddress?: string,
+    apiUrl?: string
   ): void {
     this.sendMailToken = sendMailToken;
     this.fromEmail = fromEmail;
     this.fromName = fromName || '';
     this.bounceAddress = bounceAddress || '';
+    if (apiUrl) {
+      // Normalize URL: Strip trailing slash and specific endpoints if provided
+      let normalizedUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes
+      normalizedUrl = normalizedUrl.replace(
+        /\/(email|email\/batch|email\/template|filecache|suppression\/.*)$/,
+        ''
+      );
+      this.apiBaseUrl = normalizedUrl;
+    }
   }
 
   /**
