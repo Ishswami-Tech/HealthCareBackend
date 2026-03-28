@@ -1202,42 +1202,8 @@ export class AppointmentsService {
         );
       }
 
-      // Auto-create video room for VIDEO_CALL appointments
-      if (isVideoCallAppointmentType(createDto.type) && result.success) {
-        const appointmentId = (result.data as Record<string, unknown>)?.['id'] as string;
-        try {
-          await this.clinicVideoPlugin.process({
-            operation: 'createConsultationRoom',
-            appointmentId,
-            patientId: createDto.patientId,
-            doctorId: createDto.doctorId,
-            clinicId,
-            displayName: {
-              name: 'Patient',
-              email: '',
-            },
-          });
-          void this.loggingService.log(
-            LogType.BUSINESS,
-            LogLevel.INFO,
-            `Video room auto-created for appointment ${appointmentId}`,
-            'AppointmentsService.createAppointment',
-            { appointmentId, type: createDto.type }
-          );
-        } catch (videoError) {
-          // Log but don't fail appointment creation if video room creation fails
-          void this.loggingService.log(
-            LogType.ERROR,
-            LogLevel.WARN,
-            `Failed to auto-create video room: ${videoError instanceof Error ? videoError.message : String(videoError)}`,
-            'AppointmentsService.createAppointment',
-            {
-              appointmentId,
-              error: videoError instanceof Error ? videoError.message : String(videoError),
-            }
-          );
-        }
-      }
+      // Room creation for VIDEO_CALL appointments is handled dynamically during generateMeetingToken
+      // No explicit pre-creation is needed.
 
       // Emit enterprise event for real-time WebSocket broadcasting
       await this.eventService.emitEnterprise('appointment.created', {
@@ -1527,24 +1493,8 @@ export class AppointmentsService {
       confirmedSlotIndex: dto.confirmedSlotIndex,
     });
 
-    try {
-      await this.clinicVideoPlugin.process({
-        operation: 'createConsultationRoom',
-        appointmentId,
-        patientId: appointment.patientId,
-        doctorId: appointment.doctorId,
-        clinicId,
-        displayName: { name: 'Patient', email: '' },
-      });
-    } catch (videoError) {
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.WARN,
-        `Failed to auto-create video room after slot confirmation: ${videoError instanceof Error ? videoError.message : String(videoError)}`,
-        'AppointmentsService.confirmVideoSlot',
-        { appointmentId }
-      );
-    }
+    // Room creation is handled dynamically during generateMeetingToken
+    // No explicit pre-creation is needed.
 
     await this.eventService.emit('appointment.updated', {
       appointmentId,

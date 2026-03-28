@@ -72,25 +72,29 @@ export class BillingEventsListener {
    * Auto-generate PDF when invoice is created
    */
   @OnEvent('billing.invoice.created')
-  async handleInvoiceCreated(payload: { invoiceId: string }) {
-    await this.loggingService.log(
-      LogType.PAYMENT,
-      LogLevel.INFO,
-      `Handling invoice.created event for invoice ${payload.invoiceId}`,
-      'BillingEventsListener',
-      { invoiceId: payload.invoiceId }
-    );
-
+  async handleInvoiceCreated(payload: { invoiceId: string } | string) {
+    const invoiceId = typeof payload === 'string' ? payload : payload?.invoiceId;
     try {
+      if (!invoiceId) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Empty invoiceId in billing.invoice.created event',
+          'BillingEventsListener',
+          { payload }
+        );
+        return;
+      }
+
       // Generate PDF for the invoice
-      await this.billingService.generateInvoicePDF(payload.invoiceId);
+      await this.billingService.generateInvoicePDF(invoiceId);
 
       await this.loggingService.log(
-        LogType.PAYMENT,
+        LogType.SYSTEM,
         LogLevel.INFO,
-        `Invoice PDF generated successfully for ${payload.invoiceId}`,
+        'Processed invoice creation event',
         'BillingEventsListener',
-        { invoiceId: payload.invoiceId }
+        { invoiceId }
       );
     } catch (error) {
       await this.loggingService.log(
@@ -99,7 +103,7 @@ export class BillingEventsListener {
         `Failed to generate invoice PDF: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'BillingEventsListener',
         {
-          invoiceId: payload.invoiceId,
+          invoiceId,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         }

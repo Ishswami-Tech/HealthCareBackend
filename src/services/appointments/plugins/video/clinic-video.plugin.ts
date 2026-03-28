@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Optional, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { VideoService } from '@services/video/video.service';
 import { VideoConsultationTracker } from '@services/video/video-consultation-tracker.service';
@@ -91,52 +91,10 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
       // Delegate to existing video service - no functionality change
       switch (videoData.operation) {
         case 'createVideoCall':
-          return await this.videoService.createVideoCall(
-            videoData.appointmentId!,
-            videoData.patientId!,
-            videoData.doctorId!,
-            videoData.clinicId!
-          );
-
-        case 'joinVideoCall':
-          return await this.videoService.joinVideoCall(videoData.callId!, videoData.userId!);
-
-        case 'endVideoCall':
-          return await this.videoService.endVideoCall(videoData.callId!, videoData.userId!);
-
-        case 'startRecording':
-          return await this.videoService.startRecording(videoData.callId!, videoData.userId!);
-
-        case 'stopRecording':
-          return await this.videoService.stopRecording(videoData.callId!, videoData.userId!);
-
-        case 'shareMedicalImage': {
-          // Convert imageData from string to Record<string, unknown> if needed
-          if (!videoData.imageData) {
-            throw new BadRequestException('imageData is required for sharing medical images');
-          }
-          const imageData =
-            typeof videoData.imageData === 'string'
-              ? { data: videoData.imageData, format: 'base64' }
-              : (videoData.imageData as Record<string, unknown>);
-          return await this.videoService.shareMedicalImage(
-            videoData.callId!,
-            videoData.userId!,
-            imageData
-          );
-        }
-
-        case 'getVideoCallHistory':
-          return await this.videoService.getVideoCallHistory(videoData.userId!, videoData.clinicId);
-
-        // Video consultation operations (OpenVidu primary, Jitsi fallback)
         case 'createConsultationRoom':
-          return await this.videoService.createVideoCall(
-            videoData.appointmentId!,
-            videoData.patientId!,
-            videoData.doctorId!,
-            videoData.clinicId!
-          );
+          // Legacy operations: Room creation is now handled automatically during generateMeetingToken
+          // Return success without calling non-existent videoService methods
+          return { success: true, message: 'Room creation is handled dynamically.' };
 
         case 'generateJoinToken':
           return await this.videoService.generateMeetingToken(

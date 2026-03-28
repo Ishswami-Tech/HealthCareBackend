@@ -20,7 +20,7 @@ import {
 
 @Injectable()
 export class ZeptoMailSuppressionSyncService implements OnModuleInit, OnModuleDestroy {
-  private readonly apiBaseUrl = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
   private sendMailToken: string = '';
   private syncInterval?: NodeJS.Timeout;
 
@@ -52,8 +52,17 @@ export class ZeptoMailSuppressionSyncService implements OnModuleInit, OnModuleDe
   /**
    * Initialize with Send Mail Token
    */
-  initialize(sendMailToken: string): void {
+  initialize(sendMailToken: string, apiUrl?: string): void {
     this.sendMailToken = sendMailToken;
+    if (apiUrl) {
+      // Normalize URL: Strip trailing slash and specific endpoints if provided
+      let normalizedUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes
+      normalizedUrl = normalizedUrl.replace(
+        /\/(email|email\/batch|email\/template|filecache|suppression\/.*)$/,
+        ''
+      );
+      this.apiBaseUrl = normalizedUrl;
+    }
   }
 
   /**

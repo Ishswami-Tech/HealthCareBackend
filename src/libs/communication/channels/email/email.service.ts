@@ -705,15 +705,21 @@ export class EmailService implements OnModuleInit {
       this.zeptoMailFromEmail ||
       this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
       this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
-      this.configService.getEnv('EMAIL_FROM') ||
-      'noreply@healthcare.com';
+      this.configService.getEnv('EMAIL_FROM');
+
+    if (!fromEmail) {
+      throw new Error('Email from address could not be resolved from configuration');
+    }
 
     const fromName =
       extendedOptions.fromName ||
       this.zeptoMailFromName ||
       this.configService.getEnv('DEFAULT_FROM_NAME') ||
-      this.configService.getEnv('APP_NAME') ||
-      'Healthcare App';
+      this.configService.getEnv('APP_NAME');
+
+    if (!fromName) {
+      throw new Error('Email from name could not be resolved from configuration');
+    }
 
     const emailBody = options.html || this.getEmailTemplate(options.template, options.context);
 
@@ -735,11 +741,27 @@ export class EmailService implements OnModuleInit {
           track_clicks: true,
         };
 
+        const configuredUrl = this.configService.getEnv('ZEPTOMAIL_API_URL');
+        const baseUrl = this.configService.getEnv('ZEPTOMAIL_API_BASE_URL');
+        let apiUrl = configuredUrl || (baseUrl ? `${baseUrl}/email` : null);
+
+        if (apiUrl) {
+          // Normalize: Strip trailing slash and ensure it ends with /email (if it's the send API)
+          apiUrl = apiUrl.replace(/\/+$/, '');
+          // If it's a base URL (v1.1) but doesn't have /email, append it
+          if (apiUrl.endsWith('/v1.1')) {
+            apiUrl = `${apiUrl}/email`;
+          }
+        }
+
+        if (!apiUrl) {
+          throw new Error('ZEPTOMAIL_API_URL or ZEPTOMAIL_API_BASE_URL is not configured');
+        }
         const response = await this.httpService.post<{
           data?: { message_id?: string };
           error?: { code?: string; message?: string };
           status?: string;
-        }>('https://api.zeptomail.com/v1.1/email', payload, {
+        }>(apiUrl, payload, {
           headers: {
             Accept: 'application/json',
             'Content-Type': 'application/json',

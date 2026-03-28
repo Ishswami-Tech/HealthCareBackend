@@ -21,7 +21,7 @@ export interface FileCacheUploadResult {
 
 @Injectable()
 export class ZeptoMailFileCacheService {
-  private readonly apiBaseUrl = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
   private sendMailToken: string = '';
 
   constructor(
@@ -34,8 +34,17 @@ export class ZeptoMailFileCacheService {
   /**
    * Initialize with Send Mail Token
    */
-  initialize(sendMailToken: string): void {
+  initialize(sendMailToken: string, apiUrl?: string): void {
     this.sendMailToken = sendMailToken;
+    if (apiUrl) {
+      // Normalize URL: Strip trailing slash and specific endpoints if provided
+      let normalizedUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes
+      normalizedUrl = normalizedUrl.replace(
+        /\/(email|email\/batch|email\/template|filecache|suppression\/.*)$/,
+        ''
+      );
+      this.apiBaseUrl = normalizedUrl;
+    }
   }
 
   /**

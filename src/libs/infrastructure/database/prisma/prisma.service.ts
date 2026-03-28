@@ -2970,6 +2970,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   }
 
   async findInvoiceByIdSafe(id: string): Promise<InvoiceWithRelations | null> {
+    if (!id) return null;
     type InvoiceDelegate = {
       findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
     };

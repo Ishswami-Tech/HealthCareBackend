@@ -290,6 +290,9 @@ export class CommunicationConfigService implements OnModuleInit {
       'ZEPTOMAIL_BOUNCE_ADDRESS',
       clinicInfo
     );
+    const zeptoMailApiBaseUrl =
+      this.getEnvVarWithClinicFallback('ZEPTOMAIL_API_BASE_URL', clinicInfo) ||
+      this.getEnvVarWithClinicFallback('ZEPTOMAIL_API_URL', clinicInfo);
 
     // Load WhatsApp credentials with clinic-specific fallback
     const whatsappApiKey = this.getEnvVarWithClinicFallback('WHATSAPP_API_KEY', clinicInfo);
@@ -336,6 +339,7 @@ export class CommunicationConfigService implements OnModuleInit {
           this.configService.getEnv('DEFAULT_FROM_NAME') ||
           'Healthcare App',
         bounceAddress: zeptoMailBounceAddress,
+        ...(zeptoMailApiBaseUrl && { apiUrl: zeptoMailApiBaseUrl }),
       };
     } else if (awsAccessKeyId && awsSecretAccessKey && awsSesFromEmail) {
       // AWS SES is available

@@ -37,6 +37,7 @@ export class BillingMethods extends DatabaseMethodsBase {
    * Find invoice by ID
    */
   async findInvoiceByIdSafe(id: string): Promise<InvoiceWithRelations | null> {
+    if (!id) return null;
     return await this.executeRead<InvoiceWithRelations | null>(async prisma => {
       return await prisma.invoice.findUnique({
         where: { id },
