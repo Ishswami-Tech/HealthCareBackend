@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import {
+  EmailProvider,
   EmailTemplate,
   EmailOptions,
   EmailContext,
@@ -36,6 +37,7 @@ import { ProviderFactory } from '@communication/adapters/factories/provider.fact
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { SuppressionListService } from '@communication/adapters/email/suppression-list.service';
 import { EmailUnsubscribeService } from '@communication/adapters/email/email-unsubscribe.service';
+import { ZeptoMailEmailAdapter } from '@communication/adapters/email/zeptomail/zeptomail-email.adapter';
 
 /**
  * Email configuration interface
@@ -75,6 +77,8 @@ export class EmailService implements OnModuleInit {
   private zeptoMailFromName: string | null = null;
   private isInitialized = false;
   private provider!: 'smtp' | 'api';
+  /** Global ZeptoMail adapter instance for non-clinic emails */
+  private globalAdapter: ZeptoMailEmailAdapter | null = null;
 
   /**
    * Creates an instance of EmailService
@@ -234,7 +238,7 @@ export class EmailService implements OnModuleInit {
       const mailtrapToken = this.configService.getEnv('MAILTRAP_API_TOKEN');
 
       if (rawZeptoToken) {
-        // Strip the "Zoho-enczapikey" prefix if present — the adapter adds it back on each request
+        // Strip the "Zoho-enczapikey" prefix if present
         this.zeptoMailToken = rawZeptoToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
         this.zeptoMailFromEmail =
           this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
@@ -246,11 +250,31 @@ export class EmailService implements OnModuleInit {
           this.configService.getEnv('DEFAULT_FROM_NAME') ||
           this.configService.getEnv('APP_NAME') ||
           'Healthcare App';
+
+        // Initialize global adapter to ensure consistency with clinic-specific adapters
+        this.globalAdapter = new ZeptoMailEmailAdapter(
+          this.loggingService,
+          this.httpService,
+          this.suppressionListService
+        );
+
+        if (this.globalAdapter) {
+          this.globalAdapter.initialize({
+            provider: EmailProvider.ZEPTOMAIL,
+            enabled: true,
+            credentials: {
+              apiKey: rawZeptoToken,
+              fromEmail: this.zeptoMailFromEmail ?? '',
+              fromName: this.zeptoMailFromName ?? '',
+            },
+          });
+        }
+
         this.isInitialized = true;
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          'ZeptoMail API configured — email service initialized',
+          'ZeptoMail API configured — email service initialized with global adapter',
           'EmailService',
           { fromEmail: this.zeptoMailFromEmail }
         );
@@ -727,100 +751,47 @@ export class EmailService implements OnModuleInit {
     // ZeptoMail path (primary) — used when ZEPTOMAIL_SEND_MAIL_TOKEN is set
     // -----------------------------------------------------------------------
     if (this.zeptoMailToken) {
-      try {
-        const payload = {
-          from: { address: fromEmail, name: fromName },
-          to: [{ email_address: { address: options.to } }],
-          subject: options.subject,
-          htmlbody: emailBody,
-          ...(options.text && { textbody: options.text }),
-          ...(this.configService.getEnv('ZEPTOMAIL_BOUNCE_ADDRESS') && {
-            bounce_address: this.configService.getEnv('ZEPTOMAIL_BOUNCE_ADDRESS'),
-          }),
-          track_opens: true,
-          track_clicks: true,
-        };
+      // Preference: Use global adapter for consistency
+      if (this.globalAdapter) {
+        try {
+          // Map local options to adapter-compatible options
+          const adapterOptions = {
+            to: options.to,
+            subject: options.subject,
+            body: emailBody, // Fixed: Adapter expects "body" for content
+            html: true, // Fixed: Indicate we're sending HTML
+            from: fromEmail,
+            fromName: fromName,
+          };
 
-        const configuredUrl = this.configService.getEnv('ZEPTOMAIL_API_URL');
-        const baseUrl = this.configService.getEnv('ZEPTOMAIL_API_BASE_URL');
-        let apiUrl = configuredUrl || (baseUrl ? `${baseUrl}/email` : null);
+          const result = await this.globalAdapter.send(adapterOptions);
 
-        if (apiUrl) {
-          // Normalize: Strip trailing slash and ensure it ends with /email (if it's the send API)
-          apiUrl = apiUrl.replace(/\/+$/, '');
-          // If it's a base URL (v1.1) but doesn't have /email, append it
-          if (apiUrl.endsWith('/v1.1')) {
-            apiUrl = `${apiUrl}/email`;
+          if (!result || !result.success) {
+            void this.loggingService.log(
+              LogType.SYSTEM,
+              LogLevel.ERROR,
+              `Global ZeptoMail adapter failed to send email${result?.error ? ': ' + result.error : ''}`,
+              'EmailService',
+              { to: options.to }
+            );
+            return false;
           }
-        }
 
-        if (!apiUrl) {
-          throw new Error('ZEPTOMAIL_API_URL or ZEPTOMAIL_API_BASE_URL is not configured');
-        }
-        const response = await this.httpService.post<{
-          data?: { message_id?: string };
-          error?: { code?: string; message?: string };
-          status?: string;
-        }>(apiUrl, payload, {
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            Authorization: `Zoho-enczapikey ${this.zeptoMailToken}`,
-            'User-Agent': 'HealthcareApp/1.0',
-          },
-          timeout: 30000,
-        });
-
-        const responseData = response.data;
-        if (responseData?.error) {
-          const errMsg = responseData.error.message || 'ZeptoMail API error';
+          return true;
+        } catch (error) {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.ERROR,
-            `ZeptoMail send failed: ${errMsg}`,
+            `Global adapter error: ${error instanceof Error ? error.message : 'Unknown error'}`,
             'EmailService',
-            { errorCode: responseData.error.code, to: options.to }
+            { to: options.to }
           );
-
-          // 401/authentication errors — disable to prevent further calls
-          if (responseData.error.code === 'TM_3001' || errMsg.toLowerCase().includes('auth')) {
-            this.isInitialized = false;
-          }
-          return false;
+          // Fall through to legacy fetch logic only if adapter failed catastrophically
         }
-
-        const messageId = responseData?.data?.message_id;
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.DEBUG,
-          `ZeptoMail email sent to ${options.to}`,
-          'EmailService',
-          { messageId }
-        );
-        return true;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
-        if (errorMessage.includes('401') || errorMessage.toLowerCase().includes('unauthorized')) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `ZeptoMail authentication failed. Disabling email service. Error: ${errorMessage}`,
-            'EmailService'
-          );
-          this.isInitialized = false;
-          return false;
-        }
-
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.ERROR,
-          `Failed to send ZeptoMail email: ${errorMessage}`,
-          'EmailService',
-          { stack: (error as Error)?.stack, to: options.to }
-        );
-        return false;
       }
+
+      // legacy fetch logic removed to enforce adapter usage and avoid double-send/inconsistency
+      return false;
     }
 
     // -----------------------------------------------------------------------

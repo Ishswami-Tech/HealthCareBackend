@@ -204,6 +204,23 @@ export class BillingService {
     orderId: string,
     provider?: PaymentProvider
   ): string {
+    // Priority 1: Provider-specific environment override (e.g., for local development)
+    if (provider === PaymentProvider.CASHFREE) {
+      const cashfreeReturnUrl = this.configService.getEnv('CASHFREE_RETURN_URL');
+      if (cashfreeReturnUrl) {
+        try {
+          const url = new URL(cashfreeReturnUrl);
+          url.searchParams.set('clinicId', clinicId);
+          url.searchParams.set('orderId', orderId);
+          url.searchParams.set('provider', 'cashfree');
+          return url.toString();
+        } catch {
+          // Fall through if URL is invalid
+        }
+      }
+    }
+
+    // Priority 2: Standard application URLs
     const frontendBaseUrl =
       this.configService.getEnv('FRONTEND_URL') ||
       this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
@@ -1093,7 +1110,7 @@ export class BillingService {
     const paymentFor =
       typeof paymentMetadata['paymentFor'] === 'string' ? paymentMetadata['paymentFor'] : '';
     if (
-      String(data.status || payment.status) === String(PaymentStatus.COMPLETED) &&
+      ((data.status || payment.status) as PaymentStatus) === PaymentStatus.COMPLETED &&
       paymentFor.toUpperCase() === 'PRESCRIPTION_DISPENSE'
     ) {
       await this.eventService.emit('pharmacy.medicine_desk.updated', {
@@ -1120,7 +1137,7 @@ export class BillingService {
     }
 
     // Auto-update invoice if payment is linked to one
-    if ('invoiceId' in payment && payment.invoiceId && String(data.status) === 'COMPLETED') {
+    if ('invoiceId' in payment && payment.invoiceId && data.status === PaymentStatus.COMPLETED) {
       await this.markInvoiceAsPaid(payment.invoiceId);
     }
 
@@ -1426,9 +1443,35 @@ export class BillingService {
 
   private async generateInvoiceNumber(): Promise<string> {
     const COUNTER_KEY = 'invoice:counter';
-    const currentId = await this.cacheService.get(COUNTER_KEY);
-    const nextId = currentId ? parseInt(currentId as string) + 1 : 1;
-    await this.cacheService.set(COUNTER_KEY, nextId.toString());
+
+    // Use atomic increment to prevent race conditions (duplicates)
+    let nextId = await this.cacheService.incr(COUNTER_KEY);
+
+    // If counter is 1, it might have been reset or evaporated from cache.
+    // Sync with database to ensure we don't reuse existing numbers.
+    if (nextId === 1) {
+      const lastInvoice = await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+        return await typedClient.invoice.findFirst({
+          orderBy: { invoiceNumber: 'desc' },
+          select: { invoiceNumber: true },
+        });
+      });
+
+      if (lastInvoice && lastInvoice.invoiceNumber) {
+        // Robustly parse the numeric part: e.g., INV-2024-000001 -> 000001
+        const match = lastInvoice.invoiceNumber.match(/(\d+)$/);
+        if (match && match[0]) {
+          const lastIdNum = parseInt(match[0], 10);
+          if (!isNaN(lastIdNum)) {
+            // Re-seed the cache with the current max ID from database
+            await this.cacheService.set(COUNTER_KEY, lastIdNum.toString());
+            // Increment again to get our new unique ID
+            nextId = await this.cacheService.incr(COUNTER_KEY);
+          }
+        }
+      }
+    }
 
     const year = new Date().getFullYear();
     return `INV-${year}-${nextId.toString().padStart(6, '0')}`;
@@ -1451,7 +1494,10 @@ export class BillingService {
       return { allowed: false, reason: 'Subscription not found' };
     }
 
-    if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
+    if (
+      (subscription.status as SubscriptionStatus) !== SubscriptionStatus.ACTIVE &&
+      (subscription.status as SubscriptionStatus) !== SubscriptionStatus.TRIALING
+    ) {
       return {
         allowed: false,
         reason: `Subscription is ${subscription.status.toLowerCase()}`,
@@ -2533,15 +2579,15 @@ export class BillingService {
       return;
     }
 
-    const currentStatus = String(subscription.status);
+    const currentStatus = subscription.status;
     const appointmentsRemaining = subscription.plan.isUnlimitedAppointments
       ? null
       : subscription.plan.appointmentsIncluded || null;
 
     if (
-      currentStatus === String(SubscriptionStatus.INCOMPLETE) ||
-      currentStatus === String(SubscriptionStatus.INCOMPLETE_EXPIRED) ||
-      currentStatus === String(SubscriptionStatus.PAST_DUE)
+      (currentStatus as SubscriptionStatus) === SubscriptionStatus.INCOMPLETE ||
+      (currentStatus as SubscriptionStatus) === SubscriptionStatus.INCOMPLETE_EXPIRED ||
+      (currentStatus as SubscriptionStatus) === SubscriptionStatus.PAST_DUE
     ) {
       await this.databaseService.updateSubscriptionSafe(subscriptionId, {
         status: SubscriptionStatus.ACTIVE,
@@ -2868,7 +2914,8 @@ export class BillingService {
     const subscription = subscriptions
       .filter(
         sub =>
-          (String(sub.status) === 'ACTIVE' || String(sub.status) === 'TRIALING') &&
+          ((sub.status as SubscriptionStatus) === SubscriptionStatus.ACTIVE ||
+            (sub.status as SubscriptionStatus) === SubscriptionStatus.TRIALING) &&
           sub.currentPeriodEnd >= new Date()
       )
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
@@ -2996,20 +3043,22 @@ export class BillingService {
     type SubscriptionWithPlan = (typeof subscriptions)[number];
 
     const active = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === 'ACTIVE'
+      (s: SubscriptionWithPlan) => (s.status as SubscriptionStatus) === SubscriptionStatus.ACTIVE
     ).length;
     const trialing = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === 'TRIALING'
+      (s: SubscriptionWithPlan) => (s.status as SubscriptionStatus) === SubscriptionStatus.TRIALING
     ).length;
     const cancelled = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === 'CANCELLED'
+      (s: SubscriptionWithPlan) => (s.status as SubscriptionStatus) === SubscriptionStatus.CANCELLED
     ).length;
     const pastDue = subscriptions.filter(
-      (s: SubscriptionWithPlan) => String(s.status) === 'PAST_DUE'
+      (s: SubscriptionWithPlan) => (s.status as SubscriptionStatus) === SubscriptionStatus.PAST_DUE
     ).length;
 
     const monthlyRecurringRevenue = subscriptions
-      .filter((s: SubscriptionWithPlan) => String(s.status) === 'ACTIVE')
+      .filter(
+        (s: SubscriptionWithPlan) => (s.status as SubscriptionStatus) === SubscriptionStatus.ACTIVE
+      )
       .reduce((sum: number, sub: SubscriptionWithPlan) => {
         const planAmount = sub.plan?.amount || 0;
         const monthlyAmount =
