@@ -902,11 +902,12 @@ export class BillingService {
     return this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          $executeRawUnsafe: (query: string, ...values: unknown[]) => Promise<number>;
           $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
         };
 
         // Serialize invoice-number allocation even when cache is unavailable.
-        await typedClient.$queryRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
+        await typedClient.$executeRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
 
         const invoiceNumber = await this.allocateInvoiceNumberInTransaction(typedClient);
 
