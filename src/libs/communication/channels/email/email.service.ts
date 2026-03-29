@@ -239,7 +239,7 @@ export class EmailService implements OnModuleInit {
 
       if (rawZeptoToken) {
         // Strip the "Zoho-enczapikey" prefix if present
-        this.zeptoMailToken = rawZeptoToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
+        this.zeptoMailToken = rawZeptoToken.replace(/^Zoho-enczapikey[:\s]+/i, '').trim();
         this.zeptoMailFromEmail =
           this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
           this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
@@ -258,6 +258,12 @@ export class EmailService implements OnModuleInit {
           this.suppressionListService
         );
 
+        const zeptoMailApiUrl =
+          this.configService.getEnv('ZEPTOMAIL_API_BASE_URL') ||
+          this.configService.getEnv('ZEPTOMAIL_API_URL') ||
+          '';
+        const zeptoMailRegion = this.configService.getEnv('ZEPTOMAIL_REGION') || '';
+
         if (this.globalAdapter) {
           this.globalAdapter.initialize({
             provider: EmailProvider.ZEPTOMAIL,
@@ -266,6 +272,8 @@ export class EmailService implements OnModuleInit {
               apiKey: rawZeptoToken,
               fromEmail: this.zeptoMailFromEmail ?? '',
               fromName: this.zeptoMailFromName ?? '',
+              ...(zeptoMailApiUrl ? { apiUrl: zeptoMailApiUrl } : {}),
+              ...(zeptoMailRegion ? { region: zeptoMailRegion } : {}),
             },
           });
         }

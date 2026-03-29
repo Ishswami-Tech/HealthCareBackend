@@ -800,93 +800,214 @@ export class BillingService {
   // ============ Invoices ============
 
   async createInvoice(data: CreateInvoiceDto) {
-    const invoiceNumber = await this.generateInvoiceNumber();
     const totalAmount = data.amount + (data.tax || 0) - (data.discount || 0);
+    const maxAttempts = 3;
 
-    try {
-      const invoice = await this.databaseService.createInvoiceSafe({
-        invoiceNumber,
-        userId: data.userId,
-        clinicId: data.clinicId,
-        amount: data.amount,
-        tax: data.tax || 0,
-        discount: data.discount || 0,
-        totalAmount,
-        status: InvoiceStatus.DRAFT,
-        dueDate: new Date(data.dueDate),
-        ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
-        ...(data.description && { description: data.description }),
-        ...(data.lineItems && { lineItems: data.lineItems }),
-        ...(data.metadata && { metadata: data.metadata }),
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const invoice = await this.createInvoiceRecordAtomically(data, totalAmount);
+        const invoiceNumber = invoice.invoiceNumber;
 
-      await this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'Invoice created',
-        'BillingService',
-        { invoiceId: invoice.id, invoiceNumber }
-      );
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Invoice created',
+          'BillingService',
+          { invoiceId: invoice.id, invoiceNumber }
+        );
 
-      await this.eventService.emit('billing.invoice.created', {
-        invoiceId: invoice.id,
-      });
-      await this.cacheService.invalidateCacheByTag(`user_invoices:${data.userId}`);
+        await this.eventService.emit('billing.invoice.created', {
+          invoiceId: invoice.id,
+        });
+        await this.cacheService.invalidateCacheByTag(`user_invoices:${data.userId}`);
 
-      // Queue PDF generation (heavy operation) asynchronously
-      if (this.queueService) {
-        void this.queueService
-          .addJob(
-            JobType.INVOICE_PDF,
-            'generate_pdf',
-            {
-              invoiceId: invoice.id,
-              clinicId: invoice.clinicId || '',
-              userId: invoice.userId,
-              action: 'generate_pdf',
-              metadata: {
-                invoiceNumber: invoice.invoiceNumber,
-                amount:
-                  typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
-                totalAmount:
-                  typeof invoice.totalAmount === 'number'
-                    ? invoice.totalAmount
-                    : Number(invoice.totalAmount),
-              },
-            },
-            {
-              priority: 5, // NORMAL priority (QueueService.PRIORITIES.NORMAL)
-              attempts: 3,
-            }
-          )
-          .catch((error: unknown) => {
-            void this.loggingService.log(
-              LogType.QUEUE,
-              LogLevel.WARN,
-              'Failed to queue invoice PDF generation',
-              'BillingService',
+        // Queue PDF generation (heavy operation) asynchronously
+        if (this.queueService) {
+          void this.queueService
+            .addJob(
+              JobType.INVOICE_PDF,
+              'generate_pdf',
               {
                 invoiceId: invoice.id,
-                error: error instanceof Error ? error.message : String(error),
+                clinicId: invoice.clinicId || '',
+                userId: invoice.userId,
+                action: 'generate_pdf',
+                metadata: {
+                  invoiceNumber: invoice.invoiceNumber,
+                  amount:
+                    typeof invoice.amount === 'number' ? invoice.amount : Number(invoice.amount),
+                  totalAmount:
+                    typeof invoice.totalAmount === 'number'
+                      ? invoice.totalAmount
+                      : Number(invoice.totalAmount),
+                },
+              },
+              {
+                priority: 5, // NORMAL priority (QueueService.PRIORITIES.NORMAL)
+                attempts: 3,
               }
-            );
-          });
-      }
-
-      return invoice;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to create invoice',
-        'BillingService',
-        {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          data,
+            )
+            .catch((error: unknown) => {
+              void this.loggingService.log(
+                LogType.QUEUE,
+                LogLevel.WARN,
+                'Failed to queue invoice PDF generation',
+                'BillingService',
+                {
+                  invoiceId: invoice.id,
+                  error: error instanceof Error ? error.message : String(error),
+                }
+              );
+            });
         }
-      );
-      throw error;
+
+        return invoice;
+      } catch (error) {
+        if (this.isInvoiceNumberUniqueConstraint(error) && attempt < maxAttempts) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Invoice number collision detected, retrying with a fresh number',
+            'BillingService',
+            {
+              attempt,
+              maxAttempts,
+              clinicId: data.clinicId,
+              userId: data.userId,
+            }
+          );
+
+          continue;
+        }
+
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Failed to create invoice',
+          'BillingService',
+          {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            data,
+            attempt,
+          }
+        );
+        throw error;
+      }
     }
+
+    throw new Error('Failed to create invoice after exhausting invoice number retries');
+  }
+
+  private async createInvoiceRecordAtomically(data: CreateInvoiceDto, totalAmount: number) {
+    return this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
+        };
+
+        // Serialize invoice-number allocation even when cache is unavailable.
+        await typedClient.$queryRawUnsafe('SELECT pg_advisory_xact_lock($1)', 2026032901);
+
+        const invoiceNumber = await this.allocateInvoiceNumberInTransaction(typedClient);
+
+        return typedClient.invoice.create({
+          data: {
+            invoiceNumber,
+            userId: data.userId,
+            clinicId: data.clinicId,
+            amount: data.amount,
+            tax: data.tax || 0,
+            discount: data.discount || 0,
+            totalAmount,
+            status: InvoiceStatus.DRAFT,
+            dueDate: new Date(data.dueDate),
+            ...(data.subscriptionId && { subscriptionId: data.subscriptionId }),
+            ...(data.description && { description: data.description }),
+            ...(data.lineItems && { lineItems: data.lineItems }),
+            ...(data.metadata && { metadata: data.metadata }),
+          } as never,
+          include: {
+            subscription: true,
+            payments: true,
+          },
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: data.clinicId,
+        operation: 'CREATE_INVOICE',
+        resourceType: 'INVOICE',
+        resourceId: 'pending',
+        timestamp: new Date(),
+      }
+    );
+  }
+
+  private async allocateInvoiceNumberInTransaction(
+    typedClient: PrismaTransactionClientWithDelegates & {
+      $queryRawUnsafe: <T = unknown>(query: string, ...values: unknown[]) => Promise<T>;
+    }
+  ): Promise<string> {
+    const rows = await typedClient.$queryRawUnsafe<Array<{ maxSequence: number | string | null }>>(
+      `
+        SELECT COALESCE(
+          MAX(CAST(SUBSTRING("invoiceNumber" FROM '([0-9]+)$') AS INTEGER)),
+          0
+        ) AS "maxSequence"
+        FROM "Invoice"
+        WHERE "invoiceNumber" ~ '^INV-[0-9]{4}-[0-9]+$'
+      `
+    );
+
+    const maxSequenceRaw = rows?.[0]?.maxSequence ?? 0;
+    const maxSequence = Number(maxSequenceRaw);
+    const nextSequence = Number.isNaN(maxSequence) ? 1 : maxSequence + 1;
+
+    // Keep the shared cache warm for the fast path after the transaction commits.
+    await this.cacheService.set('invoice:counter', nextSequence.toString());
+
+    return this.formatInvoiceNumber(nextSequence);
+  }
+
+  private async getMaxInvoiceSequence(): Promise<number> {
+    const lastInvoice = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      return await typedClient.invoice.findFirst({
+        orderBy: { invoiceNumber: 'desc' },
+        select: { invoiceNumber: true },
+      });
+    });
+
+    if (!lastInvoice?.invoiceNumber) {
+      return 0;
+    }
+
+    const match = lastInvoice.invoiceNumber.match(/(\d+)$/);
+    if (!match?.[0]) {
+      return 0;
+    }
+
+    const parsed = parseInt(match[0], 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  private formatInvoiceNumber(sequence: number): string {
+    const year = new Date().getFullYear();
+    return `INV-${year}-${sequence.toString().padStart(6, '0')}`;
+  }
+
+  private isInvoiceNumberUniqueConstraint(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+
+    return (
+      code === 'P2002' && (message.includes('invoiceNumber') || message.includes('"invoiceNumber"'))
+    );
   }
 
   async getUserInvoices(
@@ -1443,38 +1564,31 @@ export class BillingService {
 
   private async generateInvoiceNumber(): Promise<string> {
     const COUNTER_KEY = 'invoice:counter';
+    const nextId = await this.cacheService.incr(COUNTER_KEY);
 
-    // Use atomic increment to prevent race conditions (duplicates)
-    let nextId = await this.cacheService.incr(COUNTER_KEY);
+    // Cache providers can degrade to no-op / disconnected mode and return 0.
+    // In that case, derive a best-effort next number from the database and let
+    // createInvoice() retry on any residual uniqueness race.
+    if (nextId <= 0) {
+      const maxSequence = await this.getMaxInvoiceSequence();
+      return this.formatInvoiceNumber(maxSequence + 1);
+    }
 
-    // If counter is 1, it might have been reset or evaporated from cache.
-    // Sync with database to ensure we don't reuse existing numbers.
+    // If the counter restarted at 1, re-seed from the database before using it.
     if (nextId === 1) {
-      const lastInvoice = await this.databaseService.executeHealthcareRead(async client => {
-        const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-        return await typedClient.invoice.findFirst({
-          orderBy: { invoiceNumber: 'desc' },
-          select: { invoiceNumber: true },
-        });
-      });
-
-      if (lastInvoice && lastInvoice.invoiceNumber) {
-        // Robustly parse the numeric part: e.g., INV-2024-000001 -> 000001
-        const match = lastInvoice.invoiceNumber.match(/(\d+)$/);
-        if (match && match[0]) {
-          const lastIdNum = parseInt(match[0], 10);
-          if (!isNaN(lastIdNum)) {
-            // Re-seed the cache with the current max ID from database
-            await this.cacheService.set(COUNTER_KEY, lastIdNum.toString());
-            // Increment again to get our new unique ID
-            nextId = await this.cacheService.incr(COUNTER_KEY);
-          }
+      const maxSequence = await this.getMaxInvoiceSequence();
+      if (maxSequence > 0) {
+        await this.cacheService.set(COUNTER_KEY, maxSequence.toString());
+        const reseededNextId = await this.cacheService.incr(COUNTER_KEY);
+        if (reseededNextId > maxSequence) {
+          return this.formatInvoiceNumber(reseededNextId);
         }
+
+        return this.formatInvoiceNumber(maxSequence + 1);
       }
     }
 
-    const year = new Date().getFullYear();
-    return `INV-${year}-${nextId.toString().padStart(6, '0')}`;
+    return this.formatInvoiceNumber(nextId);
   }
 
   // ============ Subscription Appointment Management ============

@@ -129,7 +129,7 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
 
     // If token includes "Zoho-enczapikey" prefix, remove it (adapter adds it automatically in Authorization header)
     if (sendMailToken && sendMailToken.includes('Zoho-enczapikey')) {
-      sendMailToken = sendMailToken.replace(/^Zoho-enczapikey\s+/i, '').trim();
+      sendMailToken = sendMailToken.replace(/^Zoho-enczapikey[:\s]+/i, '').trim();
     }
 
     if (!sendMailToken) {
@@ -154,8 +154,10 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
     apiUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes
     // Strip specific endpoints if redundantly provided (e.g., /email, /email/batch)
     apiUrl = apiUrl.replace(/\/(email|email-batch|email-template|filecache|suppression.*)$/, '');
+    if (!/\/v\d+(\.\d+)?$/i.test(apiUrl)) {
+      apiUrl = `${apiUrl}/v1.1`;
+    }
 
-    // Ensure it ends with /v1.1 or appropriate version if missing, but let's stick to v1.1 as standard
     this.apiBaseUrl = apiUrl;
 
     // Log initialization (async, don't await)
