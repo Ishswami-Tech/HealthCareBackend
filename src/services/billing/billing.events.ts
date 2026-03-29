@@ -108,6 +108,16 @@ export class BillingEventsListener {
    */
   @OnEvent('billing.payment.updated')
   async handlePaymentUpdated(payload: { paymentId: string }) {
+    if (!payload?.paymentId) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Skipping payment.updated event with missing paymentId',
+        'BillingEventsListener'
+      );
+      return;
+    }
+
     await this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,

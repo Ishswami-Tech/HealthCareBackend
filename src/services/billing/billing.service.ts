@@ -63,7 +63,7 @@ import type {
   PrismaDelegateArgs,
 } from '@core/types/prisma.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
-import type { AppointmentWithRelations } from '@core/types';
+import type { AppointmentWithRelations, PaymentWithRelations } from '@core/types';
 
 type AppointmentsServiceLike = {
   getAppointmentServiceCatalog: () => AppointmentServiceMetadataDto[];
@@ -202,7 +202,8 @@ export class BillingService {
   private buildPaymentCallbackUrl(
     clinicId: string,
     orderId: string,
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    appointmentId?: string
   ): string {
     // Priority 1: Provider-specific environment override (e.g., for local development)
     if (provider === PaymentProvider.CASHFREE) {
@@ -213,6 +214,9 @@ export class BillingService {
           url.searchParams.set('clinicId', clinicId);
           url.searchParams.set('orderId', orderId);
           url.searchParams.set('provider', 'cashfree');
+          if (appointmentId) {
+            url.searchParams.set('appointmentId', appointmentId);
+          }
           return url.toString();
         } catch {
           // Fall through if URL is invalid
@@ -232,6 +236,9 @@ export class BillingService {
     callbackUrl.searchParams.set('orderId', orderId);
     if (provider) {
       callbackUrl.searchParams.set('provider', String(provider));
+    }
+    if (appointmentId) {
+      callbackUrl.searchParams.set('appointmentId', appointmentId);
     }
     return callbackUrl.toString();
   }
@@ -1011,6 +1018,19 @@ export class BillingService {
     );
   }
 
+  private isPaymentAppointmentUniqueConstraint(error: unknown): boolean {
+    if (!error || typeof error !== 'object') {
+      return false;
+    }
+
+    const code = 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+    const message = 'message' in error && typeof error.message === 'string' ? error.message : '';
+
+    return (
+      code === 'P2002' && (message.includes('appointmentId') || message.includes('"appointmentId"'))
+    );
+  }
+
   async getUserInvoices(
     userId: string,
     role?: string,
@@ -1159,6 +1179,60 @@ export class BillingService {
 
   async createPayment(data: CreatePaymentDto) {
     try {
+      if (data.appointmentId) {
+        const existingAppointmentPayments = await this.databaseService.findPaymentsSafe({
+          appointmentId: data.appointmentId,
+          clinicId: data.clinicId,
+        });
+        const existingPayment =
+          existingAppointmentPayments.sort(
+            (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+          )[0] || null;
+
+        if (existingPayment) {
+          const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
+            amount: data.amount,
+            status: PaymentStatus.PENDING,
+            ...(data.userId ? { userId: data.userId } : {}),
+            ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
+            ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
+            ...(data.method ? { method: data.method } : {}),
+            ...(data.transactionId ? { transactionId: data.transactionId } : {}),
+            ...(data.description ? { description: data.description } : {}),
+            ...(data.metadata ? { metadata: data.metadata } : {}),
+          });
+
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Reused existing appointment payment',
+            'BillingService',
+            {
+              paymentId: updatedPayment.id,
+              appointmentId: data.appointmentId,
+              amount: updatedPayment.amount,
+            }
+          );
+
+          await this.eventService.emit('billing.payment.updated', {
+            paymentId: updatedPayment.id,
+          });
+          await this.eventService.emit('payment.pending', {
+            paymentId: updatedPayment.id,
+            clinicId: updatedPayment.clinicId,
+            ...(updatedPayment.appointmentId
+              ? { appointmentId: updatedPayment.appointmentId, status: 'pending' }
+              : {}),
+          });
+
+          if (data.userId) {
+            await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
+          }
+
+          return updatedPayment;
+        }
+      }
+
       const payment = await this.databaseService.createPaymentSafe({
         amount: data.amount,
         clinicId: data.clinicId,
@@ -1195,6 +1269,59 @@ export class BillingService {
 
       return payment;
     } catch (error) {
+      if (data.appointmentId && this.isPaymentAppointmentUniqueConstraint(error)) {
+        const existingAppointmentPayments = await this.databaseService.findPaymentsSafe({
+          appointmentId: data.appointmentId,
+          clinicId: data.clinicId,
+        });
+        const existingPayment =
+          existingAppointmentPayments.sort(
+            (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+          )[0] || null;
+
+        if (existingPayment) {
+          const updatedPayment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
+            amount: data.amount,
+            status: PaymentStatus.PENDING,
+            ...(data.userId ? { userId: data.userId } : {}),
+            ...(data.invoiceId ? { invoiceId: data.invoiceId } : {}),
+            ...(data.subscriptionId ? { subscriptionId: data.subscriptionId } : {}),
+            ...(data.method ? { method: data.method } : {}),
+            ...(data.transactionId ? { transactionId: data.transactionId } : {}),
+            ...(data.description ? { description: data.description } : {}),
+            ...(data.metadata ? { metadata: data.metadata } : {}),
+          });
+
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Recovered from duplicate appointment payment create by reusing existing payment',
+            'BillingService',
+            {
+              paymentId: updatedPayment.id,
+              appointmentId: data.appointmentId,
+            }
+          );
+
+          await this.eventService.emit('billing.payment.updated', {
+            paymentId: updatedPayment.id,
+          });
+          await this.eventService.emit('payment.pending', {
+            paymentId: updatedPayment.id,
+            clinicId: updatedPayment.clinicId,
+            ...(updatedPayment.appointmentId
+              ? { appointmentId: updatedPayment.appointmentId, status: 'pending' }
+              : {}),
+          });
+
+          if (data.userId) {
+            await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
+          }
+
+          return updatedPayment;
+        }
+      }
+
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
@@ -1971,33 +2098,67 @@ export class BillingService {
       appointment.treatmentType as TreatmentType | string | null
     );
     const amount = serviceMetadata.videoConsultationFee as number;
+    const existingAppointmentPayments = await this.databaseService.findPaymentsSafe({
+      appointmentId: appointment.id,
+      clinicId: appointment.clinicId,
+    });
+    const existingPayment =
+      existingAppointmentPayments.sort(
+        (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+      )[0] || null;
 
     // Get user details
     const user = await this.databaseService.findUserByIdSafe(appointment.patientId);
 
-    // Create invoice for appointment payment
-    const invoice = await this.createInvoice({
-      userId: appointment.patientId,
-      clinicId: appointment.clinicId,
-      amount,
-      tax: 0,
-      discount: 0,
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
-      description: `Payment for ${appointmentType} appointment`,
-      lineItems: {
-        items: [
-          {
-            description: `${serviceMetadata.label} Appointment`,
-            amount,
-            quantity: 1,
-          },
-        ],
-      },
-      metadata: {
-        appointmentId: appointment.id,
-        appointmentType,
-      },
-    });
+    if (existingPayment && String(existingPayment.status) === String(PaymentStatus.COMPLETED)) {
+      throw new BadRequestException('Payment is already completed for this appointment');
+    }
+
+    const createAppointmentInvoice = async () =>
+      this.createInvoice({
+        userId: appointment.patientId,
+        clinicId: appointment.clinicId,
+        amount,
+        tax: 0,
+        discount: 0,
+        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
+        description: `Payment for ${appointmentType} appointment`,
+        lineItems: {
+          items: [
+            {
+              description: `${serviceMetadata.label} Appointment`,
+              amount,
+              quantity: 1,
+            },
+          ],
+        },
+        metadata: {
+          appointmentId: appointment.id,
+          appointmentType,
+          ...(existingPayment ? { retriedPaymentId: existingPayment.id } : {}),
+        },
+      });
+
+    let supersededInvoiceId: string | null = null;
+    if (existingPayment?.invoiceId) {
+      const existingInvoice = await this.databaseService.findInvoiceByIdSafe(
+        existingPayment.invoiceId
+      );
+      if (existingInvoice) {
+        const existingInvoiceStatus = String(existingInvoice.status);
+        if (existingInvoiceStatus === String(InvoiceStatus.PAID)) {
+          throw new BadRequestException('Invoice is already paid for this appointment');
+        }
+        if (existingInvoiceStatus !== String(InvoiceStatus.VOID)) {
+          supersededInvoiceId = existingInvoice.id;
+        }
+      }
+    }
+
+    // Always issue a fresh invoice when retrying an appointment payment so the
+    // payment provider receives a fresh order identifier and the payment record
+    // stays one-to-one with the appointment.
+    const invoice = await createAppointmentInvoice();
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
@@ -2030,7 +2191,8 @@ export class BillingService {
         redirectUrl: this.buildPaymentCallbackUrl(
           appointment.clinicId,
           invoice.invoiceNumber,
-          provider
+          provider,
+          appointment.id
         ),
       },
     };
@@ -2059,25 +2221,70 @@ export class BillingService {
         ? paymentIntentResult.metadata['redirectUrl']
         : undefined;
 
-    // Create payment record
-    const payment = await this.createPayment({
-      amount,
-      clinicId: appointment.clinicId,
-      userId: appointment.patientId,
-      appointmentId: appointment.id,
-      invoiceId: invoice.id,
-      ...(paymentId && { transactionId: paymentId }),
-      description: `Payment for ${serviceMetadata.label} appointment`,
-      metadata: {
-        paymentIntentId: paymentId,
-        orderId,
-        provider: providerName,
-        appointmentType,
-        revenueModel: 'APPOINTMENT',
-        serviceType: appointmentType,
-        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
-      },
-    });
+    const paymentMetadata = {
+      paymentIntentId: paymentId,
+      orderId,
+      provider: providerName,
+      appointmentType,
+      revenueModel: 'APPOINTMENT',
+      serviceType: appointmentType,
+      ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+    };
+
+    let payment: PaymentWithRelations;
+    if (existingPayment) {
+      payment = await this.databaseService.updatePaymentSafe(existingPayment.id, {
+        status: PaymentStatus.PENDING,
+        invoiceId: invoice.id,
+        ...(paymentId ? { transactionId: paymentId } : {}),
+        description: `Payment for ${serviceMetadata.label} appointment`,
+        metadata: paymentMetadata,
+      });
+
+      if (supersededInvoiceId && supersededInvoiceId !== invoice.id) {
+        await this.updateInvoice(supersededInvoiceId, {
+          status: InvoiceStatus.VOID,
+          metadata: {
+            supersededByInvoiceId: invoice.id,
+            supersededAt: new Date().toISOString(),
+            supersededByPaymentId: payment.id,
+          },
+        });
+      }
+
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Reused existing appointment payment record',
+        'BillingService',
+        {
+          appointmentId,
+          paymentId: payment.id,
+          previousInvoiceId: supersededInvoiceId,
+          newInvoiceId: invoice.id,
+        }
+      );
+
+      await this.eventService.emit('billing.payment.updated', { paymentId: payment.id });
+      await this.eventService.emit('payment.pending', {
+        paymentId: payment.id,
+        appointmentId: appointment.id,
+        status: PaymentStatus.PENDING.toLowerCase(),
+        clinicId: appointment.clinicId,
+      });
+      await this.cacheService.invalidateCacheByTag(`user_payments:${appointment.patientId}`);
+    } else {
+      payment = await this.createPayment({
+        amount,
+        clinicId: appointment.clinicId,
+        userId: appointment.patientId,
+        appointmentId: appointment.id,
+        invoiceId: invoice.id,
+        ...(paymentId && { transactionId: paymentId }),
+        description: `Payment for ${serviceMetadata.label} appointment`,
+        metadata: paymentMetadata,
+      });
+    }
 
     await this.loggingService.log(
       LogType.PAYMENT,
