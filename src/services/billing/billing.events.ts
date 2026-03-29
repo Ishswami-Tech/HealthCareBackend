@@ -76,25 +76,17 @@ export class BillingEventsListener {
     const invoiceId = typeof payload === 'string' ? payload : payload?.invoiceId;
     try {
       if (!invoiceId) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          'Empty invoiceId in billing.invoice.created event',
-          'BillingEventsListener',
-          { payload }
-        );
+        // No redundant warning here, the billing service itself will handle failures
         return;
       }
 
-      // Generate PDF for the invoice
-      await this.billingService.generateInvoicePDF(invoiceId);
-
+      // PDF generation is handled by the QueueProcessor to avoid race conditions
+      // and ensure consistent processing of heavy tasks
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'Processed invoice creation event',
-        'BillingEventsListener',
-        { invoiceId }
+        `BillingEventsListener: Received invoice created event for ${invoiceId}. Handled by queue.`,
+        'BillingEventsListener'
       );
     } catch (error) {
       await this.loggingService.log(

@@ -152,10 +152,8 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
 
     // Normalize URL: Strip trailing slash and specific endpoints if provided
     apiUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes
-    apiUrl = apiUrl.replace(
-      /\/(email|email\/batch|email\/template|filecache|suppression\/.*)$/,
-      ''
-    );
+    // Strip specific endpoints if redundantly provided (e.g., /email, /email/batch)
+    apiUrl = apiUrl.replace(/\/(email|email-batch|email-template|filecache|suppression.*)$/, '');
 
     // Ensure it ends with /v1.1 or appropriate version if missing, but let's stick to v1.1 as standard
     this.apiBaseUrl = apiUrl;
@@ -403,6 +401,20 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
               retries: 0, // We handle retries in sendWithRetry
             }
           );
+          // Log full response for debugging (especially useful for 403 Forbidden)
+          if (!httpResponse.status.toString().startsWith('2')) {
+            await this.logger.log(
+              LogType.EMAIL,
+              LogLevel.ERROR,
+              `ZeptoMail HTTP Error [${httpResponse.status}]: ${httpResponse.statusText}`,
+              'ZeptoMailEmailAdapter',
+              {
+                status: httpResponse.status,
+                data: httpResponse.data,
+                to: options.to,
+              }
+            );
+          }
 
           const responseData = httpResponse.data;
 
