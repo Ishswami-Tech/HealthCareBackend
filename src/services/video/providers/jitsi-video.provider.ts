@@ -175,6 +175,7 @@ export class JitsiVideoProvider implements IVideoProvider {
       const roomId = roomName;
       const meetingUrl = `${jitsiConfig.baseUrl}/${roomName}`;
       const token = this.generateJitsiToken(userId, userRole, userInfo, roomName);
+      const auditUserId = appointment.doctor?.userId || userId;
 
       await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -204,7 +205,7 @@ export class JitsiVideoProvider implements IVideoProvider {
           }
         },
         {
-          userId: appointment.doctorId,
+          userId: auditUserId,
           userRole: 'DOCTOR',
           clinicId: appointment.clinicId,
           operation: 'CREATE_VIDEO_CONSULTATION',

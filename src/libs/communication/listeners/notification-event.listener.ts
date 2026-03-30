@@ -14,6 +14,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { EventService } from '@infrastructure/events/event.service';
 import { CommunicationService } from '@communication/communication.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
+import { DatabaseService } from '@infrastructure/database/database.service';
 import {
   LogType,
   LogLevel,
@@ -630,6 +631,7 @@ export class NotificationEventListener implements OnModuleInit {
     eventService: unknown,
     @Inject(forwardRef(() => CommunicationService))
     private readonly communicationService: unknown,
+    private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {
@@ -723,7 +725,7 @@ export class NotificationEventListener implements OnModuleInit {
       }
 
       // Get recipients
-      const recipients = rule.recipients(eventPayload);
+      const recipients = await this.resolveRecipients(normalizedEventType, eventPayload, rule);
 
       if (recipients.length === 0) {
         await this.loggingService.log(
@@ -853,6 +855,74 @@ export class NotificationEventListener implements OnModuleInit {
       result.metadata['userId'] = userId;
     }
     return result;
+  }
+
+  private async resolveRecipients(
+    eventType: string,
+    payload: EnterpriseEventPayload,
+    rule: CommunicationRule
+  ): Promise<
+    Array<{
+      userId?: string;
+      email?: string;
+      phoneNumber?: string;
+      deviceToken?: string;
+      socketRoom?: string;
+    }>
+  > {
+    const rawRecipients = rule.recipients(payload);
+
+    if (!eventType.startsWith('appointment.')) {
+      return rawRecipients;
+    }
+
+    const appointmentId = payload.metadata?.['appointmentId'] as string | undefined;
+    if (!appointmentId) {
+      return rawRecipients.filter(recipient => !recipient.userId);
+    }
+
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment) {
+      return rawRecipients.filter(recipient => !recipient.userId);
+    }
+
+    const patientProfileId = appointment.patientId;
+    const doctorProfileId = appointment.doctorId;
+    const patientUserId = appointment.patient?.userId || appointment.patient?.user?.id || undefined;
+    const doctorUserId = appointment.doctor?.userId || appointment.doctor?.user?.id || undefined;
+
+    const resolvedRecipients = rawRecipients
+      .map(recipient => {
+        if (!recipient.userId) {
+          return recipient;
+        }
+
+        if (recipient.userId === patientProfileId && patientUserId) {
+          return {
+            ...recipient,
+            userId: patientUserId,
+            ...(recipient.socketRoom && { socketRoom: `user:${patientUserId}` }),
+          };
+        }
+
+        if (recipient.userId === doctorProfileId && doctorUserId) {
+          return {
+            ...recipient,
+            userId: doctorUserId,
+            ...(recipient.socketRoom && { socketRoom: `user:${doctorUserId}` }),
+          };
+        }
+
+        return recipient;
+      })
+      .filter(
+        recipient =>
+          !recipient.userId ||
+          recipient.userId === patientUserId ||
+          recipient.userId === doctorUserId
+      );
+
+    return resolvedRecipients;
   }
 
   /**

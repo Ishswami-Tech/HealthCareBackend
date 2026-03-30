@@ -3599,6 +3599,17 @@ export class BillingService {
         throw new NotFoundException(`Invoice ${invoiceId} not found`);
       }
 
+      if (invoice.sentViaWhatsApp) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          'Skipping invoice WhatsApp delivery because invoice was already sent',
+          'BillingService',
+          { invoiceId }
+        );
+        return true;
+      }
+
       // Get user details
       const subscriptionUser = invoice.subscription as {
         user?: { phone?: string | null; id: string };
