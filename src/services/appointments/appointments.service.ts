@@ -667,6 +667,123 @@ export class AppointmentsService {
       : {};
   }
 
+  private buildAppointmentScheduleLabel(date: Date | string, time: string): string {
+    const appointmentDate = typeof date === 'string' ? new Date(date) : date;
+    const formattedDate = appointmentDate.toLocaleDateString('en-IN', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+
+    return `${formattedDate} at ${time}`;
+  }
+
+  private async syncPaidAppointmentBillingAfterReschedule(
+    appointment: AppointmentWithRelations,
+    newDate: string,
+    newTime: string,
+    userId: string
+  ): Promise<void> {
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId: appointment.id,
+      clinicId: appointment.clinicId,
+    });
+    const completedPayment =
+      payments
+        .filter(payment => String(payment.status) === 'COMPLETED' && !!payment.invoiceId)
+        .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0] || null;
+
+    if (!completedPayment) {
+      return;
+    }
+
+    const previousSchedule = this.buildAppointmentScheduleLabel(appointment.date, appointment.time);
+    const rescheduledSchedule = this.buildAppointmentScheduleLabel(newDate, newTime);
+    const serviceMetadata = this.getAppointmentServiceMetadata(appointment.treatmentType);
+    const existingPaymentMetadata = this.asMetadataRecord(completedPayment.metadata);
+    const invoice = completedPayment.invoiceId
+      ? await this.databaseService.findInvoiceByIdSafe(completedPayment.invoiceId)
+      : null;
+    const existingInvoiceMetadata = this.asMetadataRecord(invoice?.metadata);
+    const existingLineItems =
+      invoice &&
+      invoice.lineItems &&
+      typeof invoice.lineItems === 'object' &&
+      !Array.isArray(invoice.lineItems) &&
+      'items' in (invoice.lineItems as Record<string, unknown>) &&
+      Array.isArray((invoice.lineItems as Record<string, unknown>)['items'])
+        ? ((invoice.lineItems as Record<string, unknown>)['items'] as Array<
+            Record<string, unknown>
+          >)
+        : [];
+
+    const updatedInvoiceItems =
+      existingLineItems.length > 0
+        ? existingLineItems.map((item, index) => ({
+            ...item,
+            ['description']:
+              index === 0
+                ? `${serviceMetadata.label} Appointment (${rescheduledSchedule})`
+                : item['description'],
+          }))
+        : [
+            {
+              description: `${serviceMetadata.label} Appointment (${rescheduledSchedule})`,
+              quantity: 1,
+              unitPrice: completedPayment.amount,
+              amount: completedPayment.amount,
+            },
+          ];
+
+    await this.databaseService.updatePaymentSafe(completedPayment.id, {
+      metadata: {
+        ...existingPaymentMetadata,
+        appointmentDate: newDate,
+        appointmentTime: newTime,
+        rescheduledAt: new Date().toISOString(),
+        previousAppointmentDate: appointment.date.toISOString(),
+        previousAppointmentTime: appointment.time,
+        billingSyncUpdatedBy: userId,
+      },
+    });
+
+    if (completedPayment.invoiceId) {
+      await this.billingService.updateInvoice(completedPayment.invoiceId, {
+        description: `Payment for ${serviceMetadata.label} appointment on ${rescheduledSchedule}`,
+        lineItems: {
+          items: updatedInvoiceItems,
+        },
+        metadata: {
+          ...existingInvoiceMetadata,
+          appointmentId: appointment.id,
+          appointmentType: appointment.type,
+          appointmentDate: newDate,
+          appointmentTime: newTime,
+          previousAppointmentDate: appointment.date.toISOString(),
+          previousAppointmentTime: appointment.time,
+          previousSchedule,
+          rescheduledSchedule,
+          rescheduledAt: new Date().toISOString(),
+          billingSyncUpdatedBy: userId,
+        },
+      });
+    }
+
+    await this.loggingService.log(
+      LogType.PAYMENT,
+      LogLevel.INFO,
+      'Synchronized paid appointment billing after reschedule',
+      'AppointmentsService',
+      {
+        appointmentId: appointment.id,
+        paymentId: completedPayment.id,
+        invoiceId: completedPayment.invoiceId,
+        previousSchedule,
+        rescheduledSchedule,
+      }
+    );
+  }
+
   private mapCoverageAssignmentsToEntries(
     assignments: AssistantDoctorCoverageAssignmentRecord[]
   ): AssistantDoctorCoverageEntry[] {
@@ -1668,6 +1785,8 @@ export class AppointmentsService {
         lastRescheduledAt: new Date(),
       },
     });
+
+    await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 
     // Notify
     await this.eventService.emit('appointment.rescheduled', {

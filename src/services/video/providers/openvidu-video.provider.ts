@@ -369,6 +369,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
       const token = connectionResponse.data.token;
       const meetingUrl = `${this.apiUrl}/#/sessions/${session.id}?token=${token}`;
+      const auditUserId = appointment.doctor?.userId || userId;
 
       await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -398,7 +399,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
           }
         },
         {
-          userId: appointment.doctorId,
+          userId: auditUserId,
           userRole: 'DOCTOR',
           clinicId: appointment.clinicId,
           operation: 'CREATE_VIDEO_CONSULTATION',
