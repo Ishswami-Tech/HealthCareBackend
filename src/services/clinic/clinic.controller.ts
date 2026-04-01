@@ -319,7 +319,16 @@ export class ClinicController {
 
   @Get('my-clinic')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST)
+  @Roles(
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.RECEPTIONIST
+  )
   @RequireResourcePermission('clinics', 'read')
   @Cache({
     keyTemplate: 'clinic:my:{userId}',
@@ -475,7 +484,17 @@ export class ClinicController {
 
   @Get(':id/operating-hours')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.PATIENT
+  )
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @ApiOperation({
     summary: 'Get clinic operating hours',
@@ -735,7 +754,15 @@ export class ClinicController {
 
   @Get(':id/doctors')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.PATIENT
+  )
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'clinic:{id}:doctors',
@@ -827,7 +854,14 @@ export class ClinicController {
 
   @Get(':id/patients')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE
+  )
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'clinic:{id}:patients',

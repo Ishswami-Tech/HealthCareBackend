@@ -172,10 +172,15 @@ export class QueueController {
   @Get()
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
-    Role.CLINIC_LOCATION_HEAD
+    Role.CLINIC_LOCATION_HEAD,
+    Role.PATIENT
   )
   @ApiOperation({ summary: 'List queue entries' })
   async listQueue(
@@ -225,6 +230,9 @@ export class QueueController {
   @Post('add')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -286,10 +294,13 @@ export class QueueController {
   @Patch(':patientId/status')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
-    Role.CLINIC_LOCATION_HEAD
+    Role.CLINIC_LOCATION_HEAD,
+    Role.THERAPIST,
+    Role.COUNSELOR
   )
   @ApiOperation({ summary: 'Update queue status' })
   async updateQueueStatus(
@@ -353,9 +364,45 @@ export class QueueController {
     };
   }
 
+  @Patch(':entryId/transfer')
+  @Roles(
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.CLINIC_LOCATION_HEAD
+  )
+  @ApiOperation({ summary: 'Transfer patient to a different queue (logical queue move)' })
+  async transferQueueEntry(
+    @Param('entryId') entryId: string,
+    @Body() body: { targetQueue: string; treatmentType?: string; notes?: string },
+    @Req() req: ClinicAuthenticatedRequest
+  ): Promise<{ success: true; data: unknown; message: string }> {
+    this.requireString(entryId, 'entryId');
+    this.requireString(body.targetQueue, 'targetQueue');
+    const clinicId = this.requireClinicId(req);
+    const domain = 'clinic' as const;
+
+    const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.transfer', {
+      entryId,
+      targetQueue: body.targetQueue.toUpperCase(),
+      treatmentType: body.treatmentType,
+      notes: body.notes,
+      clinicId,
+      domain,
+    });
+
+    return {
+      success: true,
+      data: { jobId: job.id },
+      message: `Patient transfer to ${body.targetQueue} enqueued`,
+    };
+  }
+
   @Post('call-next')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -450,6 +497,9 @@ export class QueueController {
   @Get('stats')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -475,6 +525,9 @@ export class QueueController {
   @Get('history')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
@@ -491,6 +544,9 @@ export class QueueController {
   @Get('analytics')
   @Roles(
     Role.DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
     Role.RECEPTIONIST,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,

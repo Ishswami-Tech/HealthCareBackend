@@ -1,9 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
-import { HealthRecordType } from '@core/types/enums.types';
+import { HealthRecordType, Role } from '@core/types/enums.types';
 import { AuditInfo } from '@core/types/database.types';
 
 interface MulterFile {
@@ -327,6 +327,57 @@ export class PatientsService {
     });
   }
 
+  async getPatientRecordForClinic(
+    patientIdentifier: string,
+    clinicId: string
+  ): Promise<{ id: string; userId: string } | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+        patient: {
+          findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+        };
+      };
+
+      const patient = (await typedClient.patient.findFirst({
+        where: {
+          OR: [{ id: patientIdentifier }, { userId: patientIdentifier }],
+        } as PrismaDelegateArgs,
+        select: {
+          id: true,
+          userId: true,
+          user: {
+            select: {
+              primaryClinicId: true,
+            },
+          },
+          appointments: {
+            where: { clinicId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+            take: 1,
+          },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as {
+        id: string;
+        userId: string;
+        user?: { primaryClinicId?: string | null } | null;
+        appointments?: Array<{ id: string }>;
+      } | null;
+
+      if (!patient) {
+        return null;
+      }
+
+      const belongsToClinic =
+        patient.user?.primaryClinicId === clinicId || (patient.appointments?.length || 0) > 0;
+
+      if (!belongsToClinic) {
+        return null;
+      }
+
+      return { id: patient.id, userId: patient.userId };
+    });
+  }
+
   async getPatientProfile(userId: string) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
@@ -448,6 +499,20 @@ export class PatientsService {
    * Upload patient document and create health record
    */
   async uploadPatientDocument(patientId: string, file: MulterFile, auditInfo: AuditInfo) {
+    const scopedPatient = await this.getPatientRecordForClinic(patientId, auditInfo.clinicId);
+
+    if (!scopedPatient) {
+      throw new ForbiddenException('Patient does not belong to your clinic');
+    }
+
+    if (
+      auditInfo.userRole === String(Role.PATIENT) &&
+      auditInfo.userId &&
+      scopedPatient.userId !== auditInfo.userId
+    ) {
+      throw new ForbiddenException('You can only upload documents to your own record');
+    }
+
     const fileName = `doc-${patientId}-${Date.now()}`;
     const asset = await this.staticAssetService.uploadFile(
       file.buffer,
@@ -464,7 +529,7 @@ export class PatientsService {
         };
         return await typedClient.healthRecord.create({
           data: {
-            patientId,
+            patientId: scopedPatient.id,
             recordType: HealthRecordType.GENERAL_DOCUMENT,
             fileUrl: asset.url,
             clinicId: auditInfo.clinicId,
@@ -492,7 +557,7 @@ export class PatientsService {
         insurance: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
       };
       return await typedClient.insurance.findMany({
-        where: { patientId } as PrismaDelegateArgs,
+        where: { userId: patientId } as PrismaDelegateArgs,
         orderBy: { createdAt: 'desc' } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
     });

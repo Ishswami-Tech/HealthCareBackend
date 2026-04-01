@@ -3373,60 +3373,62 @@ export class AppointmentsService {
         clinicId,
         locationId,
       };
-
-      // Query for CONFIRMED appointments
-      const confirmedFilters: AppointmentFilterDto = {
-        patientId: userId,
-        locationId,
-        clinicId,
-        startDate: today.toISOString(),
-        status: AppointmentStatus.CONFIRMED,
-      };
-
-      const confirmedResult = await this.coreAppointmentService.getAppointments(
-        confirmedFilters,
-        context,
-        1,
-        10
+      const patient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+      const patientIdentifiers = Array.from(
+        new Set([userId, patient?.id].filter((value): value is string => Boolean(value)))
       );
 
-      // Query for SCHEDULED appointments
-      const scheduledFilters: AppointmentFilterDto = {
-        patientId: userId,
-        locationId,
-        clinicId,
-        startDate: today.toISOString(),
-        status: AppointmentStatus.SCHEDULED,
-      };
-
-      const scheduledResult = await this.coreAppointmentService.getAppointments(
-        scheduledFilters,
-        context,
-        1,
-        10
-      );
-
-      // Combine results
       const allAppointments: AppointmentWithRelations[] = [];
 
-      if (confirmedResult.success && confirmedResult.data) {
-        const confirmedAppointments = (
-          confirmedResult.data as { appointments: AppointmentWithRelations[] }
-        ).appointments;
-        allAppointments.push(...confirmedAppointments);
+      for (const patientId of patientIdentifiers) {
+        const confirmedFilters: AppointmentFilterDto = {
+          patientId,
+          locationId,
+          clinicId,
+          startDate: today.toISOString(),
+          status: AppointmentStatus.CONFIRMED,
+        };
+
+        const confirmedResult = await this.coreAppointmentService.getAppointments(
+          confirmedFilters,
+          context,
+          1,
+          10
+        );
+
+        if (confirmedResult.success && confirmedResult.data) {
+          const confirmedAppointments = (
+            confirmedResult.data as { appointments: AppointmentWithRelations[] }
+          ).appointments;
+          allAppointments.push(...confirmedAppointments);
+        }
+
+        const scheduledFilters: AppointmentFilterDto = {
+          patientId,
+          locationId,
+          clinicId,
+          startDate: today.toISOString(),
+          status: AppointmentStatus.SCHEDULED,
+        };
+
+        const scheduledResult = await this.coreAppointmentService.getAppointments(
+          scheduledFilters,
+          context,
+          1,
+          10
+        );
+
+        if (scheduledResult.success && scheduledResult.data) {
+          const scheduledAppointments = (
+            scheduledResult.data as { appointments: AppointmentWithRelations[] }
+          ).appointments;
+          allAppointments.push(...scheduledAppointments);
+        }
       }
 
-      if (scheduledResult.success && scheduledResult.data) {
-        const scheduledAppointments = (
-          scheduledResult.data as { appointments: AppointmentWithRelations[] }
-        ).appointments;
-        allAppointments.push(...scheduledAppointments);
-      }
-
-      // Filter for valid appointments: arrival not already confirmed and date is today or future
-      const validAppointments = allAppointments.filter(
-        apt => !apt.checkedInAt && new Date(apt.date) >= today
-      );
+      // Keep already-confirmed appointments so the controller can return queue-status
+      // responses on re-scan; only exclude past appointments here.
+      const validAppointments = allAppointments.filter(apt => new Date(apt.date) >= today);
 
       // Remove duplicates (in case same appointment appears in both queries)
       const uniqueAppointments = validAppointments.filter(

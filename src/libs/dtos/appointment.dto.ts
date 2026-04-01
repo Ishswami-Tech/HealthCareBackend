@@ -1316,6 +1316,11 @@ export class StartConsultationDto {
  * @class AppointmentFilterDto
  */
 export class AppointmentFilterDto {
+  @ApiPropertyOptional({ description: 'Specific date (YYYY-MM-DD)', required: false })
+  @IsOptional()
+  @IsDateString({}, { message: 'Date must be a valid date string' })
+  date?: string;
+
   @ApiPropertyOptional({ description: 'Start date', required: false })
   @IsOptional()
   @IsDateString({}, { message: 'Start date must be a valid date string' })

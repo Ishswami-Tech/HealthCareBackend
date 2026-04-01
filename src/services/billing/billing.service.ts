@@ -69,6 +69,12 @@ type AppointmentsServiceLike = {
   getAppointmentServiceCatalog: () => AppointmentServiceMetadataDto[];
 };
 
+type BillingAccessContext = {
+  userId?: string;
+  role?: string;
+  clinicId?: string;
+};
+
 @Injectable()
 export class BillingService {
   private appointmentsServiceRef: AppointmentsServiceLike | null = null;
@@ -87,6 +93,27 @@ export class BillingService {
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
   ) {}
+
+  private assertBillingEntityAccess(
+    entity: { clinicId?: string | null; userId?: string | null },
+    requester?: BillingAccessContext
+  ): void {
+    if (!requester) {
+      return;
+    }
+
+    if (requester.role === 'SUPER_ADMIN') {
+      return;
+    }
+
+    if (requester.role === 'PATIENT' && requester.userId && entity.userId !== requester.userId) {
+      throw new NotFoundException('Billing record not found');
+    }
+
+    if (requester.clinicId && entity.clinicId !== requester.clinicId) {
+      throw new NotFoundException('Billing record not found');
+    }
+  }
 
   private getAppointmentsService(): AppointmentsServiceLike {
     if (!this.appointmentsServiceRef) {
@@ -517,7 +544,65 @@ export class BillingService {
 
   // ============ Subscriptions ============
 
-  async createSubscription(data: CreateSubscriptionDto) {
+  async createSubscription(data: CreateSubscriptionDto, requester?: BillingAccessContext) {
+    this.assertBillingEntityAccess(
+      {
+        clinicId: data.clinicId,
+        userId: data.userId,
+      },
+      requester
+    );
+
+    if (requester?.role && requester.role !== 'SUPER_ADMIN' && requester.clinicId) {
+      const patientBelongsToClinic = await this.databaseService.executeHealthcareRead(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            user: {
+              findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+            };
+            patient: {
+              findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+            };
+            appointment: {
+              findFirst: (args: PrismaDelegateArgs) => Promise<unknown>;
+            };
+          };
+
+          const user = (await typedClient.user.findUnique({
+            where: { id: data.userId } as PrismaDelegateArgs,
+            select: { primaryClinicId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as { primaryClinicId?: string | null } | null;
+
+          if (user?.primaryClinicId === requester.clinicId) {
+            return true;
+          }
+
+          const patient = (await typedClient.patient.findUnique({
+            where: { userId: data.userId } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as { id: string } | null;
+
+          if (!patient) {
+            return false;
+          }
+
+          const appointment = await typedClient.appointment.findFirst({
+            where: {
+              patientId: patient.id,
+              clinicId: requester.clinicId,
+            } as PrismaDelegateArgs,
+            select: { id: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          return !!appointment;
+        }
+      );
+
+      if (!patientBelongsToClinic) {
+        throw new NotFoundException('Patient not found');
+      }
+    }
+
     const plan = await this.getBillingPlan(data.planId);
     const existingSubscriptions = await this.databaseService.findSubscriptionsSafe({
       userId: data.userId,
@@ -673,7 +758,7 @@ export class BillingService {
     );
   }
 
-  async getSubscription(id: string) {
+  async getSubscription(id: string, requester?: BillingAccessContext) {
     const cacheKey = `billing_subscription:${id}`;
 
     return this.cacheService.cache(
@@ -685,6 +770,7 @@ export class BillingService {
           throw new NotFoundException(`Subscription with ID ${id} not found`);
         }
 
+        this.assertBillingEntityAccess(subscription, requester);
         return subscription;
       },
       {
@@ -695,7 +781,12 @@ export class BillingService {
     );
   }
 
-  async updateSubscription(id: string, data: UpdateSubscriptionDto) {
+  async updateSubscription(
+    id: string,
+    data: UpdateSubscriptionDto,
+    requester?: BillingAccessContext
+  ) {
+    const existingSubscription = await this.getSubscription(id, requester);
     const updateData: SubscriptionUpdateInput = {
       ...(data.status && { status: data.status }),
       ...(data.endDate && { endDate: new Date(data.endDate) }),
@@ -720,13 +811,19 @@ export class BillingService {
     await this.eventService.emit('billing.subscription.updated', {
       subscriptionId: id,
     });
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.cacheService.invalidateCacheByTag(
+      `user_subscriptions:${existingSubscription.userId}`
+    );
 
     return subscription;
   }
 
-  async cancelSubscription(id: string, immediate: boolean = false) {
-    const subscription = await this.getSubscription(id);
+  async cancelSubscription(
+    id: string,
+    immediate: boolean = false,
+    requester?: BillingAccessContext
+  ) {
+    const subscription = await this.getSubscription(id, requester);
 
     const updateData: {
       cancelledAt: Date;
@@ -767,8 +864,8 @@ export class BillingService {
   /**
    * Manually renew subscription (public method for admin use)
    */
-  async renewSubscription(id: string) {
-    const subscription = await this.getSubscription(id);
+  async renewSubscription(id: string, requester?: BillingAccessContext) {
+    const subscription = await this.getSubscription(id, requester);
 
     if (String(subscription.status) === 'ACTIVE') {
       throw new BadRequestException('Subscription is already active');
@@ -1090,28 +1187,25 @@ export class BillingService {
     );
   }
 
-  async getInvoice(id: string) {
+  async getInvoice(id: string, requester?: BillingAccessContext) {
     const invoice = await this.databaseService.findInvoiceByIdSafe(id);
 
     if (!invoice) {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
     }
 
+    this.assertBillingEntityAccess(invoice, requester);
     return invoice;
   }
 
-  async updateInvoice(id: string, data: UpdateInvoiceDto) {
+  async updateInvoice(id: string, data: UpdateInvoiceDto, requester?: BillingAccessContext) {
+    const existingInvoice = await this.getInvoice(id, requester);
     const updateData: UpdateInvoiceDto & { totalAmount?: number } = { ...data };
 
     if (data.amount !== undefined || data.tax !== undefined || data.discount !== undefined) {
-      const invoice = await this.databaseService.findInvoiceByIdSafe(id);
-      if (!invoice) {
-        throw new NotFoundException(`Invoice with ID ${id} not found`);
-      }
-
-      const amount = data.amount ?? invoice.amount;
-      const tax = data.tax ?? invoice.tax ?? 0;
-      const discount = data.discount ?? invoice.discount ?? 0;
+      const amount = data.amount ?? existingInvoice.amount;
+      const tax = data.tax ?? existingInvoice.tax ?? 0;
+      const discount = data.discount ?? existingInvoice.discount ?? 0;
       updateData.totalAmount = amount + tax - discount;
     }
 
@@ -1155,7 +1249,8 @@ export class BillingService {
     return invoice;
   }
 
-  async markInvoiceAsPaid(id: string) {
+  async markInvoiceAsPaid(id: string, requester?: BillingAccessContext) {
+    const existingInvoice = await this.getInvoice(id, requester);
     const invoice = await this.databaseService.updateInvoiceSafe(id, {
       status: InvoiceStatus.PAID,
       paidAt: new Date(),
@@ -1170,7 +1265,7 @@ export class BillingService {
     );
 
     await this.eventService.emit('billing.invoice.paid', { invoiceId: id });
-    await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
+    await this.cacheService.invalidateCacheByTag(`user_invoices:${existingInvoice.userId}`);
 
     return invoice;
   }
@@ -1336,7 +1431,8 @@ export class BillingService {
     }
   }
 
-  async updatePayment(id: string, data: UpdatePaymentDto) {
+  async updatePayment(id: string, data: UpdatePaymentDto, requester?: BillingAccessContext) {
+    const existingPayment = await this.getPayment(id, requester);
     const payment = await this.databaseService.updatePaymentSafe(id, {
       ...data,
       ...(data.refundAmount !== undefined && { refundedAt: new Date() }),
@@ -1381,8 +1477,8 @@ export class BillingService {
     }
 
     // Invalidate cache if payment has userId
-    if ('userId' in payment && payment.userId) {
-      await this.cacheService.invalidateCacheByTag(`user_payments:${payment.userId}`);
+    if (existingPayment.userId) {
+      await this.cacheService.invalidateCacheByTag(`user_payments:${existingPayment.userId}`);
     }
 
     // Auto-update invoice if payment is linked to one
@@ -1654,13 +1750,20 @@ export class BillingService {
     };
   }
 
-  async getPayment(id: string) {
+  async getPayment(id: string, requester?: BillingAccessContext) {
     const payment = await this.databaseService.findPaymentByIdSafe(id);
 
     if (!payment) {
       throw new NotFoundException(`Payment with ID ${id} not found`);
     }
 
+    this.assertBillingEntityAccess(
+      {
+        clinicId: payment.clinicId,
+        userId: payment.userId ?? payment.invoice?.userId ?? null,
+      },
+      requester
+    );
     return payment;
   }
 
@@ -1924,13 +2027,10 @@ export class BillingService {
    */
   async processSubscriptionPayment(
     subscriptionId: string,
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    requester?: BillingAccessContext
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
-    const subscription = await this.databaseService.findSubscriptionByIdSafe(subscriptionId);
-
-    if (!subscription) {
-      throw new NotFoundException('Subscription not found');
-    }
+    const subscription = await this.getSubscription(subscriptionId, requester);
 
     if (!subscription.plan) {
       throw new BadRequestException('Subscription plan not found');
@@ -2076,7 +2176,8 @@ export class BillingService {
   async processAppointmentPayment(
     appointmentId: string,
     appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT',
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    requester?: BillingAccessContext
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
     if (appointmentType !== 'VIDEO_CALL') {
       throw new BadRequestException('Only VIDEO_CALL appointments require per-appointment payment');
@@ -2087,6 +2188,11 @@ export class BillingService {
     if (!appointment) {
       throw new NotFoundException('Appointment not found');
     }
+
+    this.assertBillingEntityAccess(
+      { clinicId: appointment.clinicId, userId: appointment.patientId },
+      requester
+    );
 
     if (String(appointment.type) !== appointmentType) {
       throw new BadRequestException(
@@ -2310,13 +2416,10 @@ export class BillingService {
 
   async processInvoicePayment(
     invoiceId: string,
-    provider?: PaymentProvider
+    provider?: PaymentProvider,
+    requester?: BillingAccessContext
   ): Promise<{ invoice: unknown; paymentIntent: PaymentResult }> {
-    const invoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
-
-    if (!invoice) {
-      throw new NotFoundException('Invoice not found');
-    }
+    const invoice = await this.getInvoice(invoiceId, requester);
 
     const invoiceStatus = String(invoice.status);
 
@@ -3245,8 +3348,8 @@ export class BillingService {
     return subscription;
   }
 
-  async getSubscriptionUsageStats(subscriptionId: string) {
-    const subscription = await this.getSubscription(subscriptionId);
+  async getSubscriptionUsageStats(subscriptionId: string, requester?: BillingAccessContext) {
+    const subscription = await this.getSubscription(subscriptionId, requester);
 
     const appointments = await this.databaseService.findAppointmentsSafe({
       subscriptionId,
@@ -3269,8 +3372,8 @@ export class BillingService {
     };
   }
 
-  async resetSubscriptionQuota(subscriptionId: string) {
-    const subscription = await this.getSubscription(subscriptionId);
+  async resetSubscriptionQuota(subscriptionId: string, requester?: BillingAccessContext) {
+    const subscription = await this.getSubscription(subscriptionId, requester);
 
     // Reset quota for new period
     const appointmentsRemaining = subscription.plan?.isUnlimitedAppointments

@@ -462,7 +462,16 @@ export class VideoController {
    */
   @Post('token')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN
+  )
   @ClinicRoute()
   @RequireResourcePermission('video', 'create')
   @ApiOperation({
@@ -569,7 +578,7 @@ export class VideoController {
    */
   @Post('consultation/start')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.THERAPIST, Role.COUNSELOR)
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({
@@ -680,7 +689,7 @@ export class VideoController {
    */
   @Post('consultation/end')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.THERAPIST, Role.COUNSELOR)
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({
@@ -797,7 +806,16 @@ export class VideoController {
    */
   @Get('consultation/:appointmentId/status')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN
+  )
   @ClinicRoute()
   @RequireResourcePermission('video', 'read', { requireOwnership: true })
   @Cache({
@@ -986,7 +1004,15 @@ export class VideoController {
    */
   @Get('history')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.CLINIC_ADMIN
+  )
   @ClinicRoute()
   @RequireResourcePermission('video', 'read')
   @Cache({

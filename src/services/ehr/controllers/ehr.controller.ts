@@ -65,7 +65,14 @@ export class EHRController {
   // ============ Comprehensive Health Record ============
 
   @Get('comprehensive/:userId')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:comprehensive:{userId}',
@@ -85,7 +92,14 @@ export class EHRController {
   }
 
   @Get(':patientId/summary')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @RequireResourcePermission('ehr', 'read', { requireOwnership: true })
   async getEHRAISummary(@Param('patientId') patientId: string): Promise<EHRAISummaryDto> {
     // Summary might cross-reference, but usually we want comprehensive.
@@ -115,7 +129,7 @@ export class EHRController {
   // ============ Medical History ============
 
   @Post('medical-history')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'create')
   async createMedicalHistory(
     @Body() createDto: CreateMedicalHistoryDto,
@@ -131,7 +145,14 @@ export class EHRController {
   }
 
   @Get('medical-history/:userId')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.PATIENT,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN
+  )
   @RequireResourcePermission('medical-records', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'ehr:medical-history:{userId}',
@@ -151,7 +172,7 @@ export class EHRController {
   }
 
   @Put('medical-history/:id')
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
   @RequireResourcePermission('medical-records', 'update')
   async updateMedicalHistory(
     @Param('id') id: string,
@@ -205,6 +226,7 @@ export class EHRController {
   @Roles(
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
     Role.PATIENT,
     Role.CLINIC_ADMIN,
     Role.SUPER_ADMIN,
