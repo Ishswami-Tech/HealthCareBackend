@@ -12,8 +12,29 @@ import type { FastifyRequestWithUser, JwtGuardUser } from '@core/types/guard.typ
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogLevel, LogType } from '@core/types';
+import { Role } from '@core/types/enums.types';
 import { REQUIRES_PROFILE_COMPLETION_KEY } from '@core/decorators/profile-completion.decorator';
 import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
+
+/**
+ * Staff operational roles that are pre-validated by clinic admin.
+ * Profile completion enforcement only applies to PATIENT onboarding.
+ */
+const STAFF_ROLES: ReadonlySet<string> = new Set([
+  Role.RECEPTIONIST,
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+  Role.NURSE,
+  Role.PHARMACIST,
+  Role.THERAPIST,
+  Role.COUNSELOR,
+  Role.LAB_TECHNICIAN,
+  Role.FINANCE_BILLING,
+  Role.SUPPORT_STAFF,
+  Role.CLINIC_ADMIN,
+  Role.CLINIC_LOCATION_HEAD,
+  Role.SUPER_ADMIN,
+]);
 
 /**
  * Profile Completion Guard
@@ -85,6 +106,11 @@ export class ProfileCompletionGuard implements CanActivate {
 
       if (!dbUser) {
         throw new UnauthorizedException('User not found');
+      }
+
+      // Staff operational roles are pre-validated by clinic admin — skip profile completion enforcement
+      if (dbUser.role && STAFF_ROLES.has(dbUser.role)) {
+        return true;
       }
 
       // Database flag is the authoritative source for profile completion in auth flows.

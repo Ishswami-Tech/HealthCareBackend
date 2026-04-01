@@ -590,6 +590,8 @@ export class RbacService {
       ],
       RECEPTIONIST: [
         'appointments:*',
+        'users:read',
+        'users:create',
         'patients:read',
         'patients:create',
         'patients:update',
@@ -601,6 +603,9 @@ export class RbacService {
         'invoices:read',
         'payments:read',
         'payments:create',
+        'subscriptions:read',
+        'subscriptions:create',
+        'subscriptions:update',
         'scheduling:*',
         'video:read',
         'video:create',
@@ -609,6 +614,7 @@ export class RbacService {
         'notifications:create',
         'medical-records:read',
         'prescriptions:read',
+        'prescriptions:update',
         'profile:read',
         'profile:update',
       ],
@@ -722,13 +728,26 @@ export class RbacService {
       ],
     };
 
-    const permissions = rolePermissions[roleName] || [];
-    const requiredPermission = `${resource}:${action}`;
+    const normalizedRole = roleName.trim().toUpperCase();
+    const normalizedResource = resource.trim().toLowerCase();
+    const normalizedAction = action.trim().toLowerCase();
 
-    return permissions.some(
-      permission =>
-        permission === requiredPermission || permission === `${resource}:*` || permission === '*'
-    );
+    const permissions = rolePermissions[normalizedRole] || rolePermissions[roleName] || [];
+    const requiredPermission = `${normalizedResource}:${normalizedAction}`;
+
+    if (permissions.length === 0 && this.loggingService) {
+      void this.loggingService.log(
+        LogType.SECURITY,
+        LogLevel.DEBUG,
+        `No role-based permissions found for role: ${roleName} (normalized: ${normalizedRole})`,
+        'RbacService.checkRolePermission'
+      );
+    }
+
+    return permissions.some(permission => {
+      const p = permission.toLowerCase();
+      return p === requiredPermission || p === `${normalizedResource}:*` || p === '*';
+    });
   }
 
   /**
@@ -1122,6 +1141,8 @@ export class RbacService {
       ],
       RECEPTIONIST: [
         'appointments:*',
+        'users:read',
+        'users:create',
         'patients:read',
         'patients:create',
         'patients:update',
@@ -1133,6 +1154,9 @@ export class RbacService {
         'invoices:read',
         'payments:read',
         'payments:create',
+        'subscriptions:read',
+        'subscriptions:create',
+        'subscriptions:update',
         'scheduling:*',
         'video:read',
         'video:create',
@@ -1141,6 +1165,7 @@ export class RbacService {
         'notifications:create',
         'medical-records:read',
         'prescriptions:read',
+        'prescriptions:update',
         'profile:read',
         'profile:update',
       ],

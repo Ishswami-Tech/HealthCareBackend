@@ -14,6 +14,7 @@ import {
   Res,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Request,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
@@ -138,6 +139,14 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD,
     Role.PATIENT
   )
   @RequireResourcePermission('billing', 'read')
@@ -162,7 +171,16 @@ export class BillingController {
     Role.CLINIC_ADMIN,
     Role.FINANCE_BILLING,
     Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD,
+    Role.PATIENT
   )
   @RequireResourcePermission('billing', 'read')
   @Cache({
@@ -204,10 +222,26 @@ export class BillingController {
   // ============ Subscriptions ============
 
   @Post('subscriptions')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.PATIENT, Role.RECEPTIONIST)
   @RequireResourcePermission('subscriptions', 'create')
-  async createSubscription(@Body() createSubscriptionDto: CreateSubscriptionDto) {
-    return this.billingService.createSubscription(createSubscriptionDto);
+  async createSubscription(
+    @Body() createSubscriptionDto: CreateSubscriptionDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const role = req?.user?.['role'] as Role | undefined;
+    const clinicId = req?.clinicContext?.clinicId;
+
+    if (role && role !== Role.PATIENT && clinicId && createSubscriptionDto.clinicId !== clinicId) {
+      throw new ForbiddenException('Cannot create subscriptions for a different clinic');
+    }
+
+    return this.billingService.createSubscription(
+      {
+        ...createSubscriptionDto,
+        ...(role && role !== Role.PATIENT && clinicId ? { clinicId } : {}),
+      },
+      this.buildBillingAccessContext(req)
+    );
   }
 
   @Get('subscriptions/user/:userId')
@@ -260,29 +294,44 @@ export class BillingController {
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getSubscription(@Param('id') id: string) {
-    return this.billingService.getSubscription(id);
+  async getSubscription(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return this.billingService.getSubscription(id, this.buildBillingAccessContext(req));
   }
 
   @Put('subscriptions/:id')
   @RequireResourcePermission('subscriptions', 'update')
   async updateSubscription(
     @Param('id') id: string,
-    @Body() updateSubscriptionDto: UpdateSubscriptionDto
+    @Body() updateSubscriptionDto: UpdateSubscriptionDto,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
-    return this.billingService.updateSubscription(id, updateSubscriptionDto);
+    return this.billingService.updateSubscription(
+      id,
+      updateSubscriptionDto,
+      this.buildBillingAccessContext(req)
+    );
   }
 
   @Post('subscriptions/:id/cancel')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'delete')
-  async cancelSubscription(@Param('id') id: string, @Query('immediate') immediate?: string) {
-    return this.billingService.cancelSubscription(id, immediate === 'true');
+  async cancelSubscription(
+    @Param('id') id: string,
+    @Query('immediate') immediate?: string,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    return this.billingService.cancelSubscription(
+      id,
+      immediate === 'true',
+      this.buildBillingAccessContext(req)
+    );
   }
 
   @Post('subscriptions/:id/renew')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'update')
-  async renewSubscription(@Param('id') id: string) {
-    return this.billingService.renewSubscription(id);
+  async renewSubscription(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return this.billingService.renewSubscription(id, this.buildBillingAccessContext(req));
   }
 
   // ============ Invoices ============
@@ -301,7 +350,15 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.PATIENT,
     Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD
   )
   @RequireResourcePermission('invoices', 'read', { requireOwnership: true })
   @Cache({
@@ -350,7 +407,14 @@ export class BillingController {
     Role.PATIENT,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
-    Role.RECEPTIONIST
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD
   )
   @RequireResourcePermission('invoices', 'read')
   @Cache({
@@ -361,22 +425,30 @@ export class BillingController {
     containsPHI: true,
   })
   @RateLimitAPI()
-  async getInvoice(@Param('id') id: string) {
-    return this.billingService.getInvoice(id);
+  async getInvoice(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return this.billingService.getInvoice(id, this.buildBillingAccessContext(req));
   }
 
   @Put('invoices/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('invoices', 'update')
-  async updateInvoice(@Param('id') id: string, @Body() updateInvoiceDto: UpdateInvoiceDto) {
-    return this.billingService.updateInvoice(id, updateInvoiceDto);
+  async updateInvoice(
+    @Param('id') id: string,
+    @Body() updateInvoiceDto: UpdateInvoiceDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    return this.billingService.updateInvoice(
+      id,
+      updateInvoiceDto,
+      this.buildBillingAccessContext(req)
+    );
   }
 
   @Post('invoices/:id/mark-paid')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('invoices', 'update')
-  async markInvoiceAsPaid(@Param('id') id: string) {
-    return this.billingService.markInvoiceAsPaid(id);
+  async markInvoiceAsPaid(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return this.billingService.markInvoiceAsPaid(id, this.buildBillingAccessContext(req));
   }
 
   // ============ Payments ============
@@ -395,7 +467,15 @@ export class BillingController {
     Role.FINANCE_BILLING,
     Role.PATIENT,
     Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR
+    Role.ASSISTANT_DOCTOR,
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD
   )
   @RequireResourcePermission('payments', 'read', { requireOwnership: true })
   @Cache({
@@ -519,7 +599,14 @@ export class BillingController {
     Role.PATIENT,
     Role.DOCTOR,
     Role.ASSISTANT_DOCTOR,
-    Role.RECEPTIONIST
+    Role.RECEPTIONIST,
+    Role.NURSE,
+    Role.PHARMACIST,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.LAB_TECHNICIAN,
+    Role.SUPPORT_STAFF,
+    Role.CLINIC_LOCATION_HEAD
   )
   @RequireResourcePermission('payments', 'read')
   @Cache({
@@ -529,15 +616,23 @@ export class BillingController {
     enableSWR: true,
     containsPHI: true,
   })
-  async getPayment(@Param('id') id: string) {
-    return this.billingService.getPayment(id);
+  async getPayment(@Param('id') id: string, @Request() req?: ClinicAuthenticatedRequest) {
+    return this.billingService.getPayment(id, this.buildBillingAccessContext(req));
   }
 
   @Put('payments/:id')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.FINANCE_BILLING)
   @RequireResourcePermission('payments', 'update')
-  async updatePayment(@Param('id') id: string, @Body() updatePaymentDto: UpdatePaymentDto) {
-    return this.billingService.updatePayment(id, updatePaymentDto);
+  async updatePayment(
+    @Param('id') id: string,
+    @Body() updatePaymentDto: UpdatePaymentDto,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    return this.billingService.updatePayment(
+      id,
+      updatePaymentDto,
+      this.buildBillingAccessContext(req)
+    );
   }
 
   /**
@@ -872,23 +967,37 @@ export class BillingController {
    * Process subscription payment (monthly for in-person appointments)
    */
   @Post('subscriptions/:id/process-payment')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.PATIENT, Role.RECEPTIONIST)
   @RequireResourcePermission('payments', 'create')
   async processSubscriptionPayment(
     @Param('id') subscriptionId: string,
-    @Query('provider') provider?: string
+    @Query('provider') provider?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
     const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.processSubscriptionPayment(
       subscriptionId,
-      paymentProvider
+      paymentProvider,
+      this.buildBillingAccessContext(req)
     );
     return {
       success: true,
       invoice: result.invoice,
       paymentIntent: result.paymentIntent,
       message: 'Payment intent created successfully. Redirect user to payment gateway.',
+    };
+  }
+
+  private buildBillingAccessContext(req?: ClinicAuthenticatedRequest) {
+    const userId = req?.user?.['sub'] ?? req?.user?.['id'];
+    const role = req?.user?.['role'];
+    const clinicId = req?.clinicContext?.clinicId;
+
+    return {
+      ...(userId ? { userId } : {}),
+      ...(role ? { role } : {}),
+      ...(clinicId ? { clinicId } : {}),
     };
   }
 
@@ -901,14 +1010,16 @@ export class BillingController {
   async processAppointmentPayment(
     @Param('id') appointmentId: string,
     @Body() body: { appointmentType: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT' },
-    @Query('provider') provider?: string
+    @Query('provider') provider?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
     const paymentProvider = this.parsePaymentProvider(provider);
 
     const result = await this.billingService.processAppointmentPayment(
       appointmentId,
       body.appointmentType,
-      paymentProvider
+      paymentProvider,
+      this.buildBillingAccessContext(req)
     );
     return {
       success: true,
@@ -923,10 +1034,15 @@ export class BillingController {
   @RequireResourcePermission('payments', 'create')
   async processInvoicePayment(
     @Param('id') invoiceId: string,
-    @Query('provider') provider?: string
+    @Query('provider') provider?: string,
+    @Request() req?: ClinicAuthenticatedRequest
   ) {
     const paymentProvider = this.parsePaymentProvider(provider);
-    const result = await this.billingService.processInvoicePayment(invoiceId, paymentProvider);
+    const result = await this.billingService.processInvoicePayment(
+      invoiceId,
+      paymentProvider,
+      this.buildBillingAccessContext(req)
+    );
     return {
       success: true,
       invoice: result.invoice,

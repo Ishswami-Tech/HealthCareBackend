@@ -915,13 +915,22 @@ export class CoreAppointmentService {
     if (filters.patientId) where['patientId'] = filters.patientId;
     if (filters.locationId) where['locationId'] = filters.locationId;
 
-    if (filters.startDate || filters.endDate) {
+    if (filters.date || filters.startDate || filters.endDate) {
       where['date'] = {};
-      if (filters.startDate) {
-        (where['date'] as Record<string, unknown>)['gte'] = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        (where['date'] as Record<string, unknown>)['lte'] = new Date(filters.endDate);
+
+      if (filters.date) {
+        const date = new Date(filters.date);
+        const startOfDay = new Date(date.setUTCHours(0, 0, 0, 0));
+        const endOfDay = new Date(date.setUTCHours(23, 59, 59, 999));
+        (where['date'] as Record<string, unknown>)['gte'] = startOfDay;
+        (where['date'] as Record<string, unknown>)['lte'] = endOfDay;
+      } else {
+        if (filters.startDate) {
+          (where['date'] as Record<string, unknown>)['gte'] = new Date(filters.startDate);
+        }
+        if (filters.endDate) {
+          (where['date'] as Record<string, unknown>)['lte'] = new Date(filters.endDate);
+        }
       }
     }
 
@@ -1262,10 +1271,10 @@ export class CoreAppointmentService {
             : {};
 
           slotDuration = Math.max(
-            5,
+            3,
             Number.isFinite(Number(appointmentSettings['appointmentDuration']))
               ? Number(appointmentSettings['appointmentDuration'])
-              : 30
+              : slotDuration // Preserve type-based default (3 min IN_PERSON, 10 min VIDEO)
           );
           clinicPaused = Boolean(
             clinicOpdControls['isOpdPaused'] ?? clinicOpdControls['clinicPaused'] ?? false

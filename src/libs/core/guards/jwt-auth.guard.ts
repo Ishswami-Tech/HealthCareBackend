@@ -18,6 +18,27 @@ import { IS_PUBLIC_KEY } from '@core/decorators/public.decorator';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogLevel, LogType } from '@core/types';
+import { Role } from '@core/types/enums.types';
+
+/**
+ * Staff operational roles that are pre-validated by clinic admin.
+ * Profile completion enforcement only applies to PATIENT onboarding.
+ */
+const STAFF_ROLES: ReadonlySet<string> = new Set([
+  Role.RECEPTIONIST,
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+  Role.NURSE,
+  Role.PHARMACIST,
+  Role.THERAPIST,
+  Role.COUNSELOR,
+  Role.LAB_TECHNICIAN,
+  Role.FINANCE_BILLING,
+  Role.SUPPORT_STAFF,
+  Role.CLINIC_ADMIN,
+  Role.CLINIC_LOCATION_HEAD,
+  Role.SUPER_ADMIN,
+]);
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
 import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
@@ -284,11 +305,15 @@ export class JwtAuthGuard implements CanActivate {
           throw new UnauthorizedException('Account has been deactivated');
         }
 
+        // Staff roles are pre-validated by clinic admin — skip profile completion enforcement
+        const userRole =
+          user && typeof user === 'object' && 'role' in user ? String(user.role) : '';
         if (
           user &&
           typeof user === 'object' &&
           'isProfileComplete' in user &&
           user.isProfileComplete === false &&
+          !STAFF_ROLES.has(userRole) &&
           this.shouldEnforceProfileCompletion(path)
         ) {
           throw new ForbiddenException({

@@ -106,7 +106,25 @@ export class PatientsController {
   @ApiResponse({ status: 400, description: 'Bad request - Validation failed' })
   @ApiResponse({ status: 403, description: 'Forbidden - Insufficient permissions' })
   async createPatient(@Body() dto: CreatePatientDto, @Request() req: ClinicAuthenticatedRequest) {
-    const clinicId = dto.clinicId || req.clinicContext?.clinicId;
+    const clinicId = req.clinicContext?.clinicId || dto.clinicId;
+    const role = req.user?.role;
+
+    if (
+      clinicId &&
+      role !== Role.PATIENT &&
+      dto.clinicId &&
+      req.clinicContext?.clinicId &&
+      dto.clinicId !== req.clinicContext.clinicId
+    ) {
+      throw new ForbiddenException('Cannot create or update a patient for a different clinic');
+    }
+
+    if (clinicId && role !== Role.PATIENT) {
+      const inClinic = await this.patientsService.isPatientInClinic(dto.userId, clinicId);
+      if (!inClinic) {
+        throw new ForbiddenException('Patient does not belong to your clinic');
+      }
+    }
 
     return this.patientsService.createOrUpdatePatient({
       userId: dto.userId,
@@ -151,20 +169,47 @@ export class PatientsController {
     if (!userId) {
       throw new BadRequestException('User ID not found in request');
     }
+
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new BadRequestException('Clinic ID not found in context');
+    }
+
+    const patientRecord = await this.patientsService.getPatientRecordForClinic(patientId, clinicId);
+    if (!patientRecord) {
+      throw new ForbiddenException('Patient does not belong to your clinic');
+    }
+
+    const requestRole = (req.user?.role as Role | undefined) || Role.PATIENT;
+    if (requestRole === Role.PATIENT && patientRecord.userId !== userId) {
+      throw new ForbiddenException('You can only upload documents to your own record');
+    }
+
     return await this.patientsService.uploadPatientDocument(patientId, file, {
       userId,
       userRole: req.user?.role || Role.PATIENT,
       operation: 'CREATE',
       resourceType: 'HEALTH_RECORD',
-      clinicId: req.clinicContext?.clinicId || '',
+      clinicId,
     });
   }
 
   @Get(':id/insurance')
   @Roles(Role.DOCTOR, Role.PATIENT, Role.CLINIC_ADMIN, Role.RECEPTIONIST)
+  @RequireResourcePermission('patients', 'read', { requireOwnership: true })
   @ApiOperation({ summary: 'Get patient insurance details' })
   @ApiResponse({ status: 200, description: 'Insurance details retrieved successfully' })
-  async getInsurance(@Param('id') patientId: string) {
+  async getInsurance(@Param('id') patientId: string, @Request() req: ClinicAuthenticatedRequest) {
+    const role = req.user?.role;
+    const clinicId = req.clinicContext?.clinicId;
+
+    if (role !== Role.PATIENT && clinicId) {
+      const inClinic = await this.patientsService.isPatientInClinic(patientId, clinicId);
+      if (!inClinic) {
+        throw new ForbiddenException('Patient does not belong to your clinic');
+      }
+    }
+
     return await this.patientsService.getInsurance(patientId);
   }
 
@@ -257,7 +302,16 @@ export class PatientsController {
     @Request() req: ClinicAuthenticatedRequest
   ) {
     const role = req.user?.role;
+    const clinicId = req.clinicContext?.clinicId;
     const updates: Record<string, unknown> = {};
+
+    if (role !== Role.PATIENT && clinicId) {
+      const inClinic = await this.patientsService.isPatientInClinic(id, clinicId);
+      if (!inClinic) {
+        throw new ForbiddenException('Patient does not belong to your clinic');
+      }
+    }
+
     if (role === Role.RECEPTIONIST) {
       if (dto.emergencyContact != null) updates['emergencyContact'] = dto.emergencyContact;
       if (dto.insurance != null) updates['insurance'] = dto.insurance;

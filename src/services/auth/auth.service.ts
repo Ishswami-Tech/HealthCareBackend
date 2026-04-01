@@ -38,6 +38,27 @@ import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
 // import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
+/**
+ * Staff operational roles that are pre-validated by clinic admin.
+ * These roles get isProfileComplete=true at creation since profile
+ * completion is a PATIENT onboarding concern, not staff.
+ */
+const STAFF_ROLES: ReadonlySet<string> = new Set([
+  Role.RECEPTIONIST,
+  Role.DOCTOR,
+  Role.ASSISTANT_DOCTOR,
+  Role.NURSE,
+  Role.PHARMACIST,
+  Role.THERAPIST,
+  Role.COUNSELOR,
+  Role.LAB_TECHNICIAN,
+  Role.FINANCE_BILLING,
+  Role.SUPPORT_STAFF,
+  Role.CLINIC_ADMIN,
+  Role.CLINIC_LOCATION_HEAD,
+  Role.SUPER_ADMIN,
+]);
+
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
@@ -300,6 +321,7 @@ export class AuthService {
           })()
         : 12; // Safe default - will be updated during profile completion with actual DOB
 
+      const effectiveRole = (registerDto.role || 'PATIENT') as Role;
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
@@ -312,10 +334,12 @@ export class AuthService {
         ...(registerDto.dateOfBirth && { dateOfBirth: new Date(registerDto.dateOfBirth) }),
         ...(registerDto.gender && { gender: registerDto.gender }),
         ...(registerDto.address && { address: registerDto.address }),
-        role: (registerDto.role || 'PATIENT') as Role,
+        role: effectiveRole,
         primaryClinicId: clinicUUID,
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
         isVerified: !!registerDto.otp || !!registerDto.googleId,
+        // Staff roles are pre-validated by clinic admin — mark profile as complete
+        ...(STAFF_ROLES.has(effectiveRole) && { isProfileComplete: true }),
       });
 
       // 6. Create Patient record if role is PATIENT
@@ -513,7 +537,10 @@ export class AuthService {
       // Body clinicId is only used if no header and no primaryClinicId (legacy support)
       const clinicId = clinicIdFromHeader || user.primaryClinicId || loginDto.clinicId;
 
-      if (!clinicId) {
+      // SUPER_ADMIN operates across all clinics — clinic association is optional
+      const isSuperAdmin = (user.role as Role) === Role.SUPER_ADMIN;
+
+      if (!clinicId && !isSuperAdmin) {
         await this.logging.log(
           LogType.SECURITY,
           LogLevel.WARN,
@@ -531,9 +558,15 @@ export class AuthService {
       // Validate clinic access BEFORE creating session.
       // Priority: header > body > user.primaryClinicId
       // If user's primaryClinicId is stale (clinic deleted/migrated), fall back to header clinicId.
-      let clinicUUID: string;
+      let clinicUUID: string | undefined;
+      if (isSuperAdmin && !clinicId) {
+        // SUPER_ADMIN without explicit clinic — skip clinic validation
+        clinicUUID = undefined;
+      }
       try {
-        clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
+        if (clinicId) {
+          clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
+        }
       } catch (clinicErr) {
         // If the stored primaryClinicId is stale, try header-provided clinicId as fallback
         if (clinicIdFromHeader && clinicIdFromHeader !== clinicId) {
@@ -555,13 +588,13 @@ export class AuthService {
         }
       }
 
-      // Create session with validated clinic UUID
+      // Create session with validated clinic UUID (optional for SUPER_ADMIN)
       const session = await this.sessionService.createSession({
         userId: user.id,
         userAgent: sessionMetadata?.userAgent || 'Login',
         ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { login: true },
-        clinicId: clinicUUID,
+        ...(clinicUUID && { clinicId: clinicUUID }),
       });
 
       // Generate tokens with session ID - handle null phone
@@ -1812,7 +1845,10 @@ export class AuthService {
     const clinicId =
       ('clinicId' in user && user.clinicId) || ('primaryClinicId' in user && user.primaryClinicId);
 
-    if (!clinicId) {
+    // SUPER_ADMIN operates across all clinics — no clinic association required
+    const isSuperAdmin = user.role === Role.SUPER_ADMIN;
+
+    if (!clinicId && !isSuperAdmin) {
       throw new Error('Cannot generate token: user missing clinic association');
     }
 
@@ -1822,7 +1858,7 @@ export class AuthService {
       role: user.role || '',
       domain: 'healthcare',
       sessionId: sessionId,
-      clinicId: clinicId, // Always include clinic ID
+      ...(clinicId && { clinicId }), // Include clinic ID only when present
     };
 
     // Use enhanced JWT service for advanced features

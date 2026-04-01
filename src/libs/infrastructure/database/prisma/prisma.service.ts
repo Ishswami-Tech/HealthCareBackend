@@ -1525,11 +1525,24 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
           // The connection can happen in the background without blocking delegate access
           PrismaService.isFullyInitialized = true;
 
+          // Start connection in background so it doesn't block startup
+          // but ensures the pool is ready for first query
+          void this.prismaClient.$connect().catch(async e => {
+            if (this.loggingService) {
+              await this.loggingService.log(
+                LogType.DATABASE,
+                LogLevel.ERROR,
+                `Background connection failed: ${e instanceof Error ? e.message : String(e)}`,
+                'PrismaService.onModuleInit'
+              );
+            }
+          });
+
           if (this.loggingService) {
             void this.loggingService.log(
               LogType.DATABASE,
               LogLevel.INFO,
-              'PrismaClient delegates initialized - ready for use (connection in progress)',
+              'PrismaClient delegates initialized - background connection started',
               'PrismaService.onModuleInit'
             );
           }

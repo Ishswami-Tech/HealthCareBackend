@@ -32,26 +32,27 @@ export class VideoProviderFactory {
   ) {}
 
   /**
-   * Get the configured video provider
-   * Returns OpenVidu ONLY (no Jitsi fallback)
-   * Similar to CacheProviderFactory.getProvider() pattern
+   * Get the configured video provider.
+   * Supports multiple providers: openvidu | jitsi
+   * Provider is selected via VIDEO_PROVIDER env variable.
    */
   getProvider(): IVideoProvider {
-    // Only use OpenVidu - no fallback to Jitsi
     if (!this.configService.isVideoEnabled()) {
       throw new Error(
         'Video service is not enabled. Please enable VIDEO_ENABLED in configuration.'
       );
     }
 
-    const providerType = this.configService.getVideoProvider();
+    const providerType = (this.configService.getVideoProvider() ?? 'openvidu').toLowerCase();
 
-    // Only accept OpenVidu as provider
-    if (providerType !== 'openvidu') {
-      throw new Error(`Invalid video provider: ${providerType}. Only 'openvidu' is supported.`);
+    if (providerType === 'jitsi') {
+      if (this.jitsiProvider && this.jitsiProvider.isEnabled()) {
+        return this.jitsiProvider;
+      }
+      throw new Error('Jitsi provider is not enabled. Check JITSI_ENABLED configuration.');
     }
 
-    // Return OpenVidu provider
+    // Default: OpenVidu
     if (this.openviduProvider && this.openviduProvider.isEnabled()) {
       return this.openviduProvider;
     }
@@ -62,21 +63,28 @@ export class VideoProviderFactory {
   }
 
   /**
-   * Get primary provider (OpenVidu ONLY)
+   * Get primary provider (resolves from VIDEO_PROVIDER config).
    */
   getPrimaryProvider(): IVideoProvider {
-    if (this.openviduProvider && this.openviduProvider.isEnabled()) {
-      return this.openviduProvider;
-    }
-    throw new Error('OpenVidu provider is not enabled or not initialized.');
+    return this.getProvider();
   }
 
   /**
-   * Get fallback provider (DEPRECATED - OpenVidu only)
-   * @deprecated This method is deprecated. Only OpenVidu is supported.
+   * Get fallback provider.
+   * When OpenVidu is primary, Jitsi is fallback and vice versa.
    */
   getFallbackProvider(): IVideoProvider {
-    throw new Error('Fallback provider (Jitsi) is not supported. Only OpenVidu is configured.');
+    const providerType = (this.configService.getVideoProvider() ?? 'openvidu').toLowerCase();
+    if (providerType === 'openvidu') {
+      if (this.jitsiProvider && this.jitsiProvider.isEnabled()) {
+        return this.jitsiProvider;
+      }
+      throw new Error('Jitsi fallback provider is not enabled.');
+    }
+    if (this.openviduProvider && this.openviduProvider.isEnabled()) {
+      return this.openviduProvider;
+    }
+    throw new Error('OpenVidu fallback provider is not enabled.');
   }
 
   /**
@@ -88,38 +96,45 @@ export class VideoProviderFactory {
   async getProviderWithFallback(): Promise<IVideoProvider> {
     const primary = this.getPrimaryProvider();
 
-    // Check health of OpenVidu provider
-    if (primary.providerName === 'openvidu') {
+    try {
+      const isHealthy = await primary.isHealthy();
+      if (isHealthy) return primary;
+
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Primary video provider '${primary.providerName}' is unhealthy. Attempting fallback.`,
+          'VideoProviderFactory.getProviderWithFallback',
+          { provider: primary.providerName, healthStatus: 'unhealthy' }
+        );
+      }
+
+      // Try fallback provider
       try {
-        const isHealthy = await primary.isHealthy();
-        if (!isHealthy) {
-          if (this.loggingService) {
-            void this.loggingService.log(
-              LogType.SYSTEM,
-              LogLevel.WARN,
-              'OpenVidu provider is unhealthy. Video features will be unavailable. API will continue without video support.',
-              'VideoProviderFactory.getProviderWithFallback',
-              { provider: 'openvidu', healthStatus: 'unhealthy' }
-            );
+        const fallback = this.getFallbackProvider();
+        const fallbackHealthy = await fallback.isHealthy();
+        if (fallbackHealthy) return fallback;
+      } catch {
+        // No fallback available
+      }
+
+      // Return primary anyway — let method calls fail gracefully
+      return primary;
+    } catch (error) {
+      if (this.loggingService) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Video provider health check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Video features may be unavailable.`,
+          'VideoProviderFactory.getProviderWithFallback',
+          {
+            provider: primary.providerName,
+            error: error instanceof Error ? error.message : 'Unknown',
           }
-          // Return provider anyway - methods will fail gracefully when called
-          // This allows the API to start even if OpenVidu is temporarily unavailable
-        }
-      } catch (error) {
-        if (this.loggingService) {
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `OpenVidu health check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Video features will be unavailable.`,
-            'VideoProviderFactory.getProviderWithFallback',
-            { provider: 'openvidu', error: error instanceof Error ? error.message : 'Unknown' }
-          );
-        }
-        // Return provider anyway - graceful degradation
+        );
       }
       return primary;
     }
-
-    return primary;
   }
 }

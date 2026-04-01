@@ -35,6 +35,7 @@ export type UserCreateInput = {
   googleId?: string;
   facebookId?: string;
   appleId?: string;
+  isProfileComplete?: boolean;
 };
 
 /**
