@@ -5,6 +5,8 @@
  * Validates required environment variables before build
  */
 
+import 'dotenv/config';
+
 const NODE_ENV = process.env['NODE_ENV'] || 'development';
 
 // Required environment variables for production
@@ -21,15 +23,12 @@ function validateEnvironment(): void {
   const warnings: string[] = [];
 
   // Determine required variables based on environment
-  let requiredVars: string[] = [];
-  if (NODE_ENV === 'production') {
-    requiredVars = PRODUCTION_REQUIRED;
-  } else if (NODE_ENV === 'staging') {
-    requiredVars = STAGING_REQUIRED;
-  } else {
-    // Development - only warn about missing recommended vars
-    requiredVars = [];
-  }
+  const requiredVars =
+    NODE_ENV === 'production'
+      ? PRODUCTION_REQUIRED
+      : NODE_ENV === 'staging'
+        ? STAGING_REQUIRED
+        : [];
 
   // Check required variables
   for (const varName of requiredVars) {
