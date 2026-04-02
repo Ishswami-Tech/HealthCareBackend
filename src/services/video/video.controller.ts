@@ -2131,7 +2131,7 @@ export class VideoController {
   // ============================================================================
 
   @Get('admin/sessions')
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @ApiOperation({
     summary: 'List all active video sessions (Super Admin)',
     description: 'Global monitoring of all active video consultations across all clinics.',

@@ -245,6 +245,15 @@ export class BillingController {
   }
 
   @Get('subscriptions/user/:userId')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'billing:subscriptions:user:{userId}',
@@ -285,6 +294,15 @@ export class BillingController {
   }
 
   @Get('subscriptions/:id')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
     keyTemplate: 'billing:subscription:{id}',
@@ -299,6 +317,7 @@ export class BillingController {
   }
 
   @Put('subscriptions/:id')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST)
   @RequireResourcePermission('subscriptions', 'update')
   async updateSubscription(
     @Param('id') id: string,
@@ -752,6 +771,15 @@ export class BillingController {
    * Supports both basic and detailed responses via query parameter
    */
   @Get('subscriptions/:id/coverage')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
     keyTemplate: 'billing:subscription:coverage:{id}:{appointmentType}',
@@ -773,6 +801,14 @@ export class BillingController {
   }
 
   @Post('subscriptions/:subscriptionId/book-appointment/:appointmentId')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('subscriptions', 'create')
   async bookAppointmentWithSubscription(
     @Param('subscriptionId') subscriptionId: string,
@@ -863,7 +899,14 @@ export class BillingController {
   }
 
   @Post('appointments/:appointmentId/cancel-subscription')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.PATIENT)
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.PATIENT
+  )
   @RequireResourcePermission('subscriptions', 'update')
   async cancelSubscriptionAppointment(@Param('appointmentId') appointmentId: string) {
     await this.billingService.cancelSubscriptionAppointment(appointmentId);
@@ -871,6 +914,15 @@ export class BillingController {
   }
 
   @Get('subscriptions/user/:userId/active')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('subscriptions', 'read', { requireOwnership: true })
   @Cache({
     keyTemplate: 'billing:subscription:active:user:{userId}:clinic:{clinicId}',
@@ -888,6 +940,7 @@ export class BillingController {
   }
 
   @Get('subscriptions/:id/usage-stats')
+  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.FINANCE_BILLING, Role.RECEPTIONIST, Role.PATIENT)
   @RequireResourcePermission('subscriptions', 'read')
   @Cache({
     keyTemplate: 'billing:subscription:usage:{id}',
@@ -938,6 +991,15 @@ export class BillingController {
   }
 
   @Get('invoices/download/:fileName')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
   @RequireResourcePermission('invoices', 'read')
   downloadInvoice(@Param('fileName') fileName: string, @Res() res: FastifyReply) {
     // Check if file exists
