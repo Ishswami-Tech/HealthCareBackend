@@ -205,14 +205,15 @@ in code.
 
 ## 🔒 Security Configuration
 
-| Variable                        | Description                   | Default | Required             |
-| ------------------------------- | ----------------------------- | ------- | -------------------- |
-| `SECURITY_RATE_LIMIT`           | Enable security rate limiting | `true`  | No                   |
-| `SECURITY_RATE_LIMIT_MAX`       | Max requests per window       | `1000`  | No                   |
-| `SECURITY_RATE_LIMIT_WINDOW_MS` | Rate limit window (ms)        | `15000` | No                   |
-| `TRUST_PROXY`                   | Trust proxy level             | `1`     | No                   |
-| `SESSION_SECRET`                | Session secret (min 32 chars) | -       | **Yes** (production) |
-| `COOKIE_SECRET`                 | Cookie secret (min 32 chars)  | -       | **Yes** (production) |
+| Variable                        | Description                                | Default | Required             |
+| ------------------------------- | ------------------------------------------ | ------- | -------------------- |
+| `SECURITY_RATE_LIMIT`           | Enable security rate limiting              | `true`  | No                   |
+| `SECURITY_RATE_LIMIT_MAX`       | Max requests per window                    | `1000`  | No                   |
+| `SECURITY_RATE_LIMIT_WINDOW_MS` | Rate limit window (ms)                     | `15000` | No                   |
+| `TRUST_PROXY`                   | Trust proxy level                          | `1`     | No                   |
+| `SESSION_SECRET`                | Session secret (min 32 chars)              | -       | **Yes** (production) |
+| `COOKIE_SECRET`                 | Cookie secret (min 32 chars)               | -       | **Yes** (production) |
+| `COMMUNICATION_ENCRYPTION_KEY`  | AES key for provider credential encryption | -       | **Yes** (production) |
 
 ## ⚡ Rate Limiting Configuration
 
