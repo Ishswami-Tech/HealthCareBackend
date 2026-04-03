@@ -990,7 +990,17 @@ export class JwtAuthGuard implements CanActivate {
 
   private extractTokenFromHeader(request: FastifyRequestWithUser): string | undefined {
     const [type, token] = (request.headers.authorization as string)?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    if (type === 'Bearer' && token) {
+      return token;
+    }
+
+    const cookieToken = (
+      request as FastifyRequestWithUser & {
+        cookies?: Record<string, string | undefined>;
+      }
+    ).cookies?.['access_token'];
+
+    return cookieToken || undefined;
   }
 
   private isPublicPath(path: string): boolean {

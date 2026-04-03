@@ -13,6 +13,10 @@ const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
     ENV_VARS.API_URL,
     ENV_VARS.BASE_URL,
     ENV_VARS.FRONTEND_URL,
+    'SESSION_SECRET',
+    'COOKIE_SECRET',
+    'COMMUNICATION_ENCRYPTION_KEY',
+    ENV_VARS.CORS_ORIGIN,
   ],
   staging: [
     ENV_VARS.DATABASE_URL,
@@ -21,6 +25,10 @@ const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
     ENV_VARS.API_URL,
     ENV_VARS.BASE_URL,
     ENV_VARS.FRONTEND_URL,
+    'SESSION_SECRET',
+    'COOKIE_SECRET',
+    'COMMUNICATION_ENCRYPTION_KEY',
+    ENV_VARS.CORS_ORIGIN,
   ],
   'local-prod': [
     ENV_VARS.DATABASE_URL,
@@ -29,6 +37,10 @@ const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
     ENV_VARS.API_URL,
     ENV_VARS.BASE_URL,
     ENV_VARS.FRONTEND_URL,
+    'SESSION_SECRET',
+    'COOKIE_SECRET',
+    'COMMUNICATION_ENCRYPTION_KEY',
+    ENV_VARS.CORS_ORIGIN,
   ], // Same as staging
   development: [], // Development is lenient
   test: [], // Test is lenient
@@ -39,27 +51,9 @@ const REQUIRED_VARS_BY_ENV: Record<string, readonly string[]> = {
  * These are not required but should be set for proper functionality
  */
 const RECOMMENDED_VARS_BY_ENV: Record<string, readonly string[]> = {
-  production: [
-    ENV_VARS.REDIS_HOST,
-    ENV_VARS.EMAIL_HOST,
-    ENV_VARS.CORS_ORIGIN,
-    'SESSION_SECRET',
-    'COOKIE_SECRET',
-  ],
-  staging: [
-    ENV_VARS.REDIS_HOST,
-    ENV_VARS.EMAIL_HOST,
-    ENV_VARS.CORS_ORIGIN,
-    'SESSION_SECRET',
-    'COOKIE_SECRET',
-  ],
-  'local-prod': [
-    ENV_VARS.REDIS_HOST,
-    ENV_VARS.EMAIL_HOST,
-    ENV_VARS.CORS_ORIGIN,
-    'SESSION_SECRET',
-    'COOKIE_SECRET',
-  ], // Same as staging
+  production: [ENV_VARS.REDIS_HOST, ENV_VARS.EMAIL_HOST],
+  staging: [ENV_VARS.REDIS_HOST, ENV_VARS.EMAIL_HOST],
+  'local-prod': [ENV_VARS.REDIS_HOST, ENV_VARS.EMAIL_HOST], // Same as staging
   development: [ENV_VARS.DATABASE_URL, ENV_VARS.REDIS_HOST],
   test: [ENV_VARS.DATABASE_URL],
 } as const;

@@ -351,9 +351,9 @@ async function _setupWebSocketAdapter(
               allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
             },
             path: '/socket.io',
-            serveClient: true,
+            serveClient: false,
             transports: ['websocket', 'polling'],
-            allowEIO3: true,
+            allowEIO3: false,
             pingTimeout: 60000,
             pingInterval: 25000,
             connectTimeout: 45000,
@@ -744,9 +744,11 @@ async function bootstrap() {
       await securityConfigService.configureCookies(app);
       logger.log('Fastify cookies configured');
     } catch (cookieError) {
-      logger.warn(
-        `Failed to configure cookies (non-critical): ${cookieError instanceof Error ? cookieError.message : String(cookieError)}`
-      );
+      const error = new Error(
+        `Failed to configure cookies: ${cookieError instanceof Error ? cookieError.message : String(cookieError)}`
+      ) as Error & { cause?: unknown };
+      error.cause = cookieError;
+      throw error;
     }
 
     // Configure Fastify session with cache-backed store (for all environments)
@@ -756,11 +758,11 @@ async function bootstrap() {
       await securityConfigService.configureSession(app);
       logger.log('Fastify session configured');
     } catch (sessionError) {
-      logger.error(
+      const error = new Error(
         `Failed to configure Fastify session: ${sessionError instanceof Error ? sessionError.message : String(sessionError)}`
-      );
-      // Don't throw - allow app to continue without session support
-      logger.warn('Application will continue without session support');
+      ) as Error & { cause?: unknown };
+      error.cause = sessionError;
+      throw error;
     }
 
     // Prepare middleware configuration
@@ -923,12 +925,11 @@ async function bootstrap() {
         // securityConfigService.addCorsPreflightHandler(app);
         // securityConfigService.addBotDetectionHook(app);
       } catch (corsError) {
-        const corsErrorMessage = corsError instanceof Error ? corsError.message : 'Unknown error';
-        const corsErrorStack = corsError instanceof Error ? corsError.stack : 'No stack trace';
-        logger.error(`Failed to configure CORS: ${corsErrorMessage}`);
-        logger.error(`CORS error stack: ${corsErrorStack}`);
-        logger.warn('Application will continue without CORS configuration');
-        // Don't throw - allow application to continue without CORS
+        const error = new Error(
+          `Failed to configure CORS: ${corsError instanceof Error ? corsError.message : 'Unknown error'}`
+        ) as Error & { cause?: unknown };
+        error.cause = corsError;
+        throw error;
       }
     } else {
       if (!app) {
@@ -969,6 +970,7 @@ async function bootstrap() {
       logger.error('Application instance is undefined, cannot configure Swagger');
       throw new Error('Application instance is undefined');
     }
+    const appInstance = app;
 
     const enableSwagger = configService.getEnvBoolean(
       'SWAGGER_ENABLED',
@@ -988,17 +990,17 @@ async function bootstrap() {
           throw new Error('SwaggerModule.setup is not a function');
         }
 
-        logger.log('Creating Swagger document...');
+        logger.log('Creating Swagger document factory...');
         // Configure Swagger to handle circular dependencies
         // Disable deepScanRoutes to avoid scanning all types which can cause circular dependency issues
-        // Using lazy resolvers for circular dependencies
-        const document = SwaggerModule.createDocument(app, swaggerConfig, {
-          extraModels: [],
-          operationIdFactory: (controllerKey: string, methodKey: string) => methodKey,
-          deepScanRoutes: false, // Disable deep scanning to avoid circular dependency issues
-          ignoreGlobalPrefix: false,
-        });
-        logger.log('Swagger document created successfully');
+        const documentFactory = () =>
+          SwaggerModule.createDocument(appInstance, swaggerConfig, {
+            extraModels: [],
+            operationIdFactory: (_controllerKey: string, methodKey: string) => methodKey,
+            deepScanRoutes: false,
+            ignoreGlobalPrefix: false,
+          });
+        logger.log('Swagger document factory created successfully');
 
         // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
         // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
@@ -1006,7 +1008,7 @@ async function bootstrap() {
         const swaggerPath =
           typeof _swaggerUrl === 'string' ? _swaggerUrl.replace(/^\//, '') : 'docs';
         logger.log(`Setting up Swagger at path: ${swaggerPath}`);
-        SwaggerModule.setup(swaggerPath, app, document, {
+        SwaggerModule.setup(swaggerPath, appInstance, documentFactory, {
           ...swaggerCustomOptions,
           swaggerOptions: {
             ...swaggerCustomOptions.swaggerOptions,
@@ -1028,8 +1030,7 @@ async function bootstrap() {
           swaggerError instanceof Error ? swaggerError.stack : 'No stack trace';
         logger.error(`Failed to configure Swagger: ${swaggerErrorMessage}`);
         logger.error(`Swagger error stack: ${swaggerErrorStack}`);
-        logger.warn('Application will continue without Swagger documentation');
-        // Don't throw - allow application to continue without Swagger
+        throw swaggerError instanceof Error ? swaggerError : new Error(swaggerErrorMessage);
       }
     } else {
       logger.log('Swagger disabled by configuration (SWAGGER_ENABLED=false or production default)');

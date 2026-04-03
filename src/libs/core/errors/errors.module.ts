@@ -1,7 +1,7 @@
 import { Global, Module, forwardRef } from '@nestjs/common';
 import { HealthcareErrorsService } from './healthcare-errors.service';
 import { CacheErrorHandler } from './cache-error.handler';
-import { LoggingModule } from '@infrastructure/logging';
+import { LoggingModule } from '@infrastructure/logging/logging.module';
 
 /**
  * Global Errors Module

@@ -49,6 +49,7 @@
       "@payment/*": ["./src/libs/payment/*"],
       "@config": ["./src/config"],
       "@config/*": ["./src/config/*"],
+      "@nestjs/swagger": ["./src/shims/nest-swagger"],
       "@generated/prisma": ["./src/libs/infrastructure/database/prisma/generated"],
       "@prisma/client": ["./src/libs/infrastructure/database/prisma/generated"]
     }

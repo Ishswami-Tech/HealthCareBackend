@@ -225,22 +225,14 @@ export class SecurityConfigService {
   private async configureHelmet(app: INestApplication): Promise<void> {
     const adapter = this.getFastifyAdapter();
 
-    // Build CSP directives - includes Swagger UI requirements
-    // 'unsafe-inline' and 'unsafe-eval' are required for Swagger UI to function
     const scriptSrc = [
       "'self'",
-      "'unsafe-inline'", // Required for Swagger UI
-      "'unsafe-eval'", // Required for Swagger UI
       'https://accounts.google.com',
       'https://apis.google.com',
       'https://www.googleapis.com',
     ] as readonly string[];
 
-    const styleSrc = [
-      "'self'",
-      "'unsafe-inline'", // Required for Swagger UI
-      'https://fonts.googleapis.com',
-    ] as readonly string[];
+    const styleSrc = ["'self'", 'https://fonts.googleapis.com'] as readonly string[];
 
     const imgSrc = ["'self'", 'data:', 'https:', 'blob:'] as readonly string[];
 
@@ -294,14 +286,27 @@ export class SecurityConfigService {
   configureCORS(app: INestApplication): void {
     // Use ConfigService (which uses dotenv) for environment variable access
     const corsConfig = this.configService.getCorsConfig();
-    const corsOrigin = corsConfig.origin || '*';
-    const corsOrigins =
-      corsOrigin === '*' ? '*' : corsOrigin.split(',').map((origin: string) => origin.trim());
+    const corsOrigin = (corsConfig.origin || '').trim();
+    const credentialsEnabled = corsConfig.credentials !== false;
+    const normalizedOrigins = corsOrigin
+      .split(',')
+      .map((origin: string) => origin.trim())
+      .filter(Boolean);
+
+    if (credentialsEnabled && normalizedOrigins.includes('*')) {
+      throw new Error('CORS wildcard origin is not allowed when credentials are enabled');
+    }
+
+    if (credentialsEnabled && normalizedOrigins.length === 0) {
+      throw new Error('Explicit CORS origins are required when credentials are enabled');
+    }
+
+    const corsOrigins = normalizedOrigins.length > 0 ? normalizedOrigins : false;
 
     app.enableCors({
       origin: corsOrigins,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      credentials: true,
+      credentials: credentialsEnabled,
       allowedHeaders: [
         'Content-Type',
         'Authorization',
@@ -359,11 +364,17 @@ export class SecurityConfigService {
         if (origin) {
           // Use ConfigService (which uses dotenv) for environment variable access
           const corsConfig = this.configService.getCorsConfig();
-          const corsOrigin = corsConfig.origin || '*';
-          const allowedOrigins =
-            corsOrigin === '*' ? ['*'] : corsOrigin.split(',').map((o: string) => o.trim());
+          const credentialsEnabled = corsConfig.credentials !== false;
+          const allowedOrigins = (corsConfig.origin || '')
+            .split(',')
+            .map((o: string) => o.trim())
+            .filter(Boolean);
 
-          if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+          if (credentialsEnabled && allowedOrigins.includes('*')) {
+            throw new Error('CORS wildcard origin is not allowed when credentials are enabled');
+          }
+
+          if (allowedOrigins.includes(origin)) {
             replyTyped.header('Access-Control-Allow-Origin', origin);
             replyTyped.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
             // Previous configuration before adding X-Request-ID:
@@ -375,7 +386,9 @@ export class SecurityConfigService {
               'Access-Control-Allow-Headers',
               'Content-Type, Authorization, X-Session-ID, X-Clinic-ID, Origin, Accept, X-Requested-With, Access-Control-Request-Method, Access-Control-Request-Headers, X-Client-Data, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, X-Request-ID, x-request-id, X-Client-Version, x-client-version, X-Client-Platform, x-client-platform'
             );
-            replyTyped.header('Access-Control-Allow-Credentials', 'true');
+            if (credentialsEnabled) {
+              replyTyped.header('Access-Control-Allow-Credentials', 'true');
+            }
             replyTyped.header('Access-Control-Max-Age', '86400');
             replyTyped.send();
             return;
@@ -405,10 +418,15 @@ export class SecurityConfigService {
       throw new Error('Fastify adapter does not support cookie registration');
     }
     // Use ConfigService (which uses dotenv) for environment variable access
-    const cookieSecret = this.configService.getEnv(
-      'COOKIE_SECRET',
-      'default-cookie-secret-change-in-production-min-32-chars'
-    );
+    const cookieSecret = this.configService.getEnv('COOKIE_SECRET', '');
+
+    if (!cookieSecret) {
+      throw new Error('COOKIE_SECRET is required');
+    }
+
+    if (cookieSecret.length < 32) {
+      throw new Error('COOKIE_SECRET must be at least 32 characters long');
+    }
 
     const cookieOptions = {
       secret: cookieSecret,
@@ -445,16 +463,14 @@ export class SecurityConfigService {
 
     // Get session secret from config (must be at least 32 characters)
     // Use ConfigService (which uses dotenv) for environment variable access
-    const sessionSecret =
-      this.configService.getEnv(
-        'SESSION_SECRET',
-        'default-session-secret-change-in-production-min-32-chars-long'
-      ) || 'default-session-secret-change-in-production-min-32-chars-long';
+    const sessionSecret = this.configService.getEnv('SESSION_SECRET', '') || '';
 
-    if (sessionSecret && sessionSecret.length < 32) {
-      this.logger.warn(
-        'SESSION_SECRET is less than 32 characters. Please use a longer secret for production.'
-      );
+    if (!sessionSecret) {
+      throw new Error('SESSION_SECRET is required');
+    }
+
+    if (sessionSecret.length < 32) {
+      throw new Error('SESSION_SECRET must be at least 32 characters long');
     }
 
     // Session timeout in milliseconds (default: 24 hours)

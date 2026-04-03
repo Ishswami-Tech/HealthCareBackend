@@ -5,6 +5,7 @@ import {
   DynamicModule,
   forwardRef,
 } from '@nestjs/common';
+import { randomBytes } from 'node:crypto';
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
@@ -55,6 +56,21 @@ export class BullBoardModule {
       };
     }
 
+    const nodeEnv = process.env['NODE_ENV'] || 'development';
+    const queueDashboardUser = process.env['QUEUE_DASHBOARD_USER']?.trim();
+    const queueDashboardPassword = process.env['QUEUE_DASHBOARD_PASSWORD']?.trim();
+    const isDevelopment = nodeEnv === 'development';
+
+    if ((!queueDashboardUser || !queueDashboardPassword) && !isDevelopment) {
+      throw new Error(
+        'QUEUE_DASHBOARD_USER and QUEUE_DASHBOARD_PASSWORD must be set when Bull Board is enabled'
+      );
+    }
+
+    const resolvedDashboardUser = queueDashboardUser || 'local-dashboard';
+    const resolvedDashboardPassword =
+      queueDashboardPassword || randomBytes(24).toString('base64url');
+
     // Full module with queue registrations when cache is enabled
     return {
       module: BullBoardModule,
@@ -68,8 +84,8 @@ export class BullBoardModule {
             route: '/queue-dashboard',
             adapter: FastifyAdapter,
             auth: {
-              user: config.get<string>('QUEUE_DASHBOARD_USER', 'admin'),
-              password: config.get<string>('QUEUE_DASHBOARD_PASSWORD', 'admin'),
+              user: config.get<string>('QUEUE_DASHBOARD_USER', resolvedDashboardUser),
+              password: config.get<string>('QUEUE_DASHBOARD_PASSWORD', resolvedDashboardPassword),
             },
             basePath: '/queue-dashboard',
             middleware: (req: unknown, _res: unknown, next: unknown) => {
