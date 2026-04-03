@@ -16,7 +16,10 @@ export class LocationQrService {
   private readonly SECRET_KEY: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.SECRET_KEY = this.configService.get<string>('QR_SECRET_KEY') || 'fallback_dev_secret';
+    this.SECRET_KEY =
+      this.configService.getEnv('QR_SECRET_KEY') ||
+      this.configService.getEnv('QR_ENCRYPTION_KEY') ||
+      'fallback_dev_secret';
   }
 
   generateLocationQR(locationId: string, clinicId: string): string {
