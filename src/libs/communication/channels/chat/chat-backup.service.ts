@@ -96,6 +96,54 @@ export class ChatBackupService implements OnModuleInit {
     this.initializeFirebaseDatabase();
   }
 
+  private getFirebaseClient(operation: string): FirebaseGoogleClient | null {
+    if (
+      !this.isInitialized ||
+      !this.firebaseClient ||
+      !this.firebaseClient.isDatabaseConfigured()
+    ) {
+      this.isInitialized = false;
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Chat backup service is not initialized, skipping ${operation}`,
+        'ChatBackupService',
+        {
+          operation,
+          hasFirebaseClient: Boolean(this.firebaseClient),
+        }
+      );
+      return null;
+    }
+
+    return this.firebaseClient;
+  }
+
+  private extractErrorDetails(error: unknown): Record<string, unknown> {
+    if (!(error instanceof Error)) {
+      return {
+        error: 'Unknown error',
+        rawError: error,
+      };
+    }
+
+    const firebaseError = error as Error & {
+      status?: number;
+      payload?: unknown;
+      rawText?: string;
+      url?: string;
+    };
+
+    return {
+      error: firebaseError.message,
+      stack: firebaseError.stack,
+      status: firebaseError.status,
+      url: firebaseError.url,
+      payload: firebaseError.payload,
+      rawText: firebaseError.rawText,
+    };
+  }
+
   private initializeFirebaseDatabase(): void {
     try {
       const firebaseClient = new FirebaseGoogleClient(this.configService);
@@ -140,13 +188,8 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async backupMessage(messageData: ChatMessage): Promise<ChatMessageResult> {
-    if (!this.isInitialized || !this.firebaseClient) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Chat backup service is not initialized, skipping message backup',
-        'ChatBackupService'
-      );
+    const firebaseClient = this.getFirebaseClient('message backup');
+    if (!firebaseClient) {
       return { success: false, error: 'Service not initialized' };
     }
 
@@ -197,7 +240,7 @@ export class ChatBackupService implements OnModuleInit {
         senderId: messageData.senderId,
       };
 
-      await this.firebaseClient.databasePatch('', updates);
+      await firebaseClient.databasePatch('', updates);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -224,11 +267,10 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to backup message',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined,
           messageId: messageData.id,
           senderId: messageData.senderId,
           receiverId: messageData.receiverId,
+          ...this.extractErrorDetails(error),
         }
       );
 
@@ -245,19 +287,14 @@ export class ChatBackupService implements OnModuleInit {
     limit: number = 50,
     startAfter?: number
   ): Promise<MessageHistoryResult> {
-    if (!this.isInitialized || !this.firebaseClient) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.WARN,
-        'Chat backup service is not initialized',
-        'ChatBackupService'
-      );
+    const firebaseClient = this.getFirebaseClient('message history retrieval');
+    if (!firebaseClient) {
       return { success: false, error: 'Service not initialized' };
     }
 
     try {
       const conversationId = this.createConversationId(userId, conversationPartnerId);
-      const rawConversationMessages = await this.firebaseClient.databaseGet<
+      const rawConversationMessages = await firebaseClient.databaseGet<
         Record<string, ConversationMessage>
       >(`conversations/${conversationId}`, {
         orderBy: 'timestamp',
@@ -272,7 +309,7 @@ export class ChatBackupService implements OnModuleInit {
 
       if (messageIds.length > 0) {
         const fullMessagesPromises = messageIds.map(async messageId => {
-          const messageData = await this.firebaseClient!.databaseGet<FirebaseMessageData>(
+          const messageData = await firebaseClient.databaseGet<FirebaseMessageData>(
             `messages/${messageId}`
           );
           return {
@@ -316,11 +353,10 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to get message history',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined,
           userId,
           conversationPartnerId,
           limit,
+          ...this.extractErrorDetails(error),
         }
       );
 
@@ -332,12 +368,13 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async syncMessages(userId: string, lastSyncTimestamp?: number): Promise<MessageHistoryResult> {
-    if (!this.isInitialized || !this.firebaseClient) {
+    const firebaseClient = this.getFirebaseClient('message sync');
+    if (!firebaseClient) {
       return { success: false, error: 'Service not initialized' };
     }
 
     try {
-      const rawUserMessages = await this.firebaseClient.databaseGet<Record<string, unknown>>(
+      const rawUserMessages = await firebaseClient.databaseGet<Record<string, unknown>>(
         `user_messages/${userId}`,
         {
           orderBy: 'timestamp',
@@ -352,7 +389,7 @@ export class ChatBackupService implements OnModuleInit {
 
       if (messageIds.length > 0) {
         const fullMessagesPromises = messageIds.map(async messageId => {
-          const messageData = await this.firebaseClient!.databaseGet<FirebaseMessageData>(
+          const messageData = await firebaseClient.databaseGet<FirebaseMessageData>(
             `messages/${messageId}`
           );
           return {
@@ -394,9 +431,9 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to sync messages',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
           userId,
           lastSyncTimestamp,
+          ...this.extractErrorDetails(error),
         }
       );
 
@@ -408,12 +445,13 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async deleteMessage(messageId: string, userId: string): Promise<boolean> {
-    if (!this.isInitialized || !this.firebaseClient) {
+    const firebaseClient = this.getFirebaseClient('message deletion');
+    if (!firebaseClient) {
       return false;
     }
 
     try {
-      const messageData = await this.firebaseClient.databaseGet<FirebaseMessageData>(
+      const messageData = await firebaseClient.databaseGet<FirebaseMessageData>(
         `messages/${messageId}`
       );
 
@@ -453,7 +491,7 @@ export class ChatBackupService implements OnModuleInit {
       updates[`user_messages/${messageData.senderId}/${messageId}`] = null;
       updates[`user_messages/${messageData.receiverId}/${messageId}`] = null;
 
-      await this.firebaseClient.databasePatch('', updates);
+      await firebaseClient.databasePatch('', updates);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -475,9 +513,9 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to delete message',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
           messageId,
           userId,
+          ...this.extractErrorDetails(error),
         }
       );
       return false;
@@ -485,7 +523,8 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async getBackupStats(): Promise<ChatBackupStats | null> {
-    if (!this.isInitialized || !this.firebaseClient) {
+    const firebaseClient = this.getFirebaseClient('backup stats retrieval');
+    if (!firebaseClient) {
       return null;
     }
 
@@ -495,16 +534,16 @@ export class ChatBackupService implements OnModuleInit {
       const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
 
       const allMessages =
-        (await this.firebaseClient.databaseGet<Record<string, FirebaseMessageData>>('messages')) ||
-        {};
+        (await firebaseClient.databaseGet<Record<string, FirebaseMessageData>>('messages')) || {};
       const totalMessages = Object.keys(allMessages).length;
 
-      const rawMessages = await this.firebaseClient.databaseGet<
-        Record<string, FirebaseMessageData>
-      >('messages', {
-        orderBy: 'timestamp',
-        startAt: sevenDaysAgo,
-      });
+      const rawMessages = await firebaseClient.databaseGet<Record<string, FirebaseMessageData>>(
+        'messages',
+        {
+          orderBy: 'timestamp',
+          startAt: sevenDaysAgo,
+        }
+      );
       const recentMessages: Record<string, FirebaseMessageData> = rawMessages || {};
       let messagesLast24h = 0;
       let messagesLast7d = 0;
@@ -531,7 +570,7 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to get backup stats',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
+          ...this.extractErrorDetails(error),
         }
       );
       return null;
@@ -562,16 +601,22 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   private async cleanupOldMessages(conversationId: string): Promise<void> {
+    const firebaseClient = this.getFirebaseClient('old message cleanup');
+    if (!firebaseClient) {
+      return;
+    }
+
     try {
       const cutoffTime = Date.now() - this.messageRetentionDays * 24 * 60 * 60 * 1000;
 
-      const rawOldMessages = await this.firebaseClient!.databaseGet<
-        Record<string, ConversationMessage>
-      >(`conversations/${conversationId}`, {
-        orderBy: 'timestamp',
-        endAt: cutoffTime,
-        limitToFirst: 100,
-      });
+      const rawOldMessages = await firebaseClient.databaseGet<Record<string, ConversationMessage>>(
+        `conversations/${conversationId}`,
+        {
+          orderBy: 'timestamp',
+          endAt: cutoffTime,
+          limitToFirst: 100,
+        }
+      );
       const oldMessages: Record<string, unknown> | null = rawOldMessages;
       if (oldMessages) {
         const deleteUpdates: Record<string, unknown> = {};
@@ -582,7 +627,7 @@ export class ChatBackupService implements OnModuleInit {
         });
 
         if (Object.keys(deleteUpdates).length > 0) {
-          await this.firebaseClient!.databasePatch('', deleteUpdates);
+          await firebaseClient.databasePatch('', deleteUpdates);
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,
@@ -603,8 +648,8 @@ export class ChatBackupService implements OnModuleInit {
         'Failed to cleanup old messages',
         'ChatBackupService',
         {
-          error: error instanceof Error ? error.message : 'Unknown error',
           conversationId,
+          ...this.extractErrorDetails(error),
         }
       );
     }
