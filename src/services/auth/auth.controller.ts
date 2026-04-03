@@ -470,7 +470,18 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<DataResponseDto<AuthTokens>> {
     try {
-      const tokens = await this.authService.refreshToken(refreshTokenDto, {
+      const cookieRefreshToken = (
+        req as FastifyRequestWithUser & {
+          cookies?: Record<string, string | undefined>;
+        }
+      ).cookies?.['refresh_token'];
+
+      const effectiveRefreshTokenDto: RefreshTokenDto = {
+        ...refreshTokenDto,
+        refreshToken: refreshTokenDto.refreshToken || cookieRefreshToken || '',
+      };
+
+      const tokens = await this.authService.refreshToken(effectiveRefreshTokenDto, {
         userAgent: (req.headers['user-agent'] as string) || 'unknown',
         ipAddress: req.ip || '127.0.0.1',
       });

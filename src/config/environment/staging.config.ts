@@ -136,7 +136,13 @@ export default function createStagingConfig(): Config {
     },
     jwt: {
       // Use helper functions (which use dotenv) for environment variable access
-      secret: getEnvWithDefault(ENV_VARS.JWT_SECRET, 'your-super-secret-key-change-in-production'),
+      secret:
+        getEnv(ENV_VARS.JWT_SECRET) ||
+        (() => {
+          throw new Error(
+            `Missing required environment variable: ${ENV_VARS.JWT_SECRET}. Please set JWT_SECRET in .env.staging`
+          );
+        })(),
       expiration: getEnvWithDefault(ENV_VARS.JWT_EXPIRATION, DEFAULT_CONFIG.JWT_EXPIRATION),
     },
     prisma: {

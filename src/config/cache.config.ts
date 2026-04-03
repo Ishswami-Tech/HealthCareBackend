@@ -9,7 +9,6 @@
  * for backward compatibility and unified cache management
  */
 
-import { registerAs } from '@nestjs/config';
 import type { CacheConfig, RedisConfig } from '@core/types/config.types';
 import { ENV_VARS, DEFAULT_CONFIG } from './constants';
 import {
@@ -77,7 +76,7 @@ function validateRedisConfig(config: RedisConfig): void {
  * Cache configuration factory
  * This is registered with NestJS ConfigModule as 'cache'
  */
-export const cacheConfig = registerAs('cache', (): CacheConfig => {
+export const cacheConfig = (): CacheConfig => {
   const enabled = isCacheEnabled();
   const provider = getCacheProvider();
 
@@ -104,7 +103,7 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
       },
     }),
   };
-});
+};
 
 /**
  * Redis configuration factory (for backward compatibility)
@@ -113,7 +112,7 @@ export const cacheConfig = registerAs('cache', (): CacheConfig => {
  *
  * When Redis is disabled, returns minimal config with safe defaults (no validation required)
  */
-export const redisConfig = registerAs('redis', (): RedisConfig => {
+export const redisConfig = (): RedisConfig => {
   // Use helper functions (which use dotenv) for environment variable access
   const isRedisEnabled = isCacheEnabled() && getCacheProvider() === 'redis';
 
@@ -148,7 +147,7 @@ export const redisConfig = registerAs('redis', (): RedisConfig => {
   validateRedisConfig(config);
 
   return config;
-});
+};
 
 /**
  * Default export - cache config (primary)

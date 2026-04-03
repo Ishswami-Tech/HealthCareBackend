@@ -2,7 +2,7 @@ import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config/config.service';
 import { LogType, LogLevel } from '@core/types';
 import { AppointmentStatus, UpdateAppointmentStatusDto } from '@dtos/appointment.dto';
 import {

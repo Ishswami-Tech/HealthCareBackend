@@ -1,4 +1,3 @@
-import { registerAs } from '@nestjs/config';
 import type { EnhancedRateLimitConfig } from '@core/types/config.types';
 import { parseInteger, getEnv, getEnvBoolean } from './environment/utils';
 
@@ -32,7 +31,7 @@ function validateRateLimitConfig(config: EnhancedRateLimitConfig): void {
 /**
  * Rate limit configuration factory
  */
-export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
+export default function rateLimitConfig(): EnhancedRateLimitConfig {
   // Use helper functions (which use dotenv) for environment variable access
   const config: EnhancedRateLimitConfig = {
     enabled: getEnvBoolean('RATE_LIMIT_ENABLED', true),
@@ -84,4 +83,4 @@ export default registerAs('rateLimit', (): EnhancedRateLimitConfig => {
   validateRateLimitConfig(config);
 
   return config;
-});
+}

@@ -1,5 +1,4 @@
-import { registerAs } from '@nestjs/config';
-import { HealthcareError } from '@core/errors';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import {
   getEnv,
@@ -21,7 +20,7 @@ import {
  * - Scalable for 10 lakh+ users across all clinics
  */
 
-export const healthcareConfig = registerAs('healthcare', () => ({
+export const healthcareConfig = () => ({
   // Application settings
   appName: 'Healthcare Management System',
   appType: 'healthcare',
@@ -174,7 +173,7 @@ export const healthcareConfig = registerAs('healthcare', () => ({
       keyStorage: getEnvWithDefault('ENCRYPTION_KEY_STORAGE', 'local'), // 'aws-kms' | 'azure-keyvault' | 'local'
     },
     authentication: {
-      jwtSecret: getEnvWithDefault('JWT_SECRET', 'your-healthcare-jwt-secret'),
+      jwtSecret: getEnvWithDefault('JWT_SECRET', ''),
       jwtExpiration: getEnvWithDefault('JWT_EXPIRATION', '8h'), // Shorter for healthcare
       refreshTokenExpiration: getEnvWithDefault('REFRESH_TOKEN_EXPIRATION', '24h'),
       sessionTimeout: getEnvNumber('SESSION_TIMEOUT', 28800), // 8 hours
@@ -351,7 +350,7 @@ export const healthcareConfig = registerAs('healthcare', () => ({
       path: getEnvWithDefault('API_DOCS_PATH', '/api/docs'),
     },
   },
-}));
+});
 
 /**
  * Environment-specific configurations
@@ -419,10 +418,10 @@ export const validateHealthcareConfig = (config: unknown) => {
   // Validate security settings (only in production)
   if (prodEnv) {
     const authentication = asRecord(security?.['authentication']);
-    if (authentication?.['jwtSecret'] === 'your-healthcare-jwt-secret') {
-      console.warn(
-        'WARNING: JWT_SECRET is using default value in production. Please change this immediately.'
-      );
+    const jwtSecret =
+      typeof authentication?.['jwtSecret'] === 'string' ? authentication['jwtSecret'] : '';
+    if (!jwtSecret) {
+      errors.push('JWT_SECRET must be set');
     }
   }
 

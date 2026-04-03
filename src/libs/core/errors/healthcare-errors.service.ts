@@ -29,6 +29,8 @@ import { LogType, LogLevel } from '@core/types';
  */
 @Injectable()
 export class HealthcareErrorsService {
+  private static readonly HTTP_STATUS_LOCKED = 423;
+
   constructor(
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
@@ -549,7 +551,7 @@ export class HealthcareErrorsService {
   resourceLocked(resource?: string, context?: string): HealthcareError {
     return this.createError(
       ErrorCode.RESOURCE_LOCKED,
-      HttpStatus.LOCKED,
+      HealthcareErrorsService.HTTP_STATUS_LOCKED as HttpStatus,
       context,
       resource ? { resource } : undefined
     );

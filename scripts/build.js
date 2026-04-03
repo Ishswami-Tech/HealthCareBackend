@@ -5,9 +5,7 @@
  * Performs all validation checks before building and shows completion message
  *
  * Build Process:
- * - Uses SWC compiler (20x faster than TypeScript compiler)
- * - Type checking runs in parallel with SWC compilation
- * - Configuration: nest-cli.json (SWC builder enabled)
+ * - Uses direct SWC compilation plus alias rewriting
  * - Enforces strict TypeScript rules (no @ts-ignore, no eslint-disable)
  * - Auto-fixes security vulnerabilities
  */
@@ -133,6 +131,48 @@ function verifyBuildArtifacts() {
   logSuccess(`Build artifacts verified (${requiredFiles.length} files)`);
 }
 
+function copyRuntimeAssets() {
+  const distDir = path.join(process.cwd(), 'dist');
+  fs.mkdirSync(distDir, { recursive: true });
+
+  const copies = [
+    {
+      source: path.join(
+        process.cwd(),
+        'src',
+        'libs',
+        'infrastructure',
+        'database',
+        'prisma',
+        'generated'
+      ),
+      target: path.join(distDir, 'libs', 'infrastructure', 'database', 'prisma', 'generated'),
+    },
+    {
+      source: path.join(
+        process.cwd(),
+        'src',
+        'libs',
+        'infrastructure',
+        'database',
+        'prisma',
+        'schema.prisma'
+      ),
+      target: path.join(distDir, 'libs', 'infrastructure', 'database', 'prisma', 'schema.prisma'),
+    },
+    {
+      source: path.join(process.cwd(), 'src', 'views'),
+      target: path.join(distDir, 'src', 'views'),
+    },
+  ];
+
+  for (const { source, target } of copies) {
+    if (!fs.existsSync(source)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.cpSync(source, target, { recursive: true, force: true });
+  }
+}
+
 function main() {
   const startTime = Date.now();
   const args = process.argv.slice(2);
@@ -235,10 +275,7 @@ function main() {
     log('\nBuilding Application', 'blue');
     log('-'.repeat(60), 'blue');
 
-    // Set environment variable and run nest build
-    // Note: nest build uses SWC compiler (configured in nest-cli.json)
-    // SWC provides 20x faster compilation than TypeScript compiler
-    // Type checking runs in parallel with SWC compilation
+    // Set environment variable and run the direct SWC build pipeline
     const envPrefix =
       environment === 'production'
         ? 'cross-env NODE_ENV=production'
@@ -246,11 +283,19 @@ function main() {
           ? 'cross-env NODE_ENV=staging'
           : 'cross-env NODE_ENV=development';
 
+    // Clean output
+    fs.rmSync(path.join(process.cwd(), 'dist'), { recursive: true, force: true });
     const buildResult = runCommand(
-      `${envPrefix} nest build`,
-      `Building for ${environment} environment (using SWC compiler)`
+      `${envPrefix} swc src -d dist --copy-files --strip-leading-paths --config-file .swcrc`,
+      `Building for ${environment} environment`
     );
     stepTimes['SWC Compilation'] = buildResult.time;
+    const aliasResult = runCommand(
+      'yarn run tsc-alias -p tsconfig.build.json --outDir dist',
+      'Rewriting path aliases'
+    );
+    stepTimes['Alias Rewrite'] = aliasResult.time;
+    copyRuntimeAssets();
     validationCount++;
 
     // Post-build verification

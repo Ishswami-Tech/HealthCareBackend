@@ -1,16 +1,16 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import * as admin from 'firebase-admin';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { DeviceTokenService } from '@communication/channels/push/device-token.service';
 import type { PushNotificationData, PushNotificationResult } from '@core/types/notification.types';
+import { FirebaseGoogleClient } from '@communication/channels/firebase/firebase-google-client';
 
 @Injectable()
 export class PushNotificationService implements OnModuleInit {
-  private firebaseApp: admin.app.App | null = null;
+  private firebaseClient: FirebaseGoogleClient | null = null;
   private isInitialized = false;
   private snsBackupService?: SNSBackupService;
   private deviceTokenService?: DeviceTokenService;
@@ -38,11 +38,8 @@ export class PushNotificationService implements OnModuleInit {
 
   private initializeFirebase(): void {
     try {
-      const projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
-      const privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY');
-      const clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
-
-      if (!projectId || !privateKey || !clientEmail) {
+      const firebaseClient = new FirebaseGoogleClient(this.configService);
+      if (!firebaseClient.isMessagingConfigured()) {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
@@ -53,18 +50,7 @@ export class PushNotificationService implements OnModuleInit {
         return;
       }
 
-      if (!admin.apps.length) {
-        this.firebaseApp = admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId,
-            privateKey: privateKey.replace(/\\n/g, '\n'),
-            clientEmail,
-          }),
-        });
-      } else {
-        this.firebaseApp = admin.app();
-      }
-
+      this.firebaseClient = firebaseClient;
       this.isInitialized = true;
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -164,12 +150,12 @@ export class PushNotificationService implements OnModuleInit {
     notification: PushNotificationData,
     userId?: string
   ): Promise<PushNotificationResult> {
-    if (!this.isInitialized || !this.firebaseApp) {
+    if (!this.isInitialized || !this.firebaseClient) {
       return { success: false, error: 'FCM service not initialized' };
     }
 
     try {
-      const message: admin.messaging.Message = {
+      const message = {
         token: deviceToken,
         notification: {
           title: notification.title,
@@ -206,7 +192,7 @@ export class PushNotificationService implements OnModuleInit {
         },
       };
 
-      const response = await admin.messaging().send(message);
+      const response = await this.firebaseClient.sendFcmMessage(message);
 
       void this.loggingService.log(
         LogType.NOTIFICATION,
@@ -294,7 +280,7 @@ export class PushNotificationService implements OnModuleInit {
     deviceTokens: string[],
     notification: PushNotificationData
   ): Promise<PushNotificationResult> {
-    if (!this.isInitialized || !this.firebaseApp) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
@@ -305,30 +291,19 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
-      const message: admin.messaging.MulticastMessage = {
-        tokens: deviceTokens,
-        notification: {
-          title: notification.title,
-          body: notification.body,
-        },
-        data: notification.data || {},
-        android: {
-          notification: {
-            channelId: 'healthcare_notifications',
-            priority: 'high' as const,
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              badge: 1,
-              sound: 'default',
-            },
-          },
-        },
-      };
+      const responses = await Promise.all(
+        deviceTokens.map(token => this.sendViaFCM(token, notification))
+      );
+      let successCount = 0;
+      let failureCount = 0;
 
-      const response = await admin.messaging().sendEachForMulticast(message);
+      responses.forEach(response => {
+        if (response.success) {
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      });
 
       void this.loggingService.log(
         LogType.NOTIFICATION,
@@ -336,8 +311,8 @@ export class PushNotificationService implements OnModuleInit {
         'Push notifications sent to multiple devices',
         'PushNotificationService',
         {
-          successCount: response.successCount,
-          failureCount: response.failureCount,
+          successCount,
+          failureCount,
           totalTokens: deviceTokens.length,
           title: notification.title,
           initiatorId: notification.initiatorId,
@@ -345,9 +320,8 @@ export class PushNotificationService implements OnModuleInit {
         }
       );
 
-      // Log failed tokens for debugging
-      if (response.failureCount > 0) {
-        response.responses.forEach((resp, idx: number) => {
+      if (failureCount > 0) {
+        responses.forEach((resp, idx) => {
           if (!resp.success && resp.error) {
             void this.loggingService.log(
               LogType.NOTIFICATION,
@@ -356,7 +330,7 @@ export class PushNotificationService implements OnModuleInit {
               'PushNotificationService',
               {
                 deviceToken: this.maskToken(deviceTokens[idx] || ''),
-                error: resp.error.message,
+                error: resp.error,
                 initiatorId: notification.initiatorId,
                 initiatorRole: notification.initiatorRole,
               }
@@ -365,10 +339,9 @@ export class PushNotificationService implements OnModuleInit {
         });
       }
 
-      // If some failed, try SNS backup for failed tokens
-      if (response.failureCount > 0 && this.snsBackupService?.isHealthy()) {
+      if (failureCount > 0 && this.snsBackupService?.isHealthy()) {
         const failedTokens: string[] = [];
-        response.responses.forEach((resp, idx: number) => {
+        responses.forEach((resp, idx) => {
           if (!resp.success && deviceTokens[idx]) {
             failedTokens.push(deviceTokens[idx] || '');
           }
@@ -379,9 +352,8 @@ export class PushNotificationService implements OnModuleInit {
           try {
             const snsResult = await this.sendViaSNS(failedToken, notification);
             if (snsResult.success) {
-              // Update counts
-              response.successCount++;
-              response.failureCount--;
+              successCount++;
+              failureCount--;
             }
           } catch (error) {
             // Log but don't fail - individual token failures are expected
@@ -402,11 +374,16 @@ export class PushNotificationService implements OnModuleInit {
       }
 
       return {
-        success: response.successCount > 0,
-        successCount: response.successCount,
-        failureCount: response.failureCount,
-        provider: response.failureCount === 0 ? 'fcm' : 'fcm',
-        usedFallback: response.failureCount < deviceTokens.length - response.successCount,
+        success: successCount > 0,
+        successCount,
+        failureCount,
+        provider: 'fcm',
+        usedFallback: successCount > responses.filter(resp => resp.success).length,
+        results: responses.map(resp => ({
+          success: resp.success,
+          ...(resp.messageId ? { messageId: resp.messageId } : {}),
+          ...(resp.error ? { error: resp.error } : {}),
+        })),
       };
     } catch (error) {
       void this.loggingService.log(
@@ -435,7 +412,7 @@ export class PushNotificationService implements OnModuleInit {
     topic: string,
     notification: PushNotificationData
   ): Promise<PushNotificationResult> {
-    if (!this.isInitialized || !this.firebaseApp) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
@@ -446,7 +423,7 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
-      const message: admin.messaging.Message = {
+      const message = {
         topic: topic,
         notification: {
           title: notification.title,
@@ -469,7 +446,7 @@ export class PushNotificationService implements OnModuleInit {
         },
       };
 
-      const response = await admin.messaging().send(message);
+      const response = await this.firebaseClient.sendFcmMessage(message);
 
       void this.loggingService.log(
         LogType.NOTIFICATION,
@@ -510,7 +487,7 @@ export class PushNotificationService implements OnModuleInit {
   }
 
   async subscribeToTopic(deviceToken: string, topic: string): Promise<boolean> {
-    if (!this.isInitialized || !this.firebaseApp) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
@@ -521,7 +498,7 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
-      await admin.messaging().subscribeToTopic([deviceToken], topic);
+      await this.firebaseClient.manageTopicSubscription(deviceToken, topic, 'batchAdd');
 
       void this.loggingService.log(
         LogType.NOTIFICATION,
@@ -552,7 +529,7 @@ export class PushNotificationService implements OnModuleInit {
   }
 
   async unsubscribeFromTopic(deviceToken: string, topic: string): Promise<boolean> {
-    if (!this.isInitialized || !this.firebaseApp) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
@@ -563,7 +540,7 @@ export class PushNotificationService implements OnModuleInit {
     }
 
     try {
-      await admin.messaging().unsubscribeFromTopic([deviceToken], topic);
+      await this.firebaseClient.manageTopicSubscription(deviceToken, topic, 'batchRemove');
 
       void this.loggingService.log(
         LogType.NOTIFICATION,

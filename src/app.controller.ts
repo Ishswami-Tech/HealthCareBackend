@@ -16,7 +16,6 @@ interface ServiceInfo {
   url: string;
   active: boolean;
   category: string;
-  credentials?: string;
   devOnly?: boolean;
   port?: number;
   status?: string;
@@ -418,7 +417,6 @@ export class AppController {
           url: urlsConfig.redisCommander || this.configService.getEnv('REDIS_COMMANDER_URL') || '',
           active: isRedisCommanderRunning, // Active if Redis Commander health check passes
           category: 'Database',
-          credentials: 'Username: admin, Password: admin',
           devOnly: true,
         });
       } else if (isRedisProvider && isRedisCommanderRunning) {
@@ -429,7 +427,6 @@ export class AppController {
           url: urlsConfig.redisCommander || this.configService.getEnv('REDIS_COMMANDER_URL') || '',
           active: isRedisCommanderRunning,
           category: 'Database',
-          credentials: 'Username: admin, Password: admin',
           devOnly: false,
         });
       }
@@ -1376,15 +1373,6 @@ export class AppController {
                                ${!service.active ? 'disabled' : ''}>
                                 Access Service
                             </a>
-                            ${
-                              service.credentials
-                                ? `
-                                <div class="credentials-info">
-                                    <span class="credentials-label">Credentials:</span> ${service.credentials}
-                                </div>
-                            `
-                                : ''
-                            }
                         </div>
                     </div>
                 `

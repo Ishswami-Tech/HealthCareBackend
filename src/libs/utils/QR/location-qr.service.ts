@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
 
 export interface LocationQRData {

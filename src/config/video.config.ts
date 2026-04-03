@@ -9,7 +9,6 @@
  * Similar to cache.config.ts pattern (Redis/Dragonfly)
  */
 
-import { registerAs } from '@nestjs/config';
 import type { VideoProviderConfig } from '@core/types/video.types';
 import { getEnv, getEnvWithDefault, getEnvBoolean } from './environment/utils';
 
@@ -42,7 +41,7 @@ export function getVideoProvider(): 'openvidu' | 'jitsi' {
  * Video configuration factory
  * This is registered with NestJS ConfigModule as 'video'
  */
-export const videoConfig = registerAs('video', (): VideoProviderConfig => {
+export const videoConfig = (): VideoProviderConfig => {
   const enabled = isVideoEnabled();
   const provider = getVideoProvider();
 
@@ -80,7 +79,7 @@ export const videoConfig = registerAs('video', (): VideoProviderConfig => {
       enableWaitingRoom: getEnvBoolean('JITSI_ENABLE_WAITING_ROOM', true),
     },
   };
-});
+};
 
 /**
  * Default export - video config

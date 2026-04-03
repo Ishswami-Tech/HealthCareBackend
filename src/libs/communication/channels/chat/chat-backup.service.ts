@@ -1,9 +1,9 @@
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
-import * as admin from 'firebase-admin';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
+import { FirebaseGoogleClient } from '@communication/channels/firebase/firebase-google-client';
 
 export interface ChatMessage {
   id: string;
@@ -81,7 +81,7 @@ interface FirebaseMessageData {
  */
 @Injectable()
 export class ChatBackupService implements OnModuleInit {
-  private database: admin.database.Database | null = null;
+  private firebaseClient: FirebaseGoogleClient | null = null;
   private isInitialized = false;
   private readonly maxMessageHistory = 10000; // Limit per user conversation
   private readonly messageRetentionDays = 365; // Keep messages for 1 year
@@ -98,13 +98,8 @@ export class ChatBackupService implements OnModuleInit {
 
   private initializeFirebaseDatabase(): void {
     try {
-      // Use ConfigService (which uses dotenv) for environment variable access
-      const databaseUrl = this.configService.getEnv('FIREBASE_DATABASE_URL');
-      const projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
-      const privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY');
-      const clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
-
-      if (!databaseUrl || !projectId || !privateKey || !clientEmail) {
+      const firebaseClient = new FirebaseGoogleClient(this.configService);
+      if (!firebaseClient.isDatabaseConfigured()) {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
@@ -115,19 +110,7 @@ export class ChatBackupService implements OnModuleInit {
         return;
       }
 
-      // Initialize Firebase Admin SDK if not already initialized
-      if (!admin.apps.length) {
-        admin.initializeApp({
-          credential: admin.credential.cert({
-            projectId,
-            privateKey: privateKey.replace(/\\n/g, '\n'),
-            clientEmail,
-          }),
-          databaseURL: databaseUrl,
-        });
-      }
-
-      this.database = admin.database();
+      this.firebaseClient = firebaseClient;
       this.isInitialized = true;
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -157,7 +140,7 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async backupMessage(messageData: ChatMessage): Promise<ChatMessageResult> {
-    if (!this.isInitialized || !this.database) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
@@ -214,7 +197,7 @@ export class ChatBackupService implements OnModuleInit {
         senderId: messageData.senderId,
       };
 
-      await this.database.ref().update(updates);
+      await this.firebaseClient.databasePatch('', updates);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -262,7 +245,7 @@ export class ChatBackupService implements OnModuleInit {
     limit: number = 50,
     startAfter?: number
   ): Promise<MessageHistoryResult> {
-    if (!this.isInitialized || !this.database) {
+    if (!this.isInitialized || !this.firebaseClient) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
@@ -274,17 +257,13 @@ export class ChatBackupService implements OnModuleInit {
 
     try {
       const conversationId = this.createConversationId(userId, conversationPartnerId);
-      let query = this.database
-        .ref(`conversations/${conversationId}`)
-        .orderByChild('timestamp')
-        .limitToLast(limit);
-
-      if (startAfter) {
-        query = query.endBefore(startAfter);
-      }
-
-      const snapshot = await query.once('value');
-      const rawConversationMessages = snapshot.val() as Record<string, ConversationMessage> | null;
+      const rawConversationMessages = await this.firebaseClient.databaseGet<
+        Record<string, ConversationMessage>
+      >(`conversations/${conversationId}`, {
+        orderBy: 'timestamp',
+        limitToLast: limit,
+        ...(startAfter ? { endAt: startAfter - 1 } : {}),
+      });
       const conversationMessages: Record<string, unknown> = rawConversationMessages || {};
 
       // Get full message details
@@ -293,8 +272,9 @@ export class ChatBackupService implements OnModuleInit {
 
       if (messageIds.length > 0) {
         const fullMessagesPromises = messageIds.map(async messageId => {
-          const messageSnapshot = await this.database!.ref(`messages/${messageId}`).once('value');
-          const messageData = messageSnapshot.val() as FirebaseMessageData | null;
+          const messageData = await this.firebaseClient!.databaseGet<FirebaseMessageData>(
+            `messages/${messageId}`
+          );
           return {
             id: messageId,
             data: messageData,
@@ -352,19 +332,19 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async syncMessages(userId: string, lastSyncTimestamp?: number): Promise<MessageHistoryResult> {
-    if (!this.isInitialized || !this.database) {
+    if (!this.isInitialized || !this.firebaseClient) {
       return { success: false, error: 'Service not initialized' };
     }
 
     try {
-      let query = this.database.ref(`user_messages/${userId}`).orderByChild('timestamp');
-
-      if (lastSyncTimestamp) {
-        query = query.startAfter(lastSyncTimestamp);
-      }
-
-      const snapshot = await query.limitToLast(1000).once('value');
-      const rawUserMessages = snapshot.val() as Record<string, unknown> | null;
+      const rawUserMessages = await this.firebaseClient.databaseGet<Record<string, unknown>>(
+        `user_messages/${userId}`,
+        {
+          orderBy: 'timestamp',
+          limitToLast: 1000,
+          ...(lastSyncTimestamp ? { startAt: lastSyncTimestamp + 1 } : {}),
+        }
+      );
       const userMessages: Record<string, unknown> = rawUserMessages || {};
 
       const messages: Record<string, ChatMessage> = {};
@@ -372,8 +352,9 @@ export class ChatBackupService implements OnModuleInit {
 
       if (messageIds.length > 0) {
         const fullMessagesPromises = messageIds.map(async messageId => {
-          const messageSnapshot = await this.database!.ref(`messages/${messageId}`).once('value');
-          const messageData = messageSnapshot.val() as FirebaseMessageData | null;
+          const messageData = await this.firebaseClient!.databaseGet<FirebaseMessageData>(
+            `messages/${messageId}`
+          );
           return {
             id: messageId,
             data: messageData,
@@ -427,14 +408,14 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async deleteMessage(messageId: string, userId: string): Promise<boolean> {
-    if (!this.isInitialized || !this.database) {
+    if (!this.isInitialized || !this.firebaseClient) {
       return false;
     }
 
     try {
-      // Get message to find conversation details
-      const messageSnapshot = await this.database.ref(`messages/${messageId}`).once('value');
-      const messageData = messageSnapshot.val() as FirebaseMessageData | null;
+      const messageData = await this.firebaseClient.databaseGet<FirebaseMessageData>(
+        `messages/${messageId}`
+      );
 
       if (!messageData) {
         void this.loggingService.log(
@@ -472,7 +453,7 @@ export class ChatBackupService implements OnModuleInit {
       updates[`user_messages/${messageData.senderId}/${messageId}`] = null;
       updates[`user_messages/${messageData.receiverId}/${messageId}`] = null;
 
-      await this.database.ref().update(updates);
+      await this.firebaseClient.databasePatch('', updates);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -504,7 +485,7 @@ export class ChatBackupService implements OnModuleInit {
   }
 
   async getBackupStats(): Promise<ChatBackupStats | null> {
-    if (!this.isInitialized || !this.database) {
+    if (!this.isInitialized || !this.firebaseClient) {
       return null;
     }
 
@@ -513,18 +494,17 @@ export class ChatBackupService implements OnModuleInit {
       const oneDayAgo = now - 24 * 60 * 60 * 1000;
       const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
 
-      // Get total message count
-      const totalSnapshot = await this.database.ref('messages').once('value');
-      const totalMessages = totalSnapshot.numChildren();
+      const allMessages =
+        (await this.firebaseClient.databaseGet<Record<string, FirebaseMessageData>>('messages')) ||
+        {};
+      const totalMessages = Object.keys(allMessages).length;
 
-      // Get recent message counts (this is a simplified approach)
-      const messagesSnapshot = await this.database
-        .ref('messages')
-        .orderByChild('timestamp')
-        .startAt(sevenDaysAgo)
-        .once('value');
-
-      const rawMessages = messagesSnapshot.val() as Record<string, FirebaseMessageData> | null;
+      const rawMessages = await this.firebaseClient.databaseGet<
+        Record<string, FirebaseMessageData>
+      >('messages', {
+        orderBy: 'timestamp',
+        startAt: sevenDaysAgo,
+      });
       const recentMessages: Record<string, FirebaseMessageData> = rawMessages || {};
       let messagesLast24h = 0;
       let messagesLast7d = 0;
@@ -585,16 +565,13 @@ export class ChatBackupService implements OnModuleInit {
     try {
       const cutoffTime = Date.now() - this.messageRetentionDays * 24 * 60 * 60 * 1000;
 
-      const oldMessagesSnapshot = await this.database!.ref(`conversations/${conversationId}`)
-        .orderByChild('timestamp')
-        .endAt(cutoffTime)
-        .limitToFirst(100)
-        .once('value');
-
-      const rawOldMessages = oldMessagesSnapshot.val() as Record<
-        string,
-        ConversationMessage
-      > | null;
+      const rawOldMessages = await this.firebaseClient!.databaseGet<
+        Record<string, ConversationMessage>
+      >(`conversations/${conversationId}`, {
+        orderBy: 'timestamp',
+        endAt: cutoffTime,
+        limitToFirst: 100,
+      });
       const oldMessages: Record<string, unknown> | null = rawOldMessages;
       if (oldMessages) {
         const deleteUpdates: Record<string, unknown> = {};
@@ -605,7 +582,7 @@ export class ChatBackupService implements OnModuleInit {
         });
 
         if (Object.keys(deleteUpdates).length > 0) {
-          await this.database!.ref().update(deleteUpdates);
+          await this.firebaseClient!.databasePatch('', deleteUpdates);
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,

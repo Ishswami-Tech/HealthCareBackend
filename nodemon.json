@@ -1,17 +1,8 @@
 {
-  "watch": [
-    "src"
-  ],
+  "watch": ["src"],
   "ext": "ts,json,env",
-  "ignore": [
-    "src/**/*.spec.ts",
-    "src/**/*.test.ts",
-    "node_modules",
-    "dist",
-    ".git",
-    "*.log"
-  ],
-  "exec": "nest start",
+  "ignore": ["src/**/*.spec.ts", "src/**/*.test.ts", "node_modules", "dist", ".git", "*.log"],
+  "exec": "tsx -r tsconfig-paths/register src/main.ts",
   "env": {
     "NODE_ENV": "development"
   },
@@ -19,4 +10,3 @@
   "verbose": true,
   "legacyWatch": false
 }
-

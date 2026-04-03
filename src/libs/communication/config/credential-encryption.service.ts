@@ -40,14 +40,19 @@ export class CredentialEncryptionService {
     private readonly loggingService: LoggingService
   ) {
     // Get encryption key from environment or generate one (for development)
-    // Use getEnv() with default to avoid throwing errors when key is not found
     this.encryptionKey =
-      this.configService.getEnv('COMMUNICATION_ENCRYPTION_KEY', '') ||
-      this.configService.getEnv('ENCRYPTION_KEY', '') ||
-      'default-key-change-in-production';
+      this.configService.getEnv('COMMUNICATION_ENCRYPTION_KEY', '') ??
+      this.configService.getEnv('ENCRYPTION_KEY', '') ??
+      '';
 
-    if (this.encryptionKey === 'default-key-change-in-production') {
-      this.logger.warn('Using default encryption key. Change in production!');
+    if (!this.encryptionKey) {
+      const nodeEnv = process.env['NODE_ENV'] || 'development';
+      if (nodeEnv !== 'test') {
+        throw new Error(
+          'COMMUNICATION_ENCRYPTION_KEY or ENCRYPTION_KEY must be set when credential encryption is enabled'
+        );
+      }
+      this.logger.warn('Using test-only empty encryption key in test environment');
     }
   }
 

@@ -1,5 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule } from '@config/config.module';
 
 // Internal imports - Infrastructure
 import { LoggingModule } from '@infrastructure/logging';

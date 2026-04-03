@@ -10,10 +10,24 @@ import 'dotenv/config';
 const NODE_ENV = process.env['NODE_ENV'] || 'development';
 
 // Required environment variables for production
-const PRODUCTION_REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
+const PRODUCTION_REQUIRED = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'SESSION_SECRET',
+  'COOKIE_SECRET',
+  'COMMUNICATION_ENCRYPTION_KEY',
+  'CORS_ORIGIN',
+];
 
 // Required environment variables for staging
-const STAGING_REQUIRED = ['DATABASE_URL', 'JWT_SECRET'];
+const STAGING_REQUIRED = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'SESSION_SECRET',
+  'COOKIE_SECRET',
+  'COMMUNICATION_ENCRYPTION_KEY',
+  'CORS_ORIGIN',
+];
 
 // Required environment variables for all environments (optional, can have defaults)
 const RECOMMENDED = ['DATABASE_URL', 'JWT_SECRET', 'REDIS_HOST'];
@@ -26,7 +40,7 @@ function validateEnvironment(): void {
   const requiredVars =
     NODE_ENV === 'production'
       ? PRODUCTION_REQUIRED
-      : NODE_ENV === 'staging'
+      : NODE_ENV === 'staging' || NODE_ENV === 'local-prod'
         ? STAGING_REQUIRED
         : [];
 
