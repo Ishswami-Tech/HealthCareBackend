@@ -266,16 +266,73 @@ export class AppointmentNotificationService {
   /**
    * Send email notification
    */
+  private async resolvePatientUserId(
+    patientId: string,
+    notificationId: string
+  ): Promise<string | null> {
+    try {
+      const patient = await this.databaseService.executeHealthcareRead<{ userId: string } | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return (await typedClient.patient.findUnique({
+            where: { id: patientId } as PrismaDelegateArgs,
+            select: { userId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as { userId: string } | null;
+        }
+      );
+
+      if (patient?.userId) {
+        return patient.userId;
+      }
+
+      const directUser = await this.databaseService.findUserByIdSafe(patientId);
+      if (directUser?.id) {
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.WARN,
+          'Patient record not found, falling back to patientId as userId',
+          'AppointmentNotificationService.resolvePatientUserId',
+          {
+            notificationId,
+            patientId,
+            userId: directUser.id,
+          }
+        );
+
+        return directUser.id;
+      }
+
+      return null;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to resolve patient user mapping',
+        'AppointmentNotificationService.resolvePatientUserId',
+        {
+          notificationId,
+          patientId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+
+      return null;
+    }
+  }
+
   private async sendEmailNotification(
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
     const { templateData, type, clinicId, patientId } = notificationData;
+    const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
 
     // Fetch patient email using DatabaseService helper method (follows architecture rules)
     let patientEmail: string | undefined;
     try {
-      const user = await this.databaseService.findUserByIdSafe(patientId);
+      const user = patientUserId
+        ? await this.databaseService.findUserByIdSafe(patientUserId)
+        : null;
       patientEmail = user?.email || undefined;
     } catch (error) {
       await this.loggingService.log(
@@ -286,6 +343,7 @@ export class AppointmentNotificationService {
         {
           notificationId,
           patientId,
+          patientUserId,
           error: error instanceof Error ? error.message : String(error),
         }
       );
@@ -300,6 +358,7 @@ export class AppointmentNotificationService {
         {
           notificationId,
           patientId,
+          patientUserId,
         }
       );
       return;
@@ -333,6 +392,7 @@ export class AppointmentNotificationService {
       {
         notificationId,
         patientEmail,
+        patientUserId,
       }
     );
   }
@@ -346,36 +406,21 @@ export class AppointmentNotificationService {
     notificationId: string
   ): Promise<void> {
     const { templateData, type, patientId, clinicId } = notificationData;
+    const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
 
     // Fetch patient phone number using DatabaseService (follows architecture rules)
-    // Use proper typing pattern like ClinicService to avoid direct Prisma client access
     let patientPhone: string | null = null;
-    if (patientId) {
+    if (patientUserId) {
       try {
-        // First, get patient to find userId using typed client pattern
-        const patient = await this.databaseService.executeHealthcareRead<{ userId: string } | null>(
-          async client => {
-            // Use PrismaTransactionClientWithDelegates pattern to avoid direct Prisma access
-            const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-            return (await typedClient.patient.findUnique({
-              where: { id: patientId } as PrismaDelegateArgs,
-              select: { userId: true } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs)) as { userId: string } | null;
-          }
-        );
-
-        // Then get user phone using DatabaseService helper method
-        if (patient?.userId) {
-          const user = await this.databaseService.findUserByIdSafe(patient.userId);
-          patientPhone = user?.phone || null;
-        }
+        const user = await this.databaseService.findUserByIdSafe(patientUserId);
+        patientPhone = user?.phone || null;
       } catch (error) {
         await this.loggingService.log(
           LogType.ERROR,
           LogLevel.WARN,
           `Failed to fetch patient phone number: ${error instanceof Error ? error.message : 'Unknown error'}`,
           'AppointmentNotificationService',
-          { patientId, notificationId }
+          { patientId, patientUserId, notificationId }
         );
       }
     }
@@ -386,7 +431,7 @@ export class AppointmentNotificationService {
         LogLevel.WARN,
         `Skipping WhatsApp notification - no phone number found`,
         'AppointmentNotificationService',
-        { notificationId, patientId }
+        { notificationId, patientId, patientUserId }
       );
       return;
     }
@@ -450,13 +495,14 @@ export class AppointmentNotificationService {
     notificationId: string
   ): Promise<void> {
     const { templateData, type, patientId } = notificationData;
+    const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
 
     // Fetch patient device tokens using DeviceTokenService
     // DeviceTokenService uses in-memory storage (primary) with optional database persistence
     // This follows the architecture pattern: use service layer, not direct database access
     let deviceTokens: string[] = [];
     try {
-      const tokenData = this.deviceTokenService.getUserTokens(patientId);
+      const tokenData = patientUserId ? this.deviceTokenService.getUserTokens(patientUserId) : [];
       deviceTokens = tokenData.map(token => token.token);
     } catch (error) {
       await this.loggingService.log(
@@ -467,6 +513,7 @@ export class AppointmentNotificationService {
         {
           notificationId,
           patientId,
+          patientUserId,
           error: error instanceof Error ? error.message : String(error),
         }
       );
@@ -481,6 +528,7 @@ export class AppointmentNotificationService {
         {
           notificationId,
           patientId,
+          patientUserId,
         }
       );
       return;
@@ -508,6 +556,7 @@ export class AppointmentNotificationService {
       {
         notificationId,
         deviceTokens: deviceTokens.length,
+        patientUserId,
       }
     );
   }

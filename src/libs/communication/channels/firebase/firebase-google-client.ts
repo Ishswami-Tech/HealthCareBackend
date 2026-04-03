@@ -2,6 +2,12 @@ import { GoogleAuth } from 'google-auth-library';
 import { ConfigService } from '@config/config.service';
 
 type QueryValue = string | number | boolean;
+type FirebaseRequestError = Error & {
+  status?: number;
+  payload?: unknown;
+  rawText?: string;
+  url?: string;
+};
 
 export class FirebaseGoogleClient {
   private readonly projectId: string | undefined;
@@ -150,7 +156,12 @@ export class FirebaseGoogleClient {
         typeof payload.error.message === 'string'
           ? payload.error.message
           : `Firebase request failed with status ${response.status}`;
-      throw new Error(message);
+      const requestError = new Error(message) as FirebaseRequestError;
+      requestError.status = response.status;
+      requestError.payload = payload;
+      requestError.rawText = rawText;
+      requestError.url = url;
+      throw requestError;
     }
 
     return payload as T;
