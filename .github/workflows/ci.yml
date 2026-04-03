@@ -1086,7 +1086,10 @@ jobs:
           CORS_CREDENTIALS=${{ vars.CORS_CREDENTIALS }}
           CORS_METHODS=${{ vars.CORS_METHODS }}
           SWAGGER_URL=${{ vars.SWAGGER_URL }}
+          ENABLE_BULL_BOARD=${{ vars.ENABLE_BULL_BOARD }}
           BULL_BOARD_URL=${{ vars.BULL_BOARD_URL }}
+          QUEUE_DASHBOARD_USER=${{ vars.QUEUE_DASHBOARD_USER }}
+          QUEUE_DASHBOARD_PASSWORD=${{ secrets.QUEUE_DASHBOARD_PASSWORD }}
           SOCKET_URL=${{ vars.SOCKET_URL }}
           PRISMA_STUDIO_URL=${{ vars.PRISMA_STUDIO_URL }}
           PGADMIN_URL=${{ vars.PGADMIN_URL }}

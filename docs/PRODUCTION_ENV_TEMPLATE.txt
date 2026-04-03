@@ -114,10 +114,16 @@ CORS_METHODS=GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS
 
 # Service URLs
 SWAGGER_URL=/docs
+ENABLE_BULL_BOARD=false
 BULL_BOARD_URL=/queue-dashboard
 SOCKET_URL=/socket.io
 PRISMA_STUDIO_URL=/prisma
 PGADMIN_URL=/pgadmin
+
+# Queue Dashboard Authentication
+# Required only when ENABLE_BULL_BOARD=true
+QUEUE_DASHBOARD_USER=
+QUEUE_DASHBOARD_PASSWORD=
 
 # WhatsApp Configuration (Meta Business API)
 # See: https://developers.facebook.com/docs/whatsapp/cloud-api

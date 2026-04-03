@@ -82,6 +82,7 @@ services:
       
       # Service URLs
       SWAGGER_URL: /docs
+      ENABLE_BULL_BOARD: "true"
       BULL_BOARD_URL: /queue-dashboard
       SOCKET_URL: /socket.io
       REDIS_COMMANDER_URL: http://localhost:8082

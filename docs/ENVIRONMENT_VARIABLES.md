@@ -274,15 +274,18 @@ detailed setup instructions.
 
 ## 🛠️ Service URLs
 
-| Variable              | Description                    | Default                 | Required |
-| --------------------- | ------------------------------ | ----------------------- | -------- |
-| `SWAGGER_URL`         | Swagger documentation URL      | `/docs`                 | No       |
-| `BULL_BOARD_URL`      | Bull Board queue dashboard URL | `/queue-dashboard`      | No       |
-| `SOCKET_URL`          | Socket.IO URL                  | `/socket.io`            | No       |
-| `REDIS_COMMANDER_URL` | Redis Commander URL            | `http://localhost:8082` | No       |
-| `PRISMA_STUDIO_URL`   | Prisma Studio URL              | `http://localhost:5555` | No       |
-| `PGADMIN_URL`         | PgAdmin URL                    | `http://localhost:5050` | No       |
-| `LOGGER_URL`          | Logger URL                     | `/logger`               | No       |
+| Variable                   | Description                    | Default                      | Required                     |
+| -------------------------- | ------------------------------ | ---------------------------- | ---------------------------- |
+| `SWAGGER_URL`              | Swagger documentation URL      | `/docs`                      | No                           |
+| `ENABLE_BULL_BOARD`        | Enable Bull Board dashboard    | `true` (dev), `false` (prod) | No                           |
+| `BULL_BOARD_URL`           | Bull Board queue dashboard URL | `/queue-dashboard`           | No                           |
+| `QUEUE_DASHBOARD_USER`     | Bull Board basic auth username | -                            | If enabled in prod-like envs |
+| `QUEUE_DASHBOARD_PASSWORD` | Bull Board basic auth password | -                            | If enabled in prod-like envs |
+| `SOCKET_URL`               | Socket.IO URL                  | `/socket.io`                 | No                           |
+| `REDIS_COMMANDER_URL`      | Redis Commander URL            | `http://localhost:8082`      | No                           |
+| `PRISMA_STUDIO_URL`        | Prisma Studio URL              | `http://localhost:5555`      | No                           |
+| `PGADMIN_URL`              | PgAdmin URL                    | `http://localhost:5050`      | No                           |
+| `LOGGER_URL`               | Logger URL                     | `/logger`                    | No                           |
 
 ## 🐳 Docker Configuration
 
@@ -346,6 +349,8 @@ ones):
 - `JWT_SECRET` (**required**)
 - `SESSION_SECRET` (**required**)
 - `COOKIE_SECRET` (**required**)
+- `QUEUE_DASHBOARD_USER` (**required when `ENABLE_BULL_BOARD=true`**)
+- `QUEUE_DASHBOARD_PASSWORD` (**required when `ENABLE_BULL_BOARD=true`**)
 - `JITSI_APP_SECRET` (required for JWT authentication)
 
 ## 🔍 See Also

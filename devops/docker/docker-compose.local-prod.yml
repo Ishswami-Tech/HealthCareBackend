@@ -315,6 +315,7 @@ services:
       NPM_CONFIG_LOGLEVEL: error
       API_URL: ${API_URL}
       SWAGGER_URL: ${SWAGGER_URL:-/docs}
+      ENABLE_BULL_BOARD: ${ENABLE_BULL_BOARD:-false}
       BULL_BOARD_URL: ${BULL_BOARD_URL:-/queue-dashboard}
       SOCKET_URL: ${SOCKET_URL:-/socket.io}
       LOGGER_URL: ${LOGGER_URL:-/logger}

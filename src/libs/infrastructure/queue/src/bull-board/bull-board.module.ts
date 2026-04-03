@@ -45,9 +45,17 @@ export class BullBoardModule {
    */
   static forRoot(): DynamicModule {
     const cacheEnabled = isCacheEnabled();
+    const nodeEnv = process.env['NODE_ENV'] || 'development';
+    const isDevelopment = nodeEnv === 'development';
+    const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
+    const bullBoardEnabled =
+      enableBullBoardEnv !== undefined
+        ? ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv)
+        : isDevelopment;
 
-    if (!cacheEnabled) {
+    if (!cacheEnabled || !bullBoardEnabled) {
       // Return minimal module without queue registrations when cache is disabled
+      // or Bull Board is intentionally turned off for the current environment.
       return {
         module: BullBoardModule,
         imports: [forwardRef(() => LoggingModule)],
@@ -56,10 +64,8 @@ export class BullBoardModule {
       };
     }
 
-    const nodeEnv = process.env['NODE_ENV'] || 'development';
     const queueDashboardUser = process.env['QUEUE_DASHBOARD_USER']?.trim();
     const queueDashboardPassword = process.env['QUEUE_DASHBOARD_PASSWORD']?.trim();
-    const isDevelopment = nodeEnv === 'development';
 
     if ((!queueDashboardUser || !queueDashboardPassword) && !isDevelopment) {
       throw new Error(
