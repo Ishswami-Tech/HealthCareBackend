@@ -469,7 +469,6 @@ export class PatientsService {
         where: { id: { in: patientIds } } as PrismaDelegateArgs,
         include: {
           user: true,
-          vitals: { take: 1, orderBy: { recordedAt: 'desc' } },
         } as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
 
