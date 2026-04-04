@@ -1140,8 +1140,10 @@ export class AppointmentsService {
   ): Promise<{ subscriptionId: string; patientUserId: string } | null> {
     const patient = await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as Prisma.TransactionClient;
-      return await typedClient.patient.findUnique({
-        where: { id: patientId },
+      return await typedClient.patient.findFirst({
+        where: {
+          OR: [{ id: patientId }, { userId: patientId }],
+        },
         select: { id: true, userId: true },
       });
     });
@@ -1237,6 +1239,16 @@ export class AppointmentsService {
     const shouldResolveInPersonCoverageBeforeCreate =
       requiresSubscriptionCoverage && shouldAutoLinkInPersonSubscription;
 
+    const isAdministrativeRole = [
+      Role.SUPER_ADMIN,
+      Role.CLINIC_ADMIN,
+      Role.RECEPTIONIST,
+      Role.CLINIC_LOCATION_HEAD,
+      Role.DOCTOR,
+      Role.NURSE,
+      Role.ASSISTANT_DOCTOR,
+    ].includes(role as Role);
+
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
     if (shouldResolveInPersonCoverageBeforeCreate) {
       resolvedInPersonCoverage = await this.resolveEligibleInPersonSubscription(
@@ -1244,7 +1256,9 @@ export class AppointmentsService {
         clinicId
       );
 
-      if (!resolvedInPersonCoverage) {
+      // If no subscription is found, we only throw for patients booking for themselves.
+      // Administrative roles can bypass this to support walk-ins or manual billing.
+      if (!resolvedInPersonCoverage && !isAdministrativeRole) {
         throw this.errors.businessRuleViolation(
           'Active in-person subscription coverage is required before creating this appointment',
           'AppointmentsService.createAppointment'
