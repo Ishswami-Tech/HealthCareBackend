@@ -209,7 +209,16 @@ export class AppointmentsController {
   @Post()
   @RateLimitAPI()
   @HttpCode(HttpStatus.CREATED)
-  @Roles(Role.PATIENT, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
+  @Roles(
+    Role.PATIENT,
+    Role.RECEPTIONIST,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.CLINIC_LOCATION_HEAD
+  )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'create')
   @InvalidateAppointmentCache({

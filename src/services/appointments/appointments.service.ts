@@ -1202,7 +1202,7 @@ export class AppointmentsService {
     createDto: CreateAppointmentDto,
     userId: string,
     clinicId: string,
-    role: string = 'USER',
+    role: string = Role.PATIENT,
     options?: {
       skipInPersonSubscriptionAutoLink?: boolean;
     }
@@ -1239,6 +1239,7 @@ export class AppointmentsService {
     const shouldResolveInPersonCoverageBeforeCreate =
       requiresSubscriptionCoverage && shouldAutoLinkInPersonSubscription;
 
+    const normalizedRole = role.trim().toUpperCase();
     const isAdministrativeRole = [
       Role.SUPER_ADMIN,
       Role.CLINIC_ADMIN,
@@ -1247,7 +1248,15 @@ export class AppointmentsService {
       Role.DOCTOR,
       Role.NURSE,
       Role.ASSISTANT_DOCTOR,
-    ].includes(role as Role);
+    ].includes(normalizedRole as Role);
+
+    await this.loggingService.log(
+      LogType.APPOINTMENT,
+      LogLevel.INFO,
+      `Checking subscription for role: ${normalizedRole}, isAdministrative: ${isAdministrativeRole}`,
+      'AppointmentsService',
+      { role: normalizedRole, isAdministrativeRole }
+    );
 
     let resolvedInPersonCoverage: { subscriptionId: string; patientUserId: string } | null = null;
     if (shouldResolveInPersonCoverageBeforeCreate) {
