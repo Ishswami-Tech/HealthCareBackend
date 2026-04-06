@@ -957,6 +957,19 @@ export class ConfirmVideoSlotDto {
   confirmedSlotIndex!: number;
 }
 
+/**
+ * DTO for rejecting a proposed video appointment (doctor rejection reason)
+ */
+export class RejectVideoProposalDto {
+  @ApiProperty({
+    description: 'Reason for rejecting the proposed video slots',
+    example: 'My schedule changed and none of the slots work',
+  })
+  @IsString({ message: 'Rejection reason must be a string' })
+  @IsNotEmpty({ message: 'Rejection reason is required' })
+  reason!: string;
+}
+
 // =============================================
 // QR CODE CHECK-IN DTOs
 // =============================================

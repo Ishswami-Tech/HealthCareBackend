@@ -23,7 +23,7 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('dashboard')
-  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
   @RequireResourcePermission('analytics', 'read')
   @ApiOperation({ summary: 'Get dashboard summary stats' })
   async getDashboardStats(
@@ -36,7 +36,7 @@ export class AnalyticsController {
   }
 
   @Get('appointments')
-  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
   @RequireResourcePermission('analytics', 'read')
   @ApiOperation({ summary: 'Get appointment analytics' })
   async getAppointmentAnalytics(
@@ -49,7 +49,7 @@ export class AnalyticsController {
   }
 
   @Get('patients')
-  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR)
+  @Roles(Role.CLINIC_ADMIN, Role.RECEPTIONIST, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.NURSE)
   @RequireResourcePermission('analytics', 'read')
   @ApiOperation({ summary: 'Get patient analytics' })
   async getPatientAnalytics(

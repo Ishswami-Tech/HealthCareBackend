@@ -81,6 +81,7 @@ import {
   StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
+  RejectVideoProposalDto,
   AppointmentServiceCatalogResponseDto,
 } from '@dtos/appointment.dto';
 import {
@@ -453,7 +454,7 @@ export class AppointmentsController {
     return {
       success: result.success,
       data: result.data as unknown as AppointmentResponseDto,
-      message: result.message,
+      message: result.message || 'Video appointment proposal rejected successfully',
     };
   }
 
@@ -499,7 +500,58 @@ export class AppointmentsController {
     return {
       success: result.success,
       data: result.data as unknown as AppointmentResponseDto,
-      message: result.message,
+      message: result.message ?? 'Video appointment proposal rejected successfully',
+    };
+  }
+
+  @Post(':id/video/reject')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'delete')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:*', 'appointment:*'],
+    tags: ['appointments', 'appointment_data'],
+  })
+  @ApiOperation({
+    summary: 'Reject video appointment proposal',
+    description:
+      'Doctor rejects the proposed video slots. The appointment is cancelled and refunds are triggered automatically.',
+  })
+  @ApiParam({ name: 'id', description: 'Appointment ID' })
+  @ApiBody({ type: RejectVideoProposalDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Video appointment proposal rejected and refund triggered',
+  })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid request or missing clinic/user context',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
+  async rejectVideoProposal(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body() dto: RejectVideoProposalDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub;
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and user ID are required');
+    }
+
+    const result = await this.videoService.rejectVideoAppointment(
+      appointmentId,
+      dto.reason,
+      userId,
+      clinicId
+    );
+
+    return {
+      success: result.success,
+      data: result.data as unknown as AppointmentResponseDto,
+      message: result.message ?? 'Video appointment proposal rejected successfully',
     };
   }
 
