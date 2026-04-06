@@ -3,6 +3,8 @@ import { AppointmentAnalyticsService } from '../appointments/plugins/analytics/a
 import { BillingService } from '../billing/billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import type { AnalyticsFilter, AppointmentMetrics } from '@core/types/appointment.types';
+import { LoggingService } from '@infrastructure/logging';
+import { LogType, LogLevel } from '@core/types';
 
 export type AnalyticsQueryFilters = Partial<AnalyticsFilter> & {
   period?: string;
@@ -38,10 +40,18 @@ export class AnalyticsService {
     private readonly appointmentAnalytics: AppointmentAnalyticsService,
     @Inject(forwardRef(() => BillingService))
     private readonly billingService: BillingService,
-    private readonly databaseService: DatabaseService
+    private readonly databaseService: DatabaseService,
+    private readonly loggingService: LoggingService
   ) {}
 
   async getDashboardStats(clinicId: string, period: string = 'month') {
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Fetching dashboard stats for clinic ${clinicId}`,
+      'AnalyticsService.getDashboardStats',
+      { clinicId, period }
+    );
     const range = this.getDateRange(period);
 
     const [appointmentMetrics, billingStats] = await Promise.all([

@@ -285,8 +285,8 @@ export class VideoController {
         return { userId, userRole: 'patient' };
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
-      case Role.NURSE:
         return { userId, userRole: 'doctor' };
+      case Role.NURSE:
       case Role.RECEPTIONIST:
         return { userId, userRole: 'receptionist' };
       case Role.CLINIC_ADMIN:

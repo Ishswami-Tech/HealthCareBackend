@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Video Service - Consolidated Single Service
  * @class VideoService
  * @description SINGLE video service for all video operations
@@ -20,6 +20,7 @@ import {
   OnModuleDestroy,
   BadRequestException,
   NotFoundException,
+  ForbiddenException,
   Inject,
   forwardRef,
 } from '@nestjs/common';
@@ -40,6 +41,7 @@ import { VideoProviderFactory } from '@services/video/providers/video-provider.f
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import { AppointmentStatus } from '@core/types/enums.types';
 // Legacy queue constant removed — uses JobType.VIDEO_RECORDING via HEALTHCARE_QUEUE
 // Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE
 import { HealthcareError } from '@core/errors';
@@ -47,6 +49,7 @@ import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
 import type { VideoCallAppointment } from '@core/types/appointment.types';
 import type {
+  AppointmentWithRelations,
   VideoCall,
   VideoCallSettings,
   ServiceResponse,
@@ -57,7 +60,8 @@ import {
   getVideoConsultationDelegate,
   getVideoRecordingDelegate,
 } from '@core/types/video-database.types';
-import { RbacService as _RbacService } from '@core/rbac/rbac.service';
+import { RbacService } from '@core/rbac/rbac.service';
+import { BillingService } from '@services/billing/billing.service';
 
 export type { VideoCall, VideoCallSettings };
 
@@ -108,6 +112,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
     private readonly eventService: EventService,
+    @Inject(forwardRef(() => RbacService))
+    private readonly rbacService: RbacService,
+    @Inject(forwardRef(() => BillingService))
+    private readonly billingService: BillingService,
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
   ) {}
@@ -362,9 +370,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       // 3. Validate Status
-      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED', 'IN_PROGRESS'];
+      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'];
       // AWAITING_SLOT_CONFIRMATION is NOT allowed - doctor must confirm first
-      if (!allowedStatuses.includes(appointment.status)) {
+      if (!allowedStatuses.includes(String(appointment.status))) {
         throw new HealthcareError(
           ErrorCode.OPERATION_NOT_ALLOWED,
           `Cannot join session. Appointment status is ${appointment.status}. Wait for confirmation.`,
@@ -488,6 +496,95 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  async rejectVideoAppointment(
+    appointmentId: string,
+    reason: string,
+    userId: string,
+    clinicId: string
+  ): Promise<ServiceResponse<AppointmentWithRelations>> {
+    const rejectionReason = reason?.trim() || 'Doctor rejected proposed slots';
+
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'delete',
+      resourceId: appointmentId,
+    });
+
+    if (!permissionCheck.hasPermission) {
+      throw new ForbiddenException('Insufficient permissions to reject this video appointment');
+    }
+
+    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    if (!appointment || appointment.clinicId !== clinicId) {
+      throw new NotFoundException('Appointment not found');
+    }
+
+    if (appointment.type !== 'VIDEO_CALL') {
+      throw new BadRequestException('Only video appointments can be rejected');
+    }
+
+    if (String(appointment.status) !== String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION)) {
+      throw new BadRequestException('Appointment is not awaiting video slot confirmation');
+    }
+
+    const updatedAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {
+      status: AppointmentStatus.CANCELLED,
+      cancellationReason: rejectionReason,
+      cancelledBy: userId,
+      cancelledAt: new Date(),
+    });
+
+    await this.cacheService.invalidateAppointmentCache(
+      appointmentId,
+      updatedAppointment.patientId,
+      updatedAppointment.doctorId,
+      clinicId
+    );
+
+    await this.triggerAppointmentRefund(appointmentId, clinicId, rejectionReason);
+
+    await this.eventService.emitEnterprise('appointment.cancelled', {
+      eventId: `appointment-cancelled-${appointmentId}-${Date.now()}`,
+      eventType: 'appointment.cancelled',
+      category: EventCategory.APPOINTMENT,
+      priority: EventPriority.HIGH,
+      timestamp: new Date().toISOString(),
+      source: 'VideoService',
+      version: '1.0.0',
+      userId: updatedAppointment.patientId,
+      clinicId,
+      payload: {
+        appointmentId,
+        userId: updatedAppointment.patientId,
+        doctorId: updatedAppointment.doctorId,
+        clinicId,
+        reason: rejectionReason,
+        cancelledBy: userId,
+        status: AppointmentStatus.CANCELLED,
+      },
+    });
+
+    await this.loggingService.log(
+      LogType.APPOINTMENT,
+      LogLevel.INFO,
+      'Video appointment proposal rejected',
+      'VideoService.rejectVideoAppointment',
+      {
+        appointmentId,
+        clinicId,
+        userId,
+      }
+    );
+
+    return {
+      success: true,
+      data: updatedAppointment,
+      message: 'Video appointment proposal rejected successfully',
+    };
+  }
+
   /**
    * Start consultation session
    */
@@ -549,6 +646,31 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         undefined,
         { appointmentId, originalError: String(error) },
         'VideoService.startConsultation'
+      );
+    }
+  }
+
+  private async triggerAppointmentRefund(
+    appointmentId: string,
+    clinicId: string,
+    reason: string
+  ): Promise<void> {
+    try {
+      const payments = await this.databaseService.findPaymentsSafe({
+        appointmentId,
+        status: 'COMPLETED',
+      });
+
+      for (const payment of payments) {
+        await this.billingService.refundPayment(clinicId, payment.id, undefined, reason);
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        `Failed to trigger refund for video appointment ${appointmentId}: ${error instanceof Error ? error.message : String(error)}`,
+        'VideoService.triggerAppointmentRefund',
+        { appointmentId, clinicId }
       );
     }
   }

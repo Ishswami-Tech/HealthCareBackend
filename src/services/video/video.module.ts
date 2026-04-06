@@ -24,6 +24,7 @@ import { CommunicationModule } from '@communication/communication.module';
 import { QueueModule } from '@queue/src/queue.module';
 import { StorageModule } from '@infrastructure/storage';
 import { EHRModule } from '@services/ehr/ehr.module';
+import { BillingModule } from '@services/billing/billing.module';
 import { VideoController } from './video.controller';
 import { VideoService } from './video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
@@ -61,6 +62,7 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     QueueModule, // Queue processing for recording processing, transcoding, analytics
     StorageModule, // File storage for virtual backgrounds and other assets
     forwardRef(() => EHRModule), // EHR integration for medical notes and transcriptions
+    forwardRef(() => BillingModule),
   ],
   controllers: [
     VideoController,
