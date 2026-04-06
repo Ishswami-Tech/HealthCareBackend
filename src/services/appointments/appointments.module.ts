@@ -223,6 +223,7 @@ import { CommunicationModule } from '@communication/communication.module';
     ClinicResourcePlugin,
     ClinicEligibilityPlugin,
     AppointmentQueueService,
+    AppointmentAnalyticsService,
   ],
 })
 export class AppointmentsModule {}
