@@ -2,7 +2,8 @@
  * Video Controller
  * @class VideoController
  * @description REST API endpoints for video consultation services
- * Standalone service that can be used by appointments and other services
+ * Canonical runtime video API for consultation lifecycle and provider abstraction.
+ * Appointment routes may wrap these endpoints temporarily for backward compatibility.
  * Microservice-ready design
  */
 
@@ -284,6 +285,7 @@ export class VideoController {
         return { userId, userRole: 'patient' };
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
+      case Role.NURSE:
         return { userId, userRole: 'doctor' };
       case Role.RECEPTIONIST:
         return { userId, userRole: 'receptionist' };

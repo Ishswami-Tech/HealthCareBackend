@@ -28,6 +28,7 @@ import { SessionModule } from '@core/session/session.module';
 import { PatientsModule } from './services/patients/patients.module';
 import { DoctorsModule } from './services/doctors/doctors.module';
 import { StaffModule } from './services/staff/staff.module';
+import { AnalyticsModule } from './services/analytics/analytics.module';
 // import { ClinicContextMiddleware } from './libs/utils/middleware/clinic-context.middleware';
 
 @Module({
@@ -86,6 +87,7 @@ import { StaffModule } from './services/staff/staff.module';
     PatientsModule,
     DoctorsModule,
     StaffModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
