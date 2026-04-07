@@ -9,6 +9,7 @@ import {
   Param,
   Query,
   Request,
+  ExecutionContext,
   HttpStatus,
   HttpCode,
   HttpException,
@@ -561,7 +562,23 @@ export class AppointmentsController {
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'read')
   @PatientCache({
-    keyTemplate: 'appointments:my:{userId}:{clinicId}',
+    customKeyGenerator: context => {
+      const executionContext = context as ExecutionContext;
+      const request = executionContext.switchToHttp().getRequest<
+        ClinicAuthenticatedRequest & {
+          query?: Record<string, string | number | undefined>;
+        }
+      >();
+      const query = request.query || {};
+      const clinicId = request.clinicContext?.clinicId || 'no-clinic';
+      const userId = request.user?.sub || 'anonymous';
+      const status = typeof query['status'] === 'string' ? query['status'] : 'all';
+      const date = typeof query['date'] === 'string' ? query['date'] : 'all';
+      const page = query['page'] !== undefined ? String(query['page']) : '1';
+      const limit = query['limit'] !== undefined ? String(query['limit']) : '10';
+
+      return `appointments:my:${userId}:${clinicId}:${status}:${date}:${page}:${limit}:getMyAppointments`;
+    },
     ttl: 300,
     tags: ['appointments', 'patient_appointments'],
     priority: 'high',
