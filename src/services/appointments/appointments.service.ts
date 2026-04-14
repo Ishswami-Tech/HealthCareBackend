@@ -1789,6 +1789,11 @@ export class AppointmentsService {
       throw this.errors.insufficientPermissions('AppointmentsService.getAppointments');
     }
 
+    const patient =
+      _role === 'PATIENT'
+        ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
+        : null;
+
     const context: AppointmentContext = {
       userId,
       role: _role,
@@ -1796,6 +1801,7 @@ export class AppointmentsService {
       ...(filters.locationId && { locationId: filters.locationId }),
       ...(filters.providerId && { doctorId: filters.providerId }),
       ...(filters.patientId && { patientId: filters.patientId }),
+      ...(_role === 'PATIENT' && patient?.id ? { patientId: patient.id } : {}),
     };
 
     // Use CacheService as single source of truth - leverages all optimization layers:

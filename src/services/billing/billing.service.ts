@@ -159,6 +159,35 @@ export class BillingService {
     return matchedService;
   }
 
+  private async resolveAppointmentBillingUserId(
+    appointment: Pick<AppointmentWithRelations, 'patientId'> & {
+      patient?: { userId?: string | null } | null;
+    }
+  ): Promise<string | null> {
+    if (appointment.patient?.userId) {
+      return appointment.patient.userId;
+    }
+
+    if (!appointment.patientId) {
+      return null;
+    }
+
+    const patientRecord = await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as PrismaTransactionClientWithDelegates & {
+        patient: {
+          findUnique: (args: PrismaDelegateArgs) => Promise<unknown>;
+        };
+      };
+
+      return (await typedClient.patient.findUnique({
+        where: { id: appointment.patientId } as PrismaDelegateArgs,
+        select: { userId: true } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as { userId?: string | null } | null;
+    });
+
+    return patientRecord?.userId ?? null;
+  }
+
   private isSoleProprietorModeEnabled(): boolean {
     const raw =
       this.configService.getEnv('SOLE_PROPRIETOR_MODE') ??
@@ -2189,8 +2218,10 @@ export class BillingService {
       throw new NotFoundException('Appointment not found');
     }
 
+    const billingUserId = await this.resolveAppointmentBillingUserId(appointment);
+
     this.assertBillingEntityAccess(
-      { clinicId: appointment.clinicId, userId: appointment.patientId },
+      { clinicId: appointment.clinicId, userId: billingUserId },
       requester
     );
 
@@ -2214,7 +2245,7 @@ export class BillingService {
       )[0] || null;
 
     // Get user details
-    const user = await this.databaseService.findUserByIdSafe(appointment.patientId);
+    const user = billingUserId ? await this.databaseService.findUserByIdSafe(billingUserId) : null;
 
     if (existingPayment && String(existingPayment.status) === String(PaymentStatus.COMPLETED)) {
       throw new BadRequestException('Payment is already completed for this appointment');
@@ -2222,7 +2253,7 @@ export class BillingService {
 
     const createAppointmentInvoice = async () =>
       this.createInvoice({
-        userId: appointment.patientId,
+        userId: billingUserId || appointment.patientId,
         clinicId: appointment.clinicId,
         amount,
         tax: 0,
@@ -2280,7 +2311,7 @@ export class BillingService {
       amount: amount * 100, // Convert to paise
       currency: 'INR',
       orderId: invoice.invoiceNumber,
-      customerId: appointment.patientId,
+      customerId: billingUserId || appointment.patientId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
       ...(user?.name && { customerName: user.name }),
@@ -2378,12 +2409,14 @@ export class BillingService {
         status: PaymentStatus.PENDING.toLowerCase(),
         clinicId: appointment.clinicId,
       });
-      await this.cacheService.invalidateCacheByTag(`user_payments:${appointment.patientId}`);
+      await this.cacheService.invalidateCacheByTag(
+        `user_payments:${billingUserId || appointment.patientId}`
+      );
     } else {
       payment = await this.createPayment({
         amount,
         clinicId: appointment.clinicId,
-        userId: appointment.patientId,
+        userId: billingUserId || appointment.patientId,
         appointmentId: appointment.id,
         invoiceId: invoice.id,
         ...(paymentId && { transactionId: paymentId }),
