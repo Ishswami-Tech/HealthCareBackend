@@ -1270,12 +1270,18 @@ export class CoreAppointmentService {
             ? doctorControlMap[doctorId]
             : {};
 
-          slotDuration = Math.max(
-            3,
-            Number.isFinite(Number(appointmentSettings['appointmentDuration']))
-              ? Number(appointmentSettings['appointmentDuration'])
-              : slotDuration // Preserve type-based default (3 min IN_PERSON, 15 min VIDEO)
-          );
+          const configuredAppointmentDuration = Number(appointmentSettings['appointmentDuration']);
+          if (_context?.appointmentType === 'VIDEO_CALL') {
+            // Video proposals are always quarter-hour slots in the patient UX and validation flow.
+            slotDuration = 15;
+          } else {
+            slotDuration = Math.max(
+              3,
+              Number.isFinite(configuredAppointmentDuration)
+                ? configuredAppointmentDuration
+                : slotDuration
+            );
+          }
           clinicPaused = Boolean(
             clinicOpdControls['isOpdPaused'] ?? clinicOpdControls['clinicPaused'] ?? false
           );
