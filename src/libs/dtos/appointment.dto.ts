@@ -914,6 +914,14 @@ export class ProposeVideoSlotsDto {
   @IsNotEmpty()
   clinicId!: string;
 
+  @ApiPropertyOptional({
+    description: 'Optional clinic location context used when validating proposed video slots',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('4')
+  locationId?: string;
+
   @ApiProperty({ example: 3, minimum: 3, maximum: 120 })
   @IsNumber()
   @Min(3)

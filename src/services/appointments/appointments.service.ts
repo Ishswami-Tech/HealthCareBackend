@@ -1454,7 +1454,13 @@ export class AppointmentsService {
       const availability = (await this.coreAppointmentService.getDoctorAvailability(
         doctorId,
         date,
-        { clinicId, userId, role: 'USER' }
+        {
+          clinicId,
+          userId,
+          role: 'USER',
+          ...(dto.locationId ? { locationId: dto.locationId } : {}),
+          appointmentType: AppointmentType.VIDEO_CALL,
+        }
       )) as { availableSlots: string[] };
       availabilityMap.set(date, availability.availableSlots || []);
     }
@@ -1494,6 +1500,7 @@ export class AppointmentsService {
       patientId,
       doctorId,
       clinicId,
+      ...(dto.locationId ? { locationId: dto.locationId } : {}),
       type: AppointmentType.VIDEO_CALL,
       date: new Date(slotDate),
       time: slotTime,
