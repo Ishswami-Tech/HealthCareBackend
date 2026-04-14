@@ -12,6 +12,66 @@ import type {
   AppointmentWhereInput,
 } from '@core/types/input.types';
 
+const appointmentListIncludeValidator = {
+  patient: {
+    select: {
+      id: true,
+      userId: true,
+      firstName: true,
+      lastName: true,
+      phone: true,
+      email: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          profilePicture: true,
+          role: true,
+        },
+      },
+    },
+  },
+  doctor: {
+    select: {
+      id: true,
+      userId: true,
+      firstName: true,
+      lastName: true,
+      role: true,
+      specialization: true,
+      user: {
+        select: {
+          id: true,
+          name: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          profilePicture: true,
+          role: true,
+        },
+      },
+    },
+  },
+  clinic: {
+    select: {
+      id: true,
+      name: true,
+    },
+  },
+  location: {
+    select: {
+      id: true,
+      locationId: true,
+      locationName: true,
+    },
+  },
+} as const;
+
 /**
  * Appointment methods implementation
  * All methods use executeRead/Write for full optimization layers
@@ -76,30 +136,12 @@ export class AppointmentMethods extends DatabaseMethodsBase {
           ...(options?.skip !== undefined && { skip: options.skip }),
           ...(options?.take !== undefined && { take: options.take }),
           ...(options?.orderBy && { orderBy: options.orderBy }),
-          include: {
-            patient: {
-              include: {
-                user: true,
-              },
-            },
-            doctor: {
-              include: {
-                user: true,
-              },
-            },
-            clinic: true,
-            location: true,
-          },
+          include: appointmentListIncludeValidator,
         });
       },
       this.queryOptionsBuilder
         .where(where)
-        .include({
-          patient: { include: { user: true } },
-          doctor: { include: { user: true } },
-          clinic: true,
-          location: true,
-        })
+        .include(appointmentListIncludeValidator)
         .useCache(true)
         .cacheStrategy('short')
         .priority('normal')

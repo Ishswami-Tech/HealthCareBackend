@@ -404,29 +404,6 @@ export class CoreAppointmentService {
     const startTime = Date.now();
 
     try {
-      // For PATIENT and related roles, check if profile is complete before querying appointments
-      if (context.role === 'PATIENT') {
-        const user = await this.databaseService.findUserByIdSafe(context.userId);
-        if (user && !user.isProfileComplete) {
-          await this.loggingService.log(
-            LogType.AUDIT,
-            LogLevel.DEBUG,
-            `Access denied: User ${context.userId} attempted to view appointments with incomplete profile`,
-            'CoreAppointmentService.getAppointments',
-            {
-              userId: context.userId,
-              role: context.role,
-            }
-          );
-          return {
-            success: false,
-            error: 'Profile Incomplete',
-            message: 'Please complete your profile to access this feature',
-            metadata: { requiresProfileCompletion: true },
-          } as unknown as AppointmentResult<Record<string, unknown>>;
-        }
-      }
-
       // Build where clause with role-based access control (uses indexed fields)
       const where = this.buildAppointmentWhereClause(filters, context);
 
@@ -895,8 +872,13 @@ export class CoreAppointmentService {
         where['doctorId'] = context.userId;
         break;
       case 'PATIENT':
-        // Patient.userId = User.id; Appointment.patientId = Patient.id
-        where['patient'] = { userId: context.userId };
+        // Prefer the resolved Patient.id so the query can use indexed scalar filters.
+        if (context.patientId) {
+          where['patientId'] = context.patientId;
+        } else {
+          // Fallback for older call sites that only pass the authenticated User.id.
+          where['patient'] = { userId: context.userId };
+        }
         break;
       case 'NURSE':
       case 'RECEPTIONIST':
