@@ -1194,7 +1194,7 @@ export class CoreAppointmentService {
       let sessionWindows: SessionWindow[] = [];
       let slotDuration = 30;
       if (_context?.appointmentType === 'VIDEO_CALL') {
-        slotDuration = 10;
+        slotDuration = 15;
       } else if (_context?.appointmentType === 'IN_PERSON' || !_context?.appointmentType) {
         slotDuration = 3;
       }
@@ -1274,7 +1274,7 @@ export class CoreAppointmentService {
             3,
             Number.isFinite(Number(appointmentSettings['appointmentDuration']))
               ? Number(appointmentSettings['appointmentDuration'])
-              : slotDuration // Preserve type-based default (3 min IN_PERSON, 10 min VIDEO)
+              : slotDuration // Preserve type-based default (3 min IN_PERSON, 15 min VIDEO)
           );
           clinicPaused = Boolean(
             clinicOpdControls['isOpdPaused'] ?? clinicOpdControls['clinicPaused'] ?? false

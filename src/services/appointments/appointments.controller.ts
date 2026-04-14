@@ -455,7 +455,7 @@ export class AppointmentsController {
     return {
       success: result.success,
       data: result.data as unknown as AppointmentResponseDto,
-      message: result.message || 'Video appointment proposal rejected successfully',
+      message: result.message || 'Video appointment proposed successfully',
     };
   }
 
