@@ -17,10 +17,6 @@ const appointmentListIncludeValidator = {
     select: {
       id: true,
       userId: true,
-      firstName: true,
-      lastName: true,
-      phone: true,
-      email: true,
       user: {
         select: {
           id: true,
@@ -39,9 +35,6 @@ const appointmentListIncludeValidator = {
     select: {
       id: true,
       userId: true,
-      firstName: true,
-      lastName: true,
-      role: true,
       specialization: true,
       user: {
         select: {
@@ -67,7 +60,7 @@ const appointmentListIncludeValidator = {
     select: {
       id: true,
       locationId: true,
-      locationName: true,
+      name: true,
     },
   },
 } as const;
