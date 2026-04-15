@@ -440,7 +440,7 @@ export class InvoicePDFService {
       );
     }
 
-    return `${baseUrl}/api/billing/invoices/download/${fileName}`;
+    return `${baseUrl}/api/v1/billing/invoices/download/${fileName}`;
   }
 
   /**
