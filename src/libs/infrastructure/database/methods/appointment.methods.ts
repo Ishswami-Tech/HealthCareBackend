@@ -78,7 +78,7 @@ const appointmentListIncludeValidator = {
           amount: true,
           status: true,
           dueDate: true,
-          paidDate: true,
+          paidAt: true,
           invoiceNumber: true,
         },
       },
