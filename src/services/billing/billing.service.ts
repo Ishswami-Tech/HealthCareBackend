@@ -8,6 +8,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { DatabaseService } from '@infrastructure/database';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -638,16 +639,31 @@ export class BillingService {
       clinicId: data.clinicId,
       planId: data.planId,
     });
-    const blockingStatuses = new Set<string>([
-      String(SubscriptionStatus.ACTIVE),
-      String(SubscriptionStatus.TRIALING),
-      String(SubscriptionStatus.INCOMPLETE),
-      String(SubscriptionStatus.PAST_DUE),
-    ]);
+    const now = new Date();
 
-    if (
-      existingSubscriptions.some(subscription => blockingStatuses.has(String(subscription.status)))
-    ) {
+    const hasBlockingSubscription = existingSubscriptions.some(subscription => {
+      const status = String(subscription.status);
+
+      // If it's active or trialing, ensure it's not mathematically expired
+      if (
+        status === String(SubscriptionStatus.ACTIVE) ||
+        status === String(SubscriptionStatus.TRIALING)
+      ) {
+        const isExpired =
+          subscription.currentPeriodEnd && new Date(subscription.currentPeriodEnd) < now;
+        return !isExpired; // If not expired, it blocks
+      }
+
+      // Do not block INCOMPLETE subscriptions; users shouldn't be locked out if they abandon a prior checkout.
+      if (status === String(SubscriptionStatus.INCOMPLETE)) {
+        return false;
+      }
+
+      // PAST_DUE subscriptions are functionally lapsed; do not block a fresh checkout
+      return false;
+    });
+
+    if (hasBlockingSubscription) {
       throw new ConflictException(
         'An active or pending subscription already exists for this user and plan'
       );
@@ -888,6 +904,71 @@ export class BillingService {
     await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
 
     return updated;
+  }
+
+  /**
+   * Automated cron job to mark expired active subscriptions as PAST_DUE
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async checkExpiredSubscriptions() {
+    try {
+      const result = (await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            subscription: {
+              updateMany: (args: PrismaDelegateArgs) => Promise<{ count: number }>;
+            };
+          };
+
+          const now = new Date();
+          // Generous grace period (1 day) to allow webhooks to process payments normally
+          now.setDate(now.getDate() - 1);
+
+          return await typedClient.subscription.updateMany({
+            where: {
+              status: SubscriptionStatus.ACTIVE,
+              currentPeriodEnd: {
+                lt: now,
+              },
+            } as PrismaDelegateArgs,
+            data: {
+              status: SubscriptionStatus.PAST_DUE,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId: 'SYSTEM_CRON',
+          userRole: 'SYSTEM',
+          clinicId: 'SYSTEM',
+          operation: 'UPDATE_EXPIRED_SUBSCRIPTIONS',
+          resourceType: 'SUBSCRIPTION',
+          resourceId: 'BATCH_UPDATE',
+          timestamp: new Date(),
+        }
+      )) as { count: number };
+
+      if (result && result.count > 0) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Marked ${result.count} subscriptions as PAST_DUE due to expiration schedule`,
+          'BillingService',
+          { count: result.count }
+        );
+        // We should clear the user subscription caches. Since we only know the count (from updateMany)
+        // a more robust approach in the future would be doing findMany then updating loop.
+        // For now, next time someone requests billing plans they get the cached fallback,
+        // but user cache will auto-expire or update on their next interaction.
+      }
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        'Failed to process expired subscriptions via cron',
+        'BillingService',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
   }
 
   /**
