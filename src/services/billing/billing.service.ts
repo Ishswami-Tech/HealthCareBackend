@@ -2258,7 +2258,9 @@ export class BillingService {
         amount,
         tax: 0,
         discount: 0,
-        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days from now
+        // Appointment invoices are paid immediately through the gateway, so a future due date
+        // is misleading in payment history. Keep a due date for schema requirements, but make it immediate.
+        dueDate: new Date().toISOString(),
         description: `Payment for ${appointmentType} appointment`,
         lineItems: {
           items: [
@@ -3547,7 +3549,141 @@ export class BillingService {
   // ============ Invoice PDF Generation ============
 
   /**
-   * Generate PDF for an invoice
+   * Build the PDF payload for an invoice after access checks have passed.
+   */
+  async buildInvoicePDFData(
+    invoiceId: string,
+    accessContext?: BillingAccessContext
+  ): Promise<InvoicePDFData> {
+    const invoice = accessContext
+      ? await this.getInvoice(invoiceId, accessContext)
+      : await this.databaseService.findInvoiceByIdSafe(invoiceId);
+
+    if (!invoice) {
+      throw new NotFoundException(`Invoice ${invoiceId} not found`);
+    }
+
+    const invoiceUserId = String(invoice.userId ?? '');
+    const invoiceClinicId = String(invoice.clinicId ?? '');
+
+    // Get user details
+    const subscriptionUser = invoice.subscription as {
+      user?: { name: string | null; email: string; phone: string | null };
+    } | null;
+    const subscriptionUserData = subscriptionUser?.user;
+    const fetchedUser = await this.databaseService.findUserByIdSafe(invoiceUserId);
+
+    // Use type-safe user data - prefer fetched user as it has all properties
+    const user = fetchedUser || subscriptionUserData;
+
+    if (!user) {
+      throw new NotFoundException(`User ${invoiceUserId} not found`);
+    }
+
+    // Get clinic details
+    const clinic = await this.databaseService.findClinicByIdSafe(invoiceClinicId);
+
+    if (!clinic) {
+      throw new NotFoundException(`Clinic ${invoiceClinicId} not found`);
+    }
+
+    // Extract user name safely - handle both UserWithRelations and simplified user types
+    const getUserName = (u: typeof user): string => {
+      if ('name' in u && u.name) return u.name;
+      if ('firstName' in u || 'lastName' in u) {
+        const firstName = 'firstName' in u ? u.firstName || '' : '';
+        const lastName = 'lastName' in u ? u.lastName || '' : '';
+        const fullName = `${firstName} ${lastName}`.trim();
+        if (fullName) return fullName;
+      }
+      if ('email' in u && u.email) return u.email;
+      return 'Unknown User';
+    };
+
+    const subscriptionPlanName =
+      invoice.subscription &&
+      typeof invoice.subscription === 'object' &&
+      'plan' in invoice.subscription &&
+      invoice.subscription.plan &&
+      typeof invoice.subscription.plan === 'object' &&
+      'name' in invoice.subscription.plan &&
+      typeof invoice.subscription.plan.name === 'string'
+        ? invoice.subscription.plan.name
+        : null;
+
+    const subscriptionPeriod =
+      invoice.subscription &&
+      typeof invoice.subscription === 'object' &&
+      'currentPeriodStart' in invoice.subscription &&
+      'currentPeriodEnd' in invoice.subscription
+        ? `${new Date(String(invoice.subscription.currentPeriodStart)).toLocaleDateString()} - ${new Date(
+            String(invoice.subscription.currentPeriodEnd)
+          ).toLocaleDateString()}`
+        : null;
+
+    const pdfData: InvoicePDFData = {
+      invoiceNumber: String(invoice.invoiceNumber ?? invoiceId),
+      invoiceDate: new Date(invoice.createdAt),
+      dueDate: new Date(invoice.dueDate),
+      status: String(invoice.status ?? 'OPEN'),
+
+      clinicName: String(clinic.name ?? 'Clinic'),
+      ...(clinic.address ? { clinicAddress: clinic.address } : {}),
+      ...(clinic.phone ? { clinicPhone: clinic.phone } : {}),
+      ...(clinic.email ? { clinicEmail: clinic.email } : {}),
+
+      userName: getUserName(user),
+      ...('email' in user && user.email ? { userEmail: user.email } : {}),
+      ...('phone' in user && user.phone ? { userPhone: user.phone } : {}),
+      ...(subscriptionPlanName ? { subscriptionPlan: subscriptionPlanName } : {}),
+      ...(subscriptionPeriod ? { subscriptionPeriod } : {}),
+
+      lineItems: Array.isArray(invoice.lineItems)
+        ? (invoice.lineItems as Array<{
+            description: string;
+            amount: number;
+            quantity?: number;
+            unitPrice?: number;
+          }>)
+        : [
+            {
+              description: String(invoice.description ?? 'Subscription Payment'),
+              amount: Number(invoice.amount ?? 0),
+            },
+          ],
+
+      subtotal: Number(invoice.amount ?? 0),
+      tax: Number(invoice.tax ?? 0),
+      discount: Number(invoice.discount ?? 0),
+      total: Number(invoice.totalAmount ?? invoice.amount ?? 0),
+
+      ...(invoice.paidAt ? { paidAt: new Date(invoice.paidAt) } : {}),
+
+      notes: `Thank you for your payment. This invoice is for ${
+        subscriptionPlanName || 'services'
+      }.`,
+      termsAndConditions:
+        'Payment is due within 30 days. Please include the invoice number with your payment.',
+    };
+
+    if (invoice.paidAt && invoice.id) {
+      const payments = await this.databaseService.findPaymentsSafe({
+        invoiceId: String(invoice.id),
+      });
+
+      const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
+
+      if (payment) {
+        if (payment.method) pdfData.paymentMethod = payment.method;
+        if (payment.transactionId) pdfData.transactionId = payment.transactionId;
+      }
+    }
+
+    return pdfData;
+  }
+
+  /**
+   * Generate PDF for an invoice and persist the generated file metadata.
    */
   async generateInvoicePDF(invoiceId: string): Promise<void> {
     try {
@@ -3557,135 +3693,10 @@ export class BillingService {
         throw new NotFoundException(`Invoice ${invoiceId} not found`);
       }
 
-      // Get user details
-      const subscriptionUser = invoice.subscription as {
-        user?: { name: string | null; email: string; phone: string | null };
-      } | null;
-      const subscriptionUserData = subscriptionUser?.user;
-      const fetchedUser = await this.databaseService.findUserByIdSafe(invoice.userId);
-
-      // Use type-safe user data - prefer fetched user as it has all properties
-      const user = fetchedUser || subscriptionUserData;
-
-      if (!user) {
-        throw new NotFoundException(`User ${invoice.userId} not found`);
-      }
-
-      // Get clinic details
-      const clinic = await this.databaseService.findClinicByIdSafe(invoice.clinicId);
-
-      if (!clinic) {
-        throw new NotFoundException(`Clinic ${invoice.clinicId} not found`);
-      }
-
-      // Extract user name safely - handle both UserWithRelations and simplified user types
-      const getUserName = (u: typeof user): string => {
-        if ('name' in u && u.name) return u.name;
-        if ('firstName' in u || 'lastName' in u) {
-          const firstName = 'firstName' in u ? u.firstName || '' : '';
-          const lastName = 'lastName' in u ? u.lastName || '' : '';
-          const fullName = `${firstName} ${lastName}`.trim();
-          if (fullName) return fullName;
-        }
-        if ('email' in u && u.email) return u.email;
-        return 'Unknown User';
-      };
-
-      // Prepare PDF data with proper type safety
-      const pdfData = {
-        invoiceNumber: invoice.invoiceNumber,
-        invoiceDate: invoice.createdAt,
-        dueDate: invoice.dueDate,
-        status: invoice.status,
-
-        // Clinic details - using type-safe access
-        clinicName: clinic.name,
-        clinicAddress: clinic.address || undefined,
-        clinicPhone: clinic.phone || undefined,
-        clinicEmail: clinic.email || undefined,
-
-        // User details - using type-safe access
-        userName: getUserName(user),
-        userEmail: 'email' in user ? user.email || undefined : undefined,
-        userPhone: 'phone' in user ? user.phone || undefined : undefined,
-
-        // Subscription details - type-safe access
-        subscriptionPlan:
-          invoice.subscription &&
-          typeof invoice.subscription === 'object' &&
-          'plan' in invoice.subscription &&
-          invoice.subscription.plan &&
-          typeof invoice.subscription.plan === 'object' &&
-          'name' in invoice.subscription.plan &&
-          typeof invoice.subscription.plan.name === 'string'
-            ? invoice.subscription.plan.name
-            : undefined,
-        subscriptionPeriod:
-          'subscription' in invoice &&
-          invoice.subscription &&
-          'currentPeriodStart' in invoice.subscription &&
-          'currentPeriodEnd' in invoice.subscription
-            ? `${new Date(invoice.subscription.currentPeriodStart).toLocaleDateString()} - ${new Date(invoice.subscription.currentPeriodEnd).toLocaleDateString()}`
-            : undefined,
-
-        // Line items
-        lineItems: Array.isArray(invoice.lineItems)
-          ? (invoice.lineItems as Array<{
-              description: string;
-              amount: number;
-            }>)
-          : [
-              {
-                description: invoice.description || 'Subscription Payment',
-                amount: invoice.amount,
-              },
-            ],
-
-        // Totals
-        subtotal: invoice.amount,
-        tax: invoice.tax || 0,
-        discount: invoice.discount || 0,
-        total: invoice.totalAmount,
-
-        // Payment details
-        paidAt: invoice.paidAt || undefined,
-        paymentMethod: undefined as string | undefined,
-        transactionId: undefined as string | undefined,
-
-        // Notes - type-safe access
-        notes: `Thank you for your payment. This invoice is for ${
-          (invoice.subscription &&
-          typeof invoice.subscription === 'object' &&
-          'plan' in invoice.subscription &&
-          invoice.subscription.plan &&
-          typeof invoice.subscription.plan === 'object' &&
-          'name' in invoice.subscription.plan &&
-          typeof invoice.subscription.plan.name === 'string'
-            ? invoice.subscription.plan.name
-            : null) || 'services'
-        }.`,
-        termsAndConditions:
-          'Payment is due within 30 days. Please include the invoice number with your payment.',
-      };
-
-      // Get payment details if invoice is paid
-      if (invoice.paidAt) {
-        const payments = await this.databaseService.findPaymentsSafe({
-          invoiceId: invoice.id,
-        });
-
-        const payment = payments.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
-
-        if (payment) {
-          pdfData.paymentMethod = payment.method || undefined;
-          pdfData.transactionId = payment.transactionId || undefined;
-        }
-      }
+      const pdfData = await this.buildInvoicePDFData(invoiceId);
 
       // Generate PDF
-      const { filePath, fileName } = await this.invoicePDFService.generateInvoicePDF(
-        pdfData as InvoicePDFData
-      );
+      const { filePath, fileName } = await this.invoicePDFService.generateInvoicePDF(pdfData);
 
       // Get public URL
       const pdfUrl = this.invoicePDFService.getPublicInvoiceUrl(fileName);

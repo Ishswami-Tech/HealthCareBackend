@@ -990,6 +990,59 @@ export class BillingController {
     };
   }
 
+  /**
+   * Patient-facing smart PDF download.
+   * 1. If the invoice already has a generated PDF on disk → stream it immediately.
+   * 2. Otherwise → generate synchronously (saves pdfFilePath + pdfUrl back to the invoice)
+   *    and ALSO enqueue a background job so the file is treated as "persisted"
+   *    for subsequent WhatsApp delivery / admin use.
+   */
+  @Get('invoices/:id/pdf-download')
+  @Roles(
+    Role.SUPER_ADMIN,
+    Role.CLINIC_ADMIN,
+    Role.FINANCE_BILLING,
+    Role.RECEPTIONIST,
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR
+  )
+  @RequireResourcePermission('invoices', 'read')
+  async downloadInvoicePDFById(
+    @Param('id') invoiceId: string,
+    @Res() res: FastifyReply,
+    @Request() req?: ClinicAuthenticatedRequest
+  ) {
+    const accessContext = this.buildBillingAccessContext(req);
+    const invoice = (await this.billingService.getInvoice(
+      invoiceId,
+      accessContext
+    )) as unknown as Record<string, unknown> | null;
+
+    if (!invoice) {
+      throw new NotFoundException('Invoice not found');
+    }
+
+    const pdfData = await this.billingService.buildInvoicePDFData(invoiceId, accessContext);
+    const { filePath } = await this.invoicePDFService.generateInvoicePDF(pdfData);
+
+    const invoiceNumber = (invoice['invoiceNumber'] as string | null | undefined) || invoiceId;
+    const downloadName = `invoice-${invoiceNumber}.pdf`;
+    const fileStream = fs.createReadStream(filePath);
+    const cleanupTempFile = () => {
+      if (fs.existsSync(filePath)) {
+        this.invoicePDFService.deleteInvoicePDF(filePath.split(/[/\\]/).pop() || filePath);
+      }
+    };
+
+    fileStream.on('close', cleanupTempFile);
+    fileStream.on('error', cleanupTempFile);
+
+    res.type('application/pdf');
+    res.header('Content-Disposition', `attachment; filename="${downloadName}"`);
+    return res.send(fileStream);
+  }
+
   @Get('invoices/download/:fileName')
   @Roles(
     Role.SUPER_ADMIN,

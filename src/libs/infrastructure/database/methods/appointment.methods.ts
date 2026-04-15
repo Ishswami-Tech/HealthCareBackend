@@ -63,6 +63,27 @@ const appointmentListIncludeValidator = {
       name: true,
     },
   },
+  payment: {
+    select: {
+      id: true,
+      amount: true,
+      status: true,
+      method: true,
+      transactionId: true,
+      invoiceId: true,
+      updatedAt: true,
+      invoice: {
+        select: {
+          id: true,
+          amount: true,
+          status: true,
+          dueDate: true,
+          paidDate: true,
+          invoiceNumber: true,
+        },
+      },
+    },
+  },
 } as const;
 
 /**
