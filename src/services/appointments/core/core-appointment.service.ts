@@ -416,7 +416,7 @@ export class CoreAppointmentService {
         this.databaseService.findAppointmentsSafe(where, {
           skip: offset,
           take: limit,
-          orderBy: { date: 'asc' }, // Indexed field for efficient sorting
+          orderBy: { date: context.role === 'PATIENT' ? 'desc' : 'asc' }, // Patient pages need recent bookings first.
         }),
         this.databaseService.countAppointmentsSafe(where),
       ]);
