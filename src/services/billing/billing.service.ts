@@ -95,6 +95,27 @@ export class BillingService {
     private readonly queueService?: QueueService
   ) {}
 
+  private async invalidateUserInvoiceCaches(userId: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.invalidateCacheByTag(`user_invoices:${userId}`),
+      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+    ]);
+  }
+
+  private async invalidateUserPaymentCaches(userId: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.invalidateCacheByTag(`user_payments:${userId}`),
+      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+    ]);
+  }
+
+  private async invalidateUserSubscriptionCaches(userId: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.invalidateCacheByTag(`user_subscriptions:${userId}`),
+      this.cacheService.invalidateCacheByTag(`user:${userId}`),
+    ]);
+  }
+
   private assertBillingEntityAccess(
     entity: { clinicId?: string | null; userId?: string | null },
     requester?: BillingAccessContext
@@ -726,7 +747,7 @@ export class BillingService {
         userId: data.userId,
       });
 
-      await this.cacheService.invalidateCacheByTag(`user_subscriptions:${data.userId}`);
+      await this.invalidateUserSubscriptionCaches(data.userId);
 
       return subscription;
     } catch (error) {
@@ -856,9 +877,7 @@ export class BillingService {
     await this.eventService.emit('billing.subscription.updated', {
       subscriptionId: id,
     });
-    await this.cacheService.invalidateCacheByTag(
-      `user_subscriptions:${existingSubscription.userId}`
-    );
+    await this.invalidateUserSubscriptionCaches(existingSubscription.userId);
 
     return subscription;
   }
@@ -901,7 +920,7 @@ export class BillingService {
       immediate,
     });
 
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.invalidateUserSubscriptionCaches(subscription.userId);
 
     return updated;
   }
@@ -1006,7 +1025,7 @@ export class BillingService {
     await this.eventService.emit('billing.subscription.renewed', {
       subscriptionId: id,
     });
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.invalidateUserSubscriptionCaches(subscription.userId);
 
     return updated;
   }
@@ -1033,7 +1052,7 @@ export class BillingService {
         await this.eventService.emit('billing.invoice.created', {
           invoiceId: invoice.id,
         });
-        await this.cacheService.invalidateCacheByTag(`user_invoices:${data.userId}`);
+        await this.invalidateUserInvoiceCaches(data.userId);
 
         // Queue PDF generation (heavy operation) asynchronously
         if (this.queueService) {
@@ -1354,7 +1373,7 @@ export class BillingService {
     );
 
     await this.eventService.emit('billing.invoice.updated', { invoiceId: id });
-    await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
+    await this.invalidateUserInvoiceCaches(invoice.userId);
 
     return invoice;
   }
@@ -1375,7 +1394,7 @@ export class BillingService {
     );
 
     await this.eventService.emit('billing.invoice.paid', { invoiceId: id });
-    await this.cacheService.invalidateCacheByTag(`user_invoices:${existingInvoice.userId}`);
+    await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
     return invoice;
   }
@@ -1431,7 +1450,7 @@ export class BillingService {
           });
 
           if (data.userId) {
-            await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
+            await this.invalidateUserPaymentCaches(data.userId);
           }
 
           return updatedPayment;
@@ -1469,7 +1488,7 @@ export class BillingService {
       });
 
       if (data.userId) {
-        await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
+        await this.invalidateUserPaymentCaches(data.userId);
       }
 
       return payment;
@@ -1520,7 +1539,7 @@ export class BillingService {
           });
 
           if (data.userId) {
-            await this.cacheService.invalidateCacheByTag(`user_payments:${data.userId}`);
+            await this.invalidateUserPaymentCaches(data.userId);
           }
 
           return updatedPayment;
@@ -1588,7 +1607,7 @@ export class BillingService {
 
     // Invalidate cache if payment has userId
     if (existingPayment.userId) {
-      await this.cacheService.invalidateCacheByTag(`user_payments:${existingPayment.userId}`);
+      await this.invalidateUserPaymentCaches(existingPayment.userId);
     }
 
     // Auto-update invoice if payment is linked to one
@@ -2126,7 +2145,7 @@ export class BillingService {
       subscriptionId,
       appointmentId,
     });
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.invalidateUserSubscriptionCaches(subscription.userId);
   }
 
   // ============ Payment Processing ============
@@ -2492,9 +2511,7 @@ export class BillingService {
         status: PaymentStatus.PENDING.toLowerCase(),
         clinicId: appointment.clinicId,
       });
-      await this.cacheService.invalidateCacheByTag(
-        `user_payments:${billingUserId || appointment.patientId}`
-      );
+      await this.invalidateUserPaymentCaches(billingUserId || appointment.patientId);
     } else {
       payment = await this.createPayment({
         amount,
@@ -3443,7 +3460,7 @@ export class BillingService {
       appointmentId,
     });
 
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.invalidateUserSubscriptionCaches(subscription.userId);
   }
 
   async getActiveUserSubscription(userId: string, clinicId: string) {
@@ -3513,7 +3530,7 @@ export class BillingService {
     await this.eventService.emit('billing.subscription.quota_reset', {
       subscriptionId,
     });
-    await this.cacheService.invalidateCacheByTag(`user_subscriptions:${subscription.userId}`);
+    await this.invalidateUserSubscriptionCaches(subscription.userId);
   }
 
   // ============ Analytics ============
@@ -3800,7 +3817,7 @@ export class BillingService {
         invoiceId,
         pdfUrl,
       });
-      await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
+      await this.invalidateUserInvoiceCaches(invoice.userId);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
@@ -3917,7 +3934,7 @@ export class BillingService {
           invoiceId,
           userId: user.id,
         });
-        await this.cacheService.invalidateCacheByTag(`user_invoices:${invoice.userId}`);
+        await this.invalidateUserInvoiceCaches(invoice.userId);
       }
 
       return success;
