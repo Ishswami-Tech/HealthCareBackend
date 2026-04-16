@@ -670,8 +670,8 @@ export class BillingService {
         status === String(SubscriptionStatus.ACTIVE) ||
         status === String(SubscriptionStatus.TRIALING)
       ) {
-        const isExpired =
-          subscription.currentPeriodEnd && new Date(subscription.currentPeriodEnd) < now;
+        const targetDate = subscription.currentPeriodEnd || subscription.endDate;
+        const isExpired = targetDate && new Date(targetDate) < now;
         return !isExpired; // If not expired, it blocks
       }
 
@@ -3469,13 +3469,16 @@ export class BillingService {
       clinicId,
     });
 
+    const now = new Date();
     const subscription = subscriptions
-      .filter(
-        sub =>
-          ((sub.status as SubscriptionStatus) === SubscriptionStatus.ACTIVE ||
-            (sub.status as SubscriptionStatus) === SubscriptionStatus.TRIALING) &&
-          sub.currentPeriodEnd >= new Date()
-      )
+      .filter(sub => {
+        const status = sub.status as SubscriptionStatus;
+        if (status !== SubscriptionStatus.ACTIVE && status !== SubscriptionStatus.TRIALING) {
+          return false;
+        }
+        const targetDate = sub.currentPeriodEnd || sub.endDate;
+        return !targetDate || new Date(targetDate) >= now;
+      })
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
     return subscription;
