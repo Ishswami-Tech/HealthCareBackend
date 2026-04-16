@@ -1301,6 +1301,13 @@ export class AppointmentsService {
         createDto.doctorId,
         clinicId
       );
+      await Promise.all([
+        this.cacheService.invalidateCacheByTag('appointments'),
+        this.cacheService.invalidateCacheByTag('clinic_appointments'),
+        this.cacheService.invalidateCacheByTag(`clinic:${clinicId}`),
+        this.cacheService.invalidateCacheByTag(`user:${userId}`),
+        this.cacheService.invalidateCacheByTag(`user:${createDto.patientId}`),
+      ]);
 
       if (shouldResolveInPersonCoverageBeforeCreate && resolvedInPersonCoverage) {
         await this.billingService.bookAppointmentWithSubscription(
