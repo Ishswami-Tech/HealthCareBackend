@@ -772,6 +772,7 @@ export class AppointmentsController {
       const clinicId = req.clinicContext?.clinicId;
       const currentUserId = req.user?.sub;
       const role = req.user?.role || Role.PATIENT;
+      const receptionistLocationId = req.clinicContext?.locationId;
 
       if (!clinicId) {
         throw this.errors.validationError('clinicId', 'Clinic context is required', context);
@@ -797,12 +798,17 @@ export class AppointmentsController {
         }
       );
 
+      const effectiveLocationId =
+        String(role) === String(Role.RECEPTIONIST) && receptionistLocationId
+          ? receptionistLocationId
+          : locationId;
+
       const filters: AppointmentFilters = {
         ...(userId && { userId }),
         ...(doctorId && { doctorId }),
         ...(status && { status: status as AppointmentStatus }),
         ...(date && { date }),
-        ...(locationId && { locationId }),
+        ...(effectiveLocationId && { locationId: effectiveLocationId }),
         clinicId,
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
@@ -2361,6 +2367,7 @@ export class AppointmentsController {
     const userId = req.user?.sub || req.user?.id || '';
     const userRole = req.user?.role;
     const clinicId = req.clinicContext?.clinicId || '';
+    const receptionistLocationId = req.clinicContext?.locationId;
 
     try {
       if (!clinicId) {
@@ -2393,8 +2400,30 @@ export class AppointmentsController {
         throw this.errors.checkInAlreadyConfirmed(appointmentId, context);
       }
 
+      // Receptionist can only force check-in for their assigned location context.
+      if (userRole === Role.RECEPTIONIST && receptionistLocationId) {
+        if (forceCheckInDto.locationId && forceCheckInDto.locationId !== receptionistLocationId) {
+          throw new ForbiddenException(
+            'Receptionist can only force check-in for their assigned location'
+          );
+        }
+        if (appointment.locationId && appointment.locationId !== receptionistLocationId) {
+          throw new ForbiddenException(
+            'Appointment does not belong to receptionist assigned location'
+          );
+        }
+      }
+
       // Get location (use provided locationId or appointment locationId)
-      const locationId = forceCheckInDto.locationId || appointment.locationId;
+      const locationId =
+        receptionistLocationId || forceCheckInDto.locationId || appointment.locationId;
+      if (!locationId) {
+        throw this.errors.validationError(
+          'locationId',
+          'locationId is required to process force check-in',
+          context
+        );
+      }
       const location = await this.checkInLocationService.getLocationById(locationId);
 
       // Verify location belongs to clinic

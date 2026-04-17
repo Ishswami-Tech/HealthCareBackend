@@ -724,6 +724,9 @@ export class CoreAppointmentService {
       // 3. Cancel appointment
       const cancelledAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {
         status: AppointmentStatus.CANCELLED,
+        cancellationReason: reason,
+        cancelledBy: context.userId,
+        cancelledAt: new Date(),
       });
 
       // 4. Update workflow
@@ -920,6 +923,10 @@ export class CoreAppointmentService {
       case 'NURSE':
       case 'RECEPTIONIST':
         // Can see all appointments in their clinic
+        // Enforce location scope when clinic context is location-tagged.
+        if (context.role === 'RECEPTIONIST' && context.locationId) {
+          where['locationId'] = context.locationId;
+        }
         break;
       default:
         // For unknown roles, restrict to user's own appointments
@@ -932,7 +939,9 @@ export class CoreAppointmentService {
     if (filters.type) where['type'] = filters.type;
     if (filters.priority) where['priority'] = filters.priority;
     if (filters.patientId) where['patientId'] = filters.patientId;
-    if (filters.locationId) where['locationId'] = filters.locationId;
+    if (!(context.role === 'RECEPTIONIST' && context.locationId) && filters.locationId) {
+      where['locationId'] = filters.locationId;
+    }
 
     if (filters.date || filters.startDate || filters.endDate) {
       where['date'] = {};

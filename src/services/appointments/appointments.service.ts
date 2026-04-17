@@ -441,9 +441,142 @@ export class AppointmentsService {
     sendPatientNotifications: true,
   };
 
+  private readonly DEFAULT_SLOT_CONFIRMATION_EXPIRY_SETTINGS = {
+    graceMinutes: 0,
+    checkStatuses: [
+      AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
+      AppointmentStatus.SCHEDULED,
+    ] as const,
+  };
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron() {
     await this.processNoShowCancellations();
+  }
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async handleExpiredVideoSlotConfirmationCron() {
+    await this.processExpiredVideoSlotConfirmations();
+  }
+
+  async processExpiredVideoSlotConfirmations(settings?: {
+    graceMinutes?: number;
+    checkStatuses?: readonly AppointmentStatus[];
+    clinicId?: string;
+  }): Promise<{
+    totalChecked: number;
+    cancelled: number;
+    failed: number;
+    details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      expiredAt: Date;
+      reason: string;
+    }>;
+  }> {
+    const mergedSettings = { ...this.DEFAULT_SLOT_CONFIRMATION_EXPIRY_SETTINGS, ...settings };
+    const now = new Date();
+    const expiryCutoff = new Date(now.getTime() - mergedSettings.graceMinutes * 60 * 1000);
+
+    const candidates = await this.databaseService.executeHealthcareRead(async client => {
+      const prismaClient = client as unknown as Prisma.TransactionClient;
+      return await prismaClient.appointment.findMany({
+        where: {
+          type: AppointmentType.VIDEO_CALL,
+          status: { in: mergedSettings.checkStatuses as unknown as $Enums.AppointmentStatus[] },
+          confirmedSlotIndex: null,
+          ...(mergedSettings.clinicId ? { clinicId: mergedSettings.clinicId } : {}),
+        },
+        select: {
+          id: true,
+          patientId: true,
+          doctorId: true,
+          clinicId: true,
+          date: true,
+          time: true,
+          proposedSlots: true,
+          status: true,
+        },
+      });
+    });
+
+    const details: Array<{
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      expiredAt: Date;
+      reason: string;
+    }> = [];
+    let cancelledCount = 0;
+    let failedCount = 0;
+
+    for (const appointment of candidates) {
+      const expiryAt = this.resolveVideoSlotConfirmationExpiry(appointment);
+      if (!expiryAt || expiryAt.getTime() > expiryCutoff.getTime()) {
+        continue;
+      }
+
+      const formattedExpiry = expiryAt.toLocaleString('en-IN', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+        timeZone: 'Asia/Kolkata',
+      });
+      const reason = `Auto-cancelled: doctor did not confirm any proposed slot before ${formattedExpiry} IST.`;
+
+      try {
+        await this.cancelAppointment(
+          appointment.id,
+          reason,
+          'system',
+          appointment.clinicId,
+          'SYSTEM'
+        );
+
+        cancelledCount++;
+        details.push({
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          expiredAt: expiryAt,
+          reason,
+        });
+      } catch (error) {
+        failedCount++;
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Failed to auto-cancel expired video slot confirmation: ${error instanceof Error ? error.message : String(error)}`,
+          'AppointmentsService.processExpiredVideoSlotConfirmations',
+          {
+            appointmentId: appointment.id,
+            clinicId: appointment.clinicId,
+            status: appointment.status,
+          }
+        );
+      }
+    }
+
+    if (details.length > 0 || failedCount > 0) {
+      await this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        'Processed expired video slot confirmations',
+        'AppointmentsService.processExpiredVideoSlotConfirmations',
+        {
+          totalChecked: candidates.length,
+          cancelled: cancelledCount,
+          failed: failedCount,
+        }
+      );
+    }
+
+    return {
+      totalChecked: candidates.length,
+      cancelled: cancelledCount,
+      failed: failedCount,
+      details,
+    };
   }
 
   async processNoShowCancellations(settings?: {
@@ -676,6 +809,61 @@ export class AppointmentsService {
     });
 
     return `${formattedDate} at ${time}`;
+  }
+
+  private resolveVideoSlotConfirmationExpiry(appointment: {
+    date: Date;
+    time: string;
+    proposedSlots?: unknown;
+  }): Date | null {
+    const candidateSlots = Array.isArray(appointment.proposedSlots)
+      ? (appointment.proposedSlots as Array<{ date?: string; time?: string }>)
+      : [];
+
+    const parsedSlotTimes = candidateSlots
+      .map(slot => this.parseAppointmentDateTimeInIST(slot?.date, slot?.time))
+      .filter((value): value is Date => Boolean(value))
+      .sort((left, right) => right.getTime() - left.getTime());
+
+    if (parsedSlotTimes.length > 0) {
+      return parsedSlotTimes[0] ?? null;
+    }
+
+    return this.parseAppointmentDateTimeInIST(appointment.date, appointment.time);
+  }
+
+  private parseAppointmentDateTimeInIST(
+    dateInput: Date | string | undefined,
+    timeInput: string | undefined
+  ): Date | null {
+    if (!dateInput || !timeInput) {
+      return null;
+    }
+
+    const normalizedTime = this.normalizeTimeForDateParsing(timeInput);
+    if (!normalizedTime) {
+      return null;
+    }
+
+    const dateValue = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
+    if (Number.isNaN(dateValue.getTime())) {
+      return null;
+    }
+
+    const datePart = dateValue.toISOString().slice(0, 10);
+    const parsed = new Date(`${datePart}T${normalizedTime}+05:30`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  private normalizeTimeForDateParsing(timeValue: string): string | null {
+    const value = String(timeValue || '').trim();
+    if (/^\d{2}:\d{2}$/.test(value)) {
+      return `${value}:00`;
+    }
+    if (/^\d{2}:\d{2}:\d{2}$/.test(value)) {
+      return value;
+    }
+    return null;
   }
 
   private async syncPaidAppointmentBillingAfterReschedule(
