@@ -15,10 +15,11 @@ export type QRCodeData = AppointmentQRCodeData;
 
 interface ClinicalMedication {
   name: string;
-  dosage: string;
-  frequency: string;
+  dosage?: string | undefined;
+  frequency?: string | undefined;
   instructions?: string | undefined;
 }
+type ClinicalMedicationInput = string | ClinicalMedication;
 
 @Injectable()
 export class AppointmentConfirmationService {
@@ -214,7 +215,7 @@ export class AppointmentConfirmationService {
     clinicalData?: {
       diagnosis?: string | undefined;
       treatmentPlan?: string | undefined;
-      medications?: ClinicalMedication[] | undefined;
+      medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
     }
@@ -487,11 +488,24 @@ export class AppointmentConfirmationService {
     clinicalData?: {
       diagnosis?: string | undefined;
       treatmentPlan?: string | undefined;
-      medications?: ClinicalMedication[] | undefined;
+      medications?: ClinicalMedicationInput[] | undefined;
       clinicId?: string | undefined;
       userId?: string | undefined;
     }
   ): Promise<unknown> {
+    const normalizedMedications = clinicalData?.medications
+      ?.map((medication: ClinicalMedicationInput) => this.normalizeClinicalMedication(medication))
+      .filter(
+        (
+          medication
+        ): medication is {
+          name: string;
+          dosage: string;
+          frequency: string;
+          instructions?: string;
+        } => medication !== null
+      );
+
     // 1. If we have clinical data, persist it to EHR
     if (clinicalData && clinicalData.userId) {
       void this.ehrService
@@ -501,7 +515,7 @@ export class AppointmentConfirmationService {
           doctorId: doctorId,
           diagnosis: clinicalData.diagnosis,
           treatmentPlan: clinicalData.treatmentPlan,
-          medications: clinicalData.medications?.map((medication: ClinicalMedication) => ({
+          medications: normalizedMedications?.map(medication => ({
             name: medication.name,
             dosage: medication.dosage,
             frequency: medication.frequency,
@@ -540,5 +554,36 @@ export class AppointmentConfirmationService {
       domain: _domain,
       status: 'CONFIRMED',
     });
+  }
+
+  private normalizeClinicalMedication(
+    medication: ClinicalMedicationInput
+  ): { name: string; dosage: string; frequency: string; instructions?: string } | null {
+    if (typeof medication === 'string') {
+      const name = medication.trim();
+      if (!name) return null;
+
+      return {
+        name,
+        dosage: 'AS_DIRECTED',
+        frequency: 'AS_DIRECTED',
+      };
+    }
+
+    const name = medication.name?.trim();
+    if (!name) return null;
+
+    return {
+      name,
+      dosage:
+        typeof medication.dosage === 'string' && medication.dosage.trim()
+          ? medication.dosage
+          : 'AS_DIRECTED',
+      frequency:
+        typeof medication.frequency === 'string' && medication.frequency.trim()
+          ? medication.frequency
+          : 'AS_DIRECTED',
+      ...(medication.instructions !== undefined ? { instructions: medication.instructions } : {}),
+    };
   }
 }
