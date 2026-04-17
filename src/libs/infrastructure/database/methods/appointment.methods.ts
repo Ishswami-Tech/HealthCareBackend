@@ -139,7 +139,10 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     options?: {
       skip?: number;
       take?: number;
-      orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
+      orderBy?:
+        | { date?: 'asc' | 'desc' }
+        | { createdAt?: 'asc' | 'desc' }
+        | Array<{ date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' }>;
       rowLevelSecurity?: boolean;
     }
   ): Promise<AppointmentWithRelations[]> {

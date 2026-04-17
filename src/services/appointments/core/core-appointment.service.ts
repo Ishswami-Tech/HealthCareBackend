@@ -416,13 +416,50 @@ export class CoreAppointmentService {
         this.databaseService.findAppointmentsSafe(where, {
           skip: offset,
           take: limit,
-          orderBy: { date: context.role === 'PATIENT' ? 'desc' : 'asc' }, // Patient pages need recent bookings first.
+          // Stable ordering prevents freshly-booked appointments from being buried
+          // when many rows share the same appointment date.
+          orderBy:
+            context.role === 'PATIENT'
+              ? [{ date: 'desc' }, { createdAt: 'desc' }]
+              : [{ date: 'asc' }, { createdAt: 'asc' }],
         }),
         this.databaseService.countAppointmentsSafe(where),
       ]);
 
+      // Apply priority-based sorting for doctor/staff if requested or by default for specific statuses
+      let sortedAppointments = appointments;
+      const isClinicStaff = ['DOCTOR', 'RECEPTIONIST', 'PHARMACIST', 'ASSISTANT_DOCTOR'].includes(
+        context.role
+      );
+      const normalizedStatus = String(filters.status || '').toUpperCase();
+
+      if (
+        isClinicStaff &&
+        (normalizedStatus === 'SCHEDULED' ||
+          normalizedStatus === 'CONFIRMED' ||
+          normalizedStatus === 'WAITING' ||
+          filters.priority)
+      ) {
+        const PRIORITY_WEIGHTS: Record<string, number> = {
+          EMERGENCY: 100,
+          URGENT: 80,
+          HIGH: 50,
+          MEDIUM: 30,
+          NORMAL: 20,
+          LOW: 10,
+          ROUTINE: 0,
+        };
+
+        sortedAppointments = [...appointments].sort((a, b) => {
+          const pA = a.priority ? (PRIORITY_WEIGHTS[a.priority.toUpperCase()] ?? 20) : 20;
+          const pB = b.priority ? (PRIORITY_WEIGHTS[b.priority.toUpperCase()] ?? 20) : 20;
+          if (pA !== pB) return pB - pA;
+          return new Date(a.date).getTime() - new Date(b.date).getTime();
+        });
+      }
+
       const result = {
-        appointments,
+        appointments: sortedAppointments,
         pagination: {
           page,
           limit,
