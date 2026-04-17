@@ -1512,7 +1512,9 @@ export class AppointmentsService {
       date: new Date(slotDate),
       time: slotTime,
       duration: dto.duration,
-      status: AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
+      // New flow: patient selection creates a scheduled appointment.
+      // Doctor confirmation moves it to CONFIRMED.
+      status: AppointmentStatus.SCHEDULED,
       priority: AppointmentPriority.NORMAL,
       userId,
       notes: dto.notes,
@@ -1528,14 +1530,15 @@ export class AppointmentsService {
       clinicId,
       doctorId,
       patientId,
-      status: AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
+      status: AppointmentStatus.SCHEDULED,
       context: { userId },
     });
 
     return {
       success: true,
       data: appointment as unknown as Record<string, unknown>,
-      message: 'Video appointment proposed. Doctor will confirm one of your time slots.',
+      message:
+        'Video appointment scheduled with proposed slots. Doctor confirmation is required to finalize the slot.',
     };
   }
 
@@ -1570,10 +1573,20 @@ export class AppointmentsService {
         'AppointmentsService.confirmVideoSlot'
       );
     }
-    if (String(appointment.status) !== 'AWAITING_SLOT_CONFIRMATION') {
+    const appointmentStatus = String(appointment.status);
+    const confirmedSlotIndex = (
+      appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
+    ).confirmedSlotIndex;
+    const canConfirmSlot =
+      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
+      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
+        (confirmedSlotIndex === null ||
+          confirmedSlotIndex === undefined ||
+          Number.isNaN(Number(confirmedSlotIndex))));
+    if (!canConfirmSlot) {
       throw this.errors.validationError(
         'status',
-        'Appointment is not awaiting slot confirmation',
+        'Appointment is not awaiting doctor slot confirmation',
         'AppointmentsService.confirmVideoSlot'
       );
     }
@@ -1643,7 +1656,7 @@ export class AppointmentsService {
     const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
       date: new Date(slotDate),
       time: slotTime,
-      status: AppointmentStatus.SCHEDULED,
+      status: AppointmentStatus.CONFIRMED,
       confirmedSlotIndex: dto.confirmedSlotIndex,
     });
 
@@ -1653,14 +1666,14 @@ export class AppointmentsService {
     await this.eventService.emit('appointment.updated', {
       appointmentId,
       clinicId,
-      status: AppointmentStatus.SCHEDULED,
+      status: AppointmentStatus.CONFIRMED,
       context: { userId },
     });
 
     return {
       success: true,
       data: updated as unknown as Record<string, unknown>,
-      message: 'Slot confirmed. Video consultation room is ready. Patient will be notified.',
+      message: 'Video slot confirmed. Appointment is now confirmed and patient will be notified.',
     };
   }
 
@@ -2444,9 +2457,19 @@ export class AppointmentsService {
       );
     }
 
-    if (String(appointment.status) !== 'AWAITING_SLOT_CONFIRMATION') {
+    const appointmentStatus = String(appointment.status);
+    const confirmedSlotIndex = (
+      appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
+    ).confirmedSlotIndex;
+    const canRejectProposal =
+      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
+      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
+        (confirmedSlotIndex === null ||
+          confirmedSlotIndex === undefined ||
+          Number.isNaN(Number(confirmedSlotIndex))));
+    if (!canRejectProposal) {
       throw this.errors.businessRuleViolation(
-        'Appointment is not in proposal stage',
+        'Appointment is not in doctor confirmation stage',
         'AppointmentsService.rejectVideoProposal'
       );
     }
@@ -2584,6 +2607,8 @@ export class AppointmentsService {
         operation: 'markAppointmentCompleted',
         appointmentId,
         doctorId: finalDoctorId,
+        clinicId,
+        userId: appointment.userId,
         ...restDto,
       });
 

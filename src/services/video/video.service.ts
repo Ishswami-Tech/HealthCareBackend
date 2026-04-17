@@ -381,6 +381,32 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           'VideoService.generateMeetingToken'
         );
       }
+      // New flow compatibility:
+      // A video appointment can be SCHEDULED before doctor confirms the final slot.
+      // In that case, block joining until confirmedSlotIndex is set.
+      if (
+        String(appointment.type) === 'VIDEO_CALL' &&
+        String(appointment.status) === String(AppointmentStatus.SCHEDULED)
+      ) {
+        const confirmedSlotIndex = (
+          appointment as unknown as {
+            confirmedSlotIndex?: number | null;
+          }
+        ).confirmedSlotIndex;
+        if (
+          confirmedSlotIndex === null ||
+          confirmedSlotIndex === undefined ||
+          Number.isNaN(Number(confirmedSlotIndex))
+        ) {
+          throw new HealthcareError(
+            ErrorCode.OPERATION_NOT_ALLOWED,
+            'Doctor confirmation is pending. You can join after a slot is confirmed.',
+            undefined,
+            { appointmentId, status: appointment.status },
+            'VideoService.generateMeetingToken'
+          );
+        }
+      }
 
       // 4. Validate Payment
       // Strict Prepaid Rule: Must be COMPLETED
@@ -525,8 +551,20 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Only video appointments can be rejected');
     }
 
-    if (String(appointment.status) !== String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION)) {
-      throw new BadRequestException('Appointment is not awaiting video slot confirmation');
+    const appointmentStatus = String(appointment.status);
+    const confirmedSlotIndex = (
+      appointment as unknown as {
+        confirmedSlotIndex?: number | null;
+      }
+    ).confirmedSlotIndex;
+    const canRejectProposal =
+      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
+      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
+        (confirmedSlotIndex === null ||
+          confirmedSlotIndex === undefined ||
+          Number.isNaN(Number(confirmedSlotIndex))));
+    if (!canRejectProposal) {
+      throw new BadRequestException('Appointment is not in doctor slot confirmation stage');
     }
 
     const updatedAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {

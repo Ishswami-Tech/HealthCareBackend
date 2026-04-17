@@ -2459,7 +2459,10 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     options?: {
       skip?: number;
       take?: number;
-      orderBy?: { date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' };
+      orderBy?:
+        | { date?: 'asc' | 'desc' }
+        | { createdAt?: 'asc' | 'desc' }
+        | Array<{ date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' }>;
       rowLevelSecurity?: boolean;
     }
   ): Promise<AppointmentWithRelations[]> {

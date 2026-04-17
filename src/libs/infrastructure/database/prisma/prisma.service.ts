@@ -2736,7 +2736,17 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     return result as AppointmentWithRelations | null;
   }
 
-  async findAppointmentsSafe(where: AppointmentWhereInput): Promise<AppointmentWithRelations[]> {
+  async findAppointmentsSafe(
+    where: AppointmentWhereInput,
+    options?: {
+      skip?: number;
+      take?: number;
+      orderBy?:
+        | { date?: 'asc' | 'desc' }
+        | { createdAt?: 'asc' | 'desc' }
+        | Array<{ date?: 'asc' | 'desc' } | { createdAt?: 'asc' | 'desc' }>;
+    }
+  ): Promise<AppointmentWithRelations[]> {
     type AppointmentDelegate = {
       findMany: (args: PrismaDelegateArgs) => Promise<unknown>;
     };
@@ -2748,6 +2758,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     const result = await appointmentDelegate.findMany({
       where,
       include: appointmentIncludeValidator,
+      ...(options?.skip !== undefined ? { skip: options.skip } : {}),
+      ...(options?.take !== undefined ? { take: options.take } : {}),
+      ...(options?.orderBy !== undefined ? { orderBy: options.orderBy } : {}),
     } as PrismaDelegateArgs);
     return result as AppointmentWithRelations[];
   }
