@@ -7,10 +7,18 @@ import { QrService } from '@utils/QR';
 import * as crypto from 'crypto';
 
 import type { AppointmentQRCodeData, ConfirmationResult } from '@core/types/appointment.types';
+import { EHRService } from '@services/ehr/ehr.service';
 
 // Re-export types for backward compatibility (with alias for QRCodeData)
 export type { ConfirmationResult };
 export type QRCodeData = AppointmentQRCodeData;
+
+interface ClinicalMedication {
+  name: string;
+  dosage: string;
+  frequency: string;
+  instructions?: string | undefined;
+}
 
 @Injectable()
 export class AppointmentConfirmationService {
@@ -22,7 +30,8 @@ export class AppointmentConfirmationService {
     @Inject(ConfigService) private readonly configService: ConfigService,
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly qrService: QrService
+    private readonly qrService: QrService,
+    private readonly ehrService: EHRService
   ) {}
 
   async generateCheckInQR(appointmentId: string, domain: string): Promise<unknown> {
@@ -201,13 +210,25 @@ export class AppointmentConfirmationService {
   async markAppointmentCompleted(
     appointmentId: string,
     doctorId: string,
-    domain: string
+    domain: string,
+    clinicalData?: {
+      diagnosis?: string | undefined;
+      treatmentPlan?: string | undefined;
+      medications?: ClinicalMedication[] | undefined;
+      clinicId?: string | undefined;
+      userId?: string | undefined;
+    }
   ): Promise<unknown> {
     const startTime = Date.now();
 
     try {
       // Mark appointment as completed
-      const completionResult = await this.performCompletion(appointmentId, doctorId, domain);
+      const completionResult = await this.performCompletion(
+        appointmentId,
+        doctorId,
+        domain,
+        clinicalData
+      );
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -459,18 +480,49 @@ export class AppointmentConfirmationService {
     });
   }
 
-  private performCompletion(
-    _appointmentId: string,
-    _doctorId: string,
-    _domain: string
+  private async performCompletion(
+    appointmentId: string,
+    doctorId: string,
+    domain: string,
+    clinicalData?: {
+      diagnosis?: string | undefined;
+      treatmentPlan?: string | undefined;
+      medications?: ClinicalMedication[] | undefined;
+      clinicId?: string | undefined;
+      userId?: string | undefined;
+    }
   ): Promise<unknown> {
-    // This would integrate with the actual appointment service
-    // For now, return a placeholder implementation
+    // 1. If we have clinical data, persist it to EHR
+    if (clinicalData && clinicalData.userId) {
+      void this.ehrService
+        .createPrescription({
+          userId: clinicalData.userId,
+          clinicId: clinicalData.clinicId,
+          doctorId: doctorId,
+          diagnosis: clinicalData.diagnosis,
+          treatmentPlan: clinicalData.treatmentPlan,
+          medications: clinicalData.medications?.map((medication: ClinicalMedication) => ({
+            name: medication.name,
+            dosage: medication.dosage,
+            frequency: medication.frequency,
+            startDate: new Date().toISOString(),
+            ...(medication.instructions !== undefined
+              ? { instructions: medication.instructions }
+              : {}),
+          })),
+          notes: clinicalData.treatmentPlan,
+        })
+        .catch(err => {
+          this.logger.error(`Failed to persist EHR data for appointment ${appointmentId}:`, err);
+        });
+    }
+
+    // 2. Placeholder for appointment status update (handled by CoreAppointmentService usually)
     return Promise.resolve({
       success: true,
-      appointmentId: _appointmentId,
-      doctorId: _doctorId,
-      domain: _domain,
+      appointmentId: appointmentId,
+      doctorId: doctorId,
+      domain: domain,
       completedAt: new Date().toISOString(),
     });
   }

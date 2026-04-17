@@ -355,40 +355,59 @@ export class EHRService {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
           medication: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
           healthRecord: { create: (args: PrismaDelegateArgs) => Promise<unknown> };
+          prescription: {
+            create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+          };
+          prescriptionItem: { createMany: (args: { data: unknown[] }) => Promise<unknown> };
         };
 
-        // 1. Create each medication record
+        // 1. Create a formal Prescription entry (Doctor -> Pharmacy Flow)
+        const prescription = await typedClient.prescription.create({
+          data: {
+            patientId: data.userId,
+            doctorId: data.doctorId || 'system',
+            clinicId: data.clinicId || '',
+            date: new Date(),
+            status: 'PENDING',
+            notes: data.notes || '',
+          } as PrismaDelegateArgs,
+        });
+
+        // 2. Create individual prescription items
         if (data.medications && data.medications.length > 0) {
-          for (const med of data.medications) {
-            await typedClient.medication.create({
-              data: {
-                userId: data.userId,
-                clinicId: data.clinicId || '',
-                name: med.name,
-                dosage: med.dosage,
-                frequency: med.frequency,
-                startDate: new Date(med.startDate),
-                endDate: med.endDate ? new Date(med.endDate) : null,
-                prescribedBy: 'DOCTOR', // Default to doctor for prescription
-                notes: med.instructions || '',
-                isActive: true,
-              } as PrismaDelegateArgs,
-            } as PrismaDelegateArgs);
-          }
+          const itemsData = data.medications.map(med => ({
+            prescriptionId: prescription.id,
+            clinicId: data.clinicId || '',
+            dosage: med.dosage,
+            frequency: med.frequency,
+            duration: med.endDate || med.instructions || '', // Map duration or instructions
+            medicineId: null, // Should be looked up by name if master list exists
+            // Since we're using free-text medicine names for now (as per DTO),
+            // the pharmacy will map these to specific inventory items.
+          }));
+
+          // Bulk create optimized for 10M+ users scale
+          await typedClient.prescriptionItem.createMany({
+            data: itemsData,
+          });
         }
 
-        // 2. Create a generic health record entry for the prescription event
+        // 3. Create a generic health record entry for the clinical findings (EHR)
         await typedClient.healthRecord.create({
           data: {
-            patientId: data.userId, // In HealthRecord, patientId is the user's ID
-            doctorId: 'system', // Should be the actual doctor ID in a real scenario
+            patientId: data.userId,
+            doctorId: data.doctorId || 'system',
             clinicId: data.clinicId || '',
             recordType: 'PRESCRIPTION',
-            report:
-              data.notes || `Prescription generated for ${data.medications?.length || 0} items.`,
+            report: JSON.stringify({
+              diagnosis: data.diagnosis,
+              treatmentPlan: data.treatmentPlan,
+              notes: data.notes,
+              medicationsCount: data.medications?.length || 0,
+            }),
             createdAt: new Date(),
           } as PrismaDelegateArgs,
-        } as PrismaDelegateArgs);
+        });
       },
       {
         userId: data.userId,

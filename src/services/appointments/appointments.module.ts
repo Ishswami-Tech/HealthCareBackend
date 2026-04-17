@@ -81,6 +81,7 @@ import { BillingModule } from '@services/billing/billing.module';
 
 // Communication Modules
 import { CommunicationModule } from '@communication/communication.module';
+import { EHRModule } from '@services/ehr/ehr.module';
 
 /**
  * Enhanced Appointments Module
@@ -120,6 +121,8 @@ import { CommunicationModule } from '@communication/communication.module';
     VideoModule,
     forwardRef(() => BillingModule),
     CommunicationModule,
+    EHRModule,
+
     // QR Code Module
     QrModule,
     // QueueModule.forRoot() registers standard queues using BullMQ:
