@@ -121,7 +121,7 @@ export class CheckInService {
    * @param userId - The user ID performing check-in
    * @returns Check-in result
    */
-  async checkIn(appointmentId: string, userId: string): Promise<CheckInResult> {
+  async checkIn(appointmentId: string, userId: string, priority?: string): Promise<CheckInResult> {
     try {
       // Validate appointment exists and belongs to user
       const appointment = await this.validateAppointment(appointmentId, userId);
@@ -135,7 +135,7 @@ export class CheckInService {
 
       if (isInPersonAppointment(appointment)) {
         // Type narrowed - cast to InPersonAppointment for type safety
-        return this.checkInInPerson(appointment, userId);
+        return this.checkInInPerson(appointment, userId, priority);
       }
 
       throw new BadRequestException('Unsupported appointment type for physical check-in');
@@ -164,7 +164,8 @@ export class CheckInService {
    */
   private async checkInInPerson(
     appointment: InPersonAppointment,
-    userId: string
+    userId: string,
+    priority?: string
   ): Promise<CheckInResult> {
     try {
       // No runtime type check needed - TypeScript guarantees it's IN_PERSON
@@ -261,7 +262,8 @@ export class CheckInService {
           appointment.locationId, // Type-safe: guaranteed non-null
           (appointment as { domain?: string }).domain || 'clinic',
           appointment.patientId || '',
-          clinicId
+          clinicId,
+          priority
         );
         result.queuePosition = queuePosition.position;
         result.estimatedWaitTime = queuePosition.estimatedWaitTime;
@@ -929,7 +931,8 @@ export class CheckInService {
     locationId: string,
     domain: string,
     patientId: string, // Add argument
-    clinicId: string // Add argument
+    clinicId: string, // Add argument
+    priority?: string
   ): Promise<AppointmentQueuePosition> {
     await this.appointmentQueueService.checkIn(
       {
@@ -938,6 +941,7 @@ export class CheckInService {
         patientId,
         clinicId,
         locationId,
+        ...(priority !== undefined ? { priority } : {}),
       },
       domain
     );

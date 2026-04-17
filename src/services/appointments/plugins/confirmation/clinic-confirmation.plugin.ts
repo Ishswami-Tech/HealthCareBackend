@@ -2,13 +2,18 @@ import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
 import { LoggingService } from '@infrastructure/logging';
+import type { PrescriptionMedicationDto } from '@dtos/ehr.dto';
 
 interface ConfirmationPluginData {
   operation: string;
-  appointmentId?: string;
-  qrData?: string;
-  doctorId?: string;
-  clinicId?: string;
+  appointmentId?: string | undefined;
+  qrData?: string | undefined;
+  doctorId?: string | undefined;
+  clinicId?: string | undefined;
+  userId?: string | undefined;
+  diagnosis?: string | undefined;
+  treatmentPlan?: string | undefined;
+  medications?: PrescriptionMedicationDto[] | undefined;
 }
 
 @Injectable()
@@ -66,7 +71,14 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
         return await this.confirmationService.markAppointmentCompleted(
           pluginData.appointmentId,
           pluginData.doctorId,
-          'clinic'
+          'clinic',
+          {
+            diagnosis: pluginData.diagnosis,
+            treatmentPlan: pluginData.treatmentPlan,
+            medications: pluginData.medications,
+            clinicId: pluginData.clinicId,
+            userId: pluginData.userId,
+          }
         );
 
       case 'generateConfirmationQR':

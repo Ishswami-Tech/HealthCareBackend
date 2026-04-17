@@ -429,18 +429,26 @@ export class CreatePrescriptionDto {
 
   @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
-  clinicId?: string;
+  clinicId?: string | undefined;
+
+  @IsOptional()
+  @IsString()
+  doctorId?: string | undefined;
 
   @IsString()
   @IsOptional()
-  notes?: string;
+  notes?: string | undefined;
 
   @IsString()
   @IsOptional()
-  diagnosis?: string;
+  diagnosis?: string | undefined;
+
+  @IsString()
+  @IsOptional()
+  treatmentPlan?: string | undefined;
 
   @IsOptional()
-  medications?: PrescriptionMedicationDto[];
+  medications?: PrescriptionMedicationDto[] | undefined;
 }
 
 export class UpdateMedicationDto {

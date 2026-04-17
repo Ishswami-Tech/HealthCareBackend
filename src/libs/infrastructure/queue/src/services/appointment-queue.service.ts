@@ -21,6 +21,16 @@ import type {
 // Re-export types for backward compatibility
 export type { QueueEntry, QueueEntryData, AppointmentQueueStats as QueueStats };
 
+const PRIORITY_WEIGHTS: Record<string, number> = {
+  EMERGENCY: 100,
+  URGENT: 80,
+  HIGH: 50,
+  MEDIUM: 30,
+  NORMAL: 20,
+  LOW: 10,
+  ROUTINE: 0,
+};
+
 @Injectable()
 export class AppointmentQueueService {
   private readonly QUEUE_CACHE_TTL = 3600; // 1 hour
@@ -90,8 +100,13 @@ export class AppointmentQueueService {
         doctorId: queueData.assignedDoctorId || queueData.queueOwnerId,
         clinicId: queueData.clinicId,
         status: 'WAITING',
-        priority: 0,
         checkedInAt: new Date().toISOString(),
+        priority:
+          queueData.laneType === 'VIP'
+            ? 100
+            : typeof queueData.notes === 'string' && queueData.notes.includes('URGENT')
+              ? 80
+              : 0,
         ...(queueData.estimatedWaitTime !== undefined && {
           estimatedWaitTime: queueData.estimatedWaitTime,
         }),
@@ -159,14 +174,20 @@ export class AppointmentQueueService {
   ): Promise<QueueEntryData[]> {
     const queueKey = this.buildQueueKey(domain, clinicId, queueOwnerId, date);
     const entries = await this.cacheService.lRange(queueKey, 0, -1);
+    const parsedEntries = entries.map(entry => JSON.parse(entry) as QueueEntryData);
 
-    return entries.map((entry, index) => {
-      const entryData = JSON.parse(entry) as QueueEntryData;
-      return {
-        ...entryData,
-        position: index + 1,
-      };
+    // Sort by priority (desc) then by check-in time (asc)
+    const sortedEntries = parsedEntries.sort((a, b) => {
+      const pA = a.priority ?? 0;
+      const pB = b.priority ?? 0;
+      if (pA !== pB) return pB - pA;
+      return new Date(a.checkedInAt || 0).getTime() - new Date(b.checkedInAt || 0).getTime();
     });
+
+    return sortedEntries.map((entry, index) => ({
+      ...entry,
+      position: index + 1,
+    }));
   }
 
   async removeOperationalQueueItem(
@@ -232,6 +253,7 @@ export class AppointmentQueueService {
       appointmentType?: string;
       notes?: string;
       locationId?: string;
+      priority?: string | number;
     },
     domain: string
   ): Promise<OperationResponse> {
@@ -260,7 +282,10 @@ export class AppointmentQueueService {
         clinicId,
         status: 'WAITING',
         checkedInAt: new Date().toISOString(),
-        priority: 0,
+        priority:
+          typeof checkInData.priority === 'number'
+            ? checkInData.priority
+            : (PRIORITY_WEIGHTS[String(checkInData.priority).toUpperCase()] ?? 0),
       };
 
       if (appointmentType) queueEntry.type = appointmentType;
@@ -358,10 +383,19 @@ export class AppointmentQueueService {
         });
       }
 
-      const queue: QueueEntryData[] = filteredEntries.map((entry, index) => {
-        const entryData = JSON.parse(entry) as QueueEntryData;
+      const parsedEntries = filteredEntries.map(entry => JSON.parse(entry) as QueueEntryData);
+
+      // Sort by priority (desc) then by check-in time (asc)
+      const sortedEntries = parsedEntries.sort((a, b) => {
+        const pA = a.priority ?? 0;
+        const pB = b.priority ?? 0;
+        if (pA !== pB) return pB - pA;
+        return new Date(a.checkedInAt || 0).getTime() - new Date(b.checkedInAt || 0).getTime();
+      });
+
+      const queue: QueueEntryData[] = sortedEntries.map((entry, index) => {
         return {
-          ...entryData,
+          ...entry,
           position: index + 1,
           estimatedWaitTime: this.calculateEstimatedWaitTime(index + 1, domain),
         };

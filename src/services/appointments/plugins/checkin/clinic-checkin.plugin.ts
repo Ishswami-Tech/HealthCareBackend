@@ -14,6 +14,7 @@ interface CheckInPluginData {
   appointmentOrder?: string[];
   therapyType?: string;
   checkInData?: CheckInData;
+  priority?: string;
 }
 
 @Injectable()
@@ -66,7 +67,11 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
         if (!pluginData.appointmentId || !pluginData.userId) {
           throw new Error('Missing required fields for checkIn');
         }
-        return await this.checkInService.checkIn(pluginData.appointmentId, pluginData.userId);
+        return await this.checkInService.checkIn(
+          pluginData.appointmentId,
+          pluginData.userId,
+          pluginData.priority
+        );
 
       case 'getCheckedInAppointments':
         if (!pluginData.clinicId) {

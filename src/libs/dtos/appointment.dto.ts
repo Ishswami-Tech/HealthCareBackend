@@ -1247,6 +1247,15 @@ export class CompleteAppointmentDto {
   @IsString()
   prescription?: string;
 
+  @ApiPropertyOptional({
+    description: 'Medications prescribed',
+    type: [Object],
+    required: false,
+  })
+  @IsOptional()
+  @IsArray({ message: 'Medications must be an array' })
+  medications?: string[] | undefined;
+
   @ApiPropertyOptional({ description: 'Follow-up required', required: false })
   @IsOptional()
   @IsBoolean({ message: 'Follow-up required must be a boolean' })
@@ -1279,16 +1288,6 @@ export class CompleteAppointmentDto {
   @IsOptional()
   @IsString({ message: 'Follow-up priority must be a string' })
   followUpPriority?: 'low' | 'normal' | 'high' | 'urgent';
-
-  @ApiPropertyOptional({
-    description: 'Medications prescribed',
-    type: [String],
-    required: false,
-  })
-  @IsOptional()
-  @IsArray({ message: 'Medications must be an array' })
-  @IsString({ each: true, message: 'Each medication must be a string' })
-  medications?: string[];
 
   @ApiPropertyOptional({
     description: 'Tests recommended',
