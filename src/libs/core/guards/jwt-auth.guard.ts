@@ -39,6 +39,11 @@ const STAFF_ROLES: ReadonlySet<string> = new Set([
   Role.CLINIC_LOCATION_HEAD,
   Role.SUPER_ADMIN,
 ]);
+
+/**
+ * Profile completion enforcement currently applies to patient onboarding only.
+ */
+const PROFILE_COMPLETION_ENFORCED_ROLES: ReadonlySet<string> = new Set([Role.PATIENT]);
 import { JwtAuthService } from '@services/auth/core/jwt.service';
 import * as crypto from 'crypto';
 import type { FastifyRequestWithUser, JwtPayload } from '@core/types/guard.types';
@@ -308,12 +313,14 @@ export class JwtAuthGuard implements CanActivate {
         // Staff roles are pre-validated by clinic admin — skip profile completion enforcement
         const userRole =
           user && typeof user === 'object' && 'role' in user ? String(user.role) : '';
+        const normalizedUserRole = userRole.toUpperCase();
         if (
           user &&
           typeof user === 'object' &&
           'isProfileComplete' in user &&
           user.isProfileComplete === false &&
-          !STAFF_ROLES.has(userRole) &&
+          !STAFF_ROLES.has(normalizedUserRole) &&
+          PROFILE_COMPLETION_ENFORCED_ROLES.has(normalizedUserRole) &&
           this.shouldEnforceProfileCompletion(path)
         ) {
           throw new ForbiddenException({

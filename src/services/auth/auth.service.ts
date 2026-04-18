@@ -533,9 +533,12 @@ export class AuthService {
         );
       }
 
-      // Get clinic ID: Priority order = header > user.primaryClinicId
-      // Body clinicId is only used if no header and no primaryClinicId (legacy support)
-      const clinicId = clinicIdFromHeader || user.primaryClinicId || loginDto.clinicId;
+      // Resolve clinic context for login:
+      // header > body > primaryClinicId > active UserRole assignment
+      const clinicId = await this.resolveClinicForAuthentication(
+        user,
+        clinicIdFromHeader || loginDto.clinicId || undefined
+      );
 
       // SUPER_ADMIN operates across all clinics — clinic association is optional
       const isSuperAdmin = (user.role as Role) === Role.SUPER_ADMIN;
@@ -604,6 +607,7 @@ export class AuthService {
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        ...(clinicUUID && { clinicId: clinicUUID }),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(
@@ -646,7 +650,7 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
-          clinicId: user.primaryClinicId || undefined,
+          clinicId: clinicUUID || undefined,
           profileComplete: user.isProfileComplete,
           requiresProfileCompletion: !user.isProfileComplete,
         },
@@ -1275,16 +1279,32 @@ export class AuthService {
       // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
       await this.cacheService.del(`otp:${user.id}`).catch(() => {});
 
+      // Resolve and validate clinic context before creating session
+      const clinicId = await this.resolveClinicForAuthentication(
+        user,
+        verifyDto.clinicId || clinicIdFromHeader || undefined
+      );
+      const isSuperAdmin = (user.role as Role) === Role.SUPER_ADMIN;
+      if (!clinicId && !isSuperAdmin) {
+        throw this.errors.validationError(
+          'clinicId',
+          'No clinic associated with this account. Please contact support.',
+          'AuthService.verifyOtp'
+        );
+      }
+      const clinicUUID = clinicId
+        ? await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp')
+        : undefined;
+
       // Create session first
       // Session is stored in Redis via SessionManagementService
       // Fastify session will be set in controller if request object is available
-      const clinicId = verifyDto.clinicId || user.primaryClinicId || undefined;
       const session = await this.sessionService.createSession({
         userId: user.id,
         userAgent: sessionMetadata?.userAgent || 'OTP Login',
         ipAddress: sessionMetadata?.ipAddress || '127.0.0.1',
         metadata: { otpLogin: true },
-        ...(clinicId && { clinicId }),
+        ...(clinicUUID && { clinicId: clinicUUID }),
       });
 
       // Generate tokens with session ID - handle null phone
@@ -1295,6 +1315,7 @@ export class AuthService {
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
         role: user.role,
         ...(user.phone && { phone: user.phone }),
+        ...(clinicUUID && { clinicId: clinicUUID }),
         // Include clinicId: from verifyDto, or user's primaryClinicId
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
         ...(clinicIdFromHeader && { currentClinicId: clinicIdFromHeader }),
@@ -1317,7 +1338,7 @@ export class AuthService {
         userId: user.id,
         email: user.email,
         role: user.role,
-        clinicId,
+        clinicId: clinicUUID,
         sessionId: session.sessionId,
       });
 
@@ -1326,7 +1347,7 @@ export class AuthService {
         LogLevel.INFO,
         `OTP login successful for: ${user.email}`,
         'AuthService.verifyOtp',
-        { userId: user.id, email: user.email, role: user.role, clinicId }
+        { userId: user.id, email: user.email, role: user.role, clinicId: clinicUUID }
       );
 
       return {
@@ -1339,7 +1360,7 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
-          clinicId: user.primaryClinicId || undefined,
+          clinicId: clinicUUID || undefined,
           profileComplete: user.isProfileComplete,
           requiresProfileCompletion: !user.isProfileComplete,
         },
@@ -1438,6 +1459,61 @@ export class AuthService {
   }
 
   /**
+   * Resolve clinic for authentication flows.
+   * Priority: explicit clinic (header/body) -> primaryClinicId -> active UserRole clinic assignment
+   */
+  private async resolveClinicForAuthentication(
+    user: { id: string; role: Role | string; primaryClinicId?: string | null },
+    explicitClinicId?: string
+  ): Promise<string | undefined> {
+    if (explicitClinicId) {
+      return explicitClinicId;
+    }
+
+    if (user.primaryClinicId) {
+      return user.primaryClinicId;
+    }
+
+    if ((user.role as Role) === Role.SUPER_ADMIN) {
+      return undefined;
+    }
+
+    const activeRoleAssignment = await this.databaseService.executeHealthcareRead<{
+      clinicId: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as {
+        userRole: {
+          findFirst: (args: {
+            where: {
+              userId: string;
+              clinicId: { not: null };
+              isActive: true;
+              revokedAt: null;
+              OR: Array<{ expiresAt: null } | { expiresAt: { gt: Date } }>;
+            };
+            select: { clinicId: true };
+            orderBy: { assignedAt: 'asc' };
+          }) => Promise<{ clinicId: string | null } | null>;
+        };
+      };
+
+      return typedClient.userRole.findFirst({
+        where: {
+          userId: user.id,
+          clinicId: { not: null },
+          isActive: true,
+          revokedAt: null,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+        },
+        select: { clinicId: true },
+        orderBy: { assignedAt: 'asc' },
+      });
+    });
+
+    return activeRoleAssignment?.clinicId ?? undefined;
+  }
+
+  /**
    * Check user profile completion status using the ProfileCompletionService
    * This is the authoritative source for profile completion status
    */
@@ -1511,19 +1587,10 @@ export class AuthService {
   private getRequiredProfileFieldsForRole(role: Role): string[] {
     switch (role) {
       case Role.PATIENT:
-        return ['firstName', 'lastName', 'phone', 'dateOfBirth'];
+        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
-        return [
-          'firstName',
-          'lastName',
-          'phone',
-          'dateOfBirth',
-          'gender',
-          'address',
-          'specialization',
-          'experience',
-        ];
+        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
       default:
         return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
     }
