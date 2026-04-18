@@ -83,9 +83,25 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
         if (!pluginData.appointmentId || !pluginData.clinicId) {
           throw new Error('Missing required fields for processCheckIn');
         }
-        return await this.checkInService.processCheckIn(
+        if (
+          typeof (this.checkInService as unknown as { processCheckIn?: unknown }).processCheckIn ===
+          'function'
+        ) {
+          return await this.checkInService.processCheckIn(
+            pluginData.appointmentId,
+            pluginData.clinicId
+          );
+        }
+
+        if (!pluginData.userId) {
+          throw new Error('Missing required field userId for processCheckIn fallback');
+        }
+
+        // Runtime-safe fallback for older CheckInService builds that expose only `checkIn`.
+        return await this.checkInService.checkIn(
           pluginData.appointmentId,
-          pluginData.clinicId
+          pluginData.userId,
+          pluginData.priority
         );
 
       case 'getPatientQueuePosition':
