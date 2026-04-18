@@ -138,7 +138,12 @@ export class AppointmentWorkflowEngine {
    * Check if appointment can be cancelled based on its current status
    */
   canCancelAppointment(currentStatus: string): boolean {
-    const cancellableStatuses = ['SCHEDULED', 'CONFIRMED', 'RESCHEDULED'];
+    const cancellableStatuses = [
+      'SCHEDULED',
+      'CONFIRMED',
+      'RESCHEDULED',
+      'AWAITING_SLOT_CONFIRMATION',
+    ];
     return cancellableStatuses.includes(currentStatus);
   }
 }

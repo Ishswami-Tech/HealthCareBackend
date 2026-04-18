@@ -525,13 +525,29 @@ export class AppointmentsService {
       const reason = `Auto-cancelled: doctor did not confirm any proposed slot before ${formattedExpiry} IST.`;
 
       try {
-        await this.cancelAppointment(
+        const cancellationResult = await this.cancelAppointment(
           appointment.id,
           reason,
           'system',
           appointment.clinicId,
           'SYSTEM'
         );
+
+        if (!cancellationResult.success) {
+          failedCount++;
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            `Failed to auto-cancel expired video slot confirmation: ${cancellationResult.message || cancellationResult.error || 'Unknown cancellation failure'}`,
+            'AppointmentsService.processExpiredVideoSlotConfirmations',
+            {
+              appointmentId: appointment.id,
+              clinicId: appointment.clinicId,
+              status: appointment.status,
+            }
+          );
+          continue;
+        }
 
         cancelledCount++;
         details.push({
