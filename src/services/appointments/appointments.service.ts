@@ -2730,6 +2730,7 @@ export class AppointmentsService {
       const checkInData = await this.clinicCheckInPlugin.process({
         operation: 'processCheckIn',
         clinicId,
+        userId,
         ...checkInDto,
       });
 

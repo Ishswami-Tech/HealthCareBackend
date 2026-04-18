@@ -273,11 +273,13 @@ export class CheckInLocationService {
         return await (
           client as unknown as {
             checkInLocation: {
-              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+              findFirst: <T>(args: T) => Promise<CheckInLocation | null>;
             };
           }
-        ).checkInLocation.findUnique({
-          where: { id: locationId },
+        ).checkInLocation.findFirst({
+          where: {
+            OR: [{ id: locationId }, { locationId }],
+          },
         } as never);
       });
 
@@ -641,11 +643,13 @@ export class CheckInLocationService {
         return await (
           client as unknown as {
             checkInLocation: {
-              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+              findFirst: <T>(args: T) => Promise<CheckInLocation | null>;
             };
           }
-        ).checkInLocation.findUnique({
-          where: { id: data.locationId },
+        ).checkInLocation.findFirst({
+          where: {
+            OR: [{ id: data.locationId }, { locationId: data.locationId }],
+          },
         } as never);
       });
 
