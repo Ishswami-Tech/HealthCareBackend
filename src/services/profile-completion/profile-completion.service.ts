@@ -33,29 +33,11 @@ export class ProfileCompletionService {
       conditionalFields: {},
     },
     DOCTOR: {
-      requiredFields: [
-        'firstName',
-        'lastName',
-        'phone',
-        'dateOfBirth',
-        'gender',
-        'address',
-        'specialization',
-        'experience',
-      ],
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
       conditionalFields: {},
     },
     ASSISTANT_DOCTOR: {
-      requiredFields: [
-        'firstName',
-        'lastName',
-        'phone',
-        'dateOfBirth',
-        'gender',
-        'address',
-        'specialization',
-        'experience',
-      ],
+      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
       conditionalFields: {},
     },
     RECEPTIONIST: {

@@ -37,6 +37,11 @@ const STAFF_ROLES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Profile completion enforcement currently applies to patient onboarding only.
+ */
+const PROFILE_COMPLETION_ENFORCED_ROLES: ReadonlySet<string> = new Set([Role.PATIENT]);
+
+/**
  * Profile Completion Guard
  *
  * Enforces mandatory profile completion for protected routes.
@@ -108,8 +113,15 @@ export class ProfileCompletionGuard implements CanActivate {
         throw new UnauthorizedException('User not found');
       }
 
+      const normalizedUserRole = String(dbUser.role || '').toUpperCase();
+
       // Staff operational roles are pre-validated by clinic admin — skip profile completion enforcement
-      if (dbUser.role && STAFF_ROLES.has(dbUser.role)) {
+      if (normalizedUserRole && STAFF_ROLES.has(normalizedUserRole)) {
+        return true;
+      }
+
+      // Enforce profile completion for selected onboarding roles only.
+      if (!PROFILE_COMPLETION_ENFORCED_ROLES.has(normalizedUserRole)) {
         return true;
       }
 
@@ -133,7 +145,7 @@ export class ProfileCompletionGuard implements CanActivate {
           error: 'Profile Incomplete',
           message: 'Please complete your profile to access this feature.',
           requiresProfileCompletion: true,
-          redirectUrl: '/profile/complete',
+          redirectUrl: '/profile-completion',
         });
       }
 
