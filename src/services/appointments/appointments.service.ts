@@ -52,6 +52,7 @@ import {
   StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
+  ConfirmVideoFinalSlotDto,
 } from '@dtos/appointment.dto';
 import { Role } from '@core/types/enums.types';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
@@ -1878,6 +1879,184 @@ export class AppointmentsService {
       success: true,
       data: updated as unknown as Record<string, unknown>,
       message: 'Video slot confirmed. Appointment is now confirmed and patient will be notified.',
+    };
+  }
+
+  /**
+   * Confirm the final video slot using either a proposed slot index or a custom doctor-picked slot.
+   */
+  async confirmFinalVideoSlot(
+    appointmentId: string,
+    dto: ConfirmVideoFinalSlotDto,
+    userId: string,
+    clinicId: string
+  ): Promise<AppointmentResult> {
+    const permissionCheck = await this.rbacService.checkPermission({
+      userId,
+      clinicId,
+      resource: 'appointments',
+      action: 'update',
+    });
+    if (!permissionCheck.hasPermission) {
+      throw this.errors.insufficientPermissions('AppointmentsService.confirmFinalVideoSlot');
+    }
+
+    const appointment = (await this.getAppointmentById(
+      appointmentId,
+      clinicId
+    )) as AppointmentWithRelations;
+    if (String(appointment.type) !== 'VIDEO_CALL') {
+      throw this.errors.validationError(
+        'type',
+        'Only video appointments support slot confirmation',
+        'AppointmentsService.confirmFinalVideoSlot'
+      );
+    }
+
+    const appointmentStatus = String(appointment.status);
+    const confirmedSlotIndex = (
+      appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
+    ).confirmedSlotIndex;
+    const canConfirmSlot =
+      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
+      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
+        (confirmedSlotIndex === null ||
+          confirmedSlotIndex === undefined ||
+          Number.isNaN(Number(confirmedSlotIndex))));
+    if (!canConfirmSlot) {
+      throw this.errors.validationError(
+        'status',
+        'Appointment is not awaiting doctor slot confirmation',
+        'AppointmentsService.confirmFinalVideoSlot'
+      );
+    }
+
+    const hasConfirmedIndex =
+      dto.confirmedSlotIndex !== null &&
+      dto.confirmedSlotIndex !== undefined &&
+      !Number.isNaN(Number(dto.confirmedSlotIndex));
+    const hasCustomSlot = Boolean(dto.date && dto.time);
+
+    if (!hasConfirmedIndex && !hasCustomSlot) {
+      throw this.errors.validationError(
+        'slot',
+        'Provide either a confirmedSlotIndex or a custom date and time',
+        'AppointmentsService.confirmFinalVideoSlot'
+      );
+    }
+
+    // Payment required before final confirmation for video calls.
+    const payments = await this.databaseService.findPaymentsSafe({
+      appointmentId,
+      status: 'COMPLETED',
+    });
+    if (!payments || payments.length === 0) {
+      throw this.errors.validationError(
+        'payment',
+        'Patient must complete payment before the doctor can confirm the slot. Please remind the patient to pay.',
+        'AppointmentsService.confirmFinalVideoSlot'
+      );
+    }
+
+    let finalDate!: string;
+    let finalTime!: string;
+    let confirmedSlotValue: number | null = null;
+
+    if (hasConfirmedIndex) {
+      const proposedSlots = ((appointment as AppointmentWithRelations & { proposedSlots?: unknown })
+        .proposedSlots ?? []) as Array<{ date: string; time: string }>;
+      if (dto.confirmedSlotIndex! < 0 || dto.confirmedSlotIndex! >= proposedSlots.length) {
+        throw this.errors.validationError(
+          'confirmedSlotIndex',
+          'Invalid slot index',
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
+      const slot = proposedSlots[dto.confirmedSlotIndex!];
+      if (!slot) {
+        throw this.errors.validationError(
+          'confirmedSlotIndex',
+          'Invalid slot index',
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
+      finalDate = slot.date;
+      finalTime = slot.time;
+      confirmedSlotValue = dto.confirmedSlotIndex!;
+    } else if (hasCustomSlot) {
+      if (!dto.date || !dto.time) {
+        throw this.errors.validationError(
+          'slot',
+          'Provide either a confirmedSlotIndex or a custom date and time',
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
+      finalDate = dto.date;
+      finalTime = dto.time;
+      const isAvailable = await this.databaseService.executeRead(async prisma => {
+        const tx = prisma as unknown as Prisma.TransactionClient;
+        const conflicts = await tx.appointment.findMany({
+          where: {
+            doctorId: appointment.doctorId,
+            date: new Date(finalDate),
+            time: finalTime,
+            status: {
+              in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+            },
+            id: {
+              not: appointmentId,
+            },
+          },
+        });
+        return conflicts.length === 0;
+      });
+
+      if (!isAvailable) {
+        throw this.errors.appointmentSlotUnavailable(
+          `${finalDate} ${finalTime}`,
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
+    }
+
+    const existingMetadata = (appointment.metadata as Record<string, unknown>) || {};
+    const updatePayload: Record<string, unknown> = {
+      date: new Date(finalDate),
+      time: finalTime,
+      status: AppointmentStatus.CONFIRMED,
+      metadata: {
+        ...existingMetadata,
+        finalSlotConfirmedBy: userId,
+        finalSlotConfirmedAt: new Date().toISOString(),
+        finalSlotSource: hasConfirmedIndex ? 'PROPOSED_SLOT' : 'CUSTOM_SLOT',
+        finalSlotReason: dto.reason || null,
+      },
+    };
+    if (hasConfirmedIndex && confirmedSlotValue !== null) {
+      updatePayload['confirmedSlotIndex'] = confirmedSlotValue;
+    }
+    const updated = await this.databaseService.updateAppointmentSafe(
+      appointmentId,
+      updatePayload as never
+    );
+
+    await this.eventService.emit('appointment.slot.confirmed', {
+      appointmentId,
+      clinicId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      confirmedSlotIndex: confirmedSlotValue,
+      finalSlot: { date: finalDate, time: finalTime },
+      source: hasConfirmedIndex ? 'proposed' : 'custom',
+      context: { userId },
+    });
+
+    return {
+      success: true,
+      data: updated as unknown as Record<string, unknown>,
+      message: hasConfirmedIndex
+        ? 'Video slot confirmed. Appointment is now confirmed and patient will be notified.'
+        : 'Custom final video slot confirmed. Appointment is now confirmed and patient will be notified.',
     };
   }
 
