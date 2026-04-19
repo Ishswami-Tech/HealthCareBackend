@@ -159,11 +159,22 @@ export class ClinicLocationService {
       // Use executeHealthcareRead for optimized query
       const queryOptions: {
         where: { clinicId: string; isActive: boolean };
-        include?: {
-          doctorClinic: {
-            include: {
+        orderBy: { name: 'asc' } | Array<{ name: 'asc' }>;
+        select: {
+          id: boolean;
+          clinicId: boolean;
+          name: boolean;
+          address: boolean;
+          workingHours: boolean;
+          isActive: boolean;
+          createdAt: boolean;
+          updatedAt: boolean;
+          doctorClinic?: {
+            select: {
+              id: boolean;
               doctor: {
-                include: {
+                select: {
+                  id: boolean;
                   user: {
                     select: {
                       id: boolean;
@@ -181,14 +192,28 @@ export class ClinicLocationService {
           clinicId,
           isActive: true,
         },
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          clinicId: true,
+          name: true,
+          address: true,
+          workingHours: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       };
 
       if (includeDoctors) {
-        queryOptions.include = {
+        queryOptions.select = {
+          ...queryOptions.select,
           doctorClinic: {
-            include: {
+            select: {
+              id: true,
               doctor: {
-                include: {
+                select: {
+                  id: true,
                   user: {
                     select: {
                       id: true,
