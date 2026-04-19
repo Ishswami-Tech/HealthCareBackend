@@ -2105,6 +2105,36 @@ export class AppointmentsService {
 
     // Invalidate related cache entries
     if (result.success) {
+      const cancelledResult = result.data ?? {};
+      const cancelledDoctorId =
+        typeof cancelledResult?.['doctorId'] === 'string' && cancelledResult['doctorId']
+          ? String(cancelledResult['doctorId'])
+          : undefined;
+
+      if (cancelledDoctorId) {
+        try {
+          await this.appointmentQueueService.removePatientFromQueue(
+            appointmentId,
+            cancelledDoctorId,
+            clinicId,
+            'clinic'
+          );
+        } catch (queueError) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Queue cleanup after appointment cancellation failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            'AppointmentsService.cancelAppointment',
+            {
+              appointmentId,
+              doctorId: cancelledDoctorId,
+              clinicId,
+              error: queueError instanceof Error ? queueError.stack : undefined,
+            }
+          );
+        }
+      }
+
       await this.cacheService.invalidateAppointmentCache(
         appointmentId,
         (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -2276,7 +2306,7 @@ export class AppointmentsService {
 
         return this.cancelAppointment(appointmentId, updateDto.reason, userId, clinicId, role);
 
-      case AppointmentStatus.NO_SHOW:
+      case AppointmentStatus.NO_SHOW: {
         // Handle automated refund if it's a doctor no-show
         if (updateDto.reason === 'Doctor failed to join within grace period.') {
           await this.triggerAppointmentRefund(
@@ -2285,7 +2315,7 @@ export class AppointmentsService {
             'Automated refund due to Doctor No-Show'
           );
         }
-        return this.updateAppointment(
+        const noShowResult = await this.updateAppointment(
           appointmentId,
           {
             status: normalizedStatus,
@@ -2295,6 +2325,31 @@ export class AppointmentsService {
           clinicId,
           role
         );
+        try {
+          if (appointment.doctorId) {
+            await this.appointmentQueueService.removePatientFromQueue(
+              appointmentId,
+              appointment.doctorId,
+              clinicId,
+              'clinic'
+            );
+          }
+        } catch (queueError) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Queue cleanup after no-show update failed: ${queueError instanceof Error ? queueError.message : String(queueError)}`,
+            'AppointmentsService.updateStatus',
+            {
+              appointmentId,
+              doctorId: appointment.doctorId,
+              clinicId,
+              error: queueError instanceof Error ? queueError.stack : undefined,
+            }
+          );
+        }
+        return noShowResult;
+      }
 
       // Handle other status updates generically (e.g., CONFIRMED)
       default:

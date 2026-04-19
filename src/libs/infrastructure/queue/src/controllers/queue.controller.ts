@@ -189,15 +189,15 @@ export class QueueController {
   ): Promise<{ success: true; data: QueueEntryLike[]; meta: Record<string, unknown> }> {
     const clinicId = this.requireClinicId(req);
     const domain = 'clinic' as const;
+    const queueDate = this.safeDate(query.date || this.today());
 
     const statuses = this.parseStatuses(query.status);
 
     if (query.doctorId) {
-      const date = this.safeDate(query.date || this.today());
       const doctorQueue = await this.appointmentQueueService.getDoctorQueue(
         query.doctorId,
         clinicId,
-        date,
+        queueDate,
         domain
       );
       const data = doctorQueue.queue
@@ -212,6 +212,35 @@ export class QueueController {
       return { success: true, data, meta: { clinicId, domain, total: data.length } };
     }
 
+    const clinicQueue = await this.appointmentQueueService.getClinicQueue(
+      clinicId,
+      queueDate,
+      domain
+    );
+    if (clinicQueue.length > 0) {
+      const data = clinicQueue
+        .map((entry, index) =>
+          this.operationalEntry(
+            entry as unknown as QueueEntryLike,
+            Number(entry.position || index + 1),
+            clinicQueue.length
+          )
+        )
+        .filter(entry => this.matchEntry(entry, query));
+      const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
+      return {
+        success: true,
+        data: data.slice(0, limit),
+        meta: {
+          clinicId,
+          domain,
+          total: data.length,
+          source: 'operational-queue',
+          date: queueDate,
+        },
+      };
+    }
+
     const queueNames = this.resolveQueueNames(query.queueName);
     const rows: QueueEntryLike[] = [];
     for (const queueName of queueNames) {
@@ -223,7 +252,7 @@ export class QueueController {
     return {
       success: true,
       data: data.slice(0, limit),
-      meta: { clinicId, domain, total: data.length },
+      meta: { clinicId, domain, total: data.length, source: 'job-queue-fallback', date: queueDate },
     };
   }
 
@@ -383,6 +412,23 @@ export class QueueController {
     const clinicId = this.requireClinicId(req);
     const domain = 'clinic' as const;
 
+    const transfer = await this.appointmentQueueService.transferOperationalQueueItem(
+      entryId,
+      clinicId,
+      domain,
+      body.targetQueue.toUpperCase(),
+      body.treatmentType,
+      body.notes
+    );
+
+    if (transfer.success) {
+      return {
+        success: true,
+        data: transfer.data || { entryId, targetQueue: body.targetQueue.toUpperCase() },
+        message: `Patient moved to ${body.targetQueue}`,
+      };
+    }
+
     const job = await this.queueService.addJob(JobType.APPOINTMENT, 'queue.transfer', {
       entryId,
       targetQueue: body.targetQueue.toUpperCase(),
@@ -394,7 +440,7 @@ export class QueueController {
 
     return {
       success: true,
-      data: { jobId: job.id },
+      data: { jobId: job.id, fallback: true },
       message: `Patient transfer to ${body.targetQueue} enqueued`,
     };
   }

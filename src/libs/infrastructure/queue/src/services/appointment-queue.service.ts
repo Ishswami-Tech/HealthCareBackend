@@ -190,6 +190,47 @@ export class AppointmentQueueService {
     }));
   }
 
+  async getClinicQueue(clinicId: string, date: string, domain: string): Promise<QueueEntryData[]> {
+    const normalizedDate = this.getQueueDate(date);
+    const queuePattern = `queue:${domain}:${clinicId}:*:${normalizedDate}`;
+    const queueKeys = await this.cacheService.keys(queuePattern);
+    const clinicEntries: QueueEntryData[] = [];
+
+    for (const queueKey of queueKeys) {
+      const ownerId = this.extractOwnerIdFromQueueKey(queueKey);
+      const entries = await this.cacheService.lRange(queueKey, 0, -1);
+
+      entries.forEach((entry, index) => {
+        try {
+          const parsed = JSON.parse(entry) as QueueEntryData;
+          clinicEntries.push({
+            ...parsed,
+            queueOwnerId: parsed.queueOwnerId || ownerId,
+            doctorId: parsed.doctorId || ownerId,
+            position: parsed.position || index + 1,
+          });
+        } catch {
+          // Ignore malformed entries and continue building the clinic queue snapshot.
+        }
+      });
+    }
+
+    clinicEntries.sort((left, right) => {
+      const leftPriority = left.priority || 0;
+      const rightPriority = right.priority || 0;
+      if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+
+      const leftCheckedIn = new Date(left.checkedInAt || 0).getTime();
+      const rightCheckedIn = new Date(right.checkedInAt || 0).getTime();
+      return leftCheckedIn - rightCheckedIn;
+    });
+
+    return clinicEntries.map((entry, index) => ({
+      ...entry,
+      position: index + 1,
+    }));
+  }
+
   async removeOperationalQueueItem(
     entryId: string,
     queueOwnerId: string,
@@ -242,6 +283,120 @@ export class AppointmentQueueService {
     }
 
     return { success: true, message: 'Queue item removed successfully' };
+  }
+
+  async transferOperationalQueueItem(
+    entryId: string,
+    clinicId: string,
+    domain: string,
+    targetQueue: string,
+    treatmentType?: string,
+    notes?: string
+  ): Promise<OperationResponse & { data?: Record<string, unknown> }> {
+    const normalizedTargetQueue = String(targetQueue || '')
+      .trim()
+      .toUpperCase();
+    const nextQueueCategory = this.mapTargetQueueToCategory(normalizedTargetQueue);
+    const nextType = this.resolveQueueEntryType(nextQueueCategory, treatmentType);
+    const today = this.getQueueDate();
+
+    const searchPatterns = [
+      `queue:${domain}:${clinicId}:*:${today}`,
+      `queue:${domain}:${clinicId}:*:*`,
+    ];
+
+    const visitedKeys = new Set<string>();
+    const queueKeys: string[] = [];
+    for (const pattern of searchPatterns) {
+      const keys = await this.cacheService.keys(pattern);
+      keys.forEach(key => {
+        if (!visitedKeys.has(key)) {
+          visitedKeys.add(key);
+          queueKeys.push(key);
+        }
+      });
+    }
+
+    for (const queueKey of queueKeys) {
+      const entries = await this.cacheService.lRange(queueKey, 0, -1);
+      const ownerId = this.extractOwnerIdFromQueueKey(queueKey);
+      let updated = false;
+      let appointmentId = '';
+      let previousQueueCategory = '';
+      const nextEntries = entries.map(entry => {
+        try {
+          const parsed = JSON.parse(entry) as QueueEntryData;
+          const parsedEntryId = parsed.entryId || parsed.appointmentId;
+          if (String(parsedEntryId) !== String(entryId)) {
+            return entry;
+          }
+
+          appointmentId = String(parsed.appointmentId || parsed.entryId || entryId);
+          previousQueueCategory = String(parsed.queueCategory || '');
+          const mergedNotes = [parsed.notes, notes].filter(Boolean).join(' | ');
+
+          const nextEntry: QueueEntryData = {
+            ...parsed,
+            queueCategory: nextQueueCategory,
+            ...(nextType ? { type: nextType } : {}),
+            ...(mergedNotes ? { notes: mergedNotes } : {}),
+            queueOwnerId: parsed.queueOwnerId || ownerId || parsed.doctorId,
+          };
+          updated = true;
+          return JSON.stringify(nextEntry);
+        } catch {
+          return entry;
+        }
+      });
+
+      if (!updated) continue;
+
+      await this.cacheService.del(queueKey);
+      for (const entry of nextEntries) {
+        await this.cacheService.rPush(queueKey, entry);
+      }
+
+      if (this.typedEventService) {
+        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+          eventId: `queue-transfer-${entryId}-${Date.now()}`,
+          eventType: 'appointment.queue.updated',
+          category: EventCategory.APPOINTMENT,
+          priority: EventPriority.HIGH,
+          timestamp: new Date().toISOString(),
+          source: 'AppointmentQueueService',
+          version: '1.0.0',
+          payload: {
+            action: 'TRANSFERRED',
+            entryId,
+            appointmentId,
+            clinicId,
+            domain,
+            queueOwnerId: ownerId,
+            doctorId: ownerId,
+            targetQueue: normalizedTargetQueue,
+            treatmentType: nextType || treatmentType,
+            queueCategory: nextQueueCategory,
+            previousQueueCategory,
+          },
+        });
+      }
+
+      return {
+        success: true,
+        message: 'Queue item transferred successfully',
+        data: {
+          entryId,
+          appointmentId,
+          queueOwnerId: ownerId,
+          previousQueueCategory,
+          queueCategory: nextQueueCategory,
+          targetQueue: normalizedTargetQueue,
+          treatmentType: nextType || treatmentType,
+        },
+      };
+    }
+
+    return { success: false, message: 'Queue item not found' };
   }
 
   async checkIn(
@@ -1149,6 +1304,9 @@ export class AppointmentQueueService {
             domain,
             action: 'REMOVED',
             appointmentId,
+            clinicId,
+            queueOwnerId: doctorId,
+            queueCategory: 'DOCTOR_CONSULTATION',
           },
         });
       }
@@ -1300,5 +1458,34 @@ export class AppointmentQueueService {
       });
     }
     return { success: true, message: 'Queue resumed' };
+  }
+
+  private extractOwnerIdFromQueueKey(queueKey: string): string {
+    const parts = queueKey.split(':');
+    return parts.length >= 5 ? parts[3] || '' : '';
+  }
+
+  private mapTargetQueueToCategory(targetQueue: string): string {
+    switch (targetQueue) {
+      case 'DOCTOR_CONSULTATION':
+      case 'CONSULTATION':
+        return 'DOCTOR_CONSULTATION';
+      case 'THERAPY_PROCEDURE':
+      case 'THERAPY':
+        return 'THERAPY_PROCEDURE';
+      case 'MEDICINE_DESK':
+      case 'PHARMACY':
+        return 'MEDICINE_DESK';
+      default:
+        return targetQueue;
+    }
+  }
+
+  private resolveQueueEntryType(queueCategory: string, treatmentType?: string): string {
+    if (treatmentType) return String(treatmentType).trim().toUpperCase();
+    if (queueCategory === 'DOCTOR_CONSULTATION') return 'CONSULTATION';
+    if (queueCategory === 'THERAPY_PROCEDURE') return 'THERAPY';
+    if (queueCategory === 'MEDICINE_DESK') return 'MEDICINE_DESK';
+    return '';
   }
 }

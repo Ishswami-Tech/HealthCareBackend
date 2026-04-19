@@ -259,6 +259,16 @@ export class QueueProcessor {
             domain as string
           );
 
+        case 'queue.transfer':
+          return await service.transferOperationalQueueItem(
+            (job.data['entryId'] as string) || (appointmentId as string) || (patientId as string),
+            clinicId as string,
+            domain as string,
+            (job.data['targetQueue'] as string) || 'DOCTOR_CONSULTATION',
+            job.data['treatmentType'] as string | undefined,
+            job.data['notes'] as string | undefined
+          );
+
         default:
           throw new Error(`Unsupported appointment queue action: ${action}`);
       }

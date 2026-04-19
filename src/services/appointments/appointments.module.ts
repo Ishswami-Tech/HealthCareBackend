@@ -227,6 +227,8 @@ import { EHRModule } from '@services/ehr/ehr.module';
     ClinicEligibilityPlugin,
     AppointmentQueueService,
     AppointmentAnalyticsService,
+    CheckInService,
+    CheckInLocationService,
   ],
 })
 export class AppointmentsModule {}

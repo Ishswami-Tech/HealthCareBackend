@@ -2414,7 +2414,7 @@ export class AppointmentsController {
         }
       }
 
-      // Get location (use provided locationId or appointment locationId)
+      // Resolve the location for the override flow.
       const locationId =
         receptionistLocationId || forceCheckInDto.locationId || appointment.locationId;
       if (!locationId) {
@@ -2424,14 +2424,12 @@ export class AppointmentsController {
           context
         );
       }
-      const location = await this.checkInLocationService.getLocationById(locationId);
 
-      // Verify location belongs to clinic
+      const location = await this.checkInLocationService.getLocationById(locationId);
       if (location.clinicId !== clinicId) {
         throw this.errors.insufficientPermissions(context);
       }
 
-      // Log staff override action with audit trail
       await this.loggingService.log(
         LogType.AUDIT,
         LogLevel.WARN,
@@ -2451,7 +2449,6 @@ export class AppointmentsController {
         }
       );
 
-      // Process check-in with staff override flag
       const checkInData: {
         appointmentId: string;
         locationId: string;
