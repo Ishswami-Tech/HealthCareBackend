@@ -81,6 +81,7 @@ import {
   StartConsultationDto,
   ProposeVideoSlotsDto,
   ConfirmVideoSlotDto,
+  ConfirmVideoFinalSlotDto,
   RejectVideoProposalDto,
   AppointmentServiceCatalogResponseDto,
 } from '@dtos/appointment.dto';
@@ -501,6 +502,54 @@ export class AppointmentsController {
       success: result.success,
       data: result.data as unknown as AppointmentResponseDto,
       message: result.message ?? 'Video appointment proposal rejected successfully',
+    };
+  }
+
+  @Post(':id/video/confirm-final-slot')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.NURSE)
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'update')
+  @InvalidateAppointmentCache({
+    patterns: ['appointments:*', 'appointment:*'],
+    tags: ['appointments', 'appointment_data'],
+  })
+  @ApiOperation({
+    summary: 'Confirm the final video slot',
+    description:
+      "Doctor can either confirm one of the patient's proposed slots or set a custom final slot and finalize the appointment.",
+  })
+  @ApiParam({ name: 'id', description: 'Appointment ID' })
+  @ApiBody({ type: ConfirmVideoFinalSlotDto })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Final video slot confirmed successfully' })
+  @ApiResponse({
+    status: HttpStatus.BAD_REQUEST,
+    description: 'Invalid slot, appointment state, or time selection',
+  })
+  @ApiResponse({ status: HttpStatus.NOT_FOUND, description: 'Appointment not found' })
+  async confirmFinalVideoSlot(
+    @Param('id', ParseUUIDPipe) appointmentId: string,
+    @Body(ValidationPipe) dto: ConfirmVideoFinalSlotDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<AppointmentResponseDto>> {
+    const clinicId = req.clinicContext?.clinicId;
+    const userId = req.user?.sub;
+    if (!clinicId || !userId) {
+      throw new BadRequestException('Clinic context and user ID are required');
+    }
+
+    const result = await this.appointmentService.confirmFinalVideoSlot(
+      appointmentId,
+      dto,
+      userId,
+      clinicId
+    );
+
+    return {
+      success: result.success,
+      data: result.data as unknown as AppointmentResponseDto,
+      message: result.message ?? 'Final video slot confirmed successfully',
     };
   }
 

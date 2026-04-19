@@ -966,6 +966,49 @@ export class ConfirmVideoSlotDto {
 }
 
 /**
+ * DTO for confirming a final video slot.
+ * Supports either selecting one of the patient's proposed slots or providing
+ * a custom final slot chosen by the doctor.
+ */
+export class ConfirmVideoFinalSlotDto {
+  @ApiPropertyOptional({
+    example: 0,
+    description: '0-based index of the slot to confirm from proposedSlots',
+    minimum: 0,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0, { message: 'Slot index must be 0 or greater' })
+  confirmedSlotIndex?: number;
+
+  @ApiPropertyOptional({
+    example: '2025-02-18',
+    description: 'Custom final slot date in YYYY-MM-DD format',
+  })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @ApiPropertyOptional({
+    example: '10:30',
+    description: 'Custom final slot time in HH:MM format',
+  })
+  @IsOptional()
+  @Matches(/^\d{2}:\d{2}(:\d{2})?$/, {
+    message: 'Time must be in HH:MM or HH:MM:SS format',
+  })
+  time?: string;
+
+  @ApiPropertyOptional({
+    description: 'Optional reason for choosing a custom final slot',
+    example: 'Doctor unavailable for proposed patient slots',
+  })
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+/**
  * DTO for rejecting a proposed video appointment (doctor rejection reason)
  */
 export class RejectVideoProposalDto {
