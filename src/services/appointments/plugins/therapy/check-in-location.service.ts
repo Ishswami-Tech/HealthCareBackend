@@ -599,7 +599,14 @@ export class CheckInLocationService {
   // =============================================
 
   /**
-   * Process check-in
+   * Process check-in.
+   *
+   * Handles TWO distinct flows:
+   *   1. Patient QR check-in — `locationId` is a `CheckInLocation` ID or linked `locationId`
+   *      The `checkInLocation` record is found in the DB and used for coordinate validation.
+   *   2. Receptionist manual check-in — `locationId` is a `ClinicLocation` ID.
+   *      No `checkInLocation` record exists; we resolve via `ClinicLocationService` directly
+   *      and skip coordinate validation.
    */
   async processCheckIn(data: ProcessCheckInDto): Promise<CheckIn> {
     const startTime = Date.now();
@@ -638,8 +645,10 @@ export class CheckInLocationService {
         throw new BadRequestException('Appointment arrival is already confirmed');
       }
 
-      // Get location details using executeHealthcareRead
-      const location = await this.databaseService.executeHealthcareRead(async client => {
+      // ──────────────────────────────────────────────────────────
+      // STEP 1: Try to resolve as a CheckInLocation (QR flow)
+      // ──────────────────────────────────────────────────────────
+      const qrLocation = await this.databaseService.executeHealthcareRead(async client => {
         return await (
           client as unknown as {
             checkInLocation: {
@@ -653,54 +662,85 @@ export class CheckInLocationService {
         } as never);
       });
 
-      if (!location) {
-        throw new NotFoundException(`Location with ID ${data.locationId} not found`);
-      }
+      // ──────────────────────────────────────────────────────────
+      // STEP 2: If no QR record found, try ClinicLocation (manual reception flow)
+      // ──────────────────────────────────────────────────────────
+      let resolvedClinicId: string | null = null;
+      let isManualReceptionCheckIn = false;
 
-      if (!location.isActive) {
-        throw new BadRequestException('Check-in location is not active');
-      }
-
-      // If CheckInLocation has locationId linking to ClinicLocation, validate using LocationCacheService
-      if (location.locationId) {
-        let clinicLocation: ClinicLocationResponseDto | null = null;
-
-        // Try LocationCacheService first (shared cache)
-        if (this.locationCacheService) {
-          clinicLocation = await this.locationCacheService.getLocation(location.locationId, false);
+      if (qrLocation) {
+        // QR flow: validate isActive
+        if (!qrLocation.isActive) {
+          throw new BadRequestException('Check-in location is not active');
         }
 
-        // Cache miss - fetch from ClinicLocationService
+        // If CheckInLocation links to a ClinicLocation, validate appointment location match
+        if (qrLocation.locationId) {
+          let clinicLocation: ClinicLocationResponseDto | null = null;
+
+          if (this.locationCacheService) {
+            clinicLocation = await this.locationCacheService.getLocation(
+              qrLocation.locationId,
+              false
+            );
+          }
+          if (!clinicLocation && this.clinicLocationService) {
+            clinicLocation = await this.clinicLocationService.getClinicLocationById(
+              qrLocation.locationId,
+              false
+            );
+          }
+
+          const appointmentWithLocation = appointmentData as { locationId?: string };
+          if (appointmentWithLocation.locationId && clinicLocation && qrLocation.locationId) {
+            if (
+              appointmentWithLocation.locationId !== clinicLocation.id &&
+              appointmentWithLocation.locationId !== qrLocation.locationId
+            ) {
+              throw new BadRequestException(
+                `Appointment is at location ${appointmentWithLocation.locationId}, but check-in is at location ${qrLocation.locationId}. Please visit the correct location.`
+              );
+            }
+          }
+        }
+
+        // Coordinate validation for QR flow
+        if (data.coordinates) {
+          const validation = this.validateLocation(data.coordinates, qrLocation);
+          if (!validation.isValid) {
+            throw new BadRequestException(validation.message);
+          }
+        }
+
+        resolvedClinicId = qrLocation.clinicId;
+      } else {
+        // Manual reception flow: resolve locationId as a ClinicLocation
+        let clinicLocation: ClinicLocationResponseDto | null = null;
+
+        if (this.locationCacheService) {
+          clinicLocation = await this.locationCacheService.getLocation(data.locationId, false);
+        }
         if (!clinicLocation && this.clinicLocationService) {
           clinicLocation = await this.clinicLocationService.getClinicLocationById(
-            location.locationId,
+            data.locationId,
             false
           );
         }
 
-        // Validate appointment location matches check-in location
-        const appointmentWithLocation = appointmentData as { locationId?: string };
-        if (appointmentWithLocation.locationId && clinicLocation && location.locationId) {
-          if (
-            appointmentWithLocation.locationId !== clinicLocation.id &&
-            appointmentWithLocation.locationId !== location.locationId
-          ) {
-            throw new BadRequestException(
-              `Appointment is at location ${appointmentWithLocation.locationId}, but check-in is at location ${location.locationId}. Please visit the correct location.`
-            );
-          }
+        if (!clinicLocation) {
+          throw new NotFoundException(`Location with ID ${data.locationId} not found`);
         }
+
+        resolvedClinicId =
+          clinicLocation.clinicId || (appointmentData as { clinicId?: string }).clinicId || null;
+        isManualReceptionCheckIn = true;
       }
 
-      // Validate location if coordinates provided
-      if (data.coordinates) {
-        const validation = this.validateLocation(data.coordinates, location);
-        if (!validation.isValid) {
-          throw new BadRequestException(validation.message);
-        }
-      }
+      // Derive the clinicId to use for audit/queue — fall back to appointment's clinicId
+      const effectiveClinicId =
+        resolvedClinicId || (appointmentData as { clinicId?: string }).clinicId || '';
 
-      // Create check-in using executeHealthcareWrite with audit logging
+      // Create check-in record
       const checkIn = await this.databaseService.executeHealthcareWrite(
         async client => {
           return await (
@@ -714,7 +754,7 @@ export class CheckInLocationService {
               appointmentId: data.appointmentId,
               locationId: data.locationId,
               patientId: data.patientId,
-              clinicId: location.clinicId, // Denormalized for 10M+ scale analytics
+              clinicId: effectiveClinicId,
               coordinates: data.coordinates as never,
               deviceInfo: data.deviceInfo as never,
             },
@@ -744,12 +784,16 @@ export class CheckInLocationService {
         },
         {
           userId: data.patientId,
-          clinicId: location?.clinicId || '',
+          clinicId: effectiveClinicId,
           resourceType: 'CHECK_IN',
           operation: 'CREATE',
           resourceId: '',
-          userRole: 'patient',
-          details: { appointmentId: data.appointmentId, locationId: data.locationId },
+          userRole: isManualReceptionCheckIn ? 'receptionist' : 'patient',
+          details: {
+            appointmentId: data.appointmentId,
+            locationId: data.locationId,
+            isManualReceptionCheckIn,
+          },
         }
       );
 
@@ -763,7 +807,7 @@ export class CheckInLocationService {
 
       await this.ensureActiveInPersonCoverage(appointmentRecord);
 
-      // Update appointment status using executeHealthcareWrite
+      // Update appointment status
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const appointmentDelegate = client['appointment'] as {
@@ -779,11 +823,11 @@ export class CheckInLocationService {
         },
         {
           userId: data.patientId,
-          clinicId: location?.clinicId || '',
+          clinicId: effectiveClinicId,
           resourceType: 'APPOINTMENT',
           operation: 'UPDATE',
           resourceId: data.appointmentId,
-          userRole: 'patient',
+          userRole: isManualReceptionCheckIn ? 'receptionist' : 'patient',
           details: { status: 'CONFIRMED' },
         }
       );
@@ -794,14 +838,14 @@ export class CheckInLocationService {
           appointmentId: data.appointmentId,
           doctorId: appointmentRecord.doctorId,
           patientId: data.patientId,
-          clinicId: location.clinicId,
+          clinicId: effectiveClinicId,
           appointmentType: appointmentRecord.type,
           locationId: data.locationId,
         },
         'clinic'
       );
 
-      // Invalidate cache using proper method
+      // Invalidate cache
       await this.cacheService.invalidateCacheByTag(`appointment:${data.appointmentId}`);
       await this.cacheService.invalidateCacheByTag(`patient:${data.patientId}`);
 
@@ -814,6 +858,7 @@ export class CheckInLocationService {
           checkInId: checkIn.id,
           appointmentId: data.appointmentId,
           locationId: data.locationId,
+          isManualReceptionCheckIn,
           responseTime: Date.now() - startTime,
         }
       );
