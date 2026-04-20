@@ -29,6 +29,7 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { Role } from '@core/types/enums.types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { CreatePatientDto, UpdatePatientDto } from '@dtos/patient.dto';
+import { QuickRegisterPatientDto } from '@dtos/patient.dto';
 import { createParamDecorator, ExecutionContext } from '@nestjs/common';
 import { PatientsService } from '../patients.service';
 
@@ -139,6 +140,50 @@ export class PatientsController {
       ...(dto.emergencyContact != null && { emergencyContact: dto.emergencyContact }),
       ...(dto.insurance != null && { insurance: dto.insurance }),
     });
+  }
+
+  @Post('quick-register')
+  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.CLINIC_ADMIN, Role.SUPER_ADMIN)
+  @RequireResourcePermission('patients', 'create')
+  @ApiOperation({ summary: 'Quick register patient and create profile atomically' })
+  @ApiBody({ type: QuickRegisterPatientDto })
+  @ApiResponse({ status: 201, description: 'Patient quick registered successfully' })
+  async quickRegisterPatient(
+    @Body() dto: QuickRegisterPatientDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    if (!clinicId) {
+      throw new BadRequestException('Clinic ID is required');
+    }
+
+    const actorUserId = req.user?.sub || req.user?.id;
+    if (!actorUserId) {
+      throw new ForbiddenException('User ID not found in token');
+    }
+
+    return this.patientsService.quickRegisterPatient(
+      {
+        ...(dto.email ? { email: dto.email } : {}),
+        password: dto.password,
+        firstName: dto.firstName,
+        lastName: dto.lastName,
+        phone: dto.phone,
+        clinicId,
+        ...(dto.dateOfBirth != null ? { dateOfBirth: dto.dateOfBirth } : {}),
+        ...(dto.gender != null ? { gender: dto.gender } : {}),
+        ...(dto.address != null ? { address: dto.address } : {}),
+        ...(dto.city != null ? { city: dto.city } : {}),
+        ...(dto.state != null ? { state: dto.state } : {}),
+        ...(dto.country != null ? { country: dto.country } : {}),
+        ...(dto.zipCode != null ? { zipCode: dto.zipCode } : {}),
+        ...(dto.allergies != null ? { allergies: dto.allergies } : {}),
+        ...(dto.medicalHistory != null ? { medicalHistory: dto.medicalHistory } : {}),
+        ...(dto.emergencyContact != null ? { emergencyContact: dto.emergencyContact } : {}),
+        ...(dto.insurance != null ? { insurance: dto.insurance } : {}),
+      },
+      actorUserId
+    );
   }
 
   @Post(':id/documents')

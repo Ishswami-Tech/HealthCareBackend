@@ -137,20 +137,20 @@ export class AppointmentLocationService {
     }
   }
 
-  async getLocationById(locationId: string, domain: string): Promise<unknown> {
+  async getLocationById(locationId: string, domain: string, clinicId?: string): Promise<unknown> {
     const startTime = Date.now();
 
     try {
       // Use LocationCacheService for shared cache (single source of truth)
       if (this.locationCacheService) {
-        const cached = await this.locationCacheService.getLocation(locationId, false);
+        const cached = await this.locationCacheService.getLocation(locationId, false, clinicId);
         if (cached) {
           void this.loggingService.log(
             LogType.SYSTEM,
             LogLevel.INFO,
             'Location retrieved from shared cache',
             'AppointmentLocationService',
-            { locationId, domain, responseTime: Date.now() - startTime }
+            { locationId, domain, clinicId, responseTime: Date.now() - startTime }
           );
           return {
             location: cached,
@@ -163,7 +163,8 @@ export class AppointmentLocationService {
         if (this.clinicLocationService) {
           const location = await this.clinicLocationService.getClinicLocationById(
             locationId,
-            false
+            false,
+            clinicId
           );
           if (!location) {
             throw new NotFoundException(`Location not found: ${locationId}`);
@@ -180,7 +181,7 @@ export class AppointmentLocationService {
             LogLevel.INFO,
             'Location retrieved from database',
             'AppointmentLocationService',
-            { locationId, domain, responseTime: Date.now() - startTime }
+            { locationId, domain, clinicId, responseTime: Date.now() - startTime }
           );
 
           return result;
@@ -228,6 +229,7 @@ export class AppointmentLocationService {
         {
           locationId,
           domain,
+          clinicId,
           _error: _error instanceof Error ? _error.stack : undefined,
         }
       );

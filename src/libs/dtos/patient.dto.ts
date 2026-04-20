@@ -10,6 +10,7 @@ import {
   ValidateNested,
   Min,
   IsDateString,
+  IsEmail,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -184,6 +185,114 @@ export class CreatePatientDto {
     type: PatientInsuranceDto,
     description: 'Insurance information',
   })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PatientInsuranceDto)
+  insurance?: PatientInsuranceDto;
+}
+
+/**
+ * Data Transfer Object for quick patient registration
+ * Creates the user account and patient profile in one request.
+ */
+export class QuickRegisterPatientDto {
+  @ApiPropertyOptional({
+    example: 'patient@example.com',
+    description:
+      'Patient email address. If omitted, the backend will generate an internal address.',
+    format: 'email',
+  })
+  @IsOptional()
+  @IsEmail({}, { message: 'Email must be a valid email address' })
+  email?: string;
+
+  @ApiProperty({
+    example: 'SecurePassword123!',
+    description: 'Temporary account password for the newly created patient',
+    minLength: 8,
+  })
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+
+  @ApiProperty({
+    example: 'John',
+    description: 'Patient first name',
+  })
+  @IsString()
+  @IsNotEmpty()
+  firstName!: string;
+
+  @ApiProperty({
+    example: 'Doe',
+    description: 'Patient last name',
+  })
+  @IsString()
+  @IsNotEmpty()
+  lastName!: string;
+
+  @ApiProperty({
+    example: '+919876543210',
+    description: 'Patient phone number',
+  })
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
+
+  @ApiPropertyOptional({ example: '1990-01-15' })
+  @IsOptional()
+  @IsString()
+  dateOfBirth?: string;
+
+  @ApiPropertyOptional({ example: 'MALE', enum: PatientGender, enumName: 'PatientGender' })
+  @IsOptional()
+  @IsEnum(PatientGender)
+  gender?: PatientGender;
+
+  @ApiPropertyOptional({ example: '123 Main St' })
+  @IsOptional()
+  @IsString()
+  address?: string;
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'MH' })
+  @IsOptional()
+  @IsString()
+  state?: string;
+
+  @ApiPropertyOptional({ example: 'India' })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiPropertyOptional({ example: '400001' })
+  @IsOptional()
+  @IsString()
+  zipCode?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allergies?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  medicalHistory?: string[];
+
+  @ApiPropertyOptional({ type: PatientEmergencyContactDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PatientEmergencyContactDto)
+  emergencyContact?: PatientEmergencyContactDto;
+
+  @ApiPropertyOptional({ type: PatientInsuranceDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => PatientInsuranceDto)

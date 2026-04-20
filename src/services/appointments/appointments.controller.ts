@@ -2444,6 +2444,19 @@ export class AppointmentsController {
         throw this.errors.appointmentNotFound(appointmentId, context);
       }
 
+      const currentStatus = String(appointment.status || '').toUpperCase();
+      if (
+        [
+          String(AppointmentStatus.COMPLETED),
+          String(AppointmentStatus.CANCELLED),
+          String(AppointmentStatus.NO_SHOW),
+          'DISCHARGED',
+          'TRANSFERRED',
+        ].includes(currentStatus)
+      ) {
+        throw this.errors.businessRuleViolation('Appointment can no longer be checked in', context);
+      }
+
       // Check if arrival is already confirmed
       if (appointment.checkedInAt) {
         throw this.errors.checkInAlreadyConfirmed(appointmentId, context);
@@ -2474,7 +2487,7 @@ export class AppointmentsController {
         );
       }
 
-      const location = await this.checkInLocationService.getLocationById(locationId);
+      const location = await this.checkInLocationService.getLocationById(locationId, clinicId);
       if (location.clinicId !== clinicId) {
         throw this.errors.insufficientPermissions(context);
       }
@@ -2517,7 +2530,7 @@ export class AppointmentsController {
         checkInData.deviceInfo = forceCheckInDto.deviceInfo;
       }
 
-      const checkIn = await this.checkInLocationService.processCheckIn(checkInData);
+      const checkIn = await this.checkInLocationService.processCheckIn(checkInData, clinicId);
 
       // Log successful forced check-in
       await this.loggingService.log(
@@ -2752,7 +2765,10 @@ export class AppointmentsController {
       }
 
       // Get location by QR code (works with both JSON format and direct QR string)
-      const location = await this.checkInLocationService.getLocationByQRCode(scanDto.qrCode);
+      const location = await this.checkInLocationService.getLocationByQRCode(
+        scanDto.qrCode,
+        clinicId
+      );
 
       if (!location.isActive) {
         throw this.errors.validationError('location', 'Check-in location is not active', context, {
@@ -3107,7 +3123,7 @@ export class AppointmentsController {
         checkInData.deviceInfo = scanDto.deviceInfo;
       }
 
-      const checkIn = await this.checkInLocationService.processCheckIn(checkInData);
+      const checkIn = await this.checkInLocationService.processCheckIn(checkInData, clinicId);
 
       // Step 6: Add to doctor queue
       let queuePosition: {
@@ -3583,12 +3599,12 @@ export class AppointmentsController {
       }
 
       // Verify location belongs to clinic before deletion
-      const location = await this.checkInLocationService.getLocationById(locationId);
+      const location = await this.checkInLocationService.getLocationById(locationId, clinicId);
       if (location.clinicId !== clinicId) {
         throw this.errors.insufficientPermissions(context);
       }
 
-      await this.checkInLocationService.deleteCheckInLocation(locationId);
+      await this.checkInLocationService.deleteCheckInLocation(locationId, clinicId);
 
       await this.loggingService.log(
         LogType.BUSINESS,

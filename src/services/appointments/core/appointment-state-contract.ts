@@ -1,0 +1,38 @@
+export const APPOINTMENT_STATUS_TRANSITIONS: Record<string, string[]> = {
+  PENDING: ['SCHEDULED', 'CANCELLED', 'RESCHEDULED'],
+  SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
+  AWAITING_SLOT_CONFIRMATION: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
+  CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
+  WAITING: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
+  ON_HOLD: ['SCHEDULED', 'CANCELLED', 'RESCHEDULED'],
+  IN_PROGRESS: ['COMPLETED', 'CANCELLED', 'ON_HOLD'],
+  COMPLETED: [],
+  CANCELLED: [],
+  NO_SHOW: ['RESCHEDULED'],
+  RESCHEDULED: ['SCHEDULED', 'CONFIRMED', 'CANCELLED'],
+  FOLLOW_UP_SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
+  DISCHARGED: [],
+  TRANSFERRED: ['CONFIRMED', 'IN_PROGRESS', 'CANCELLED'],
+};
+
+export const APPOINTMENT_CANCELABLE_STATUSES = new Set<string>([
+  'PENDING',
+  'SCHEDULED',
+  'CONFIRMED',
+  'RESCHEDULED',
+  'AWAITING_SLOT_CONFIRMATION',
+  'WAITING',
+  'ON_HOLD',
+  'FOLLOW_UP_SCHEDULED',
+]);
+
+export function isValidAppointmentStatusTransition(
+  currentStatus: string,
+  newStatus: string
+): boolean {
+  return APPOINTMENT_STATUS_TRANSITIONS[currentStatus]?.includes(newStatus) ?? false;
+}
+
+export function canCancelAppointmentStatus(currentStatus: string): boolean {
+  return APPOINTMENT_CANCELABLE_STATUSES.has(currentStatus);
+}

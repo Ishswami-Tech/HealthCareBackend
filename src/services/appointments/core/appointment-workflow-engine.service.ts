@@ -1,5 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { WorkflowContext, WorkflowResult } from '@core/types/appointment.types';
+import {
+  canCancelAppointmentStatus,
+  isValidAppointmentStatusTransition,
+} from './appointment-state-contract';
 
 // Re-export for backward compatibility
 export type { WorkflowContext, WorkflowResult };
@@ -80,17 +84,7 @@ export class AppointmentWorkflowEngine {
    * Check if status transition is valid
    */
   isValidStatusTransition(currentStatus: string, newStatus: string): boolean {
-    const validTransitions: Record<string, string[]> = {
-      SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
-      CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
-      IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
-      COMPLETED: [], // Final state
-      CANCELLED: [], // Final state
-      NO_SHOW: ['RESCHEDULED'], // Can be rescheduled
-      RESCHEDULED: ['SCHEDULED', 'CONFIRMED'],
-    };
-
-    return validTransitions[currentStatus]?.includes(newStatus) || false;
+    return isValidAppointmentStatusTransition(currentStatus, newStatus);
   }
 
   /**
@@ -138,12 +132,6 @@ export class AppointmentWorkflowEngine {
    * Check if appointment can be cancelled based on its current status
    */
   canCancelAppointment(currentStatus: string): boolean {
-    const cancellableStatuses = [
-      'SCHEDULED',
-      'CONFIRMED',
-      'RESCHEDULED',
-      'AWAITING_SLOT_CONFIRMATION',
-    ];
-    return cancellableStatuses.includes(currentStatus);
+    return canCancelAppointmentStatus(currentStatus);
   }
 }

@@ -77,6 +77,13 @@ interface CheckInVerificationRecord {
 export class CheckInService {
   private readonly CHECKIN_CACHE_TTL = 1800; // 30 minutes
   private readonly QUEUE_CACHE_TTL = 300; // 5 minutes
+  private readonly BLOCKED_CHECK_IN_STATUSES = new Set<string>([
+    String(AppointmentStatus.COMPLETED),
+    String(AppointmentStatus.CANCELLED),
+    String(AppointmentStatus.NO_SHOW),
+    'DISCHARGED',
+    'TRANSFERRED',
+  ]);
 
   constructor(
     private readonly cacheService: CacheService,
@@ -172,11 +179,12 @@ export class CheckInService {
       // locationId is guaranteed to be string (non-null)
       const now = new Date();
       const clinicId = appointment.clinicId || '';
+      const currentStatus = String(appointment.status || '').toUpperCase();
 
       await this.ensureActiveInPersonCoverage(appointment);
 
-      if (String(appointment.status) === String(AppointmentStatus.CONFIRMED)) {
-        throw new BadRequestException('Appointment arrival is already confirmed');
+      if (this.BLOCKED_CHECK_IN_STATUSES.has(currentStatus)) {
+        throw new BadRequestException('This appointment can no longer be checked in');
       }
 
       // 2. Confirm the appointment and record clinic arrival
@@ -421,6 +429,11 @@ export class CheckInService {
   ): Promise<CheckInResult> {
     try {
       const now = new Date();
+      const currentStatus = String(appointment.status || '').toUpperCase();
+
+      if (this.BLOCKED_CHECK_IN_STATUSES.has(currentStatus)) {
+        throw new BadRequestException('This appointment can no longer be checked in');
+      }
 
       // 1. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
@@ -625,9 +638,15 @@ export class CheckInService {
         throw new BadRequestException('Appointment is missing doctor assignment');
       }
 
-      const currentStatus = String(appointment.status || '').toUpperCase();
-      if (currentStatus !== String(AppointmentStatus.CONFIRMED)) {
-        throw new BadRequestException('Appointment must be confirmed before starting consultation');
+      const appointmentRecord = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      const currentStatus = String(
+        appointmentRecord?.status || appointment.status || ''
+      ).toUpperCase();
+      const isArrivalConfirmed = Boolean(appointmentRecord?.checkedInAt);
+      if (currentStatus !== String(AppointmentStatus.CONFIRMED) || !isArrivalConfirmed) {
+        throw new BadRequestException(
+          'Appointment must be checked in before starting consultation'
+        );
       }
 
       await this.databaseService.executeHealthcareWrite(
