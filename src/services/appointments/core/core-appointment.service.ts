@@ -905,6 +905,26 @@ export class CoreAppointmentService {
     context: AppointmentContext
   ): Record<string, unknown> {
     const where: Record<string, unknown> = { clinicId: context.clinicId };
+    const rawStatusList = (filters as AppointmentFilterDto & { statusList?: AppointmentStatus[] })
+      .statusList;
+    const rawStatusValue = String(filters.status || '').trim();
+    const normalizedStatusList =
+      Array.isArray(rawStatusList) && rawStatusList.length > 0
+        ? rawStatusList
+            .map(value => String(value).trim().toUpperCase())
+            .filter((value): value is AppointmentStatus =>
+              Object.values(AppointmentStatus).includes(value as AppointmentStatus)
+            )
+        : rawStatusValue.includes(',')
+          ? rawStatusValue
+              .split(',')
+              .map(value => value.trim().toUpperCase())
+              .filter((value): value is AppointmentStatus =>
+                Object.values(AppointmentStatus).includes(value as AppointmentStatus)
+              )
+          : rawStatusValue
+            ? [rawStatusValue.toUpperCase() as AppointmentStatus]
+            : [];
 
     // Apply role-based filtering
     switch (context.role) {
@@ -935,7 +955,12 @@ export class CoreAppointmentService {
     }
 
     // Apply filters
-    if (filters.status) where['status'] = filters.status;
+    if (normalizedStatusList && normalizedStatusList.length > 0) {
+      where['status'] =
+        normalizedStatusList.length === 1 ? normalizedStatusList[0] : { in: normalizedStatusList };
+    } else if (filters.status) {
+      where['status'] = filters.status;
+    }
     if (filters.type) where['type'] = filters.type;
     if (filters.priority) where['priority'] = filters.priority;
     if (filters.patientId) where['patientId'] = filters.patientId;
