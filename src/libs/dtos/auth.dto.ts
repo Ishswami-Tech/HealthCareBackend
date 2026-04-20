@@ -476,10 +476,12 @@ export class RefreshTokenDto {
   @ApiProperty({
     description: 'Refresh token for getting new access token',
     example: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+    required: false,
   })
+  @IsOptional()
   @IsString({ message: 'Refresh token must be a string' })
   @IsNotEmpty({ message: 'Refresh token is required' })
-  refreshToken!: string;
+  refreshToken?: string;
 
   @ApiProperty({
     description: 'Device fingerprint for security validation',
