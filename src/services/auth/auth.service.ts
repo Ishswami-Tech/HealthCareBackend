@@ -679,6 +679,13 @@ export class AuthService {
     sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<AuthTokens> {
     try {
+      if (!refreshTokenDto.refreshToken) {
+        throw this.errors.authenticationError(
+          'Refresh token is required',
+          'AuthService.refreshToken'
+        );
+      }
+
       // Use enhanced JWT refresh with security validation
       return await this.jwtAuthService.refreshEnhancedToken(
         refreshTokenDto.refreshToken,

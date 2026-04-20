@@ -2505,11 +2505,6 @@ export class AppointmentsController {
         );
       }
 
-      const location = await this.checkInLocationService.getLocationById(locationId, clinicId);
-      if (location.clinicId !== clinicId) {
-        throw this.errors.insufficientPermissions(context);
-      }
-
       await this.loggingService.log(
         LogType.AUDIT,
         LogLevel.WARN,

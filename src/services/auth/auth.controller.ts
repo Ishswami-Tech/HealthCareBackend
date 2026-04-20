@@ -481,6 +481,13 @@ export class AuthController {
         refreshToken: refreshTokenDto.refreshToken || cookieRefreshToken || '',
       };
 
+      if (!effectiveRefreshTokenDto.refreshToken) {
+        throw this.errors.authenticationError(
+          'Refresh token is required',
+          'AuthController.refreshToken'
+        );
+      }
+
       const tokens = await this.authService.refreshToken(effectiveRefreshTokenDto, {
         userAgent: (req.headers['user-agent'] as string) || 'unknown',
         ipAddress: req.ip || '127.0.0.1',
