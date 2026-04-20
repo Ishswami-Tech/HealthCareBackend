@@ -21,6 +21,7 @@
     "noImplicitThis": true,
     "alwaysStrict": true,
     "strictBindCallApply": true,
+    "allowImportingTsExtensions": true,
     "noUncheckedIndexedAccess": true,
     "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": true,

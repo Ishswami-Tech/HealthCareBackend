@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Optional,
   Inject,
   forwardRef,
@@ -209,9 +210,17 @@ export class CheckInLocationService {
 
         if (locationIds.length > 0) {
           // Warm shared cache for linked ClinicLocations
-          await this.locationCacheService.warmLocations(locationIds, async (locationId: string) => {
-            return await this.clinicLocationService!.getClinicLocationById(locationId, false);
-          });
+          await this.locationCacheService.warmLocations(
+            locationIds,
+            async (locationId: string) => {
+              return await this.clinicLocationService!.getClinicLocationById(
+                locationId,
+                false,
+                clinicId
+              );
+            },
+            clinicId
+          );
         }
       }
 
@@ -246,9 +255,9 @@ export class CheckInLocationService {
   /**
    * Get location by ID
    */
-  async getLocationById(locationId: string): Promise<CheckInLocation> {
+  async getLocationById(locationId: string, clinicId?: string): Promise<CheckInLocation> {
     const startTime = Date.now();
-    const cacheKey = `checkin-location:id:${locationId}`;
+    const cacheKey = `checkin-location:id:${clinicId || 'all'}:${locationId}`;
 
     try {
       // Try to get from cache first
@@ -279,6 +288,7 @@ export class CheckInLocationService {
         ).checkInLocation.findFirst({
           where: {
             OR: [{ id: locationId }, { locationId }],
+            ...(clinicId ? { clinicId } : {}),
           },
         } as never);
       });
@@ -295,16 +305,23 @@ export class CheckInLocationService {
         // Try to get from shared cache first
         const clinicLocation = await this.locationCacheService.getLocation(
           location.locationId,
-          false
+          false,
+          location.clinicId
         );
         if (!clinicLocation) {
           // Cache miss - fetch and populate shared cache
           const fetched = await this.clinicLocationService.getClinicLocationById(
             location.locationId,
-            false
+            false,
+            location.clinicId
           );
           if (fetched) {
-            await this.locationCacheService.setLocation(location.locationId, fetched, false);
+            await this.locationCacheService.setLocation(
+              location.locationId,
+              fetched,
+              false,
+              location.clinicId
+            );
           }
         }
       }
@@ -339,16 +356,19 @@ export class CheckInLocationService {
   /**
    * Get location by QR code
    */
-  async getLocationByQRCode(qrCode: string): Promise<CheckInLocation> {
+  async getLocationByQRCode(qrCode: string, clinicId?: string): Promise<CheckInLocation> {
     const startTime = Date.now();
-    const cacheKey = `checkin-location:qr:${qrCode}`;
+    const cacheKey = `checkin-location:qr:${clinicId || 'all'}:${qrCode}`;
 
     try {
       // Try to get from cache first
       const cached = await this.cacheService.get(cacheKey);
       if (cached && cached !== '') {
         try {
-          return JSON.parse(cached as string) as CheckInLocation;
+          const parsed = JSON.parse(cached as string) as CheckInLocation;
+          if (!clinicId || parsed.clinicId === clinicId) {
+            return parsed;
+          }
         } catch (parseError) {
           // Invalid cached data, continue to fetch from database
           await this.loggingService.log(
@@ -366,11 +386,14 @@ export class CheckInLocationService {
         return await (
           client as unknown as {
             checkInLocation: {
-              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+              findFirst: <T>(args: T) => Promise<CheckInLocation | null>;
             };
           }
-        ).checkInLocation.findUnique({
-          where: { qrCode },
+        ).checkInLocation.findFirst({
+          where: {
+            qrCode,
+            ...(clinicId ? { clinicId } : {}),
+          },
         } as never);
       });
 
@@ -390,16 +413,23 @@ export class CheckInLocationService {
         // Try to get from shared cache first
         const clinicLocation = await this.locationCacheService.getLocation(
           location.locationId,
-          false
+          false,
+          clinicId || location.clinicId
         );
         if (!clinicLocation) {
           // Cache miss - fetch and populate shared cache
           const fetched = await this.clinicLocationService.getClinicLocationById(
             location.locationId,
-            false
+            false,
+            clinicId || location.clinicId
           );
           if (fetched) {
-            await this.locationCacheService.setLocation(location.locationId, fetched, false);
+            await this.locationCacheService.setLocation(
+              location.locationId,
+              fetched,
+              false,
+              clinicId || location.clinicId
+            );
           }
         }
       }
@@ -442,6 +472,18 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
+      const existingLocation = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkInLocation: {
+              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+            };
+          }
+        ).checkInLocation.findUnique({
+          where: { id: locationId },
+        } as never);
+      });
+
       // Use executeHealthcareWrite for update with audit logging
       const location = await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -461,7 +503,7 @@ export class CheckInLocationService {
         },
         {
           userId: 'system',
-          clinicId: '',
+          clinicId: existingLocation?.clinicId || '',
           resourceType: 'CHECK_IN_LOCATION',
           operation: 'UPDATE',
           resourceId: locationId,
@@ -472,7 +514,9 @@ export class CheckInLocationService {
 
       // Invalidate cache using proper method
       await this.cacheService.invalidateCache(`checkin-location:${locationId}`);
-      await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
+      if (location.clinicId) {
+        await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
+      }
       if (location.qrCode) {
         await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
       }
@@ -512,7 +556,7 @@ export class CheckInLocationService {
   /**
    * Delete check-in location
    */
-  async deleteCheckInLocation(locationId: string): Promise<void> {
+  async deleteCheckInLocation(locationId: string, clinicId?: string): Promise<void> {
     const startTime = Date.now();
 
     try {
@@ -521,11 +565,14 @@ export class CheckInLocationService {
         return await (
           client as unknown as {
             checkInLocation: {
-              findUnique: <T>(args: T) => Promise<CheckInLocation | null>;
+              findFirst: <T>(args: T) => Promise<CheckInLocation | null>;
             };
           }
-        ).checkInLocation.findUnique({
-          where: { id: locationId },
+        ).checkInLocation.findFirst({
+          where: {
+            id: locationId,
+            ...(clinicId ? { clinicId } : {}),
+          },
         } as never);
       });
 
@@ -548,7 +595,7 @@ export class CheckInLocationService {
         },
         {
           userId: 'system',
-          clinicId: location.clinicId || '',
+          clinicId: clinicId || location.clinicId || '',
           resourceType: 'CHECK_IN_LOCATION',
           operation: 'DELETE',
           resourceId: locationId,
@@ -558,15 +605,26 @@ export class CheckInLocationService {
       );
 
       // Invalidate cache using proper method
-      await this.cacheService.invalidateCache(`checkin-location:${locationId}`);
-      await this.cacheService.invalidateCacheByTag(`clinic:${location.clinicId}`);
+      await this.cacheService.invalidateCache(`checkin-location:id:${locationId}`);
+      await this.cacheService.invalidateCache(
+        `checkin-location:id:${clinicId || 'all'}:${locationId}`
+      );
+      if (clinicId || location.clinicId) {
+        await this.cacheService.invalidateCacheByTag(`clinic:${clinicId || location.clinicId}`);
+      }
       if (location.qrCode) {
         await this.cacheService.invalidateCache(`checkin-location:qr:${location.qrCode}`);
+        await this.cacheService.invalidateCache(
+          `checkin-location:qr:${clinicId || 'all'}:${location.qrCode}`
+        );
       }
 
       // Also invalidate shared location cache if locationId is linked
       if (location.locationId && this.locationCacheService) {
-        await this.locationCacheService.invalidateLocation(location.locationId, location.clinicId);
+        await this.locationCacheService.invalidateLocation(
+          location.locationId,
+          clinicId || location.clinicId
+        );
       }
 
       await this.loggingService.log(
@@ -608,7 +666,7 @@ export class CheckInLocationService {
    *      No `checkInLocation` record exists; we resolve via `ClinicLocationService` directly
    *      and skip coordinate validation.
    */
-  async processCheckIn(data: ProcessCheckInDto): Promise<CheckIn> {
+  async processCheckIn(data: ProcessCheckInDto, clinicId?: string): Promise<CheckIn> {
     const startTime = Date.now();
 
     try {
@@ -624,6 +682,11 @@ export class CheckInLocationService {
 
       if (!appointmentData) {
         throw new NotFoundException(`Appointment with ID ${data.appointmentId} not found`);
+      }
+
+      const appointmentClinicId = (appointmentData as { clinicId?: string }).clinicId || '';
+      if (clinicId && appointmentClinicId && appointmentClinicId !== clinicId) {
+        throw new ForbiddenException('Appointment does not belong to this clinic');
       }
 
       // Check if arrival has already been recorded using executeHealthcareRead
@@ -658,6 +721,7 @@ export class CheckInLocationService {
         ).checkInLocation.findFirst({
           where: {
             OR: [{ id: data.locationId }, { locationId: data.locationId }],
+            ...(clinicId ? { clinicId } : {}),
           },
         } as never);
       });
@@ -681,13 +745,18 @@ export class CheckInLocationService {
           if (this.locationCacheService) {
             clinicLocation = await this.locationCacheService.getLocation(
               qrLocation.locationId,
-              false
+              false,
+              clinicId
             );
+            if (clinicLocation && clinicId && clinicLocation.clinicId !== clinicId) {
+              clinicLocation = null;
+            }
           }
           if (!clinicLocation && this.clinicLocationService) {
             clinicLocation = await this.clinicLocationService.getClinicLocationById(
               qrLocation.locationId,
-              false
+              false,
+              clinicId
             );
           }
 
@@ -718,12 +787,20 @@ export class CheckInLocationService {
         let clinicLocation: ClinicLocationResponseDto | null = null;
 
         if (this.locationCacheService) {
-          clinicLocation = await this.locationCacheService.getLocation(data.locationId, false);
+          clinicLocation = await this.locationCacheService.getLocation(
+            data.locationId,
+            false,
+            clinicId
+          );
+          if (clinicLocation && clinicId && clinicLocation.clinicId !== clinicId) {
+            clinicLocation = null;
+          }
         }
         if (!clinicLocation && this.clinicLocationService) {
           clinicLocation = await this.clinicLocationService.getClinicLocationById(
             data.locationId,
-            false
+            false,
+            clinicId
           );
         }
 
@@ -886,6 +963,24 @@ export class CheckInLocationService {
     const startTime = Date.now();
 
     try {
+      const existingCheckIn = await this.databaseService.executeHealthcareRead(async client => {
+        return await (
+          client as unknown as {
+            checkIn: {
+              findUnique: <T>(args: T) => Promise<CheckIn | null>;
+            };
+          }
+        ).checkIn.findUnique({
+          where: { id: data.checkInId },
+          include: {
+            location: true,
+          },
+        } as never);
+      });
+      const existingCheckInWithLocation = existingCheckIn as CheckIn & {
+        location?: { clinicId?: string };
+      };
+
       // Use executeHealthcareWrite for update with audit logging
       const checkIn = await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -921,7 +1016,7 @@ export class CheckInLocationService {
         },
         {
           userId: data.verifiedBy,
-          clinicId: '',
+          clinicId: existingCheckInWithLocation.location?.clinicId || '',
           resourceType: 'CHECK_IN',
           operation: 'UPDATE',
           resourceId: data.checkInId,

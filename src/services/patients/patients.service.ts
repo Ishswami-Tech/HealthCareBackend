@@ -5,6 +5,8 @@ import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/
 import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
 import { HealthRecordType, Role } from '@core/types/enums.types';
 import { AuditInfo } from '@core/types/database.types';
+import { UsersService } from '@services/users/users.service';
+import { Gender } from '@dtos/user.dto';
 
 interface MulterFile {
   buffer: Buffer;
@@ -18,7 +20,8 @@ export class PatientsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
-    private readonly staticAssetService: StaticAssetService
+    private readonly staticAssetService: StaticAssetService,
+    private readonly usersService: UsersService
   ) {}
 
   /**
@@ -233,6 +236,87 @@ export class PatientsService {
     }
 
     return { success: true, message: 'Patient profile updated' };
+  }
+
+  async quickRegisterPatient(
+    data: {
+      email?: string;
+      password: string;
+      firstName: string;
+      lastName: string;
+      phone: string;
+      clinicId: string;
+      dateOfBirth?: string;
+      gender?: 'MALE' | 'FEMALE' | 'OTHER';
+      address?: string;
+      city?: string;
+      state?: string;
+      country?: string;
+      zipCode?: string;
+      allergies?: string[];
+      medicalHistory?: string[];
+      emergencyContact?: {
+        name: string;
+        relationship: string;
+        phone: string;
+      };
+      insurance?: {
+        provider: string;
+        policyNumber: string;
+        groupNumber?: string;
+        primaryHolder: string;
+        coverageStartDate: string;
+        coverageEndDate?: string;
+        coverageType: string;
+      };
+    },
+    actorUserId?: string
+  ) {
+    const generatedEmail =
+      data.email?.trim() || `patient.${data.phone.replace(/\D/g, '')}.${Date.now()}@clinic.local`;
+
+    const createdUser = await this.usersService.createUser(
+      {
+        email: generatedEmail,
+        password: data.password,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        phone: data.phone,
+        role: Role.PATIENT,
+        clinicId: data.clinicId,
+        ...(data.gender ? { gender: data.gender as Gender } : {}),
+        ...(data.dateOfBirth ? { dateOfBirth: data.dateOfBirth } : {}),
+        ...(data.address ? { address: data.address } : {}),
+        ...(data.city ? { city: data.city } : {}),
+        ...(data.state ? { state: data.state } : {}),
+        ...(data.country ? { country: data.country } : {}),
+        ...(data.zipCode ? { zipCode: data.zipCode } : {}),
+      },
+      actorUserId,
+      data.clinicId
+    );
+
+    try {
+      const patientProfile = await this.createOrUpdatePatient({
+        userId: createdUser.id,
+        clinicId: data.clinicId,
+        ...(data.dateOfBirth ? { dateOfBirth: data.dateOfBirth } : {}),
+        ...(data.gender ? { gender: data.gender } : {}),
+        ...(data.allergies ? { allergies: data.allergies } : {}),
+        ...(data.medicalHistory ? { medicalHistory: data.medicalHistory } : {}),
+        ...(data.emergencyContact ? { emergencyContact: data.emergencyContact } : {}),
+        ...(data.insurance ? { insurance: data.insurance } : {}),
+      });
+
+      return {
+        user: createdUser,
+        patient: patientProfile,
+        generatedEmail,
+      };
+    } catch (error) {
+      await this.usersService.remove(createdUser.id);
+      throw error;
+    }
   }
 
   async updatePatient(id: string, updates: Record<string, unknown>) {

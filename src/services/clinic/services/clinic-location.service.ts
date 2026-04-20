@@ -253,13 +253,14 @@ export class ClinicLocationService {
 
   async getClinicLocationById(
     id: string,
-    includeDoctors = false
+    includeDoctors = false,
+    clinicId?: string
   ): Promise<ClinicLocationResponseDto | null> {
     try {
       // Use LocationCacheService for shared cache (single source of truth)
       if (this.locationCacheService) {
-        const cached = await this.locationCacheService.getLocation(id, includeDoctors);
-        if (cached) {
+        const cached = await this.locationCacheService.getLocation(id, includeDoctors, clinicId);
+        if (cached && (!clinicId || cached.clinicId === clinicId)) {
           return cached;
         }
       }
@@ -285,7 +286,10 @@ export class ClinicLocationService {
           };
         };
       } = {
-        where: { id },
+        where: {
+          id,
+          ...(clinicId ? { clinicId } : {}),
+        },
       };
 
       if (includeDoctors) {
@@ -321,7 +325,7 @@ export class ClinicLocationService {
 
       // Cache the result in LocationCacheService
       if (location && this.locationCacheService) {
-        await this.locationCacheService.setLocation(id, location, includeDoctors);
+        await this.locationCacheService.setLocation(id, location, includeDoctors, clinicId);
       }
 
       return location;
@@ -404,8 +408,12 @@ export class ClinicLocationService {
     }
   }
 
-  async deleteLocation(id: string, _userId: string): Promise<void> {
+  async deleteLocation(id: string, _userId: string, clinicId?: string): Promise<void> {
     try {
+      const location = clinicId
+        ? await this.getClinicLocationById(id, false, clinicId)
+        : await this.getClinicLocationById(id, false);
+
       // Use executeHealthcareWrite for soft delete with audit logging
       await this.databaseService.executeHealthcareWrite<ClinicLocation>(
         async client => {
@@ -420,7 +428,7 @@ export class ClinicLocationService {
         },
         {
           userId: _userId || 'system',
-          clinicId: '',
+          clinicId: clinicId || location?.clinicId || '',
           resourceType: 'CLINIC_LOCATION',
           operation: 'DELETE',
           resourceId: id,
@@ -431,12 +439,10 @@ export class ClinicLocationService {
 
       // Invalidate location cache after deletion
       if (this.locationCacheService) {
-        // Get clinicId before invalidating (if needed)
-        const location = await this.getClinicLocationById(id, false);
         if (location) {
-          await this.locationCacheService.invalidateLocation(id, location.clinicId);
+          await this.locationCacheService.invalidateLocation(id, clinicId || location.clinicId);
         } else {
-          await this.locationCacheService.invalidateLocation(id);
+          await this.locationCacheService.invalidateLocation(id, clinicId);
         }
       }
 

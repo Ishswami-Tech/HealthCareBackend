@@ -42,9 +42,10 @@ export class LocationCacheService {
    */
   async getLocation(
     locationId: string,
-    includeDoctors = false
+    includeDoctors = false,
+    clinicId?: string
   ): Promise<ClinicLocationResponseDto | null> {
-    const cacheKey = this.getLocationKey(locationId, includeDoctors);
+    const cacheKey = this.getLocationKey(locationId, includeDoctors, clinicId);
     const startTime = Date.now();
 
     try {
@@ -92,16 +93,26 @@ export class LocationCacheService {
   async setLocation(
     locationId: string,
     location: ClinicLocationResponseDto | ClinicLocation,
-    includeDoctors = false
+    includeDoctors = false,
+    clinicId?: string
   ): Promise<void> {
-    const cacheKey = this.getLocationKey(locationId, includeDoctors);
+    const resolvedClinicId =
+      clinicId ||
+      ('clinicId' in location && typeof location.clinicId === 'string'
+        ? location.clinicId
+        : undefined);
+    const cacheKey = this.getLocationKey(locationId, includeDoctors, resolvedClinicId);
 
     try {
       // Use cache() method with forceRefresh to ensure value is set
       // Tags are handled via cache() method's options
       await this.cacheService.cache(cacheKey, () => Promise.resolve(location), {
         ttl: this.DEFAULT_TTL,
-        tags: ['locations', `location:${locationId}`],
+        tags: [
+          'locations',
+          `location:${locationId}`,
+          ...(resolvedClinicId ? [`clinic:${resolvedClinicId}`] : []),
+        ],
         enableSwr: true,
         forceRefresh: true, // Force set the value
       });
@@ -193,6 +204,12 @@ export class LocationCacheService {
         this.getLocationKey(locationId, false),
         this.getLocationKey(locationId, true),
       ];
+      if (clinicId) {
+        keysToInvalidate.push(
+          this.getLocationKey(locationId, false, clinicId),
+          this.getLocationKey(locationId, true, clinicId)
+        );
+      }
 
       // Also invalidate related domain-specific caches
       keysToInvalidate.push(
@@ -246,7 +263,8 @@ export class LocationCacheService {
    */
   async warmLocations(
     locationIds: string[],
-    fetchFn: (locationId: string) => Promise<ClinicLocationResponseDto | null>
+    fetchFn: (locationId: string) => Promise<ClinicLocationResponseDto | null>,
+    clinicId?: string
   ): Promise<{ warmed: number; failed: number }> {
     let warmed = 0;
     let failed = 0;
@@ -255,7 +273,7 @@ export class LocationCacheService {
       const results = await Promise.allSettled(
         locationIds.map(async locationId => {
           // Check if already cached
-          const cached = await this.getLocation(locationId, false);
+          const cached = await this.getLocation(locationId, false, clinicId);
           if (cached) {
             warmed++;
             return;
@@ -265,7 +283,7 @@ export class LocationCacheService {
           try {
             const location = await fetchFn(locationId);
             if (location) {
-              await this.setLocation(locationId, location, false);
+              await this.setLocation(locationId, location, false, clinicId);
               warmed++;
             } else {
               failed++;
@@ -307,8 +325,9 @@ export class LocationCacheService {
   /**
    * Get cache key for a single location
    */
-  private getLocationKey(locationId: string, includeDoctors: boolean): string {
-    return `${this.CACHE_PREFIX}:${locationId}:${includeDoctors ? 'with-doctors' : 'basic'}`;
+  private getLocationKey(locationId: string, includeDoctors: boolean, clinicId?: string): string {
+    const scope = clinicId ? `${clinicId}:` : '';
+    return `${this.CACHE_PREFIX}:${scope}${locationId}:${includeDoctors ? 'with-doctors' : 'basic'}`;
   }
 
   /**

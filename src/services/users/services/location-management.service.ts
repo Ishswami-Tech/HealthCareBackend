@@ -75,12 +75,19 @@ export class LocationManagementService {
     // Validate new location belongs to clinic using LocationCacheService (shared cache)
     let location: ClinicLocationResponseDto | null = null;
     if (this.locationCacheService) {
-      location = await this.locationCacheService.getLocation(newLocationId, false);
+      location = await this.locationCacheService.getLocation(newLocationId, false, clinicId);
+      if (location && location.clinicId !== clinicId) {
+        location = null;
+      }
     }
 
     // If not in cache, fetch from ClinicLocationService
     if (!location) {
-      location = await this.clinicLocationService.getClinicLocationById(newLocationId, false);
+      location = await this.clinicLocationService.getClinicLocationById(
+        newLocationId,
+        false,
+        clinicId
+      );
     }
 
     if (!location) {
@@ -177,7 +184,7 @@ export class LocationManagementService {
           });
           const locationId = doctor?.doctorClinic?.[0]?.locationId;
           if (!locationId) return null;
-          return await this.getLocationDetails(locationId);
+          return await this.getLocationDetails(locationId, clinicId);
         }
         case Role.RECEPTIONIST: {
           const receptionist = await this.databaseService.executeHealthcareRead<{
@@ -191,7 +198,7 @@ export class LocationManagementService {
             return result as { locationId: string | null } | null;
           });
           if (!receptionist?.locationId) return null;
-          return await this.getLocationDetails(receptionist.locationId);
+          return await this.getLocationDetails(receptionist.locationId, clinicId);
         }
         // Add other roles as needed
         default:
@@ -213,18 +220,26 @@ export class LocationManagementService {
    * Get location details using LocationCacheService (shared cache) or ClinicLocationService
    */
   private async getLocationDetails(
-    locationId: string
+    locationId: string,
+    clinicId: string
   ): Promise<{ id: string; name: string } | null> {
     try {
       // Try LocationCacheService first (shared cache)
       let location = null;
       if (this.locationCacheService) {
-        location = await this.locationCacheService.getLocation(locationId, false);
+        location = await this.locationCacheService.getLocation(locationId, false, clinicId);
+        if (location && location.clinicId !== clinicId) {
+          location = null;
+        }
       }
 
       // If not in cache, fetch from ClinicLocationService
       if (!location) {
-        location = await this.clinicLocationService.getClinicLocationById(locationId, false);
+        location = await this.clinicLocationService.getClinicLocationById(
+          locationId,
+          false,
+          clinicId
+        );
       }
 
       if (!location) {

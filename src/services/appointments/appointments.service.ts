@@ -1983,6 +1983,31 @@ export class AppointmentsService {
       finalDate = slot.date;
       finalTime = slot.time;
       confirmedSlotValue = dto.confirmedSlotIndex!;
+
+      const isAvailable = await this.databaseService.executeRead(async prisma => {
+        const tx = prisma as unknown as Prisma.TransactionClient;
+        const conflicts = await tx.appointment.findMany({
+          where: {
+            doctorId: appointment.doctorId,
+            date: new Date(finalDate),
+            time: finalTime,
+            status: {
+              in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
+            },
+            id: {
+              not: appointmentId,
+            },
+          },
+        });
+        return conflicts.length === 0;
+      });
+
+      if (!isAvailable) {
+        throw this.errors.appointmentSlotUnavailable(
+          `${finalDate} ${finalTime}`,
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
     } else if (hasCustomSlot) {
       if (!dto.date || !dto.time) {
         throw this.errors.validationError(
@@ -3486,6 +3511,7 @@ export class AppointmentsService {
       const locationData = await this.clinicLocationPlugin.process({
         operation: 'getLocationInfo',
         locationId,
+        clinicId,
       });
 
       const result = { success: true, data: locationData };

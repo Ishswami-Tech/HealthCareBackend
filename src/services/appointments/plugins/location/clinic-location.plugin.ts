@@ -6,6 +6,7 @@ import { LoggingService } from '@infrastructure/logging';
 interface LocationPluginData {
   operation: string;
   locationId?: string;
+  clinicId?: string;
 }
 
 @Injectable()
@@ -32,13 +33,27 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     // Delegate to existing location service - no functionality change
     switch (pluginData.operation) {
       case 'getAllLocations':
-        return await this.locationService.getAllLocations('clinic');
+        return await this.locationService.getAllLocations('clinic', pluginData.clinicId);
 
       case 'getLocationById':
         if (!pluginData.locationId) {
           throw new Error('Missing required field locationId for getLocationById');
         }
-        return await this.locationService.getLocationById(pluginData.locationId, 'clinic');
+        return await this.locationService.getLocationById(
+          pluginData.locationId,
+          'clinic',
+          pluginData.clinicId
+        );
+
+      case 'getLocationInfo':
+        if (!pluginData.locationId) {
+          throw new Error('Missing required field locationId for getLocationInfo');
+        }
+        return await this.locationService.getLocationById(
+          pluginData.locationId,
+          'clinic',
+          pluginData.clinicId
+        );
 
       case 'getDoctorsByLocation':
         if (!pluginData.locationId) {
@@ -74,6 +89,7 @@ export class ClinicLocationPlugin extends BaseAppointmentPlugin {
     // Validate that required fields are present for each operation
     const requiredFields: Record<string, string[]> = {
       getLocationById: ['locationId'],
+      getLocationInfo: ['locationId'],
       getDoctorsByLocation: ['locationId'],
       getLocationStats: ['locationId'],
       invalidateDoctorsCache: ['locationId'],

@@ -131,10 +131,10 @@ export class ClinicLocationController {
   @ApiParam({ name: 'id', description: 'ID of the location' })
   async findOne(
     @Param('id') id: string,
-    @Param('clinicId') _clinicId: string,
+    @Param('clinicId') clinicId: string,
     @Request() _req: { user: { id: string } }
   ): Promise<ClinicLocationResponseDto> {
-    const location = await this.locationService.getClinicLocationById(id, false);
+    const location = await this.locationService.getClinicLocationById(id, false, clinicId);
     if (!location) {
       throw new NotFoundException(`Location with ID ${id} not found`);
     }
@@ -254,6 +254,6 @@ export class ClinicLocationController {
     @Request() req: { user?: { id?: string; sub?: string } }
   ): Promise<void> {
     const userId = req.user?.id || req.user?.sub || 'system';
-    await this.locationService.deleteLocation(id, userId);
+    await this.locationService.deleteLocation(id, userId, clinicId);
   }
 }
