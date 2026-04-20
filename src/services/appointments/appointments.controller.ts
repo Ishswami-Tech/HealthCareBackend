@@ -150,6 +150,24 @@ export class AppointmentsController {
     private readonly analyticsService: AppointmentAnalyticsService
   ) {}
 
+  private parseStatusFilter(status?: string): {
+    status?: AppointmentStatus;
+    statusList?: AppointmentStatus[];
+  } {
+    if (!status) return {};
+
+    const statuses = status
+      .split(',')
+      .map(value => value.trim().toUpperCase())
+      .filter((value): value is AppointmentStatus =>
+        Object.values(AppointmentStatus).includes(value as AppointmentStatus)
+      );
+
+    if (statuses.length === 0) return {};
+    if (statuses.length === 1) return { status: statuses[0] as AppointmentStatus };
+    return { statusList: statuses };
+  }
+
   /**
    * Manually trigger no-show cancellation check
    * Useful for testing or on-demand checks
@@ -685,10 +703,10 @@ export class AppointmentsController {
         { userId, clinicId }
       );
 
-      const filters: AppointmentFilters = {
+      const filters: AppointmentFilters & { statusList?: AppointmentStatus[] } = {
         userId,
         clinicId,
-        ...(status && { status: status as AppointmentStatus }),
+        ...this.parseStatusFilter(status),
         ...(date && { date }),
         page: Math.max(1, page),
         limit: Math.min(100, Math.max(1, limit)),
@@ -852,10 +870,10 @@ export class AppointmentsController {
           ? receptionistLocationId
           : locationId;
 
-      const filters: AppointmentFilters = {
+      const filters: AppointmentFilters & { statusList?: AppointmentStatus[] } = {
         ...(userId && { userId }),
         ...(doctorId && { doctorId }),
-        ...(status && { status: status as AppointmentStatus }),
+        ...this.parseStatusFilter(status),
         ...(date && { date }),
         ...(effectiveLocationId && { locationId: effectiveLocationId }),
         clinicId,
