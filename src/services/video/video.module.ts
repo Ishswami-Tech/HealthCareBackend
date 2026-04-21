@@ -2,8 +2,7 @@
  * Video Module
  * @class VideoModule
  * @description Standalone video service module
- * Can be used by appointments and other services
- * Microservice-ready design
+ * One backend video service with a swappable provider abstraction.
  */
 
 import { Module, forwardRef } from '@nestjs/common';
@@ -69,12 +68,12 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     OpenViduWebhookController, // Webhook handler for OpenVidu events (optimized architecture)
   ],
   providers: [
-    // Video providers must be listed BEFORE VideoProviderFactory (which depends on them)
-    OpenViduVideoProvider, // Primary provider (OpenVidu)
-    JitsiVideoProvider, // Fallback provider (Jitsi)
-    // Video providers factory (depends on OpenViduVideoProvider and JitsiVideoProvider)
+    // Providers must be listed BEFORE VideoProviderFactory (which depends on them)
+    OpenViduVideoProvider,
+    JitsiVideoProvider,
+    // Provider factory (current runtime: OpenVidu primary, Jitsi fallback)
     VideoProviderFactory,
-    // Single consolidated video service (depends on VideoProviderFactory)
+    // Single consolidated video service
     VideoService,
     // Other services
     VideoConsultationTracker,
@@ -90,11 +89,8 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     VideoVirtualBackgroundService,
   ],
   exports: [
-    // Export video service for other modules to use
     VideoService,
-    // Export tracker for advanced use cases
     VideoConsultationTracker,
-    // Export new feature services
     VideoChatService,
     VideoWaitingRoomService,
     VideoMedicalNotesService,

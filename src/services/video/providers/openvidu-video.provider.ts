@@ -262,68 +262,6 @@ export class OpenViduVideoProvider implements IVideoProvider {
         );
       }
 
-      // Security: Validate Appointment Status
-      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'ACTIVE', 'IN_PROGRESS'];
-      if (!allowedStatuses.includes(appointment.status)) {
-        throw new HealthcareError(
-          ErrorCode.WORKFLOW_STATE_INVALID,
-          `Cannot join consultation. Appointment status is ${appointment.status}`,
-          undefined,
-          { appointmentId, status: appointment.status },
-          'OpenViduVideoProvider.generateMeetingToken'
-        );
-      }
-
-      // Security: Validate Time Window
-      // Allow joining 15 minutes before start and until completion
-      const appointmentDate = new Date(appointment.date);
-      // appointment.time is string "HH:mm"
-      const timeParts = appointment.time.split(':');
-      const hours = Number(timeParts[0]);
-      const minutes = timeParts.length > 1 ? Number(timeParts[1]) : 0;
-
-      if (isNaN(hours) || isNaN(minutes)) {
-        throw new HealthcareError(
-          ErrorCode.VALIDATION_INVALID_TIME,
-          `Invalid appointment time format: ${appointment.time}`,
-          undefined,
-          { appointmentId, time: appointment.time },
-          'OpenViduVideoProvider.generateMeetingToken'
-        );
-      }
-
-      appointmentDate.setHours(hours, minutes, 0, 0);
-
-      const now = new Date();
-      const startTime = appointmentDate.getTime();
-      const gracePeriodBefore = 15 * 60 * 1000; // 15 mins before
-      const duration = (appointment.duration || 30) * 60 * 1000;
-      const gracePeriodAfter = 15 * 60 * 1000; // 15 mins after scheduled end (for connection)
-
-      if (now.getTime() < startTime - gracePeriodBefore) {
-        throw new HealthcareError(
-          ErrorCode.RESOURCE_LOCKED,
-          'Consultation has not started yet. You can join 15 minutes before the scheduled time.',
-          undefined,
-          { appointmentId, scheduledTime: appointmentDate.toISOString() },
-          'OpenViduVideoProvider.generateMeetingToken'
-        );
-      }
-
-      // If status is NOT active, check expiration
-      // If active, assume session is ongoing (handled by endConsultation)
-      if (appointment.status !== 'ACTIVE' && appointment.status !== 'IN_PROGRESS') {
-        if (now.getTime() > startTime + duration + gracePeriodAfter) {
-          throw new HealthcareError(
-            ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED,
-            'Consultation time has expired.',
-            undefined,
-            { appointmentId, scheduledTime: appointmentDate.toISOString() },
-            'OpenViduVideoProvider.generateMeetingToken'
-          );
-        }
-      }
-
       // Generate room name
       const roomName = this.generateSecureRoomName(appointmentId, appointment.clinicId);
       const roomId = roomName;

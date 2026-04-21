@@ -1,9 +1,10 @@
 /**
  * Video Provider Factory
  * @class VideoProviderFactory
- * @description Factory for creating video providers based on configuration
- * Supports multiple providers: OpenVidu (primary), Jitsi (fallback)
- * Similar to CacheProviderFactory pattern
+ * @description Factory for the single backend video provider abstraction
+ *
+ * OpenVidu is the primary runtime provider. Jitsi remains available as a
+ * failover adapter so the backend can keep joining calls when OpenVidu is down.
  */
 
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
@@ -33,8 +34,7 @@ export class VideoProviderFactory {
 
   /**
    * Get the configured video provider.
-   * Supports multiple providers: openvidu | jitsi
-   * Provider is selected via VIDEO_PROVIDER env variable.
+   * The current runtime supports OpenVidu with Jitsi failover.
    */
   getProvider(): IVideoProvider {
     if (!this.configService.isVideoEnabled()) {
@@ -44,7 +44,6 @@ export class VideoProviderFactory {
     }
 
     const providerType = (this.configService.getVideoProvider() ?? 'openvidu').toLowerCase();
-
     if (providerType === 'jitsi') {
       if (this.jitsiProvider && this.jitsiProvider.isEnabled()) {
         return this.jitsiProvider;
@@ -52,7 +51,6 @@ export class VideoProviderFactory {
       throw new Error('Jitsi provider is not enabled. Check JITSI_ENABLED configuration.');
     }
 
-    // Default: OpenVidu
     if (this.openviduProvider && this.openviduProvider.isEnabled()) {
       return this.openviduProvider;
     }
@@ -63,7 +61,7 @@ export class VideoProviderFactory {
   }
 
   /**
-   * Get primary provider (resolves from VIDEO_PROVIDER config).
+   * Get primary provider.
    */
   getPrimaryProvider(): IVideoProvider {
     return this.getProvider();
@@ -88,53 +86,55 @@ export class VideoProviderFactory {
   }
 
   /**
-   * Get provider with health check (OpenVidu ONLY - no fallback)
-   * NOTE: This method now logs warnings instead of throwing errors
-   * to prevent crashing the entire API when video services are unavailable.
-   * Video features will be disabled but core healthcare features will work.
+   * Get provider with health check and automatic failover.
    */
   async getProviderWithFallback(): Promise<IVideoProvider> {
-    const primary = this.getPrimaryProvider();
-
-    try {
-      const isHealthy = await primary.isHealthy();
-      if (isHealthy) return primary;
-
-      if (this.loggingService) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Primary video provider '${primary.providerName}' is unhealthy. Attempting fallback.`,
-          'VideoProviderFactory.getProviderWithFallback',
-          { provider: primary.providerName, healthStatus: 'unhealthy' }
-        );
+    const preferredOrder = (() => {
+      const providerType = (this.configService.getVideoProvider() ?? 'openvidu').toLowerCase();
+      if (providerType === 'jitsi') {
+        return [this.jitsiProvider, this.openviduProvider];
       }
+      return [this.openviduProvider, this.jitsiProvider];
+    })().filter(provider => Boolean(provider && provider.isEnabled())) as IVideoProvider[];
 
-      // Try fallback provider
-      try {
-        const fallback = this.getFallbackProvider();
-        const fallbackHealthy = await fallback.isHealthy();
-        if (fallbackHealthy) return fallback;
-      } catch {
-        // No fallback available
-      }
-
-      // Return primary anyway — let method calls fail gracefully
-      return primary;
-    } catch (error) {
-      if (this.loggingService) {
-        void this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.WARN,
-          `Video provider health check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Video features may be unavailable.`,
-          'VideoProviderFactory.getProviderWithFallback',
-          {
-            provider: primary.providerName,
-            error: error instanceof Error ? error.message : 'Unknown',
-          }
-        );
-      }
-      return primary;
+    if (preferredOrder.length === 0) {
+      throw new Error(
+        'No enabled video providers are available. Check OPENVIDU_ENABLED and JITSI_ENABLED configuration.'
+      );
     }
+
+    for (const provider of preferredOrder) {
+      try {
+        const isHealthy = await provider.isHealthy();
+        if (isHealthy) {
+          return provider;
+        }
+
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Video provider '${provider.providerName}' is unhealthy. Trying next provider if available.`,
+            'VideoProviderFactory.getProviderWithFallback',
+            { provider: provider.providerName, healthStatus: 'unhealthy' }
+          );
+        }
+      } catch (error) {
+        if (this.loggingService) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Video provider '${provider.providerName}' health check failed: ${error instanceof Error ? error.message : 'Unknown error'}. Trying next provider if available.`,
+            'VideoProviderFactory.getProviderWithFallback',
+            {
+              provider: provider.providerName,
+              error: error instanceof Error ? error.message : 'Unknown',
+            }
+          );
+        }
+      }
+    }
+
+    return preferredOrder[0]!;
   }
 }
