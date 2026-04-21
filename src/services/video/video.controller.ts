@@ -848,10 +848,21 @@ export class VideoController {
   })
   async getConsultationStatus(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Request() _req: ClinicAuthenticatedRequest
+    @Request() req: ClinicAuthenticatedRequest
   ): Promise<VideoConsultationSessionDto> {
     try {
-      const sessionResult: unknown = await this.videoService.getConsultationSession(appointmentId);
+      const accessContext: { userId?: string; userRole?: string } = {};
+      const resolvedUserId = req.user?.id || req.user?.sub;
+      if (resolvedUserId) {
+        accessContext.userId = resolvedUserId;
+      }
+      if (req.user?.role) {
+        accessContext.userRole = req.user.role;
+      }
+      const sessionResult: unknown = await this.videoService.getConsultationSession(
+        appointmentId,
+        accessContext
+      );
       if (sessionResult === null) {
         throw this.errors.notFoundError(
           'Video consultation session',

@@ -51,6 +51,7 @@ import type {
   Doctor,
   Clinic,
 } from '@core/types/database.types';
+import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import type { AppointmentUpdateInput } from '@core/types/input.types';
 import type {
   PrismaTransactionClientWithDelegates,
@@ -740,7 +741,10 @@ export class CoreAppointmentService {
       // 5. Queue background operations
       await this.queueBackgroundOperations(cancelledAppointment, context, 'CANCELLATION');
 
-      // 6. Emit events
+      // 6. Keep any linked video session aligned with the appointment status
+      await this.cancelAssociatedVideoSession(appointmentId, context);
+
+      // 7. Emit events
       await this.eventService.emit('appointment.cancelled', {
         appointmentId: cancelledAppointment.id,
         clinicId: cancelledAppointment.clinicId,
@@ -750,7 +754,7 @@ export class CoreAppointmentService {
         context,
       });
 
-      // 7. HIPAA audit log
+      // 8. HIPAA audit log
       await this.hipaaAuditLog('CANCEL_APPOINTMENT', context, {
         appointmentId: cancelledAppointment.id,
         patientId: cancelledAppointment.patientId,
@@ -758,7 +762,7 @@ export class CoreAppointmentService {
         reason,
       });
 
-      // 8. Invalidate cache
+      // 9. Invalidate cache
       await this.invalidateAppointmentCache(context.clinicId);
 
       const processingTime = Date.now() - startTime;
@@ -1053,6 +1057,45 @@ export class CoreAppointmentService {
         { error: errorMessage }
       );
       // Don't throw error as background operations shouldn't break main flow
+    }
+  }
+
+  private async cancelAssociatedVideoSession(
+    appointmentId: string,
+    context: AppointmentContext
+  ): Promise<void> {
+    try {
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const delegate = getVideoConsultationDelegate(client);
+          await delegate.updateMany({
+            where: { appointmentId, status: { not: 'CANCELLED' } },
+            data: { status: 'CANCELLED' },
+          });
+        },
+        {
+          userId: context.userId,
+          userRole: context.role,
+          operation: 'CANCEL_APPOINTMENT',
+          resourceType: 'videoConsultation',
+          resourceId: appointmentId,
+          clinicId: context.clinicId,
+        }
+      );
+
+      await this.cacheService.del(`video_session:${appointmentId}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to cancel linked video session: ${errorMessage}`,
+        'CoreAppointmentService.cancelAssociatedVideoSession',
+        {
+          appointmentId,
+          error: errorMessage,
+        }
+      );
     }
   }
 
