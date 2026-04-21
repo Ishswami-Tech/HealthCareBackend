@@ -1102,7 +1102,9 @@ export class CoreAppointmentService {
   private async invalidateAppointmentCache(clinicId: string): Promise<void> {
     try {
       const patterns = [
-        `appointments:${clinicId}:*`,
+        `healthcare:clinic:${clinicId}:appointments:list:*`,
+        `healthcare:clinic:${clinicId}:appointments:*`,
+        `healthcare:appointment:*`,
         `metrics:${clinicId}:*`,
         `doctor:*:clinic:${clinicId}:*availability*`, // Matches enhanced key pattern
         `availability:${clinicId}:*`,
