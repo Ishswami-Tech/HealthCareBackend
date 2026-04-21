@@ -1392,6 +1392,28 @@ export class AppointmentsService {
     return null;
   }
 
+  private async resolveDoctorEntityId(
+    doctorIdentifier: string,
+    clinicId: string
+  ): Promise<string | null> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as Prisma.TransactionClient;
+      const doctor = await typedClient.doctor.findFirst({
+        where: {
+          clinics: {
+            some: {
+              clinicId,
+            },
+          },
+          OR: [{ id: doctorIdentifier }, { userId: doctorIdentifier }],
+        },
+        select: { id: true },
+      });
+
+      return doctor?.id ?? null;
+    });
+  }
+
   // Note: Use DatabaseService safe methods instead of direct Prisma access
   // Example: await this.databaseService.findAppointmentByIdSafe(id)
   // Example: await this.databaseService.findUserByIdSafe(userId)
@@ -2221,12 +2243,14 @@ export class AppointmentsService {
       _role === 'PATIENT'
         ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
         : null;
+    const doctor = _role === 'DOCTOR' ? await this.resolveDoctorEntityId(userId, clinicId) : null;
 
     const context: AppointmentContext = {
       userId,
       role: _role,
       clinicId,
       ...(filters.locationId && { locationId: filters.locationId }),
+      ...(doctor && { doctorId: doctor }),
       ...(filters.doctorId && { doctorId: filters.doctorId }),
       ...(filters.providerId && { doctorId: filters.providerId }),
       ...(filters.patientId && { patientId: filters.patientId }),
