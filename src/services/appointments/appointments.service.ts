@@ -3092,14 +3092,38 @@ export class AppointmentsService {
       // Create a copy of completeDto without doctorId to avoid duplication
       const { doctorId: _, ...restDto } = completeDto;
 
-      const completionData = await this.clinicConfirmationPlugin.process({
-        operation: 'markAppointmentCompleted',
-        appointmentId,
-        doctorId: finalDoctorId,
-        clinicId,
-        userId: appointment.userId,
-        ...restDto,
-      });
+      let completionData: unknown;
+      try {
+        completionData = await this.clinicConfirmationPlugin.process({
+          operation: 'markAppointmentCompleted',
+          appointmentId,
+          doctorId: finalDoctorId,
+          clinicId,
+          userId: appointment.userId,
+          ...restDto,
+        });
+      } catch (error) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Clinic confirmation plugin failed during completion; continuing with appointment status update: ${error instanceof Error ? error.message : String(error)}`,
+          'AppointmentsService.completeAppointment',
+          {
+            appointmentId,
+            doctorId: finalDoctorId,
+            clinicId,
+            error: error instanceof Error ? error.stack : undefined,
+          }
+        );
+        completionData = {
+          success: true,
+          appointmentId,
+          doctorId: finalDoctorId,
+          clinicId,
+          completedAt: new Date().toISOString(),
+          fallback: true,
+        };
+      }
 
       const result = { success: true, data: completionData };
 
