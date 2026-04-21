@@ -1424,6 +1424,11 @@ export class AppointmentFilterDto {
   @IsEnum(AppointmentPriority, { message: 'Priority must be a valid priority level' })
   priority?: AppointmentPriority;
 
+  @ApiPropertyOptional({ description: 'Doctor ID filter', required: false })
+  @IsOptional()
+  @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
+  doctorId?: string;
+
   @ApiPropertyOptional({ description: 'Provider ID filter', required: false })
   @IsOptional()
   @IsUUID('4', { message: 'Provider ID must be a valid UUID' })
