@@ -929,7 +929,7 @@ export class CoreAppointmentService {
     // Apply role-based filtering
     switch (context.role) {
       case 'DOCTOR':
-        where['doctorId'] = context.userId;
+        where['doctorId'] = context.doctorId || context.userId;
         break;
       case 'PATIENT':
         // Prefer the resolved Patient.id so the query can use indexed scalar filters.
