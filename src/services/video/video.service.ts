@@ -62,6 +62,7 @@ import {
 } from '@core/types/video-database.types';
 import { RbacService } from '@core/rbac/rbac.service';
 import { BillingService } from '@services/billing/billing.service';
+import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 
 export type { VideoCall, VideoCallSettings };
 
@@ -296,6 +297,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       avatar?: string;
     }
   ): Promise<VideoTokenResponse> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
       // 1. Validate Appointment Status, Payment & Time
       // Use executeRead to fetch appointment with necessary relations
@@ -303,7 +306,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         // Safe cast to access Prisma client features
         const tx = prisma as unknown as Prisma.TransactionClient;
         return await tx.appointment.findUnique({
-          where: { id: appointmentId },
+          where: { id: resolvedAppointmentId },
           include: {
             payment: true,
             patient: true,
@@ -316,7 +319,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           ErrorCode.APPOINTMENT_NOT_FOUND,
           'Appointment not found',
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.generateMeetingToken'
         );
       }
@@ -334,7 +337,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
             'You are not authorized to join this appointment.',
             undefined,
-            { userId, appointmentId },
+            { userId, appointmentId: resolvedAppointmentId },
             'VideoService.generateMeetingToken'
           );
         }
@@ -346,7 +349,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
             'You are not authorized to join this appointment.',
             undefined,
-            { userId, appointmentId },
+            { userId, appointmentId: resolvedAppointmentId },
             'VideoService.generateMeetingToken'
           );
         }
@@ -354,7 +357,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       const provider: IVideoProvider = await this.getProvider();
       const tokenResponse: VideoTokenResponse = await provider.generateMeetingToken(
-        appointmentId,
+        resolvedAppointmentId,
         userId,
         userRole,
         userInfo
@@ -370,7 +373,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Video provider failed: ${errorMessage}`,
         'VideoService.generateMeetingToken',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           provider: providerName,
           error: errorMessage,
         }
@@ -382,7 +385,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Video provider failed',
         undefined,
-        { appointmentId, originalError: String(error) },
+        { appointmentId: resolvedAppointmentId, originalError: String(error) },
         'VideoService.generateMeetingToken'
       );
     }
@@ -394,6 +397,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     clinicId: string
   ): Promise<ServiceResponse<AppointmentWithRelations>> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     const rejectionReason = reason?.trim() || 'Doctor rejected proposed slots';
 
     const permissionCheck = await this.rbacService.checkPermission({
@@ -401,14 +405,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       clinicId,
       resource: 'appointments',
       action: 'delete',
-      resourceId: appointmentId,
+      resourceId: resolvedAppointmentId,
     });
 
     if (!permissionCheck.hasPermission) {
       throw new ForbiddenException('Insufficient permissions to reject this video appointment');
     }
 
-    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
     if (!appointment || appointment.clinicId !== clinicId) {
       throw new NotFoundException('Appointment not found');
     }
@@ -433,24 +437,27 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Appointment is not in doctor slot confirmation stage');
     }
 
-    const updatedAppointment = await this.databaseService.updateAppointmentSafe(appointmentId, {
-      status: AppointmentStatus.CANCELLED,
-      cancellationReason: rejectionReason,
-      cancelledBy: userId,
-      cancelledAt: new Date(),
-    });
+    const updatedAppointment = await this.databaseService.updateAppointmentSafe(
+      resolvedAppointmentId,
+      {
+        status: AppointmentStatus.CANCELLED,
+        cancellationReason: rejectionReason,
+        cancelledBy: userId,
+        cancelledAt: new Date(),
+      }
+    );
 
     await this.cacheService.invalidateAppointmentCache(
-      appointmentId,
+      resolvedAppointmentId,
       updatedAppointment.patientId,
       updatedAppointment.doctorId,
       clinicId
     );
 
-    await this.triggerAppointmentRefund(appointmentId, clinicId, rejectionReason);
+    await this.triggerAppointmentRefund(resolvedAppointmentId, clinicId, rejectionReason);
 
     await this.eventService.emitEnterprise('appointment.cancelled', {
-      eventId: `appointment-cancelled-${appointmentId}-${Date.now()}`,
+      eventId: `appointment-cancelled-${resolvedAppointmentId}-${Date.now()}`,
       eventType: 'appointment.cancelled',
       category: EventCategory.APPOINTMENT,
       priority: EventPriority.HIGH,
@@ -460,7 +467,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       userId: updatedAppointment.patientId,
       clinicId,
       payload: {
-        appointmentId,
+        appointmentId: resolvedAppointmentId,
         userId: updatedAppointment.patientId,
         doctorId: updatedAppointment.doctorId,
         clinicId,
@@ -476,7 +483,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       'Video appointment proposal rejected',
       'VideoService.rejectVideoAppointment',
       {
-        appointmentId,
+        appointmentId: resolvedAppointmentId,
         clinicId,
         userId,
       }
@@ -497,10 +504,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
       const provider: IVideoProvider = await this.getProvider();
       const session: VideoConsultationSession = await provider.startConsultation(
-        appointmentId,
+        resolvedAppointmentId,
         userId,
         userRole
       );
@@ -509,7 +518,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const now: number = Date.now();
       const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.started', {
-        eventId: `video-consultation-started-${appointmentId}-${now}`,
+        eventId: `video-consultation-started-${resolvedAppointmentId}-${now}`,
         eventType: 'video.consultation.started',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
@@ -517,7 +526,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         source: 'VideoService',
         version: '1.0.0',
         payload: {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           sessionId: session.id,
           userId,
           userRole,
@@ -536,7 +545,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Video provider failed: ${errorMessage}`,
         'VideoService.startConsultation',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           provider: providerName,
           error: errorMessage,
         }
@@ -548,7 +557,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Video provider failed',
         undefined,
-        { appointmentId, originalError: String(error) },
+        { appointmentId: resolvedAppointmentId, originalError: String(error) },
         'VideoService.startConsultation'
       );
     }
@@ -588,10 +597,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin',
     sessionNotes?: string
   ): Promise<VideoConsultationSession> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
       const provider: IVideoProvider = await this.getProvider();
       const session: VideoConsultationSession = await provider.endConsultation(
-        appointmentId,
+        resolvedAppointmentId,
         userId,
         userRole
       );
@@ -614,7 +625,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       const now: number = Date.now();
       const timestamp: string = new Date(now).toISOString();
       await this.eventService.emitEnterprise('video.consultation.ended', {
-        eventId: `video-consultation-ended-${appointmentId}-${now}`,
+        eventId: `video-consultation-ended-${resolvedAppointmentId}-${now}`,
         eventType: 'video.consultation.ended',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
@@ -622,7 +633,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         source: 'VideoService',
         version: '1.0.0',
         payload: {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           sessionId: session.id,
           duration,
           provider: provider.providerName,
@@ -640,7 +651,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Video provider failed: ${errorMessage}`,
         'VideoService.endConsultation',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           provider: providerName,
           error: errorMessage,
         }
@@ -652,7 +663,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Video provider failed',
         undefined,
-        { appointmentId, originalError: String(error) },
+        { appointmentId: resolvedAppointmentId, originalError: String(error) },
         'VideoService.endConsultation'
       );
     }
@@ -663,9 +674,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    */
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
     try {
+      const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
       const provider: IVideoProvider = await this.getProvider();
       const session: VideoConsultationSession | null =
-        await provider.getConsultationSession(appointmentId);
+        await provider.getConsultationSession(resolvedAppointmentId);
       return session;
     } catch {
       // No fallback provider configured.
@@ -701,7 +713,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   async getConsultationStatus(
     appointmentId: string
   ): Promise<AppointmentVideoConsultationSession | null> {
-    const session = await this.getConsultationSession(appointmentId);
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    const session = await this.getConsultationSession(resolvedAppointmentId);
     if (!session) {
       return null;
     }
@@ -760,20 +773,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     issueDescription: string,
     issueType: 'audio' | 'video' | 'connection' | 'other'
   ): Promise<void> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
-      const session = await this.getConsultationSession(appointmentId);
+      const session = await this.getConsultationSession(resolvedAppointmentId);
       if (!session) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `No video session found for appointment ${appointmentId}`,
+          `No video session found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.reportTechnicalIssue'
         );
       }
 
       // Store technical issue in cache
-      const cacheKey = `video_session:${appointmentId}`;
+      const cacheKey = `video_session:${resolvedAppointmentId}`;
       const cachedSessionValue: unknown = await this.cacheService.get(cacheKey);
 
       if (
@@ -798,10 +813,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.WARN,
-        `Technical issue reported for appointment ${appointmentId}`,
+        `Technical issue reported for appointment ${resolvedAppointmentId}`,
         'VideoService.reportTechnicalIssue',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           issueType,
           reportedBy: userId,
           description: issueDescription,
@@ -811,13 +826,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to report technical issue for appointment ${appointmentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to report technical issue for appointment ${resolvedAppointmentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.reportTechnicalIssue',
         {
           error: error instanceof Error ? error.message : String(error),
           userId,
           issueType,
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
         }
       );
       if (error instanceof Error) {
@@ -827,7 +842,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to report technical issue',
         undefined,
-        { appointmentId, userId, issueType, originalError: String(error) },
+        { appointmentId: resolvedAppointmentId, userId, issueType, originalError: String(error) },
         'VideoService.reportTechnicalIssue'
       );
     }
@@ -837,10 +852,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    * Add video recording job to queue
    */
   async processRecording(appointmentId: string, recordingUrl: string): Promise<void> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     await this.queueService?.addJob(
       JobType.VIDEO_RECORDING,
       'process_recording',
-      { appointmentId, recordingUrl },
+      { appointmentId: resolvedAppointmentId, recordingUrl },
       { priority: JobPriorityLevel.HIGH }
     );
   }
@@ -849,20 +865,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    * Internal method called by QueueProcessor to actually process the recording
    */
   async executeProcessRecording(appointmentId: string, recordingUrl: string): Promise<void> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
-      const session = await this.getConsultationSession(appointmentId);
+      const session = await this.getConsultationSession(resolvedAppointmentId);
       if (!session) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `No video session found for appointment ${appointmentId}`,
+          `No video session found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.executeProcessRecording'
         );
       }
 
       // Update session with recording URL in cache
-      const cacheKey = `video_session:${appointmentId}`;
+      const cacheKey = `video_session:${resolvedAppointmentId}`;
       const cachedSessionValue: unknown = await this.cacheService.get(cacheKey);
 
       if (
@@ -878,22 +895,22 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.BUSINESS,
         LogLevel.INFO,
-        `Processing recording for appointment ${appointmentId}`,
+        `Processing recording for appointment ${resolvedAppointmentId}`,
         'VideoService.executeProcessRecording',
         {
           recordingUrl,
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
         }
       );
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to process recording for appointment ${appointmentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to process recording for appointment ${resolvedAppointmentId}: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.executeProcessRecording',
         {
           error: error instanceof Error ? error.message : String(error),
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
         }
       );
       throw error;
@@ -911,19 +928,20 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     clinicId: string
   ): Promise<CreateVideoCallResponse> {
     const startTime = Date.now();
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
       // Validate appointment exists and belongs to participants
-      await this.validateAppointment(appointmentId, patientId, doctorId, clinicId);
+      await this.validateAppointment(resolvedAppointmentId, patientId, doctorId, clinicId);
 
       // Generate unique meeting URL
-      const meetingUrl = await this.generateMeetingUrl(appointmentId);
+      const meetingUrl = await this.generateMeetingUrl(resolvedAppointmentId);
 
       // Create video call record
       const now = Date.now();
       const videoCall: VideoCall = {
-        id: `vc-${appointmentId}-${now}`,
-        appointmentId,
+        id: `vc-${resolvedAppointmentId}-${now}`,
+        appointmentId: resolvedAppointmentId,
         patientId,
         doctorId,
         clinicId,
@@ -954,7 +972,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         'Video call created successfully',
         'VideoService',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           patientId,
           doctorId,
           clinicId,
@@ -977,7 +995,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Failed to create video call: ${errorMessage}`,
         'VideoService',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           patientId,
           doctorId,
           clinicId,
@@ -991,7 +1009,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ErrorCode.INTERNAL_SERVER_ERROR,
         'Failed to create video call',
         undefined,
-        { appointmentId, patientId, doctorId, clinicId, originalError: String(error) },
+        {
+          appointmentId: resolvedAppointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          originalError: String(error),
+        },
         'VideoService.createVideoCall'
       );
     }
@@ -1462,15 +1486,18 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     doctorId: string,
     clinicId: string
   ): Promise<VideoCallAppointment> {
-    const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
 
     if (!appointment) {
-      throw new NotFoundException(`Appointment ${appointmentId} not found`);
+      throw new NotFoundException(`Appointment ${resolvedAppointmentId} not found`);
     }
 
     // Runtime validation at boundary - narrow to VideoCallAppointment
     if (!isVideoCallAppointment(appointment)) {
-      throw new BadRequestException(`Appointment ${appointmentId} is not a video consultation`);
+      throw new BadRequestException(
+        `Appointment ${resolvedAppointmentId} is not a video consultation`
+      );
     }
 
     // Validate participants
@@ -2378,6 +2405,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       createdAt: string;
     }>
   > {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
@@ -2390,13 +2418,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      const consultation = await this.getConsultationSession(appointmentId);
+      const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${appointmentId}`,
+          `Consultation session not found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.getSessionRecordings'
         );
       }
@@ -2431,7 +2459,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Failed to get session recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.getSessionRecordings',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           error: error instanceof Error ? error.message : String(error),
         }
       );
@@ -2447,6 +2475,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     connectionId: string,
     action: 'kick' | 'mute' | 'unmute' | 'forceUnpublish'
   ): Promise<void> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
@@ -2459,13 +2488,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      const consultation = await this.getConsultationSession(appointmentId);
+      const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${appointmentId}`,
+          `Consultation session not found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.manageSessionParticipant'
         );
       }
@@ -2492,7 +2521,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Emit event
       await this.eventService.emitEnterprise('video.participant.managed', {
-        eventId: `video-participant-managed-${appointmentId}-${Date.now()}`,
+        eventId: `video-participant-managed-${resolvedAppointmentId}-${Date.now()}`,
         eventType: 'video.participant.managed',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
@@ -2500,7 +2529,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         source: 'VideoService',
         version: '1.0.0',
         payload: {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           connectionId,
           action,
         },
@@ -2512,7 +2541,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Failed to manage session participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.manageSessionParticipant',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           connectionId,
           action,
           error: error instanceof Error ? error.message : String(error),
@@ -2542,6 +2571,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }>;
     }>
   > {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
@@ -2554,13 +2584,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      const consultation = await this.getConsultationSession(appointmentId);
+      const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${appointmentId}`,
+          `Consultation session not found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.getSessionParticipants'
         );
       }
@@ -2593,7 +2623,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Failed to get session participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.getSessionParticipants',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           error: error instanceof Error ? error.message : String(error),
         }
       );
@@ -2621,6 +2651,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       subscribers: number;
     }>;
   }> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
@@ -2633,13 +2664,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         );
       }
 
-      const consultation = await this.getConsultationSession(appointmentId);
+      const consultation = await this.getConsultationSession(resolvedAppointmentId);
       if (!consultation) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${appointmentId}`,
+          `Consultation session not found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'VideoService.getSessionAnalytics'
         );
       }
@@ -2672,7 +2703,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         `Failed to get session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'VideoService.getSessionAnalytics',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           error: error instanceof Error ? error.message : String(error),
         }
       );
