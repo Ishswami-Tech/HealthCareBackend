@@ -13,6 +13,7 @@
  */
 
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform, Type } from 'class-transformer';
 import {
   IsString,
   IsOptional,
@@ -29,8 +30,8 @@ import {
   IsObject,
   IsArray,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { VideoCallStatus } from './appointment.dto';
+import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 
 /**
  * User information for video consultation
@@ -68,9 +69,10 @@ export class VideoUserInfoDto {
  */
 export class GenerateVideoTokenDto {
   @ApiProperty({
-    example: 'appointment-uuid-123',
-    description: 'Appointment ID for the video consultation',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'Appointment ID for the video consultation (UUID or prefixed session id)',
   })
+  @Transform(({ value }) => normalizeAppointmentId(value))
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
@@ -110,9 +112,10 @@ export class GenerateVideoTokenDto {
  */
 export class StartVideoConsultationDto {
   @ApiProperty({
-    example: 'appointment-uuid-123',
-    description: 'Appointment ID for the video consultation',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'Appointment ID for the video consultation (UUID or prefixed session id)',
   })
+  @Transform(({ value }) => normalizeAppointmentId(value))
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;
@@ -143,9 +146,10 @@ export class StartVideoConsultationDto {
  */
 export class EndVideoConsultationDto {
   @ApiProperty({
-    example: 'appointment-uuid-123',
-    description: 'Appointment ID for the video consultation',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'Appointment ID for the video consultation (UUID or prefixed session id)',
   })
+  @Transform(({ value }) => normalizeAppointmentId(value))
   @IsUUID('4', { message: 'Appointment ID must be a valid UUID' })
   @IsNotEmpty({ message: 'Appointment ID is required' })
   appointmentId!: string;

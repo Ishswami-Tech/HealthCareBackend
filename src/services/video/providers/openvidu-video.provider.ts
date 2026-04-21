@@ -18,6 +18,7 @@ import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
+import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 import type {
   IVideoProvider,
   VideoProviderType,
@@ -186,13 +187,9 @@ export class OpenViduVideoProvider implements IVideoProvider {
       }
     } catch (error) {
       // Session doesn't exist, create new one
-      if (
-        error instanceof HealthcareError &&
-        error.metadata &&
-        typeof error.metadata === 'object' &&
-        'status' in error.metadata &&
-        error.metadata['status'] === 404
-      ) {
+      const status = error instanceof HealthcareError ? error.metadata?.['status'] : undefined;
+
+      if (status === 404 || status === '404') {
         // Session doesn't exist, create it
       } else {
         throw error;
@@ -238,15 +235,17 @@ export class OpenViduVideoProvider implements IVideoProvider {
       avatar?: string;
     }
   ): Promise<VideoTokenResponse> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
       // Get appointment to create VideoConsultation
-      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
       if (!appointment) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Appointment ${appointmentId} not found`,
+          `Appointment ${resolvedAppointmentId} not found`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'OpenViduVideoProvider.generateMeetingToken'
         );
       }
@@ -255,15 +254,15 @@ export class OpenViduVideoProvider implements IVideoProvider {
       if (!isVideoCallAppointment(appointment)) {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          `Appointment ${appointmentId} is not a video consultation`,
+          `Appointment ${resolvedAppointmentId} is not a video consultation`,
           undefined,
-          { appointmentId, type: appointment.type },
+          { appointmentId: resolvedAppointmentId, type: appointment.type },
           'OpenViduVideoProvider.generateMeetingToken'
         );
       }
 
       // Generate room name
-      const roomName = this.generateSecureRoomName(appointmentId, appointment.clinicId);
+      const roomName = this.generateSecureRoomName(resolvedAppointmentId, appointment.clinicId);
       const roomId = roomName;
 
       // Create or get session
@@ -313,13 +312,13 @@ export class OpenViduVideoProvider implements IVideoProvider {
         async client => {
           const delegate = getVideoConsultationDelegate(client);
           const existing = await delegate.findFirst({
-            where: { OR: [{ appointmentId }] },
+            where: { OR: [{ appointmentId: resolvedAppointmentId }] },
           });
 
           if (!existing) {
             await delegate.create({
               data: {
-                appointmentId,
+                appointmentId: resolvedAppointmentId,
                 patientId: appointment.patientId,
                 doctorId: appointment.doctorId,
                 clinicId: appointment.clinicId,
@@ -342,7 +341,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
           clinicId: appointment.clinicId,
           operation: 'CREATE_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
-          resourceId: appointmentId,
+          resourceId: resolvedAppointmentId,
           timestamp: new Date(),
         }
       );
@@ -362,7 +361,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         `Failed to generate OpenVidu meeting token: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'OpenViduVideoProvider.generateMeetingToken',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           userId,
           userRole,
           error: error instanceof Error ? error.message : String(error),
@@ -380,33 +379,36 @@ export class OpenViduVideoProvider implements IVideoProvider {
     userId: string,
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
       // Get existing session or create new one
-      let session = await this.getConsultationSession(appointmentId);
+      let session = await this.getConsultationSession(resolvedAppointmentId);
       if (!session) {
         // Generate token to create session
-        const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+        const appointment =
+          await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
         if (!appointment || !isVideoCallAppointment(appointment)) {
           throw new HealthcareError(
             ErrorCode.DATABASE_RECORD_NOT_FOUND,
-            `Appointment ${appointmentId} not found or not a video consultation`,
+            `Appointment ${resolvedAppointmentId} not found or not a video consultation`,
             undefined,
-            { appointmentId },
+            { appointmentId: resolvedAppointmentId },
             'OpenViduVideoProvider.startConsultation'
           );
         }
 
-        await this.generateMeetingToken(appointmentId, userId, userRole, {
+        await this.generateMeetingToken(resolvedAppointmentId, userId, userRole, {
           displayName: 'User',
           email: '',
         });
-        session = await this.getConsultationSession(appointmentId);
+        session = await this.getConsultationSession(resolvedAppointmentId);
         if (!session) {
           throw new HealthcareError(
             ErrorCode.DATABASE_RECORD_NOT_FOUND,
-            `Failed to create consultation session for appointment ${appointmentId}`,
+            `Failed to create consultation session for appointment ${resolvedAppointmentId}`,
             undefined,
-            { appointmentId },
+            { appointmentId: resolvedAppointmentId },
             'OpenViduVideoProvider.startConsultation'
           );
         }
@@ -417,14 +419,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
           const consultation = await delegate.findFirst({
-            where: { OR: [{ appointmentId }] },
+            where: { OR: [{ appointmentId: resolvedAppointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(
               ErrorCode.DATABASE_RECORD_NOT_FOUND,
-              `Video consultation not found for appointment ${appointmentId}`,
+              `Video consultation not found for appointment ${resolvedAppointmentId}`,
               undefined,
-              { appointmentId },
+              { appointmentId: resolvedAppointmentId },
               'OpenViduVideoProvider.startConsultation'
             );
           }
@@ -445,12 +447,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
           clinicId: '',
           operation: 'START_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
-          resourceId: appointmentId,
+          resourceId: resolvedAppointmentId,
           timestamp: new Date(),
         }
       );
 
-      return (await this.getConsultationSession(appointmentId))!;
+      return (await this.getConsultationSession(resolvedAppointmentId))!;
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -458,7 +460,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         `Failed to start OpenVidu consultation: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'OpenViduVideoProvider.startConsultation',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           userId,
           userRole,
           error: error instanceof Error ? error.message : String(error),
@@ -476,26 +478,31 @@ export class OpenViduVideoProvider implements IVideoProvider {
     userId: string,
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
-      const session = await this.getConsultationSession(appointmentId);
+      const session = await this.getConsultationSession(resolvedAppointmentId);
       if (!session) {
         throw new HealthcareError(
           ErrorCode.DATABASE_RECORD_NOT_FOUND,
-          `Consultation session not found for appointment ${appointmentId}`,
+          `Consultation session not found for appointment ${resolvedAppointmentId}`,
           undefined,
-          { appointmentId },
+          { appointmentId: resolvedAppointmentId },
           'OpenViduVideoProvider.endConsultation'
         );
       }
 
       // 1. Terminate session in OpenVidu REST API
       try {
-        await this.httpService.delete(`${this.apiUrl}/openvidu/api/sessions/${appointmentId}`, {
-          auth: {
-            username: 'OPENVIDUAPP',
-            password: this.secret,
-          },
-        });
+        await this.httpService.delete(
+          `${this.apiUrl}/openvidu/api/sessions/${resolvedAppointmentId}`,
+          {
+            auth: {
+              username: 'OPENVIDUAPP',
+              password: this.secret,
+            },
+          }
+        );
       } catch (ovError) {
         // 404 means session already ended or doesn't exist in OpenVidu, which is fine
         const axiosError = ovError as AxiosError;
@@ -506,7 +513,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
             LogLevel.WARN,
             `Failed to delete session in OpenVidu: ${ovError instanceof Error ? ovError.message : 'Unknown error'}`,
             'OpenViduVideoProvider.endConsultation',
-            { appointmentId }
+            { appointmentId: resolvedAppointmentId }
           );
         }
       }
@@ -517,14 +524,14 @@ export class OpenViduVideoProvider implements IVideoProvider {
           const delegate = getVideoConsultationDelegate(client);
           // Find consultation by appointmentId to get its id
           const consultation = await delegate.findFirst({
-            where: { OR: [{ appointmentId }] },
+            where: { OR: [{ appointmentId: resolvedAppointmentId }] },
           });
           if (!consultation) {
             throw new HealthcareError(
               ErrorCode.DATABASE_RECORD_NOT_FOUND,
-              `Video consultation not found for appointment ${appointmentId}`,
+              `Video consultation not found for appointment ${resolvedAppointmentId}`,
               undefined,
-              { appointmentId },
+              { appointmentId: resolvedAppointmentId },
               'OpenViduVideoProvider.endConsultation'
             );
           }
@@ -543,12 +550,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
           clinicId: '',
           operation: 'END_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
-          resourceId: appointmentId,
+          resourceId: resolvedAppointmentId,
           timestamp: new Date(),
         }
       );
 
-      return (await this.getConsultationSession(appointmentId))!;
+      return (await this.getConsultationSession(resolvedAppointmentId))!;
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -556,7 +563,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         `Failed to end OpenVidu consultation: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'OpenViduVideoProvider.endConsultation',
         {
-          appointmentId,
+          appointmentId: resolvedAppointmentId,
           userId,
           userRole,
           error: error instanceof Error ? error.message : String(error),
@@ -571,11 +578,12 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
     try {
+      const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
       const consultation = await this.databaseService.executeHealthcareRead(async client => {
         const delegate = getVideoConsultationDelegate(client);
         return await delegate.findFirst({
           where: {
-            OR: [{ appointmentId }],
+            OR: [{ appointmentId: resolvedAppointmentId }],
           },
           include: {
             participants: true,
@@ -589,7 +597,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
 
       return {
         id: (consultation as { id: string }).id,
-        appointmentId,
+        appointmentId: resolvedAppointmentId,
         roomId: (consultation as { roomId: string }).roomId,
         roomName: (consultation as { roomId: string }).roomId,
         meetingUrl: (consultation as { meetingUrl: string }).meetingUrl,
@@ -623,7 +631,7 @@ export class OpenViduVideoProvider implements IVideoProvider {
         `Failed to get OpenVidu consultation session: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'OpenViduVideoProvider.getConsultationSession',
         {
-          appointmentId,
+          appointmentId: normalizeAppointmentId(appointmentId),
           error: error instanceof Error ? error.message : String(error),
         }
       );
