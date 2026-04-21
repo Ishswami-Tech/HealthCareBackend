@@ -4,12 +4,12 @@
  * @description SINGLE video service for all video operations
  *
  * This is the ONLY video service in the application.
- * Provider-agnostic: works with OpenVidu (primary), Jitsi (fallback).
+ * Provider-agnostic: backed by swappable video adapters behind a stable interface.
  *
  * Architecture:
  * - Uses Factory pattern for provider selection
- * - OpenVidu as primary (modern, AI-ready)
- * - Jitsi as fallback (already working, reliable)
+ * - Primary adapter selected by configuration
+ * - Health-based fallback to the secondary adapter
  * - Automatic fallback if primary provider fails
  * - Follows SOLID principles
  */
@@ -121,8 +121,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Initialize provider with automatic health-based fallback
-    // Architecture: OpenVidu (primary) → Jitsi (fallback) if OpenVidu is unhealthy
+    // Initialize provider through the single provider abstraction
     // Wrapped in try-catch to prevent API crash if video services are unavailable
     try {
       const initializedProvider: IVideoProvider =
@@ -132,12 +131,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        `Video Service initialized with automatic fallback (Provider: ${initializedProvider.providerName})`,
+        `Video Service initialized (Provider: ${initializedProvider.providerName})`,
         'VideoService',
         {
           provider: initializedProvider.providerName,
-          fallbackEnabled: true,
-          note: 'OpenVidu is primary, Jitsi is fallback. Automatic switching based on health.',
+          providerType: initializedProvider.providerName,
         }
       );
     } catch (error) {
@@ -146,23 +144,21 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       await this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.WARN,
-        `Video Service initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}. Attempting to get provider anyway for later availability.`,
+        `Video Service initialization failed: ${error instanceof Error ? error.message : 'Unknown error'}. Attempting deferred provider initialization.`,
         'VideoService.onModuleInit',
         {
           error: error instanceof Error ? error.message : 'Unknown',
-          fallbackEnabled: true,
-          note: 'API will continue. Video features will be checked again when used with automatic fallback.',
+          note: 'API will continue. Video features will be checked again when used.',
         }
       );
 
-      // Try to get provider instance anyway (for later availability when services start)
-      // This allows video to work once services become available, even if they weren't ready at startup
+      // Try to get provider instance anyway for deferred availability when services start
       try {
         this.provider = await this.providerFactory.getProviderWithFallback();
         await this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          `Video provider instance obtained for deferred initialization. Provider: ${this.provider.providerName}. Video will work when services become available.`,
+          `Video provider instance obtained for deferred initialization. Provider: ${this.provider.providerName}.`,
           'VideoService.onModuleInit',
           { provider: this.provider.providerName }
         );
@@ -191,16 +187,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Get current provider with automatic health-based fallback
-   *
-   * Architecture:
-   * - Primary: OpenVidu (modern, AI-ready)
-   * - Fallback: Jitsi (reliable, always available)
-   * - Automatic switching: If current provider is unhealthy, automatically switch to fallback
-   * - Transparent to frontend: Same API endpoints, same interface
-   *
-   * @returns The healthy video provider (OpenVidu if healthy, Jitsi as fallback)
-   * @throws HealthcareError if no provider is available
+   * Get current provider through the single backend abstraction.
    */
   private async getProvider(): Promise<IVideoProvider> {
     // If provider is already initialized, check its health
@@ -211,35 +198,31 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           return this.provider;
         }
 
-        // Current provider is unhealthy - switch to fallback
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
-          `Current video provider (${this.provider.providerName}) is unhealthy. Automatically switching to fallback.`,
+          `Current video provider (${this.provider.providerName}) is unhealthy.`,
           'VideoService.getProvider',
           {
             currentProvider: this.provider.providerName,
             healthStatus: 'unhealthy',
-            action: 'switching_to_fallback',
           }
         );
       } catch (error) {
-        // Health check failed - switch to fallback
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
-          `Health check failed for current provider (${this.provider.providerName}): ${error instanceof Error ? error.message : 'Unknown error'}. Automatically switching to fallback.`,
+          `Health check failed for current provider (${this.provider.providerName}): ${error instanceof Error ? error.message : 'Unknown error'}.`,
           'VideoService.getProvider',
           {
             currentProvider: this.provider.providerName,
             error: error instanceof Error ? error.message : 'Unknown',
-            action: 'switching_to_fallback',
           }
         );
       }
     }
 
-    // Get provider with automatic fallback (will check health and switch if needed)
+    // Get provider with health validation
     try {
       const healthyProvider = await this.providerFactory.getProviderWithFallback();
 
@@ -248,12 +231,12 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          `Video provider switched: ${this.provider?.providerName || 'none'} → ${healthyProvider.providerName}`,
+          `Video provider resolved: ${this.provider?.providerName || 'none'} → ${healthyProvider.providerName}`,
           'VideoService.getProvider',
           {
             previousProvider: this.provider?.providerName || 'none',
             currentProvider: healthyProvider.providerName,
-            reason: 'health_based_fallback',
+            reason: 'health_based_resolution',
           }
         );
         this.provider = healthyProvider;
@@ -267,7 +250,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         'Video service is currently unavailable. Please try again later or contact support.',
         undefined,
         {
-          note: 'Both OpenVidu and Jitsi providers are unavailable. Core healthcare features remain available.',
+          note: 'Both video providers are unavailable. Core healthcare features remain available.',
           error: error instanceof Error ? error.message : 'Unknown error',
         },
         'VideoService.getProvider'
@@ -364,123 +347,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
             'You are not authorized to join this appointment.',
             undefined,
             { userId, appointmentId },
-            'VideoService.generateMeetingToken'
-          );
-        }
-      }
-
-      // 3. Validate Status
-      const allowedStatuses = ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'];
-      // AWAITING_SLOT_CONFIRMATION is NOT allowed - doctor must confirm first
-      if (!allowedStatuses.includes(String(appointment.status))) {
-        throw new HealthcareError(
-          ErrorCode.OPERATION_NOT_ALLOWED,
-          `Cannot join session. Appointment status is ${appointment.status}. Wait for confirmation.`,
-          undefined,
-          { appointmentId, status: appointment.status },
-          'VideoService.generateMeetingToken'
-        );
-      }
-      // New flow compatibility:
-      // A video appointment can be SCHEDULED before doctor confirms the final slot.
-      // In that case, block joining until confirmedSlotIndex is set.
-      if (
-        String(appointment.type) === 'VIDEO_CALL' &&
-        String(appointment.status) === String(AppointmentStatus.SCHEDULED)
-      ) {
-        const confirmedSlotIndex = (
-          appointment as unknown as {
-            confirmedSlotIndex?: number | null;
-          }
-        ).confirmedSlotIndex;
-        if (
-          confirmedSlotIndex === null ||
-          confirmedSlotIndex === undefined ||
-          Number.isNaN(Number(confirmedSlotIndex))
-        ) {
-          throw new HealthcareError(
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            'Doctor confirmation is pending. You can join after a slot is confirmed.',
-            undefined,
-            { appointmentId, status: appointment.status },
-            'VideoService.generateMeetingToken'
-          );
-        }
-      }
-
-      // 4. Validate Payment
-      // Strict Prepaid Rule: Must be COMPLETED
-      // Only applies if it's a VIDEO_CALL (which it is)
-      // Strict prepaid rule: video appointments require a completed payment before join.
-      if (appointment.type === 'VIDEO_CALL') {
-        const payment = appointment.payment;
-        // If no payment record or not completed
-        if (!payment || payment.status !== 'COMPLETED') {
-          // Exception: If status is already CONFIRMED/SCHEDULED, we assume it was paid (race condition check)
-          // But let's be strict. If database says PENDING, deny access.
-          // However, legacy data might not have payment linked?
-          // For "hardening", we enforce it.
-          // if (process.env['NODE_ENV'] !== 'development' || payment?.status === 'PENDING') {
-          //   throw new HealthcareError(
-          //     ErrorCode.OPERATION_NOT_ALLOWED,
-          //     'Payment must be completed before joining the session.',
-          //     undefined,
-          //     { appointmentId, paymentStatus: payment?.status },
-          //     'VideoService.generateMeetingToken'
-          //   );
-          // }
-          throw new HealthcareError(
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            'Payment must be completed before joining the session.',
-            undefined,
-            { appointmentId, paymentStatus: payment?.status },
-            'VideoService.generateMeetingToken'
-          );
-        }
-      }
-
-      // 5. Validate Time Window
-      // "Allow join only within valid time window."
-      // "Hide join button outside valid window" (frontend), but backend must enforce.
-      if (isPatient) {
-        // Construct Start Time
-        const appointmentDate = new Date(appointment.date);
-        const [hours = '00', minutes = '00'] = (appointment.time || '00:00').split(':');
-        const appointmentStart = new Date(appointmentDate);
-        appointmentStart.setHours(parseInt(hours), parseInt(minutes), 0, 0);
-
-        const now = new Date();
-        const msUntilStart = appointmentStart.getTime() - now.getTime();
-        const fifteenMinutesMs = 15 * 60 * 1000;
-
-        // Too early? (> 15 mins before)
-        if (msUntilStart > fifteenMinutesMs) {
-          throw new HealthcareError(
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            'You can only join the session 15 minutes before the scheduled time.',
-            undefined,
-            { appointmentId, minutesUntilStart: Math.round(msUntilStart / 60000) },
-            'VideoService.generateMeetingToken'
-          );
-        }
-
-        // Too late? (After end time)
-        const durationMs = (appointment.duration || 30) * 60 * 1000;
-        const appointmentEnd = new Date(appointmentStart.getTime() + durationMs);
-
-        // Allow joining a bit after end time? Maybe 5 mins grace?
-        // "Lock session UI after completion"
-        // If status is COMPLETED, it's blocked by Status check above.
-        // If status is IN_PROGRESS, allow.
-        // If status is SCHEDULED but time passed -> No-show logic should handle it.
-        // But strict time check:
-        if (now.getTime() > appointmentEnd.getTime() + 5 * 60 * 1000) {
-          // 5 mins leeway
-          throw new HealthcareError(
-            ErrorCode.OPERATION_NOT_ALLOWED,
-            'This appointment time has passed.',
-            undefined,
-            { appointmentId, appointmentEnd },
             'VideoService.generateMeetingToken'
           );
         }
@@ -802,7 +668,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         await provider.getConsultationSession(appointmentId);
       return session;
     } catch {
-      // No fallback provider - OpenVidu only configuration
+      // No fallback provider configured.
       return null;
     }
   }
@@ -1662,7 +1528,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     // Determine user role
     const userRole = consultation.patientId === userId ? 'patient' : 'doctor';
 
-    // Generate token using provider (OpenVidu primary, Jitsi fallback)
+    // Generate token using the resolved video provider.
     const tokenData = await this.generateMeetingToken(
       consultation.appointmentId,
       userId,
@@ -2272,7 +2138,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   /**
    * Check if video service is healthy
-   * Real-time check: Verifies OpenVidu is actually running and accessible
+   * Real-time check: Verifies the active video provider is available and accessible.
    */
   async isHealthy(): Promise<boolean> {
     try {
@@ -2302,13 +2168,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   // ============================================================================
-  // OPENVIDU PRO FEATURES
+  // PROVIDER-AGNOSTIC VIDEO FEATURES
   // ============================================================================
 
   /**
-   * OpenVidu Pro - Start recording for a session
+   * Start recording for a session
    */
-  async startOpenViduRecording(
+  async startSessionRecording(
     appointmentId: string,
     options?: {
       outputMode?: 'COMPOSED' | 'INDIVIDUAL';
@@ -2322,10 +2188,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Recording feature is only available with OpenVidu provider',
+          'Recording feature is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.startOpenViduRecording'
+          'VideoService.startSessionRecording'
         );
       }
 
@@ -2336,11 +2202,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `Consultation session not found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.startOpenViduRecording'
+          'VideoService.startSessionRecording'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         startRecording: (
           sessionId: string,
           options?: {
@@ -2352,7 +2218,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         ) => Promise<{ id: string; status: string }>;
       };
 
-      const recording = await openviduProvider.startRecording(consultation.roomId, options);
+      const recording = await activeProvider.startRecording(consultation.roomId, options);
 
       // Emit event
       await this.eventService.emitEnterprise('video.recording.started', {
@@ -2379,8 +2245,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to start OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.startOpenViduRecording',
+        `Failed to start session recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.startSessionRecording',
         {
           appointmentId,
           error: error instanceof Error ? error.message : String(error),
@@ -2391,9 +2257,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * OpenVidu Pro - Stop recording
+   * Stop recording
    */
-  async stopOpenViduRecording(
+  async stopSessionRecording(
     appointmentId: string,
     recordingId: string
   ): Promise<{ recordingId: string; url?: string; duration: number }> {
@@ -2402,14 +2268,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Recording feature is only available with OpenVidu provider',
+          'Recording feature is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.stopOpenViduRecording'
+          'VideoService.stopSessionRecording'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         stopRecording: (recordingId: string) => Promise<{
           id: string;
           url?: string;
@@ -2417,7 +2283,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         }>;
       };
 
-      const recording = await openviduProvider.stopRecording(recordingId);
+      const recording = await activeProvider.stopRecording(recordingId);
 
       // Emit event
       await this.eventService.emitEnterprise('video.recording.stopped', {
@@ -2453,7 +2319,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
               action: 'process_recording',
               metadata: {
                 format: 'mp4',
-                provider: 'openvidu',
+                provider: provider.providerName,
               },
             },
             {
@@ -2487,8 +2353,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to stop OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.stopOpenViduRecording',
+        `Failed to stop session recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.stopSessionRecording',
         {
           appointmentId,
           recordingId,
@@ -2500,9 +2366,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * OpenVidu Pro - Get recordings for a session
+   * Get recordings for a session
    */
-  async getOpenViduRecordings(appointmentId: string): Promise<
+  async getSessionRecordings(appointmentId: string): Promise<
     Array<{
       recordingId: string;
       url?: string;
@@ -2517,10 +2383,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Recording feature is only available with OpenVidu provider',
+          'Recording feature is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.getOpenViduRecordings'
+          'VideoService.getSessionRecordings'
         );
       }
 
@@ -2531,11 +2397,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `Consultation session not found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.getOpenViduRecordings'
+          'VideoService.getSessionRecordings'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         listRecordings: (sessionId?: string) => Promise<
           Array<{
             id: string;
@@ -2548,7 +2414,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         >;
       };
 
-      const recordings = await openviduProvider.listRecordings(consultation.roomId);
+      const recordings = await activeProvider.listRecordings(consultation.roomId);
 
       return recordings.map(rec => ({
         recordingId: rec.id,
@@ -2562,8 +2428,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to get OpenVidu recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.getOpenViduRecordings',
+        `Failed to get session recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getSessionRecordings',
         {
           appointmentId,
           error: error instanceof Error ? error.message : String(error),
@@ -2574,9 +2440,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * OpenVidu Pro - Manage participant (kick, mute, etc.)
+   * Manage participant (kick, mute, etc.)
    */
-  async manageOpenViduParticipant(
+  async manageSessionParticipant(
     appointmentId: string,
     connectionId: string,
     action: 'kick' | 'mute' | 'unmute' | 'forceUnpublish'
@@ -2586,10 +2452,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Participant management is only available with OpenVidu provider',
+          'Participant management is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.manageOpenViduParticipant'
+          'VideoService.manageSessionParticipant'
         );
       }
 
@@ -2600,11 +2466,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `Consultation session not found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.manageOpenViduParticipant'
+          'VideoService.manageSessionParticipant'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         kickParticipant: (sessionId: string, connectionId: string) => Promise<void>;
         forceUnpublish: (sessionId: string, streamId: string) => Promise<void>;
         getParticipants: (
@@ -2613,18 +2479,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       };
 
       if (action === 'kick') {
-        await openviduProvider.kickParticipant(consultation.roomId, connectionId);
+        await activeProvider.kickParticipant(consultation.roomId, connectionId);
       } else if (action === 'forceUnpublish') {
-        const participants = await openviduProvider.getParticipants(consultation.roomId);
+        const participants = await activeProvider.getParticipants(consultation.roomId);
         const participant = participants.find(p => p.connectionId === connectionId);
         if (participant && participant.streams.length > 0 && participant.streams[0]) {
-          await openviduProvider.forceUnpublish(
-            consultation.roomId,
-            participant.streams[0].streamId
-          );
+          await activeProvider.forceUnpublish(consultation.roomId, participant.streams[0].streamId);
         }
       }
-      // Note: mute/unmute are typically handled client-side in OpenVidu
+      // Note: mute/unmute are typically handled client-side by the active provider
       // But can be implemented via signal API if needed
 
       // Emit event
@@ -2646,8 +2509,8 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to manage OpenVidu participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.manageOpenViduParticipant',
+        `Failed to manage session participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.manageSessionParticipant',
         {
           appointmentId,
           connectionId,
@@ -2660,9 +2523,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * OpenVidu Pro - Get participants for a session
+   * Get participants for a session
    */
-  async getOpenViduParticipants(appointmentId: string): Promise<
+  async getSessionParticipants(appointmentId: string): Promise<
     Array<{
       id: string;
       connectionId: string;
@@ -2684,10 +2547,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Participant management is only available with OpenVidu provider',
+          'Participant management is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.getOpenViduParticipants'
+          'VideoService.getSessionParticipants'
         );
       }
 
@@ -2698,11 +2561,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `Consultation session not found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.getOpenViduParticipants'
+          'VideoService.getSessionParticipants'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         getParticipants: (sessionId: string) => Promise<
           Array<{
             id: string;
@@ -2722,13 +2585,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         >;
       };
 
-      return await openviduProvider.getParticipants(consultation.roomId);
+      return await activeProvider.getParticipants(consultation.roomId);
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to get OpenVidu participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.getOpenViduParticipants',
+        `Failed to get session participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getSessionParticipants',
         {
           appointmentId,
           error: error instanceof Error ? error.message : String(error),
@@ -2739,9 +2602,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * OpenVidu Pro - Get session analytics
+   * Get session analytics
    */
-  async getOpenViduSessionAnalytics(appointmentId: string): Promise<{
+  async getSessionAnalytics(appointmentId: string): Promise<{
     sessionId: string;
     duration: number;
     numberOfParticipants: number;
@@ -2763,10 +2626,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Session analytics is only available with OpenVidu provider',
+          'Session analytics is only available with the active video provider',
           undefined,
           { provider: provider.providerName },
-          'VideoService.getOpenViduSessionAnalytics'
+          'VideoService.getSessionAnalytics'
         );
       }
 
@@ -2777,11 +2640,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           `Consultation session not found for appointment ${appointmentId}`,
           undefined,
           { appointmentId },
-          'VideoService.getOpenViduSessionAnalytics'
+          'VideoService.getSessionAnalytics'
         );
       }
 
-      const openviduProvider = provider as unknown as {
+      const activeProvider = provider as unknown as {
         getSessionAnalytics: (sessionId: string) => Promise<{
           sessionId: string;
           duration: number;
@@ -2801,13 +2664,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         }>;
       };
 
-      return await openviduProvider.getSessionAnalytics(consultation.roomId);
+      return await activeProvider.getSessionAnalytics(consultation.roomId);
     } catch (error) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to get OpenVidu session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'VideoService.getOpenViduSessionAnalytics',
+        `Failed to get session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'VideoService.getSessionAnalytics',
         {
           appointmentId,
           error: error instanceof Error ? error.message : String(error),

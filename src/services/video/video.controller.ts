@@ -1248,8 +1248,8 @@ export class VideoController {
   @HttpCode(HttpStatus.CREATED)
   @RequireResourcePermission('video', 'create')
   @ApiOperation({
-    summary: 'Start OpenVidu recording',
-    description: 'Start recording for a video consultation session (OpenVidu Pro feature).',
+    summary: 'Start recording',
+    description: 'Start recording for a video consultation session.',
   })
   @ApiBody({ type: StartRecordingDto })
   @ApiResponse({
@@ -1259,7 +1259,7 @@ export class VideoController {
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
-    description: 'Invalid request or provider not OpenVidu',
+    description: 'Invalid request or provider unavailable',
   })
   async startRecording(
     @Body() dto: StartRecordingDto,
@@ -1286,7 +1286,7 @@ export class VideoController {
       }
 
       const result: { recordingId: string; status: string } =
-        await this.videoService.startOpenViduRecording(dto.appointmentId, recordingOptions);
+        await this.videoService.startSessionRecording(dto.appointmentId, recordingOptions);
 
       const response: RecordingResponseDto = {
         recordingId: result.recordingId,
@@ -1311,8 +1311,8 @@ export class VideoController {
   @HttpCode(HttpStatus.OK)
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
-    summary: 'Stop OpenVidu recording',
-    description: 'Stop an active recording (OpenVidu Pro feature).',
+    summary: 'Stop recording',
+    description: 'Stop an active recording.',
   })
   @ApiBody({ type: StopRecordingDto })
   @ApiResponse({
@@ -1326,7 +1326,7 @@ export class VideoController {
   ): Promise<RecordingResponseDto> {
     try {
       const result: { recordingId: string; url?: string; duration: number } =
-        await this.videoService.stopOpenViduRecording(dto.appointmentId, dto.recordingId);
+        await this.videoService.stopSessionRecording(dto.appointmentId, dto.recordingId);
 
       const response: RecordingResponseDto = {
         recordingId: result.recordingId,
@@ -1359,8 +1359,7 @@ export class VideoController {
   })
   @ApiOperation({
     summary: 'Get recordings for a session',
-    description:
-      'Get all recordings for a video consultation session (OpenVidu Pro feature). Cached for performance.',
+    description: 'Get all recordings for a video consultation session. Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -1379,9 +1378,9 @@ export class VideoController {
   ): Promise<RecordingListResponseDto> {
     try {
       type RecordingReturnType = Awaited<
-        ReturnType<typeof this.videoService.getOpenViduRecordings>
+        ReturnType<typeof this.videoService.getSessionRecordings>
       >[number];
-      const recordings = await this.videoService.getOpenViduRecordings(appointmentId);
+      const recordings = await this.videoService.getSessionRecordings(appointmentId);
 
       const response: RecordingListResponseDto = {
         count: recordings.length,
@@ -1414,7 +1413,7 @@ export class VideoController {
   @RequireResourcePermission('video', 'update')
   @ApiOperation({
     summary: 'Manage participant',
-    description: 'Kick, mute, unmute, or force unpublish a participant (OpenVidu Pro feature).',
+    description: 'Kick, mute, unmute, or force unpublish a participant.',
   })
   @ApiBody({ type: ManageParticipantDto })
   @ApiResponse({
@@ -1427,7 +1426,7 @@ export class VideoController {
     @Request() _req: ClinicAuthenticatedRequest
   ): Promise<SuccessResponseDto> {
     try {
-      await this.videoService.manageOpenViduParticipant(
+      await this.videoService.manageSessionParticipant(
         dto.appointmentId,
         dto.connectionId,
         dto.action
@@ -1455,8 +1454,7 @@ export class VideoController {
   })
   @ApiOperation({
     summary: 'Get participants',
-    description:
-      'Get all participants in a video consultation session (OpenVidu Pro feature). Cached for performance.',
+    description: 'Get all participants in a video consultation session. Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -1475,9 +1473,9 @@ export class VideoController {
   ): Promise<ParticipantListResponseDto> {
     try {
       type ParticipantReturnType = Awaited<
-        ReturnType<typeof this.videoService.getOpenViduParticipants>
+        ReturnType<typeof this.videoService.getSessionParticipants>
       >[number];
-      const participants = await this.videoService.getOpenViduParticipants(appointmentId);
+      const participants = await this.videoService.getSessionParticipants(appointmentId);
 
       const response: ParticipantListResponseDto = {
         count: participants.length,
@@ -1524,8 +1522,7 @@ export class VideoController {
   })
   @ApiOperation({
     summary: 'Get session analytics',
-    description:
-      'Get detailed analytics for a video consultation session (OpenVidu Pro feature). Cached for performance.',
+    description: 'Get detailed analytics for a video consultation session. Cached for performance.',
   })
   @ApiParam({
     name: 'appointmentId',
@@ -1543,7 +1540,7 @@ export class VideoController {
     @Request() _req: ClinicAuthenticatedRequest
   ): Promise<SessionAnalyticsResponseDto> {
     try {
-      const analytics = await this.videoService.getOpenViduSessionAnalytics(appointmentId);
+      const analytics = await this.videoService.getSessionAnalytics(appointmentId);
 
       const response: SessionAnalyticsResponseDto = {
         sessionId: analytics.sessionId,
@@ -1556,7 +1553,7 @@ export class VideoController {
         connections: analytics.connections.map(
           (
             conn: Awaited<
-              ReturnType<typeof this.videoService.getOpenViduSessionAnalytics>
+              ReturnType<typeof this.videoService.getSessionAnalytics>
             >['connections'][number]
           ) => ({
             connectionId: conn.connectionId,
