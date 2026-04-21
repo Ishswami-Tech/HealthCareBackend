@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Video Service - Consolidated Single Service
  * @class VideoService
  * @description SINGLE video service for all video operations
@@ -42,7 +42,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { AppointmentStatus } from '@core/types/enums.types';
-// Legacy queue constant removed — uses JobType.VIDEO_RECORDING via HEALTHCARE_QUEUE
+// Legacy queue constant removed � uses JobType.VIDEO_RECORDING via HEALTHCARE_QUEUE
 // Future use: VIDEO_TRANSCODING_QUEUE, VIDEO_ANALYTICS_QUEUE
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
@@ -93,6 +93,11 @@ type VideoCallHistoryResponse = ServiceResponse<{
   total: number;
   retrievedAt: string;
 }>;
+
+type VideoSessionAccessContext = {
+  userId?: string;
+  userRole?: string;
+};
 
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
@@ -232,7 +237,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          `Video provider resolved: ${this.provider?.providerName || 'none'} → ${healthyProvider.providerName}`,
+          `Video provider resolved: ${this.provider?.providerName || 'none'} ? ${healthyProvider.providerName}`,
           'VideoService.getProvider',
           {
             previousProvider: this.provider?.providerName || 'none',
@@ -300,7 +305,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      // 1. Validate Appointment Status, Payment & Time
+      // 1. Validate appointment status and payment eligibility
       // Use executeRead to fetch appointment with necessary relations
       const appointment = await this.databaseService.executeRead(async prisma => {
         // Safe cast to access Prisma client features
@@ -317,12 +322,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       if (!appointment) {
         throw new HealthcareError(
           ErrorCode.APPOINTMENT_NOT_FOUND,
-          'Appointment not found',
+          'No appointment found',
           undefined,
           { appointmentId: resolvedAppointmentId },
           'VideoService.generateMeetingToken'
         );
       }
+
+      this.ensureAppointmentJoinable(appointment, userRole);
 
       // 2. Validate User Authorization
       // Ensure the requesting user is a participant in this appointment
@@ -454,6 +461,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       clinicId
     );
 
+    await this.cancelAssociatedVideoSession(resolvedAppointmentId, {
+      userId,
+      userRole: 'DOCTOR',
+      operation: 'REJECT_VIDEO_APPOINTMENT',
+      resourceType: 'videoConsultation',
+      resourceId: resolvedAppointmentId,
+      clinicId,
+    });
+
     await this.triggerAppointmentRefund(resolvedAppointmentId, clinicId, rejectionReason);
 
     await this.eventService.emitEnterprise('appointment.cancelled', {
@@ -494,6 +510,152 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       data: updatedAppointment,
       message: 'Video appointment proposal rejected successfully',
     };
+  }
+
+  private async cancelAssociatedVideoSession(
+    appointmentId: string,
+    auditInfo: {
+      userId: string;
+      userRole: string;
+      operation: string;
+      resourceType: string;
+      resourceId?: string;
+      clinicId: string;
+    }
+  ): Promise<void> {
+    try {
+      await this.databaseService.executeHealthcareWrite(async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        await delegate.updateMany({
+          where: { appointmentId, status: { not: 'CANCELLED' } },
+          data: { status: 'CANCELLED' },
+        });
+      }, auditInfo);
+
+      await this.cacheService.del(`video_session:${appointmentId}`);
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to cancel linked video session: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'VideoService.cancelAssociatedVideoSession',
+        { appointmentId }
+      );
+    }
+  }
+
+  private ensureAppointmentJoinable(
+    appointment: {
+      id: string;
+      clinicId: string;
+      status?: string | null;
+      payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
+    },
+    userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
+  ): void {
+    const appointmentStatus = String(appointment.status || '').toUpperCase();
+    const nonJoinableStatuses = new Set([
+      AppointmentStatus.CANCELLED,
+      AppointmentStatus.COMPLETED,
+      AppointmentStatus.NO_SHOW,
+    ]);
+
+    if (nonJoinableStatuses.has(appointmentStatus as AppointmentStatus)) {
+      throw new NotFoundException('No appointment found');
+    }
+
+    if (userRole !== 'patient') {
+      return;
+    }
+
+    if (!this.isAppointmentPaid(appointment)) {
+      throw new ForbiddenException('Payment is required to join this appointment.');
+    }
+  }
+
+  private isAppointmentPaid(appointment: {
+    payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
+  }): boolean {
+    const paymentEntries = Array.isArray(appointment.payment)
+      ? appointment.payment
+      : appointment.payment
+        ? [appointment.payment]
+        : [];
+
+    return paymentEntries.some(payment =>
+      ['PAID', 'COMPLETED'].includes(String(payment.status || '').toUpperCase())
+    );
+  }
+
+  private buildPlaceholderConsultationSession(appointment: {
+    id: string;
+    date?: Date | string | null;
+    time?: string | null;
+    duration?: number | null;
+  }): VideoConsultationSession {
+    const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
+    return {
+      id: `video-session-${appointment.id}`,
+      appointmentId: appointment.id,
+      roomId: `appointment-${appointment.id}`,
+      roomName: `appointment-${appointment.id}`,
+      meetingUrl: `/video-appointments/${appointment.id}`,
+      status: 'SCHEDULED',
+      startTime: scheduledWindow?.startTime ?? null,
+      endTime: scheduledWindow?.endTime ?? null,
+      participants: [],
+      recordingEnabled: false,
+      screenSharingEnabled: true,
+      chatEnabled: true,
+      waitingRoomEnabled: true,
+    };
+  }
+
+  private resolveAppointmentVideoWindow(appointment: {
+    date?: Date | string | null;
+    time?: string | null;
+    duration?: number | null;
+  }): { startTime: Date | null; endTime: Date | null } | null {
+    if (!appointment.date || !appointment.time) {
+      return null;
+    }
+
+    const normalizedTime = this.normalizeTimeForDateParsing(appointment.time);
+    if (!normalizedTime) {
+      return null;
+    }
+
+    const dateValue =
+      typeof appointment.date === 'string' ? new Date(appointment.date) : appointment.date;
+    if (Number.isNaN(dateValue.getTime())) {
+      return null;
+    }
+
+    const datePart = dateValue.toISOString().slice(0, 10);
+    const startTime = new Date(`${datePart}T${normalizedTime}+05:30`);
+    if (Number.isNaN(startTime.getTime())) {
+      return null;
+    }
+
+    const appointmentDurationMinutes =
+      typeof appointment.duration === 'number' && appointment.duration > 0
+        ? appointment.duration
+        : 30;
+    const endTime = new Date(startTime.getTime() + appointmentDurationMinutes * 60_000);
+    return { startTime, endTime };
+  }
+
+  private normalizeTimeForDateParsing(timeValue: string): string | null {
+    const value = String(timeValue || '').trim();
+    if (/^\d{2}:\d{2}$/.test(value)) {
+      return `${value}:00`;
+    }
+    if (/^\d{2}:\d{2}:\d{2}$/.test(value)) {
+      return value;
+    }
+    return null;
   }
 
   /**
@@ -672,17 +834,66 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
   /**
    * Get consultation session
    */
-  async getConsultationSession(appointmentId: string): Promise<VideoConsultationSession | null> {
+  async getConsultationSession(
+    appointmentId: string,
+    accessContext?: VideoSessionAccessContext
+  ): Promise<VideoConsultationSession | null> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+
     try {
-      const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
       const provider: IVideoProvider = await this.getProvider();
       const session: VideoConsultationSession | null =
         await provider.getConsultationSession(resolvedAppointmentId);
-      return session;
+      if (session) {
+        return session;
+      }
     } catch {
-      // No fallback provider configured.
+      // No fallback provider configured. Continue with appointment-backed fallback below.
+    }
+
+    if (!accessContext) {
       return null;
     }
+
+    const appointment = await this.databaseService.executeRead(async prisma => {
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      return await tx.appointment.findUnique({
+        where: { id: resolvedAppointmentId },
+        include: {
+          payment: true,
+          patient: true,
+          doctor: true,
+        },
+      });
+    });
+
+    if (!appointment) {
+      return null;
+    }
+
+    const appointmentStatus = String(appointment.status || '').toUpperCase();
+    const blockedStatuses = new Set([
+      AppointmentStatus.CANCELLED,
+      AppointmentStatus.COMPLETED,
+      AppointmentStatus.NO_SHOW,
+    ]);
+
+    if (blockedStatuses.has(appointmentStatus as AppointmentStatus)) {
+      return null;
+    }
+
+    const normalizedUserRole = String(accessContext.userRole || '').toLowerCase();
+    if (normalizedUserRole === 'patient' && !this.isAppointmentPaid(appointment)) {
+      throw new HealthcareError(
+        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+        'Payment is required to join this appointment.',
+        undefined,
+        { appointmentId: resolvedAppointmentId, userId: accessContext.userId },
+        'VideoService.getConsultationSession'
+      );
+    }
+
+    return this.buildPlaceholderConsultationSession(appointment);
   }
 
   /**
