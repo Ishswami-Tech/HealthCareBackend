@@ -1615,8 +1615,8 @@ export class CoreAppointmentService {
             const currentMinute = parseInt(currentMinuteStr || '0', 10);
             const totalCurrentMinutes = currentHour * 60 + currentMinute;
 
-            // If slot has already started or is too close to start (e.g. within 15 mins), mark as unavailable
-            if (currentMinutes < totalCurrentMinutes + 15) {
+            // For same-day booking, only hide slots that are already in the past.
+            if (currentMinutes < totalCurrentMinutes) {
               slotsByTime.set(time, {
                 time,
                 available: false,
