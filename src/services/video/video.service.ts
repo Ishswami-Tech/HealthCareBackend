@@ -313,8 +313,24 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Fallback: If the provided ID is actually a VideoConsultation ID
       if (!appointment) {
         const videoSession = await this.databaseService.executeRead(async prisma => {
-          const tx = prisma as unknown as Prisma.TransactionClient;
-          return await tx.videoConsultation.findUnique({
+          // Bypass PrismaService composition wrapper in a strictly typed manner
+          type VideoConsultationDelegate = {
+            findUnique: (args: {
+              where: { id: string };
+              select: { appointmentId: boolean };
+            }) => Promise<{ appointmentId: string } | null>;
+          };
+
+          const service = prisma as unknown as {
+            prismaClient?: { videoConsultation: VideoConsultationDelegate };
+            videoConsultation?: VideoConsultationDelegate;
+          };
+
+          const delegate = service.prismaClient?.videoConsultation || service.videoConsultation;
+
+          if (!delegate) return null;
+
+          return await delegate.findUnique({
             where: { id: resolvedAppointmentId },
             select: { appointmentId: true },
           });
@@ -726,8 +742,24 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       // Fallback: If the provided ID is actually a VideoConsultation ID
       if (!appointment) {
         const videoSession = await this.databaseService.executeRead(async prisma => {
-          const tx = prisma as unknown as Prisma.TransactionClient;
-          return await tx.videoConsultation.findUnique({
+          // Bypass PrismaService composition wrapper in a strictly typed manner
+          type VideoConsultationDelegate = {
+            findUnique: (args: {
+              where: { id: string };
+              select: { appointmentId: boolean };
+            }) => Promise<{ appointmentId: string } | null>;
+          };
+
+          const service = prisma as unknown as {
+            prismaClient?: { videoConsultation: VideoConsultationDelegate };
+            videoConsultation?: VideoConsultationDelegate;
+          };
+
+          const delegate = service.prismaClient?.videoConsultation || service.videoConsultation;
+
+          if (!delegate) return null;
+
+          return await delegate.findUnique({
             where: { id: resolvedAppointmentId },
             select: { appointmentId: true },
           });
