@@ -913,18 +913,32 @@ export class JwtAuthGuard implements CanActivate {
   private async checkLockoutStatus(identifier: string): Promise<LockoutStatus> {
     const lockoutKey = `auth:lockout:${identifier}`;
 
-    const lockoutData = await this.cacheService.get<string>(lockoutKey);
+    const lockoutData = await this.cacheService.get<unknown>(lockoutKey);
 
     if (lockoutData) {
-      const { lockedUntil } = JSON.parse(lockoutData) as {
-        lockedUntil: number;
-      };
-      const now = Date.now();
-      if (now < lockedUntil) {
-        const remainingMinutes = Math.ceil((lockedUntil - now) / (1000 * 60));
-        return { isLocked: true, remainingMinutes };
+      let lockedUntil: number | undefined;
+
+      if (typeof lockoutData === 'string') {
+        try {
+          const parsed = JSON.parse(lockoutData) as { lockedUntil?: number };
+          lockedUntil = parsed.lockedUntil;
+        } catch {
+          lockedUntil = undefined;
+        }
+      } else if (typeof lockoutData === 'object' && lockoutData !== null) {
+        const parsed = lockoutData as { lockedUntil?: unknown };
+        lockedUntil = typeof parsed.lockedUntil === 'number' ? parsed.lockedUntil : undefined;
       }
-      // Lockout expired, clear it
+
+      if (typeof lockedUntil === 'number') {
+        const now = Date.now();
+        if (now < lockedUntil) {
+          const remainingMinutes = Math.ceil((lockedUntil - now) / (1000 * 60));
+          return { isLocked: true, remainingMinutes };
+        }
+      }
+
+      // Lockout expired or payload was malformed, clear it
       await this.cacheService.del(lockoutKey);
     }
 

@@ -1494,7 +1494,7 @@ export class AppointmentsService {
       // Administrative roles can bypass this to support walk-ins or manual billing.
       if (!resolvedInPersonCoverage && !isAdministrativeRole) {
         throw this.errors.businessRuleViolation(
-          'Active in-person subscription coverage is required before creating this appointment',
+          'An active plan is required before creating this in-person appointment',
           'AppointmentsService.createAppointment'
         );
       }
