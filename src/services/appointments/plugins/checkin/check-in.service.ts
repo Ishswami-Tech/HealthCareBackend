@@ -101,7 +101,7 @@ export class CheckInService {
   }): Promise<void> {
     if (!appointment.subscriptionId || !appointment.isSubscriptionBased) {
       throw new BadRequestException(
-        'This in-person appointment is not linked to an active subscription'
+        'This in-person appointment needs an active plan before check-in'
       );
     }
 
@@ -109,15 +109,15 @@ export class CheckInService {
       appointment.subscriptionId
     );
     if (!subscription || subscription.clinicId !== appointment.clinicId) {
-      throw new BadRequestException('Linked subscription was not found for this appointment');
+      throw new BadRequestException('The active plan for this appointment could not be found');
     }
 
     if (String(subscription.status) !== 'ACTIVE' && String(subscription.status) !== 'TRIALING') {
-      throw new BadRequestException('Linked subscription is no longer active');
+      throw new BadRequestException('The active plan for this appointment is no longer valid');
     }
 
     if (subscription.currentPeriodEnd < new Date()) {
-      throw new BadRequestException('Linked subscription coverage period has ended');
+      throw new BadRequestException('The active plan coverage period has ended');
     }
   }
 

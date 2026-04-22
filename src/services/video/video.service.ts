@@ -308,18 +308,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     try {
       // 1. Validate appointment status and payment eligibility
       // Use executeRead to fetch appointment with necessary relations
-      const appointment = await this.databaseService.executeRead(async prisma => {
-        // Safe cast to access Prisma client features
-        const tx = prisma as unknown as Prisma.TransactionClient;
-        return await tx.appointment.findUnique({
-          where: { id: resolvedAppointmentId },
-          include: {
-            payment: true,
-            patient: true,
-            doctor: true,
-          },
-        });
-      });
+      const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
       if (!appointment) {
         // Log both raw and resolved IDs to surface ID-mismatch issues immediately
         void this.loggingService.log(
@@ -590,7 +579,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       confirmedSlotIndex,
     });
     if (awaitingConfirmation) {
-      throw new NotFoundException('This appointment is not confirmed for video yet.');
+      throw new NotFoundException('This video request is awaiting slot confirmation.');
     }
 
     // Only CONFIRMED and IN_PROGRESS are joinable
@@ -599,7 +588,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         appointmentStatus as AppointmentStatus
       )
     ) {
-      throw new NotFoundException('This appointment is not confirmed for video yet.');
+      throw new NotFoundException('This video request is awaiting slot confirmation.');
     }
 
     if (userRole !== 'patient') {
@@ -607,7 +596,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
 
     if (!this.isAppointmentPaid(appointment)) {
-      throw new ForbiddenException('Payment is required to join this appointment.');
+      throw new ForbiddenException('Payment is required before joining this video appointment.');
     }
   }
 
@@ -921,17 +910,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    const appointment = await this.databaseService.executeRead(async prisma => {
-      const tx = prisma as unknown as Prisma.TransactionClient;
-      return await tx.appointment.findUnique({
-        where: { id: resolvedAppointmentId },
-        include: {
-          payment: true,
-          patient: true,
-          doctor: true,
-        },
-      });
-    });
+    const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
 
     if (!appointment) {
       return null;

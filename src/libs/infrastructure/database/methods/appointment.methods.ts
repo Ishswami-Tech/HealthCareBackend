@@ -111,6 +111,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
               },
             },
             clinic: true,
+            payment: true,
           },
         });
       },
@@ -120,6 +121,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
           patient: { include: { user: true } },
           doctor: { include: { user: true } },
           clinic: true,
+          payment: true,
         })
         .useCache(true)
         .cacheStrategy('short')
