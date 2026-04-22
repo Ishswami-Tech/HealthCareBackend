@@ -43,7 +43,6 @@ export enum AppointmentStatus {
   TRANSFERRED = 'TRANSFERRED',
   DISCHARGED = 'DISCHARGED',
   FOLLOW_UP_SCHEDULED = 'FOLLOW_UP_SCHEDULED',
-  AWAITING_SLOT_CONFIRMATION = 'AWAITING_SLOT_CONFIRMATION', // Video flow: patient proposed slots, awaiting doctor
 }
 
 /**

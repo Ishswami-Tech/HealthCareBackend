@@ -1,7 +1,6 @@
 export const APPOINTMENT_STATUS_TRANSITIONS: Record<string, string[]> = {
   PENDING: ['SCHEDULED', 'CANCELLED', 'RESCHEDULED'],
   SCHEDULED: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
-  AWAITING_SLOT_CONFIRMATION: ['CONFIRMED', 'CANCELLED', 'RESCHEDULED'],
   CONFIRMED: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
   WAITING: ['IN_PROGRESS', 'NO_SHOW', 'CANCELLED'],
   ON_HOLD: ['SCHEDULED', 'CANCELLED', 'RESCHEDULED'],
@@ -20,11 +19,35 @@ export const APPOINTMENT_CANCELABLE_STATUSES = new Set<string>([
   'SCHEDULED',
   'CONFIRMED',
   'RESCHEDULED',
-  'AWAITING_SLOT_CONFIRMATION',
   'WAITING',
   'ON_HOLD',
   'FOLLOW_UP_SCHEDULED',
 ]);
+
+export function isVideoSlotAwaitingConfirmation(appointment: {
+  type?: string | null | undefined;
+  status?: string | null | undefined;
+  proposedSlots?: unknown;
+  confirmedSlotIndex?: number | null | undefined;
+}): boolean {
+  if (String(appointment.type || '').toUpperCase() !== 'VIDEO_CALL') {
+    return false;
+  }
+
+  const hasProposedSlots =
+    Array.isArray(appointment.proposedSlots) && appointment.proposedSlots.length > 0;
+  const confirmedSlotIndex = appointment.confirmedSlotIndex;
+  const hasConfirmedSlot =
+    confirmedSlotIndex !== null &&
+    confirmedSlotIndex !== undefined &&
+    !Number.isNaN(Number(confirmedSlotIndex));
+
+  if (String(appointment.status || '').toUpperCase() === 'AWAITING_SLOT_CONFIRMATION') {
+    return true;
+  }
+
+  return hasProposedSlots && !hasConfirmedSlot;
+}
 
 export function isValidAppointmentStatusTransition(
   currentStatus: string,

@@ -23,6 +23,7 @@ import {
   Request,
   ParseUUIDPipe,
   ValidationPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -922,6 +923,12 @@ export class VideoController {
       const context = 'VideoController.getConsultationStatus';
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, context);
+        throw error;
+      }
+      // NotFoundException originates from ensureAppointmentJoinable (via the appointment
+      // fallback path) — re-throw it directly so the HTTP filter maps it to 404,
+      // preserving the differentiated message the frontend decoder relies on.
+      if (error instanceof NotFoundException) {
         throw error;
       }
       const healthcareError = this.errors.internalServerError(context);
