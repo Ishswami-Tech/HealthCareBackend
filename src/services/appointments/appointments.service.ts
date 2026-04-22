@@ -56,6 +56,7 @@ import {
 } from '@dtos/appointment.dto';
 import { Role } from '@core/types/enums.types';
 import { isVideoCallAppointmentType } from '@core/types/appointment-guards.types';
+import { isVideoSlotAwaitingConfirmation } from './core/appointment-state-contract';
 
 // Legacy imports for backward compatibility
 import { DatabaseService } from '@infrastructure/database';
@@ -444,10 +445,7 @@ export class AppointmentsService {
 
   private readonly DEFAULT_SLOT_CONFIRMATION_EXPIRY_SETTINGS = {
     graceMinutes: 0,
-    checkStatuses: [
-      AppointmentStatus.AWAITING_SLOT_CONFIRMATION,
-      AppointmentStatus.SCHEDULED,
-    ] as const,
+    checkStatuses: [AppointmentStatus.SCHEDULED] as const,
   };
 
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
@@ -1800,16 +1798,16 @@ export class AppointmentsService {
         'AppointmentsService.confirmVideoSlot'
       );
     }
-    const appointmentStatus = String(appointment.status);
     const confirmedSlotIndex = (
       appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
     ).confirmedSlotIndex;
-    const canConfirmSlot =
-      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
-      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
-        (confirmedSlotIndex === null ||
-          confirmedSlotIndex === undefined ||
-          Number.isNaN(Number(confirmedSlotIndex))));
+    const canConfirmSlot = isVideoSlotAwaitingConfirmation({
+      type: appointment.type,
+      status: appointment.status,
+      proposedSlots: (appointment as AppointmentWithRelations & { proposedSlots?: unknown })
+        .proposedSlots,
+      confirmedSlotIndex,
+    });
     if (!canConfirmSlot) {
       throw this.errors.validationError(
         'status',
@@ -1935,16 +1933,16 @@ export class AppointmentsService {
       );
     }
 
-    const appointmentStatus = String(appointment.status);
     const confirmedSlotIndex = (
       appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
     ).confirmedSlotIndex;
-    const canConfirmSlot =
-      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
-      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
-        (confirmedSlotIndex === null ||
-          confirmedSlotIndex === undefined ||
-          Number.isNaN(Number(confirmedSlotIndex))));
+    const canConfirmSlot = isVideoSlotAwaitingConfirmation({
+      type: appointment.type,
+      status: appointment.status,
+      proposedSlots: (appointment as AppointmentWithRelations & { proposedSlots?: unknown })
+        .proposedSlots,
+      confirmedSlotIndex,
+    });
     if (!canConfirmSlot) {
       throw this.errors.validationError(
         'status',
@@ -2945,16 +2943,16 @@ export class AppointmentsService {
       );
     }
 
-    const appointmentStatus = String(appointment.status);
     const confirmedSlotIndex = (
       appointment as AppointmentWithRelations & { confirmedSlotIndex?: number | null }
     ).confirmedSlotIndex;
-    const canRejectProposal =
-      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
-      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
-        (confirmedSlotIndex === null ||
-          confirmedSlotIndex === undefined ||
-          Number.isNaN(Number(confirmedSlotIndex))));
+    const canRejectProposal = isVideoSlotAwaitingConfirmation({
+      type: appointment.type,
+      status: appointment.status,
+      proposedSlots: (appointment as AppointmentWithRelations & { proposedSlots?: unknown })
+        .proposedSlots,
+      confirmedSlotIndex,
+    });
     if (!canRejectProposal) {
       throw this.errors.businessRuleViolation(
         'Appointment is not in doctor confirmation stage',

@@ -4,6 +4,7 @@ import { BillingService } from './billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
+import { isVideoSlotAwaitingConfirmation } from '@services/appointments/core/appointment-state-contract';
 
 /**
  * Billing event listeners for automatic invoice generation and delivery
@@ -269,12 +270,17 @@ export class BillingEventsListener {
         );
 
         if (appointment) {
-          const isVideoCall = String(appointment.type) === 'VIDEO_CALL';
-          const isAwaitingSlot = String(appointment.status) === 'AWAITING_SLOT_CONFIRMATION';
+          const isAwaitingSlot = isVideoSlotAwaitingConfirmation({
+            type: appointment.type,
+            status: appointment.status,
+            proposedSlots: (appointment as { proposedSlots?: unknown }).proposedSlots,
+            confirmedSlotIndex: (appointment as { confirmedSlotIndex?: number | null })
+              .confirmedSlotIndex,
+          });
 
-          // VIDEO_CALL in AWAITING_SLOT_CONFIRMATION: keep status unchanged - payment recorded,
+          // VIDEO_CALL awaiting slot confirmation: keep status unchanged - payment recorded,
           // doctor must confirm slot (appointments.service.confirmVideoSlot)
-          if (isVideoCall && isAwaitingSlot) {
+          if (isAwaitingSlot) {
             await this.loggingService.log(
               LogType.APPOINTMENT,
               LogLevel.INFO,

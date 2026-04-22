@@ -47,6 +47,7 @@ import { AppointmentStatus } from '@core/types/enums.types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { isVideoCallAppointment } from '@core/types/appointment-guards.types';
+import { isVideoSlotAwaitingConfirmation } from '@services/appointments/core/appointment-state-contract';
 import type { VideoCallAppointment } from '@core/types/appointment.types';
 import type {
   AppointmentWithRelations,
@@ -320,11 +321,19 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         });
       });
       if (!appointment) {
+        // Log both raw and resolved IDs to surface ID-mismatch issues immediately
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Appointment lookup failed – record not found`,
+          'VideoService.generateMeetingToken',
+          { rawAppointmentId: appointmentId, resolvedAppointmentId }
+        );
         throw new HealthcareError(
           ErrorCode.APPOINTMENT_NOT_FOUND,
           'No appointment found',
           undefined,
-          { appointmentId: resolvedAppointmentId },
+          { rawAppointmentId: appointmentId, resolvedAppointmentId },
           'VideoService.generateMeetingToken'
         );
       }
@@ -428,18 +437,17 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Only video appointments can be rejected');
     }
 
-    const appointmentStatus = String(appointment.status);
     const confirmedSlotIndex = (
       appointment as unknown as {
         confirmedSlotIndex?: number | null;
       }
     ).confirmedSlotIndex;
-    const canRejectProposal =
-      appointmentStatus === String(AppointmentStatus.AWAITING_SLOT_CONFIRMATION) ||
-      (appointmentStatus === String(AppointmentStatus.SCHEDULED) &&
-        (confirmedSlotIndex === null ||
-          confirmedSlotIndex === undefined ||
-          Number.isNaN(Number(confirmedSlotIndex))));
+    const canRejectProposal = isVideoSlotAwaitingConfirmation({
+      type: appointment.type,
+      status: appointment.status,
+      proposedSlots: (appointment as unknown as { proposedSlots?: unknown }).proposedSlots,
+      confirmedSlotIndex,
+    });
     if (!canRejectProposal) {
       throw new BadRequestException('Appointment is not in doctor slot confirmation stage');
     }
@@ -550,20 +558,48 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     appointment: {
       id: string;
       clinicId: string;
+      type?: string | null;
       status?: string | null;
       payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
     },
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): void {
     const appointmentStatus = String(appointment.status || '').toUpperCase();
-    const nonJoinableStatuses = new Set([
-      AppointmentStatus.CANCELLED,
-      AppointmentStatus.COMPLETED,
-      AppointmentStatus.NO_SHOW,
-    ]);
+    const confirmedSlotIndex = (
+      appointment as unknown as {
+        confirmedSlotIndex?: number | null;
+      }
+    ).confirmedSlotIndex;
 
-    if (nonJoinableStatuses.has(appointmentStatus as AppointmentStatus)) {
-      throw new NotFoundException('No appointment found');
+    // Blocked terminal states – surface specific reasons so the frontend can display the right message
+    if (appointmentStatus === String(AppointmentStatus.CANCELLED)) {
+      throw new NotFoundException('This appointment has been cancelled.');
+    }
+    if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
+      throw new NotFoundException('This appointment has already been completed.');
+    }
+    if (appointmentStatus === String(AppointmentStatus.NO_SHOW)) {
+      throw new NotFoundException('This appointment was marked as no-show.');
+    }
+
+    // Unconfirmed slot – paid but doctor hasn't confirmed a time yet
+    const awaitingConfirmation = isVideoSlotAwaitingConfirmation({
+      type: appointment.type,
+      status: appointment.status,
+      proposedSlots: (appointment as unknown as { proposedSlots?: unknown }).proposedSlots,
+      confirmedSlotIndex,
+    });
+    if (awaitingConfirmation) {
+      throw new NotFoundException('This appointment is not confirmed for video yet.');
+    }
+
+    // Only CONFIRMED and IN_PROGRESS are joinable
+    if (
+      ![AppointmentStatus.CONFIRMED, AppointmentStatus.IN_PROGRESS].includes(
+        appointmentStatus as AppointmentStatus
+      )
+    ) {
+      throw new NotFoundException('This appointment is not confirmed for video yet.');
     }
 
     if (userRole !== 'patient') {
@@ -669,12 +705,42 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
+      const appointment = await this.databaseService.executeRead(async prisma => {
+        const tx = prisma as unknown as Prisma.TransactionClient;
+        return await tx.appointment.findUnique({
+          where: { id: resolvedAppointmentId },
+          include: {
+            payment: true,
+            patient: true,
+            doctor: true,
+          },
+        });
+      });
+
+      if (!appointment) {
+        throw new HealthcareError(
+          ErrorCode.APPOINTMENT_NOT_FOUND,
+          'No appointment found',
+          undefined,
+          { appointmentId: resolvedAppointmentId },
+          'VideoService.startConsultation'
+        );
+      }
+
+      this.ensureAppointmentJoinable(appointment, userRole);
+
       const provider: IVideoProvider = await this.getProvider();
       const session: VideoConsultationSession = await provider.startConsultation(
         resolvedAppointmentId,
         userId,
         userRole
       );
+
+      if (String(appointment.status) !== String(AppointmentStatus.IN_PROGRESS)) {
+        await this.databaseService.updateAppointmentSafe(resolvedAppointmentId, {
+          status: AppointmentStatus.IN_PROGRESS,
+        });
+      }
 
       // Emit event
       const now: number = Date.now();
@@ -870,29 +936,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     if (!appointment) {
       return null;
     }
-
-    const appointmentStatus = String(appointment.status || '').toUpperCase();
-    const blockedStatuses = new Set([
-      AppointmentStatus.CANCELLED,
-      AppointmentStatus.COMPLETED,
-      AppointmentStatus.NO_SHOW,
-    ]);
-
-    if (blockedStatuses.has(appointmentStatus as AppointmentStatus)) {
-      return null;
-    }
-
     const normalizedUserRole = String(accessContext.userRole || '').toLowerCase();
-    if (normalizedUserRole === 'patient' && !this.isAppointmentPaid(appointment)) {
-      throw new HealthcareError(
-        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-        'Payment is required to join this appointment.',
-        undefined,
-        { appointmentId: resolvedAppointmentId, userId: accessContext.userId },
-        'VideoService.getConsultationSession'
-      );
-    }
-
+    this.ensureAppointmentJoinable(
+      {
+        ...appointment,
+        clinicId: appointment.clinicId,
+      },
+      normalizedUserRole as 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
+    );
     return this.buildPlaceholderConsultationSession(appointment);
   }
 
