@@ -303,12 +303,29 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       avatar?: string;
     }
   ): Promise<VideoTokenResponse> {
-    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    let resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
       // 1. Validate appointment status and payment eligibility
       // Use executeRead to fetch appointment with necessary relations
-      const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+      let appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+
+      // Fallback: If the provided ID is actually a VideoConsultation ID
+      if (!appointment) {
+        const videoSession = await this.databaseService.executeRead(async prisma => {
+          const tx = prisma as unknown as Prisma.TransactionClient;
+          return await tx.videoConsultation.findUnique({
+            where: { id: resolvedAppointmentId },
+            select: { appointmentId: true },
+          });
+        });
+
+        if (videoSession?.appointmentId) {
+          resolvedAppointmentId = videoSession.appointmentId;
+          appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+        }
+      }
+
       if (!appointment) {
         // Log both raw and resolved IDs to surface ID-mismatch issues immediately
         void this.loggingService.log(
@@ -691,10 +708,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     userRole: 'patient' | 'doctor' | 'receptionist' | 'clinic_admin'
   ): Promise<VideoConsultationSession> {
-    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    let resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      const appointment = await this.databaseService.executeRead(async prisma => {
+      let appointment = await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as Prisma.TransactionClient;
         return await tx.appointment.findUnique({
           where: { id: resolvedAppointmentId },
@@ -705,6 +722,32 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           },
         });
       });
+
+      // Fallback: If the provided ID is actually a VideoConsultation ID
+      if (!appointment) {
+        const videoSession = await this.databaseService.executeRead(async prisma => {
+          const tx = prisma as unknown as Prisma.TransactionClient;
+          return await tx.videoConsultation.findUnique({
+            where: { id: resolvedAppointmentId },
+            select: { appointmentId: true },
+          });
+        });
+
+        if (videoSession?.appointmentId) {
+          resolvedAppointmentId = videoSession.appointmentId;
+          appointment = await this.databaseService.executeRead(async prisma => {
+            const tx = prisma as unknown as Prisma.TransactionClient;
+            return await tx.appointment.findUnique({
+              where: { id: resolvedAppointmentId },
+              include: {
+                payment: true,
+                patient: true,
+                doctor: true,
+              },
+            });
+          });
+        }
+      }
 
       if (!appointment) {
         throw new HealthcareError(
