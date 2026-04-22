@@ -5,7 +5,7 @@
  * Primary video provider with modern architecture and AI-ready integration
  */
 
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
@@ -35,7 +35,7 @@ import type { VideoProviderConfig } from '@core/types/video.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 
 @Injectable()
-export class OpenViduVideoProvider implements IVideoProvider {
+export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
   readonly providerName: VideoProviderType = 'openvidu';
   private readonly MEETING_CACHE_TTL = 3600; // 1 hour
   private readonly HEALTH_CHECK_COOLDOWN_MS = 60000;
@@ -112,6 +112,52 @@ export class OpenViduVideoProvider implements IVideoProvider {
     );
   }
 
+  async onModuleInit(): Promise<void> {
+    const normalizedApiUrl = this.normalizeUrl(this.apiUrl);
+    const normalizedDomain = this.normalizeHost(this.domain);
+    const apiHost = this.extractHost(normalizedApiUrl);
+    const domainHost = this.extractHost(normalizedDomain);
+
+    const derivedPublicUrl = domainHost ? `https://${domainHost}` : normalizedDomain;
+    const endpoints = {
+      restApiBase: `${normalizedApiUrl}/openvidu/api`,
+      publicDomain: derivedPublicUrl,
+      websocketHint: domainHost ? `wss://${domainHost}` : 'wss://<OPENVIDU_DOMAIN>',
+    };
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'OpenVidu endpoint validation completed',
+      'OpenViduVideoProvider.onModuleInit',
+      {
+        apiUrl: normalizedApiUrl,
+        domain: normalizedDomain,
+        apiHost,
+        domainHost,
+        endpoints,
+        note: 'The browser signaling endpoint must be reachable on the public OpenVidu domain, and the backend REST endpoint must point to the same deployment.',
+      }
+    );
+
+    if (apiHost && domainHost && apiHost !== domainHost) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'OpenVidu configuration mismatch detected',
+        'OpenViduVideoProvider.onModuleInit',
+        {
+          apiHost,
+          domainHost,
+          apiUrl: normalizedApiUrl,
+          domain: normalizedDomain,
+          expected:
+            'OPENVIDU_URL and OPENVIDU_DOMAIN should point to the same OpenVidu deployment host',
+        }
+      );
+    }
+  }
+
   /**
    * Check if provider is enabled
    */
@@ -125,6 +171,27 @@ export class OpenViduVideoProvider implements IVideoProvider {
    */
   private getAuthHeader(): string {
     return `Basic ${Buffer.from(`OPENVIDUAPP:${this.secret}`).toString('base64')}`;
+  }
+
+  private normalizeUrl(value: string): string {
+    return value.replace(/\/+$/, '');
+  }
+
+  private normalizeHost(value: string): string {
+    return value
+      .trim()
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+  }
+
+  private extractHost(value: string): string | null {
+    try {
+      const normalized =
+        value.startsWith('http://') || value.startsWith('https://') ? value : `https://${value}`;
+      return new URL(normalized).host;
+    } catch {
+      return null;
+    }
   }
 
   /**
