@@ -615,11 +615,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       throw new NotFoundException('This video request is awaiting slot confirmation.');
     }
 
-    // Only CONFIRMED and IN_PROGRESS are joinable
+    // SCHEDULED, CONFIRMED and IN_PROGRESS are joinable.
+    // SCHEDULED is included because confirmVideoSlot sets the status to SCHEDULED
+    // after the doctor selects a slot, and both participants need to join from that state.
     if (
-      ![AppointmentStatus.CONFIRMED, AppointmentStatus.IN_PROGRESS].includes(
-        appointmentStatus as AppointmentStatus
-      )
+      ![
+        AppointmentStatus.SCHEDULED,
+        AppointmentStatus.CONFIRMED,
+        AppointmentStatus.IN_PROGRESS,
+      ].includes(appointmentStatus as AppointmentStatus)
     ) {
       throw new NotFoundException('This video request is awaiting slot confirmation.');
     }
@@ -911,6 +915,45 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         const startTimeMs: number = session.startTime.getTime();
         const endTimeMs: number = session.endTime.getTime();
         duration = Math.floor((endTimeMs - startTimeMs) / 1000);
+      }
+
+      // Transition the actual Appointment to COMPLETED status
+      try {
+        await this.databaseService.executeHealthcareWrite(
+          async client => {
+            // Fallback to raw Prisma client for the appointment table
+            const rawClient = client as unknown as {
+              appointment: {
+                update: (args: {
+                  where: { id: string };
+                  data: { status: string };
+                }) => Promise<void>;
+              };
+            };
+            await rawClient.appointment.update({
+              where: { id: resolvedAppointmentId },
+              data: { status: 'COMPLETED' },
+            });
+          },
+          {
+            userId,
+            userRole: String(userRole).toUpperCase(),
+            clinicId: '', // We don't have clinicId here, but it can be empty string or retrieved
+            operation: 'UPDATE_APPOINTMENT',
+            resourceType: 'APPOINTMENT',
+            resourceId: resolvedAppointmentId,
+            ipAddress: 'internal',
+            userAgent: 'VideoService',
+          }
+        );
+      } catch (dbError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.ERROR,
+          `Failed to update appointment status to COMPLETED: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+          'VideoService.endConsultation',
+          { appointmentId: resolvedAppointmentId }
+        );
       }
 
       // Emit event
