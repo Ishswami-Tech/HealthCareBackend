@@ -2748,6 +2748,34 @@ export class BillingService {
         invoice = await this.markInvoiceAsPaid(payment.invoiceId);
       }
 
+      if (incomingStatusLower === 'completed' && payment.appointmentId) {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(
+          payment.appointmentId
+        );
+        if (appointment) {
+          await Promise.all([
+            this.cacheService.invalidateAppointmentCache(
+              appointment.id,
+              appointment.patientId || undefined,
+              appointment.doctorId || undefined,
+              appointment.clinicId || clinicId
+            ),
+            appointment.patientId
+              ? this.cacheService.invalidatePatientCache(
+                  appointment.patientId,
+                  appointment.clinicId || clinicId
+                )
+              : Promise.resolve(0),
+            appointment.doctorId
+              ? this.cacheService.invalidateDoctorCache(
+                  appointment.doctorId,
+                  appointment.clinicId || clinicId
+                )
+              : Promise.resolve(0),
+          ]);
+        }
+      }
+
       if (incomingStatusLower === 'completed' && payment.subscriptionId) {
         await this.renewSubscriptionAfterPayment(payment.subscriptionId);
         await this.prepareLedgerForSubscriptionPayment(payment.id, clinicId);

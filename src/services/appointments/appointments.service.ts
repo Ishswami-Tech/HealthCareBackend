@@ -2248,10 +2248,10 @@ export class AppointmentsService {
       role: _role,
       clinicId,
       ...(filters.locationId && { locationId: filters.locationId }),
-      ...(doctor && { doctorId: doctor }),
-      ...(filters.doctorId && { doctorId: filters.doctorId }),
-      ...(filters.providerId && { doctorId: filters.providerId }),
-      ...(filters.patientId && { patientId: filters.patientId }),
+      ...(doctor ? { doctorId: doctor } : {}),
+      ...(_role !== 'DOCTOR' && filters.doctorId ? { doctorId: filters.doctorId } : {}),
+      ...(_role !== 'DOCTOR' && filters.providerId ? { doctorId: filters.providerId } : {}),
+      ...(_role !== 'PATIENT' && filters.patientId ? { patientId: filters.patientId } : {}),
       ...(_role === 'PATIENT' && patient?.id ? { patientId: patient.id } : {}),
     };
 
