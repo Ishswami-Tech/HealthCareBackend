@@ -200,6 +200,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
   private getHttpConfig(options?: {
     headers?: Record<string, string>;
     timeout?: number;
+    suppressErrorLogging?: boolean;
   }): HttpRequestOptions {
     // Use the centralized HTTP service's getHttpConfig for SSL handling
     const baseConfig = this.httpService.getHttpConfig({
@@ -221,6 +222,12 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       result.timeout = baseConfig.timeout;
     }
 
+    // Forward suppressErrorLogging so expected failures (e.g. 404 in createOrGetSession)
+    // don't produce noisy [ERROR] lines in the transport logs.
+    if (options?.suppressErrorLogging) {
+      result.suppressErrorLogging = true;
+    }
+
     // Note: httpsAgent is already handled by httpService.getHttpConfig() for SSL in dev
     // We don't need to copy it here as it will be applied automatically
 
@@ -228,12 +235,15 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
   }
 
   /**
-   * Generate secure room name
+   * Generate secure room name.
+   * MUST be deterministic for a given appointment+clinic so that all
+   * participants resolve to the same OpenVidu session regardless of
+   * when they call generateMeetingToken.
    */
   private generateSecureRoomName(appointmentId: string, clinicId: string): string {
     const hash = crypto
       .createHash('sha256')
-      .update(`${appointmentId}-${clinicId}-${Date.now()}`)
+      .update(`${appointmentId}-${clinicId}-healthcare-video-salt`)
       .digest('hex');
     return `appointment-${appointmentId}-${hash.substring(0, 8)}`;
   }
@@ -243,10 +253,11 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
    */
   private async createOrGetSession(roomName: string): Promise<OpenViduRoomConfig> {
     try {
-      // Try to get existing session
+      // Try to get existing session — 404 is expected when the session
+      // hasn't been created yet, so suppress the error log.
       const response = await this.httpService.get<OpenViduRoomConfig>(
         `${this.apiUrl}/openvidu/api/sessions/${roomName}`,
-        this.getHttpConfig()
+        this.getHttpConfig({ suppressErrorLogging: true })
       );
 
       if (response.data) {
@@ -347,10 +358,9 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       }
 
       // Determine OpenVidu role based on user role
-      // Doctors, Receptionists, and Admins are PUBLISHERs (or MODERATORs if needed)
-      // Patients are SUBSCRIBERs (based on existing logic, though arguably should be PUBLISHERs for 2-way)
-      // Preserving existing logic for patient/doctor, adding others as PUBLISHER
-      const openViduRole = userRole === 'patient' ? 'SUBSCRIBER' : 'PUBLISHER';
+      // Both doctor and patient need PUBLISHER to enable two-way audio/video.
+      // Receptionists and Admins are also PUBLISHERs if they need to join.
+      const openViduRole = 'PUBLISHER';
 
       const connectionResponse = await this.httpService.post<OpenViduConnectionResponse>(
         `${this.apiUrl}/openvidu/api/sessions/${session.id}/connection`,
@@ -449,12 +459,14 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
+      // Get appointment to fetch clinicId for audit logging
+      const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+      const clinicId = appointment?.clinicId || '';
+
       // Get existing session or create new one
       let session = await this.getConsultationSession(resolvedAppointmentId);
       if (!session) {
         // Generate token to create session
-        const appointment =
-          await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
         if (!appointment || !isVideoCallAppointment(appointment)) {
           throw new HealthcareError(
             ErrorCode.DATABASE_RECORD_NOT_FOUND,
@@ -511,7 +523,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
           // Map expanded roles to audit log roles.
           // Database audit roles might be restricted? using DOCTOR/PATIENT as fallback or specific if available
           userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit log
-          clinicId: '',
+          clinicId,
           operation: 'START_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
           resourceId: resolvedAppointmentId,
@@ -560,16 +572,14 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       }
 
       // 1. Terminate session in OpenVidu REST API
+      // Use the session's roomId (= the customSessionId used at creation time),
+      // NOT the appointmentId which is a different value.
+      const openViduSessionId = session.roomId || session.roomName;
       try {
-        await this.httpService.delete(
-          `${this.apiUrl}/openvidu/api/sessions/${resolvedAppointmentId}`,
-          {
-            auth: {
-              username: 'OPENVIDUAPP',
-              password: this.secret,
-            },
-          }
-        );
+        await this.httpService.delete(`${this.apiUrl}/openvidu/api/sessions/${openViduSessionId}`, {
+          ...this.getHttpConfig(),
+          suppressErrorLogging: true,
+        });
       } catch (ovError) {
         // 404 means session already ended or doesn't exist in OpenVidu, which is fine
         const axiosError = ovError as AxiosError;
@@ -580,12 +590,16 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
             LogLevel.WARN,
             `Failed to delete session in OpenVidu: ${ovError instanceof Error ? ovError.message : 'Unknown error'}`,
             'OpenViduVideoProvider.endConsultation',
-            { appointmentId: resolvedAppointmentId }
+            { appointmentId: resolvedAppointmentId, openViduSessionId }
           );
         }
       }
 
-      // 2. Update Database Record
+      // 2. Fetch appointment to get clinicId for audit log
+      const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+      const clinicId = appointment?.clinicId || '';
+
+      // 3. Update Database Record
       await this.databaseService.executeHealthcareWrite(
         async client => {
           const delegate = getVideoConsultationDelegate(client);
@@ -614,7 +628,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         {
           userId,
           userRole: userRole === 'patient' ? 'PATIENT' : 'DOCTOR', // Fallback for audit log
-          clinicId: '',
+          clinicId,
           operation: 'END_VIDEO_CONSULTATION',
           resourceType: 'VIDEO_CONSULTATION',
           resourceId: resolvedAppointmentId,

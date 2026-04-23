@@ -286,6 +286,8 @@ export class VideoController {
         return { userId, userRole: 'patient' };
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
+      case Role.THERAPIST:
+      case Role.COUNSELOR:
         return { userId, userRole: 'doctor' };
       case Role.NURSE:
       case Role.RECEPTIONIST:
@@ -581,7 +583,15 @@ export class VideoController {
    */
   @Post('consultation/start')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.THERAPIST, Role.COUNSELOR)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.NURSE,
+    Role.RECEPTIONIST
+  )
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({
@@ -629,24 +639,6 @@ export class VideoController {
       const sessionChatEnabled: boolean = session.chatEnabled;
       const sessionWaitingRoomEnabled: boolean = session.waitingRoomEnabled;
 
-      // Emit event
-      await this.eventService.emitEnterprise('video.consultation.started', {
-        eventId: `video-consultation-started-${body.appointmentId}-${Date.now()}`,
-        eventType: 'video.consultation.started',
-        category: EventCategory.SYSTEM,
-        priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
-        source: 'VideoController',
-        version: '1.0.0',
-        payload: {
-          appointmentId: body.appointmentId,
-          sessionId,
-          userId: authenticatedUser.userId,
-          userRole: authenticatedUser.userRole,
-          provider: this.videoService.getCurrentProvider(),
-        },
-      });
-
       // Map to DTO - all values already extracted above
       const sessionDtoResult: unknown = this.createVideoConsultationSessionDto(
         sessionId,
@@ -692,7 +684,15 @@ export class VideoController {
    */
   @Post('consultation/end')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.PATIENT, Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.THERAPIST, Role.COUNSELOR)
+  @Roles(
+    Role.PATIENT,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.NURSE,
+    Role.RECEPTIONIST
+  )
   @ClinicRoute()
   @RequireResourcePermission('video', 'update', { requireOwnership: true })
   @ApiOperation({
@@ -740,29 +740,6 @@ export class VideoController {
       const sessionScreenSharingEnabled: boolean = session.screenSharingEnabled;
       const sessionChatEnabled: boolean = session.chatEnabled;
       const sessionWaitingRoomEnabled: boolean = session.waitingRoomEnabled;
-
-      // Calculate duration - all values already extracted above
-      const duration =
-        sessionStartTime && sessionEndTime
-          ? Math.floor((sessionEndTime.getTime() - sessionStartTime.getTime()) / 1000)
-          : undefined;
-
-      // Emit event
-      await this.eventService.emitEnterprise('video.consultation.ended', {
-        eventId: `video-consultation-ended-${body.appointmentId}-${Date.now()}`,
-        eventType: 'video.consultation.ended',
-        category: EventCategory.SYSTEM,
-        priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
-        source: 'VideoController',
-        version: '1.0.0',
-        payload: {
-          appointmentId: body.appointmentId,
-          sessionId,
-          duration,
-          recordingUrl: undefined, // Would be populated from session if available
-        },
-      });
 
       // Map to DTO - all values already extracted above
       const sessionDtoResult: unknown = this.createVideoConsultationSessionDto(
