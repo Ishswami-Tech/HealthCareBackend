@@ -33,6 +33,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import { LogType, LogLevel } from '@core/types';
+import { AppointmentType, TreatmentType } from '@core/types/enums.types';
 import { HEALTHCARE_QUEUE } from './queue.constants';
 
 // Internal imports - Types
@@ -49,6 +50,20 @@ import {
 } from '@core/types/queue.types';
 
 // Domain is always 'clinic' — single-application healthcare system
+
+type QueueFilterOption = {
+  value: string;
+  label: string;
+  description: string;
+  aliases?: string[];
+};
+
+type QueueFilterGroup = {
+  key: string;
+  label: string;
+  description: string;
+  filters: QueueFilterOption[];
+};
 
 /**
  * Enterprise Queue Service for Healthcare Applications
@@ -108,6 +123,329 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     LOW: 3,
     BACKGROUND: 1,
   } as const;
+
+  // Logical queue filters supported by the unified queue model.
+  // These values are used for dashboard filtering and legacy compatibility.
+  static readonly QUEUE_FILTER_CATALOG: readonly QueueFilterGroup[] = [
+    {
+      key: 'appointments',
+      label: 'Appointments',
+      description:
+        'Appointment lifecycle, queue orchestration, reminders, and follow-up workflows.',
+      filters: [
+        {
+          value: 'appointment',
+          label: 'Appointments',
+          description: 'All appointment queue activity',
+          aliases: ['appointment-queue', 'enhanced-appointment-queue', HEALTHCARE_QUEUE],
+        },
+        {
+          value: 'queue_management',
+          label: 'Queue Management',
+          description: 'Queue reordering, transfer, pause, and resume operations',
+          aliases: ['queue-management', 'queue-management-queue'],
+        },
+        {
+          value: 'waiting_list',
+          label: 'Waiting List',
+          description: 'Patients waiting to be moved into consultation',
+          aliases: ['waiting-list'],
+        },
+        {
+          value: 'follow_up',
+          label: 'Follow Up',
+          description: 'Follow-up scheduling and reminders',
+          aliases: ['follow-up', 'follow-up-queue'],
+        },
+        {
+          value: 'reminder',
+          label: 'Reminder',
+          description: 'Appointment reminder dispatch jobs',
+          aliases: ['reminder-queue'],
+        },
+        {
+          value: 'calendar_sync',
+          label: 'Calendar Sync',
+          description: 'Calendar synchronization and scheduling sync jobs',
+          aliases: ['calendar-sync', 'calendar-sync-queue'],
+        },
+        {
+          value: 'doctor_availability',
+          label: 'Doctor Availability',
+          description: 'Availability lookup and slot generation jobs',
+          aliases: ['availability', 'doctor-availability'],
+        },
+        {
+          value: 'recurring_appointment',
+          label: 'Recurring Appointments',
+          description: 'Recurring series and template-based appointment jobs',
+          aliases: ['recurring', 'series'],
+        },
+      ],
+    },
+    {
+      key: 'appointment-modes',
+      label: 'Appointment Modes',
+      description: 'Appointment entry mode used to classify the consultation request.',
+      filters: [
+        {
+          value: AppointmentType.IN_PERSON,
+          label: 'In Person',
+          description: 'Physical clinic appointment',
+        },
+        {
+          value: AppointmentType.VIDEO_CALL,
+          label: 'Video Call',
+          description: 'Remote video consultation appointment',
+        },
+        {
+          value: AppointmentType.HOME_VISIT,
+          label: 'Home Visit',
+          description: 'Doctor visit at patient location',
+        },
+      ],
+    },
+    {
+      key: 'treatments',
+      label: 'Treatments',
+      description: 'Clinical and Ayurvedic treatment intent for appointments.',
+      filters: [
+        {
+          value: TreatmentType.GENERAL_CONSULTATION,
+          label: 'General Consultation',
+          description: 'General consultation workflow',
+        },
+        {
+          value: TreatmentType.FOLLOW_UP,
+          label: 'Follow Up',
+          description: 'Follow-up consultation workflow',
+        },
+        {
+          value: 'procedural_care',
+          label: 'Procedural Care',
+          description: 'Combined therapeutic and surgical appointment workflow',
+          aliases: [TreatmentType.THERAPY, TreatmentType.SURGERY],
+        },
+        {
+          value: 'diagnostic_preventive',
+          label: 'Diagnostic / Preventive Care',
+          description: 'Combined diagnostic, imaging, and preventive workflow',
+          aliases: [TreatmentType.LAB_TEST, TreatmentType.IMAGING, TreatmentType.VACCINATION],
+        },
+        {
+          value: TreatmentType.SPECIAL_CASE,
+          label: 'Special Case / Complex Care',
+          description: 'Complex, sensitive, or unusual care needs',
+        },
+        {
+          value: TreatmentType.GERIATRIC_CARE,
+          label: 'Senior Citizen',
+          description: 'Care workflow for senior citizens and older adults',
+        },
+        {
+          value: TreatmentType.VIDDHAKARMA,
+          label: 'Viddhakarma',
+          description: 'Ayurvedic puncture-based procedure workflow',
+        },
+        {
+          value: TreatmentType.AGNIKARMA,
+          label: 'Agnikarma',
+          description: 'Ayurvedic heat-based procedure workflow',
+        },
+        {
+          value: TreatmentType.PANCHAKARMA,
+          label: 'Panchakarma',
+          description: 'Ayurvedic detoxification workflow',
+        },
+        {
+          value: TreatmentType.NADI_PARIKSHA,
+          label: 'Nadi Pariksha',
+          description: 'Pulse diagnosis workflow',
+        },
+        {
+          value: TreatmentType.SHIRODHARA,
+          label: 'Shirodhara',
+          description: 'Ayurvedic therapy workflow',
+        },
+        {
+          value: 'ayurvedic_procedures',
+          label: 'Ayurvedic Procedures',
+          description: 'Combined Ayurvedic procedure workflow',
+          aliases: [
+            TreatmentType.DOSHA_ANALYSIS,
+            TreatmentType.VIRECHANA,
+            TreatmentType.ABHYANGA,
+            TreatmentType.SWEDANA,
+            TreatmentType.BASTI,
+            TreatmentType.NASYA,
+            TreatmentType.RAKTAMOKSHANA,
+          ],
+        },
+      ],
+    },
+    {
+      key: 'billing-and-payments',
+      label: 'Billing And Payments',
+      description: 'Payment collection, reconciliation, invoice generation, and billing support.',
+      filters: [
+        {
+          value: 'billing',
+          label: 'Billing',
+          description: 'General billing and invoice management',
+          aliases: ['invoice', 'invoice-pdf-queue', 'bulk-invoice-queue'],
+        },
+        {
+          value: 'payment',
+          label: 'Payments',
+          description: 'Payment collection and processing',
+          aliases: [
+            'payments',
+            'payment-processing-queue',
+            'payment-reconciliation-queue',
+            'payment-analytics',
+            'payment-notification',
+          ],
+        },
+        {
+          value: 'invoice',
+          label: 'Invoices',
+          description: 'Invoice PDF generation and bulk invoice jobs',
+          aliases: ['invoice-pdf-queue', 'bulk-invoice-queue'],
+        },
+        {
+          value: 'payment_processing',
+          label: 'Payment Processing',
+          description: 'Transaction capture and payment gateway processing',
+        },
+        {
+          value: 'payment_reconciliation',
+          label: 'Payment Reconciliation',
+          description: 'Reconciliation and settlement workflows',
+        },
+        {
+          value: 'payment_analytics',
+          label: 'Payment Analytics',
+          description: 'Payment reporting and analytics workflows',
+        },
+      ],
+    },
+    {
+      key: 'video',
+      label: 'Video',
+      description: 'Video consultation orchestration, recording, transcoding, and analytics.',
+      filters: [
+        {
+          value: 'video',
+          label: 'Video',
+          description: 'All video consultation jobs',
+          aliases: ['video-recording-queue', 'video-transcoding-queue', 'video-analytics-queue'],
+        },
+        {
+          value: 'video_recording',
+          label: 'Video Recording',
+          description: 'Consultation recording jobs',
+          aliases: ['video-recording-queue'],
+        },
+        {
+          value: 'video_transcoding',
+          label: 'Video Transcoding',
+          description: 'Video transcoding pipeline jobs',
+          aliases: ['video-transcoding-queue'],
+        },
+        {
+          value: 'video_analytics',
+          label: 'Video Analytics',
+          description: 'Video analytics and quality jobs',
+          aliases: ['video-analytics-queue'],
+        },
+      ],
+    },
+    {
+      key: 'clinical-support',
+      label: 'Clinical Support',
+      description: 'Diagnostics, EHR imports, and cross-service operational support.',
+      filters: [
+        {
+          value: 'email',
+          label: 'Email',
+          description: 'Email delivery jobs',
+          aliases: ['email-queue'],
+        },
+        {
+          value: 'notification',
+          label: 'Notifications',
+          description: 'Push, in-app, SMS, and WhatsApp notifications',
+          aliases: ['notification-queue'],
+        },
+        {
+          value: 'lab_report',
+          label: 'Lab Reports',
+          description: 'Lab report generation and delivery jobs',
+          aliases: ['lab-report-queue'],
+        },
+        {
+          value: 'imaging',
+          label: 'Imaging',
+          description: 'Imaging and scan workflow jobs',
+          aliases: ['imaging-queue'],
+        },
+        {
+          value: 'bulk_ehr_import',
+          label: 'Bulk EHR Import',
+          description: 'Bulk EHR ingestion and migration jobs',
+          aliases: ['bulk-ehr-import-queue'],
+        },
+        {
+          value: 'analytics',
+          label: 'Analytics',
+          description: 'General analytics and reporting jobs',
+          aliases: ['analytics-queue'],
+        },
+        {
+          value: 'ayurveda_therapy',
+          label: 'Ayurveda Therapy',
+          description: 'Ayurvedic therapy job workflows',
+          aliases: ['ayurveda-therapy'],
+        },
+        {
+          value: 'vidhakarma',
+          label: 'Viddhakarma',
+          description: 'Viddhakarma treatment jobs',
+          aliases: ['vidhakarma-queue'],
+        },
+        {
+          value: 'panchakarma',
+          label: 'Panchakarma',
+          description: 'Panchakarma treatment jobs',
+          aliases: ['panchakarma-queue'],
+        },
+        {
+          value: 'chequp',
+          label: 'Chequp',
+          description: 'Chequp treatment or checkup jobs',
+          aliases: ['chequp-queue'],
+        },
+        {
+          value: 'service',
+          label: 'Service',
+          description: 'Generic service queue jobs',
+          aliases: ['service-queue'],
+        },
+      ],
+    },
+  ] as const;
+
+  static readonly SUPPORTED_QUEUE_FILTERS = QueueService.flattenQueueFilterCatalog(
+    QueueService.QUEUE_FILTER_CATALOG
+  );
+
+  private static flattenQueueFilterCatalog(catalog: readonly QueueFilterGroup[]): string[] {
+    const filters = catalog.flatMap(group =>
+      group.filters.flatMap(filter => [filter.value, ...(filter.aliases || [])])
+    );
+    const normalized = filters.map(filter => filter.trim()).filter(Boolean);
+    return Array.from(new Set([HEALTHCARE_QUEUE, ...normalized]));
+  }
 
   // Instance properties
   // Initialize Maps with defensive checks to prevent undefined errors
@@ -661,6 +999,28 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     return Array.from(this.queues.keys());
   }
 
+  /**
+   * Get the queue names supported by the unified queue model.
+   * This is used by dashboards and filters to show the logical queue categories
+   * even though BullMQ itself uses a single physical queue.
+   */
+  getSupportedQueueFilters(): string[] {
+    return Array.from(new Set(QueueService.SUPPORTED_QUEUE_FILTERS));
+  }
+
+  /**
+   * Get the structured queue filter catalog for dashboard consumers.
+   */
+  getQueueFilterCatalog(): QueueFilterGroup[] {
+    return QueueService.QUEUE_FILTER_CATALOG.map(group => ({
+      ...group,
+      filters: group.filters.map(filter => ({
+        ...filter,
+        ...(filter.aliases ? { aliases: [...filter.aliases] } : {}),
+      })),
+    }));
+  }
+
   private pick(...values: Array<string | undefined>): string {
     const value = values.find(item => typeof item === 'string' && item.trim().length > 0);
     return value?.trim() || '';
@@ -679,13 +1039,15 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       return JobType.APPOINTMENT;
     if (queueName === 'email-queue') return JobType.EMAIL;
     if (queueName === 'notification-queue') return JobType.NOTIFICATION;
-    if (queueName === 'payment-processing-queue' || queueName === 'payment-reconciliation-queue')
-      return JobType.PAYMENT_PROCESSING;
+    if (queueName === 'invoice-pdf-queue') return JobType.INVOICE_PDF;
+    if (queueName === 'bulk-invoice-queue') return JobType.BULK_INVOICE;
+    if (queueName === 'payment-processing-queue') return JobType.PAYMENT_PROCESSING;
+    if (queueName === 'payment-reconciliation-queue') return JobType.PAYMENT_RECONCILIATION;
+    if (queueName === 'payment-analytics-queue') return JobType.PAYMENT_ANALYTICS;
+    if (queueName === 'payment-notification-queue') return JobType.PAYMENT_NOTIFICATION;
     if (queueName === 'lab-report-queue') return JobType.LAB_REPORT;
     if (queueName === 'imaging-queue') return JobType.IMAGING;
     if (queueName === 'bulk-ehr-import-queue') return JobType.BULK_EHR_IMPORT;
-    if (queueName === 'invoice-pdf-queue') return JobType.INVOICE_PDF;
-    if (queueName === 'bulk-invoice-queue') return JobType.BULK_INVOICE;
     if (queueName === 'video-recording-queue') return JobType.VIDEO_RECORDING;
     if (queueName === 'video-transcoding-queue') return JobType.VIDEO_TRANSCODING;
     if (queueName === 'video-analytics-queue') return JobType.VIDEO_ANALYTICS;
@@ -696,6 +1058,72 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     if (queueName === 'calendar-sync-queue') return JobType.CALENDAR_SYNC;
 
     return JobType.UNKNOWN;
+  }
+
+  private getQueueJobFamily(jobType: string, data: Record<string, unknown> = {}): string {
+    const normalizedJobType = jobType.trim().toLowerCase();
+    const normalizedQueueType = this.pick(
+      this.recordString(data, 'queueType'),
+      this.recordString(data, 'queueCategory'),
+      this.recordString(data, 'treatmentType'),
+      this.recordString(data, 'serviceBucket')
+    )
+      .trim()
+      .toLowerCase();
+
+    if (
+      normalizedJobType.includes('appointment') ||
+      normalizedQueueType.includes('appointment') ||
+      normalizedQueueType.includes('consultation') ||
+      normalizedQueueType.includes('follow')
+    ) {
+      return 'appointments';
+    }
+
+    if (
+      normalizedJobType.includes('payment') ||
+      normalizedJobType.includes('invoice') ||
+      normalizedQueueType.includes('billing') ||
+      normalizedQueueType.includes('invoice') ||
+      normalizedQueueType.includes('payment')
+    ) {
+      return 'billing-and-payments';
+    }
+
+    if (normalizedJobType.includes('video') || normalizedQueueType.includes('video')) {
+      return 'video';
+    }
+
+    if (
+      normalizedJobType.includes('email') ||
+      normalizedJobType.includes('notification') ||
+      normalizedJobType.includes('reminder')
+    ) {
+      return 'clinical-support';
+    }
+
+    if (
+      normalizedJobType.includes('lab') ||
+      normalizedJobType.includes('imaging') ||
+      normalizedJobType.includes('bulk_ehr') ||
+      normalizedQueueType.includes('lab') ||
+      normalizedQueueType.includes('imaging')
+    ) {
+      return 'clinical-support';
+    }
+
+    if (
+      normalizedJobType.includes('vidhakarma') ||
+      normalizedJobType.includes('panchakarma') ||
+      normalizedJobType.includes('chequp') ||
+      normalizedJobType.includes('ayurveda') ||
+      normalizedQueueType.includes('ayurveda') ||
+      normalizedQueueType.includes('panchakarma')
+    ) {
+      return 'clinical-support';
+    }
+
+    return this.toQueueCategory(jobType);
   }
 
   private mapNumericToPriorityLevel(numericPriority: number): JobPriorityLevel {
@@ -905,10 +1333,21 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       queueNames,
       totalQueues: queueNames.length,
       totalEntries: entries.length,
+      availableQueueFilters: this.getSupportedQueueFilters(),
+      availableQueueFilterCatalog: this.getQueueFilterCatalog(),
+      activeQueueName: HEALTHCARE_QUEUE,
       filters: {
         ...(filters.queueName ? { queueName: filters.queueName } : {}),
         ...(filters.queueType ? { queueType: filters.queueType } : {}),
         ...(filters.type ? { type: filters.type } : {}),
+        ...(filters.jobType ? { jobType: filters.jobType } : {}),
+        ...(filters.jobFamily ? { jobFamily: filters.jobFamily } : {}),
+        ...(filters.family ? { family: filters.family } : {}),
+        ...(filters.module ? { module: filters.module } : {}),
+        ...(filters.appointmentType ? { appointmentType: filters.appointmentType } : {}),
+        ...(filters.treatmentType ? { treatmentType: filters.treatmentType } : {}),
+        ...(filters.serviceBucket ? { serviceBucket: filters.serviceBucket } : {}),
+        ...(filters.queueCategory ? { queueCategory: filters.queueCategory } : {}),
         ...(filters.domain ? { domain: filters.domain } : {}),
         ...(filters.startDate ? { startDate: filters.startDate } : {}),
         ...(filters.endDate ? { endDate: filters.endDate } : {}),
@@ -1279,6 +1718,16 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     const scopedDefaults = clinicId ? { ...defaults, clinicId } : defaults;
 
     switch (queueName) {
+      case 'invoice-pdf-queue':
+      case 'bulk-invoice-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 15,
+          averageConsultationTime: 3,
+          autoCallNext: false,
+          allowWalkIns: false,
+          priorityEnabled: false,
+        };
       case 'email-queue':
         return {
           ...scopedDefaults,
@@ -1298,10 +1747,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           priorityEnabled: false,
         };
       case 'payment-processing-queue':
+      case 'payment-reconciliation-queue':
         return {
           ...scopedDefaults,
           maxWaitTime: 20,
           averageConsultationTime: 5,
+          autoCallNext: false,
+          allowWalkIns: false,
+        };
+      case 'video-recording-queue':
+      case 'video-transcoding-queue':
+      case 'video-analytics-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 25,
+          averageConsultationTime: 10,
+          autoCallNext: false,
+          allowWalkIns: false,
+          priorityEnabled: false,
+        };
+      case 'lab-report-queue':
+      case 'imaging-queue':
+      case 'bulk-ehr-import-queue':
+        return {
+          ...scopedDefaults,
+          maxWaitTime: 30,
+          averageConsultationTime: 10,
           autoCallNext: false,
           allowWalkIns: false,
         };
@@ -1322,18 +1793,33 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     switch (queueName) {
       case 'appointment-queue':
       case 'enhanced-appointment-queue':
+      case 'healthcare-queue':
         return 120;
       case 'email-queue':
         return 5000;
       case 'notification-queue':
         return 10000;
       case 'payment-processing-queue':
+      case 'payment-reconciliation-queue':
         return 500;
+      case 'invoice-pdf-queue':
+      case 'bulk-invoice-queue':
+        return 400;
+      case 'video-recording-queue':
+      case 'video-transcoding-queue':
+      case 'video-analytics-queue':
+        return 350;
+      case 'lab-report-queue':
+      case 'imaging-queue':
+      case 'bulk-ehr-import-queue':
+        return 200;
       case 'analytics-queue':
         return 250;
       case 'reminder-queue':
       case 'follow-up-queue':
         return 1000;
+      case 'service-queue':
+        return 180;
       default:
         return 250;
     }
@@ -1381,20 +1867,31 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     if (exactMatch) return exactMatch;
 
     const lower = value.toLowerCase();
+    if (lower === HEALTHCARE_QUEUE || lower === 'healthcare' || lower === 'unified-queue')
+      return HEALTHCARE_QUEUE;
+    if (lower.includes('billing')) return 'invoice-pdf-queue';
+    if (lower.includes('invoice')) return 'invoice-pdf-queue';
     if (lower.includes('notification')) return 'notification-queue';
     if (lower.includes('email')) return 'email-queue';
+    if (lower.includes('payment-recon')) return 'payment-reconciliation-queue';
     if (lower.includes('payment')) return 'payment-processing-queue';
     if (lower.includes('service')) return 'service-queue';
     if (lower.includes('analytics')) return 'analytics-queue';
     if (lower.includes('follow')) return 'follow-up-queue';
     if (lower.includes('reminder')) return 'reminder-queue';
     if (lower.includes('appointment')) return 'appointment-queue';
+    if (lower.includes('video')) return 'video-recording-queue';
+    if (lower.includes('lab')) return 'lab-report-queue';
+    if (lower.includes('imaging')) return 'imaging-queue';
+    if (lower.includes('ayurveda') || lower.includes('panchakarma')) return 'panchakarma-queue';
+    if (lower.includes('viddha')) return 'vidhakarma-queue';
+    if (lower.includes('chequp')) return 'chequp-queue';
     return value;
   }
 
   private resolveQueueNamesForExport(queueName?: string): string[] {
     const resolved = this.resolveQueueName(queueName);
-    if (resolved) return [resolved];
+    if (resolved && this.queues.has(resolved)) return [resolved];
     return this.getTrackedQueueNames();
   }
 
@@ -1426,18 +1923,32 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     queueIndex?: number
   ): QueueExportEntry {
     const data = this.jobData(job);
+    const jobType = this.pick(
+      this.recordString(data, 'jobType'),
+      this.recordString(data, 'type'),
+      job.name
+    );
     const queueType = this.pick(
       this.recordString(data, 'queueType'),
       this.recordString(data, 'type'),
       this.recordString(data, 'queueCategory'),
-      job.name,
+      jobType,
       queueName
     );
+    const queueCategory = this.pick(
+      this.recordString(data, 'queueCategory'),
+      this.toQueueCategory(queueType)
+    );
+    const jobFamily = this.getQueueJobFamily(jobType, data);
     const patientId = this.recordString(data, 'patientId');
     const doctorId = this.recordString(data, 'doctorId');
     const appointmentId = this.recordString(data, 'appointmentId');
     const queueOwnerId = this.recordString(data, 'queueOwnerId');
     const locationId = this.recordString(data, 'locationId');
+    const treatmentType = this.recordString(data, 'treatmentType');
+    const appointmentType = this.recordString(data, 'appointmentType');
+    const appointmentMode = this.recordString(data, 'appointmentMode');
+    const serviceBucket = this.recordString(data, 'serviceBucket');
     const priority = typeof job.opts.priority === 'number' ? job.opts.priority : undefined;
     const timestamp =
       typeof job.timestamp === 'number' ? new Date(job.timestamp).toISOString() : undefined;
@@ -1449,11 +1960,14 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     return {
       id: typeof job.id === 'string' ? job.id : `${queueName}-${queueIndex ?? 0}-${position}`,
       queueName,
+      jobType,
+      jobFamily,
       queueType,
-      queueCategory: this.pick(
-        this.recordString(data, 'queueCategory'),
-        this.toQueueCategory(queueType)
-      ),
+      queueCategory,
+      ...(appointmentType ? { appointmentType } : {}),
+      ...(appointmentMode ? { appointmentMode } : {}),
+      ...(treatmentType ? { treatmentType } : {}),
+      ...(serviceBucket ? { serviceBucket } : {}),
       ...(clinicId ? { clinicId } : {}),
       ...(patientId ? { patientId } : {}),
       ...(doctorId ? { doctorId } : {}),

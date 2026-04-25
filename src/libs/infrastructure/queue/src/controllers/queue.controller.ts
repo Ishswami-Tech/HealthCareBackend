@@ -40,6 +40,15 @@ interface QueueQuery {
   locationId?: string;
   date?: string;
   limit?: string;
+  jobType?: string;
+  jobFamily?: string;
+  family?: string;
+  module?: string;
+  appointmentType?: string;
+  treatmentType?: string;
+  serviceBucket?: string;
+  queueCategory?: string;
+  appointmentMode?: string;
 }
 
 interface QueueAddBody {
@@ -76,6 +85,9 @@ export interface NotificationQueueBody {
 interface QueueEntryLike {
   id?: string;
   entryId?: string;
+  jobType?: string;
+  jobFamily?: string;
+  displayLabel?: string;
   appointmentId?: string;
   patientId?: string;
   doctorId?: string;
@@ -83,6 +95,10 @@ interface QueueEntryLike {
   queueName?: string;
   queueType?: string;
   queueCategory?: string;
+  appointmentType?: string;
+  treatmentType?: string;
+  serviceBucket?: string;
+  appointmentMode?: string;
   queueOwnerId?: string;
   status?: string;
   locationId?: string;
@@ -212,12 +228,13 @@ export class QueueController {
       return { success: true, data, meta: { clinicId, domain, total: data.length } };
     }
 
+    const usesLogicalQueueFilter = this.hasLogicalQueueFilter(query);
     const clinicQueue = await this.appointmentQueueService.getClinicQueue(
       clinicId,
       queueDate,
       domain
     );
-    if (clinicQueue.length > 0) {
+    if (clinicQueue.length > 0 && !usesLogicalQueueFilter) {
       const data = clinicQueue
         .map((entry, index) =>
           this.operationalEntry(
@@ -237,22 +254,26 @@ export class QueueController {
           total: data.length,
           source: 'operational-queue',
           date: queueDate,
+          ...this.queueDashboardMeta(),
         },
       };
     }
 
-    const queueNames = this.resolveQueueNames(query.queueName);
-    const rows: QueueEntryLike[] = [];
-    for (const queueName of queueNames) {
-      const jobs = await this.queueService.getJobs(queueName, { status: statuses, domain });
-      rows.push(...jobs.map((job, idx) => this.jobEntry(job, idx + 1, jobs.length, clinicId)));
-    }
+    const jobs = await this.queueService.getJobs(HEALTHCARE_QUEUE, { status: statuses, domain });
+    const rows = jobs.map((job, idx) => this.jobEntry(job, idx + 1, jobs.length, clinicId));
     const data = rows.filter(entry => this.matchEntry(entry, query));
     const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
     return {
       success: true,
       data: data.slice(0, limit),
-      meta: { clinicId, domain, total: data.length, source: 'job-queue-fallback', date: queueDate },
+      meta: {
+        clinicId,
+        domain,
+        total: data.length,
+        source: 'job-queue-fallback',
+        date: queueDate,
+        ...this.queueDashboardMeta(),
+      },
     };
   }
 
@@ -619,6 +640,22 @@ export class QueueController {
     return { success: true, data };
   }
 
+  @Get('filters')
+  @Roles(
+    Role.DOCTOR,
+    Role.RECEPTIONIST,
+    Role.CLINIC_ADMIN,
+    Role.SUPER_ADMIN,
+    Role.CLINIC_LOCATION_HEAD
+  )
+  @ApiOperation({ summary: 'Queue filter catalog' })
+  filters(): { success: true; data: Record<string, unknown> } {
+    return {
+      success: true,
+      data: this.queueDashboardMeta(),
+    };
+  }
+
   @Get('performance')
   @Roles(
     Role.DOCTOR,
@@ -630,7 +667,13 @@ export class QueueController {
   @ApiOperation({ summary: 'Queue performance' })
   async performance(): Promise<{ success: true; data: unknown }> {
     const data = await this.queueService.getPerformanceMetrics();
-    return { success: true, data };
+    return {
+      success: true,
+      data: {
+        ...data,
+        ...this.queueDashboardMeta(),
+      },
+    };
   }
 
   @Get('wait-times')
@@ -644,10 +687,17 @@ export class QueueController {
   @ApiOperation({ summary: 'Queue wait times' })
   async waitTimes(
     @Query() query: { queueName?: string }
-  ): Promise<{ success: true; data: unknown[] }> {
+  ): Promise<{ success: true; data: unknown[]; meta: Record<string, unknown> }> {
     const queueNames = this.resolveQueueNames(query.queueName);
     const data = await Promise.all(queueNames.map(name => this.queueService.getQueueMetrics(name)));
-    return { success: true, data };
+    return {
+      success: true,
+      data,
+      meta: {
+        requestedQueueName: query.queueName || null,
+        ...this.queueDashboardMeta(),
+      },
+    };
   }
 
   @Post('estimate-wait-time')
@@ -1072,10 +1122,17 @@ export class QueueController {
   async exportQueueGet(
     @Query() query: QueueExportInput,
     @Req() req: ClinicAuthenticatedRequest
-  ): Promise<{ success: true; data: unknown }> {
+  ): Promise<{ success: true; data: unknown; meta: Record<string, unknown> }> {
     const clinicId = this.requireClinicId(req, query.clinicId);
     const data = await this.queueService.exportQueueData({ ...query, clinicId }, clinicId);
-    return { success: true, data };
+    return {
+      success: true,
+      data,
+      meta: {
+        requestedQueueName: this.pick(query.queueName, query.queueType, query.type) || null,
+        ...this.queueDashboardMeta(),
+      },
+    };
   }
 
   @Post('export')
@@ -1090,13 +1147,20 @@ export class QueueController {
   async exportQueuePost(
     @Body() body: QueueExportInput,
     @Req() req: ClinicAuthenticatedRequest
-  ): Promise<{ success: true; data: unknown }> {
+  ): Promise<{ success: true; data: unknown; meta: Record<string, unknown> }> {
     if (!body || typeof body !== 'object') {
       throw new BadRequestException('Request body is required');
     }
     const clinicId = this.requireClinicId(req, body.clinicId);
     const data = await this.queueService.exportQueueData({ ...body, clinicId }, clinicId);
-    return { success: true, data };
+    return {
+      success: true,
+      data,
+      meta: {
+        requestedQueueName: this.pick(body.queueName, body.queueType, body.type) || null,
+        ...this.queueDashboardMeta(),
+      },
+    };
   }
 
   private resolveQueueNames(queueName?: string): string[] {
@@ -1140,23 +1204,259 @@ export class QueueController {
     return 1;
   }
 
+  private queueDashboardMeta(): Record<string, unknown> {
+    return {
+      availableQueueFilters: this.queueService.getSupportedQueueFilters(),
+      availableQueueFilterCatalog: this.queueService.getQueueFilterCatalog(),
+      physicalQueueName: HEALTHCARE_QUEUE,
+      activeQueueName: HEALTHCARE_QUEUE,
+    };
+  }
+
+  private queueDisplayLabel(
+    jobFamily?: string,
+    queueCategory?: string,
+    queueType?: string,
+    treatmentType?: string,
+    appointmentType?: string
+  ): string {
+    const value = this.pick(jobFamily, queueCategory, queueType, treatmentType, appointmentType);
+    const normalized = this.normalizeQueueTaxonomyToken(value);
+
+    if (normalized === 'billing_and_payments') return 'Billing and Payments';
+    if (normalized === 'appointments') return 'Appointments';
+    if (normalized === 'video') return 'Video';
+    if (normalized === 'clinical_support') return 'Clinical Support';
+    if (normalized === 'special_case') return 'Special Case / Complex Care';
+    if (normalized === 'senior_citizen') return 'Senior Citizen';
+    if (normalized === 'procedural_care') return 'Procedural Care';
+    if (normalized === 'lab_test' || normalized === 'imaging' || normalized === 'vaccination')
+      return 'Diagnostic / Preventive Care';
+    if (normalized === 'dosha_analysis') return 'Ayurvedic Procedures';
+    if (
+      normalized === 'therapy' ||
+      normalized === 'surgery' ||
+      normalized === 'virechana' ||
+      normalized === 'abhyanga' ||
+      normalized === 'swedana' ||
+      normalized === 'basti' ||
+      normalized === 'nasya' ||
+      normalized === 'raktamokshana'
+    ) {
+      return 'Ayurvedic Procedures';
+    }
+    if (normalized === 'general_consultation') return 'General Consultation';
+    if (normalized === 'follow_up') return 'Follow Up';
+    if (normalized === 'home_visit') return 'Home Visit';
+
+    return value
+      .split(/[_-]+/)
+      .filter(Boolean)
+      .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+      .join(' ');
+  }
+
+  private queueFamilyFromJobType(jobType?: string, queueType?: string): string {
+    const normalizedJobType = this.normalizeQueueFilterToken(jobType);
+    const normalizedQueueType = this.normalizeQueueFilterToken(queueType);
+
+    if (
+      normalizedJobType.includes('payment') ||
+      normalizedJobType.includes('invoice') ||
+      normalizedJobType.includes('billing') ||
+      normalizedQueueType.includes('payment') ||
+      normalizedQueueType.includes('invoice') ||
+      normalizedQueueType.includes('billing')
+    ) {
+      return 'billing-and-payments';
+    }
+
+    if (normalizedJobType.includes('video') || normalizedQueueType.includes('video')) {
+      return 'video';
+    }
+
+    if (
+      normalizedJobType.includes('appointment') ||
+      normalizedJobType.includes('consultation') ||
+      normalizedJobType.includes('follow') ||
+      normalizedQueueType.includes('appointment') ||
+      normalizedQueueType.includes('consultation') ||
+      normalizedQueueType.includes('follow')
+    ) {
+      return 'appointments';
+    }
+
+    if (
+      normalizedJobType.includes('email') ||
+      normalizedJobType.includes('notification') ||
+      normalizedJobType.includes('reminder') ||
+      normalizedJobType.includes('lab') ||
+      normalizedJobType.includes('imaging') ||
+      normalizedJobType.includes('bulk_ehr') ||
+      normalizedJobType.includes('ayurveda') ||
+      normalizedQueueType.includes('email') ||
+      normalizedQueueType.includes('notification') ||
+      normalizedQueueType.includes('lab') ||
+      normalizedQueueType.includes('imaging') ||
+      normalizedQueueType.includes('ayurveda')
+    ) {
+      return 'clinical-support';
+    }
+
+    return this.normalizeQueueFilterToken(jobType || queueType);
+  }
+
+  private hasLogicalQueueFilter(query: QueueQuery): boolean {
+    return Boolean(
+      query.queueName?.trim() ||
+      query.type?.trim() ||
+      query.jobType?.trim() ||
+      query.jobFamily?.trim() ||
+      query.family?.trim() ||
+      query.module?.trim() ||
+      query.appointmentType?.trim() ||
+      query.treatmentType?.trim() ||
+      query.serviceBucket?.trim() ||
+      query.queueCategory?.trim() ||
+      query.appointmentMode?.trim()
+    );
+  }
+
+  private normalizeQueueFilterToken(value?: string): string {
+    return (
+      value
+        ?.trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_') || ''
+    );
+  }
+
+  private normalizeQueueTaxonomyToken(value?: string): string {
+    const normalized = this.normalizeQueueFilterToken(value);
+    if (!normalized) return '';
+    if (normalized === 'therapy' || normalized === 'surgery') return 'procedural_care';
+    if (normalized === 'therapy_procedure') return 'procedural_care';
+    if (normalized === 'geriatric_care' || normalized === 'senior_citizen_care')
+      return 'senior_citizen';
+    return normalized;
+  }
+
+  private matchesFilterValue(
+    value: string | undefined,
+    ...candidates: Array<string | undefined>
+  ): boolean {
+    const normalizedValue = this.normalizeQueueTaxonomyToken(value);
+    if (!normalizedValue) return true;
+    return candidates.some(candidate => {
+      const normalizedCandidate = this.normalizeQueueTaxonomyToken(candidate);
+      return (
+        normalizedCandidate === normalizedValue ||
+        normalizedCandidate.includes(normalizedValue) ||
+        normalizedValue.includes(normalizedCandidate)
+      );
+    });
+  }
+
   private matchEntry(entry: QueueEntryLike, query: QueueQuery): boolean {
     const doctorId = this.pick(entry.doctorId, entry.queueOwnerId);
     const locationId = entry.locationId;
     const queueName = entry.queueName;
     const queueType = entry.queueType;
     const queueCategory = entry.queueCategory;
+    const jobType = entry.jobType;
+    const jobFamily = entry.jobFamily;
+    const appointmentType = entry.appointmentType;
+    const treatmentType = entry.treatmentType;
+    const serviceBucket = entry.serviceBucket;
+    const appointmentMode = entry.appointmentMode;
     const status = entry.status?.toLowerCase();
     if (query.doctorId && doctorId !== query.doctorId) return false;
     if (query.locationId && locationId !== query.locationId) return false;
     if (
       query.queueName &&
-      query.queueName !== queueName &&
-      query.queueName !== queueType &&
-      query.queueName !== queueCategory
+      !this.matchesFilterValue(
+        query.queueName,
+        queueName,
+        queueType,
+        queueCategory,
+        jobType,
+        jobFamily,
+        treatmentType,
+        appointmentType,
+        serviceBucket,
+        appointmentMode
+      )
     )
       return false;
-    if (query.type && query.type !== queueType && query.type !== queueCategory) return false;
+    if (
+      query.type &&
+      !this.matchesFilterValue(
+        query.type,
+        queueType,
+        queueCategory,
+        jobType,
+        jobFamily,
+        treatmentType,
+        appointmentType,
+        serviceBucket,
+        appointmentMode
+      )
+    )
+      return false;
+    if (query.jobType && !this.matchesFilterValue(query.jobType, jobType, queueType, queueCategory))
+      return false;
+    if (
+      query.jobFamily &&
+      !this.matchesFilterValue(query.jobFamily, jobFamily, jobType, queueType, queueCategory)
+    )
+      return false;
+    if (query.family && !this.matchesFilterValue(query.family, jobFamily, jobType, queueType))
+      return false;
+    if (query.module && !this.matchesFilterValue(query.module, jobFamily, jobType, queueType))
+      return false;
+    if (
+      query.queueCategory &&
+      !this.matchesFilterValue(query.queueCategory, queueCategory, queueType, jobType)
+    )
+      return false;
+    if (
+      query.treatmentType &&
+      !this.matchesFilterValue(
+        query.treatmentType,
+        treatmentType,
+        queueType,
+        queueCategory,
+        jobType
+      )
+    )
+      return false;
+    if (
+      query.appointmentType &&
+      !this.matchesFilterValue(
+        query.appointmentType,
+        appointmentType,
+        appointmentMode,
+        queueType,
+        queueCategory
+      )
+    )
+      return false;
+    if (
+      query.appointmentMode &&
+      !this.matchesFilterValue(query.appointmentMode, appointmentMode, appointmentType, queueType)
+    )
+      return false;
+    if (
+      query.serviceBucket &&
+      !this.matchesFilterValue(
+        query.serviceBucket,
+        serviceBucket,
+        queueType,
+        queueCategory,
+        jobType
+      )
+    )
+      return false;
     if (query.status && !this.parseStatuses(query.status).includes(status || '')) return false;
     return true;
   }
@@ -1173,6 +1473,18 @@ export class QueueController {
     const notes = this.pick(entry.notes);
     return {
       id: appointmentId,
+      jobType: this.pick(entry.jobType, 'appointment'),
+      jobFamily: this.pick(
+        entry.jobFamily,
+        this.queueFamilyFromJobType(entry.jobType || 'appointment', entry.queueType || entry.type)
+      ),
+      displayLabel: this.queueDisplayLabel(
+        entry.jobFamily,
+        entry.queueCategory,
+        entry.queueType,
+        entry.treatmentType,
+        entry.appointmentType || entry.appointmentMode
+      ),
       appointmentId,
       patientId,
       ...(doctorId ? { doctorId } : {}),
@@ -1180,6 +1492,14 @@ export class QueueController {
       queueName: HEALTHCARE_QUEUE,
       queueType: this.pick(entry.type, entry.queueCategory, 'DOCTOR_CONSULTATION'),
       queueCategory: this.pick(entry.queueCategory, 'DOCTOR_CONSULTATION'),
+      ...(this.pick(entry.appointmentType)
+        ? { appointmentType: this.pick(entry.appointmentType) }
+        : {}),
+      ...(this.pick(entry.treatmentType) ? { treatmentType: this.pick(entry.treatmentType) } : {}),
+      ...(this.pick(entry.serviceBucket) ? { serviceBucket: this.pick(entry.serviceBucket) } : {}),
+      ...(this.pick(entry.appointmentMode)
+        ? { appointmentMode: this.pick(entry.appointmentMode) }
+        : {}),
       queueOwnerId: this.pick(entry.queueOwnerId, entry.doctorId),
       status: this.pick(entry.status, 'WAITING'),
       position,
@@ -1196,11 +1516,26 @@ export class QueueController {
 
   private jobEntry(job: Job, position: number, total: number, clinicId: string): QueueEntryLike {
     const data = this.jobData(job);
+    const jobType = this.pick(
+      this.recordString(data, 'jobType'),
+      this.recordString(data, 'type'),
+      job.name
+    );
     const queueType = this.pick(
       this.recordString(data, 'queueType'),
       this.recordString(data, 'type'),
       this.recordString(data, 'queueCategory'),
-      job.name
+      jobType
+    );
+    const queueCategory = this.pick(
+      this.recordString(data, 'queueCategory'),
+      this.toQueueCategory(queueType)
+    );
+    const jobFamily = this.pick(
+      this.recordString(data, 'jobFamily'),
+      this.recordString(data, 'family'),
+      this.recordString(data, 'module'),
+      this.queueFamilyFromJobType(jobType, queueType)
     );
     const appointmentId = this.pick(
       this.recordString(data, 'appointmentId'),
@@ -1209,22 +1544,36 @@ export class QueueController {
     );
     const doctorId = this.recordString(data, 'doctorId');
     const locationId = this.recordString(data, 'locationId');
+    const appointmentType = this.recordString(data, 'appointmentType');
+    const treatmentType = this.recordString(data, 'treatmentType');
+    const appointmentMode = this.recordString(data, 'appointmentMode');
+    const serviceBucket = this.recordString(data, 'serviceBucket');
     const checkedInAt = this.recordString(data, 'checkedInAt');
     const startedAt = this.recordString(data, 'startedAt');
     const completedAt = this.recordString(data, 'completedAt');
     const notes = this.recordString(data, 'notes');
     return {
       id: appointmentId,
+      jobType,
+      jobFamily,
+      displayLabel: this.queueDisplayLabel(
+        jobFamily,
+        queueCategory,
+        queueType,
+        treatmentType,
+        appointmentType || appointmentMode
+      ),
       entryId: this.pick(this.recordString(data, 'entryId'), appointmentId),
       queueName: this.pick(
         this.asString((job as unknown as Record<string, unknown>)['queueName']),
         queueType
       ),
       queueType,
-      queueCategory: this.pick(
-        this.recordString(data, 'queueCategory'),
-        this.toQueueCategory(queueType)
-      ),
+      queueCategory,
+      ...(appointmentType ? { appointmentType } : {}),
+      ...(appointmentMode ? { appointmentMode } : {}),
+      ...(treatmentType ? { treatmentType } : {}),
+      ...(serviceBucket ? { serviceBucket } : {}),
       queueOwnerId: this.pick(
         this.recordString(data, 'queueOwnerId'),
         this.recordString(data, 'doctorId'),

@@ -70,6 +70,8 @@ export enum TreatmentType {
   LAB_TEST = 'LAB_TEST',
   IMAGING = 'IMAGING',
   VACCINATION = 'VACCINATION',
+  SPECIAL_CASE = 'SPECIAL_CASE',
+  GERIATRIC_CARE = 'GERIATRIC_CARE',
   // Ayurveda Types
   VIDDHAKARMA = 'VIDDHAKARMA',
   AGNIKARMA = 'AGNIKARMA',
@@ -354,6 +356,17 @@ export class AppointmentServiceMetadataDto {
     example: TreatmentType.GENERAL_CONSULTATION,
   })
   treatmentType!: TreatmentType;
+
+  @ApiPropertyOptional({
+    type: [String],
+    enum: TreatmentType,
+    enumName: 'TreatmentTypeAlias',
+    description: 'Additional treatment types that should resolve to the same visible service',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsEnum(TreatmentType, { each: true })
+  aliasTreatmentTypes?: TreatmentType[];
 
   @ApiProperty({
     example: 'General Consultation',
