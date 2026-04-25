@@ -91,6 +91,7 @@ export class AppController {
       const urlsConfig = this.configService.getUrlsConfig();
       const baseUrl = appConfig.apiUrl || appConfig.baseUrl;
       const isProduction = appConfig.environment === 'production';
+      const isSwaggerEnabled = this.configService.getEnvBoolean('API_DOCS_ENABLED', true);
 
       // Get real-time service status using Terminus health checks
       let healthData;
@@ -347,7 +348,7 @@ export class AppController {
           name: 'API Documentation',
           description: 'Swagger API documentation and testing interface.',
           url: `${baseUrl}${urlsConfig.swagger}`,
-          active: isApiRunning, // API is running if we can serve this page
+          active: isApiRunning && isSwaggerEnabled,
           category: 'Documentation',
         },
         {

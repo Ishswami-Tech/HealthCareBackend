@@ -47,15 +47,13 @@ import { AnalyticsModule } from './services/analytics/analytics.module';
     ScheduleModule.forRoot(),
     QueueModule.forRoot(),
     BullBoardModule.forRoot(), // Queue dashboard at /queue-dashboard
+    // Cache must initialize before logging so the log dashboard can persist and read entries.
+    CacheModule.forRoot(),
     // JWT is configured in AuthModule - no need for global registration here
     // This ensures all JWT operations use the same secret from ConfigService
     // Core modules must be loaded before communication modules to ensure LoggingService and CacheService are available
     LoggingModule,
     LoggingControllersModule, // Separate module for controllers to avoid duplicate registration
-    // CacheModule - Required for caching functionality (Dragonfly/Redis)
-    // Must be loaded BEFORE EventsModule as EventService depends on CacheService
-    // Use forRoot() to conditionally include CacheWarmingService (only in API, not worker)
-    CacheModule.forRoot(),
     // Central event system - must be loaded early for event-driven architecture
     // EventService depends on LoggingService and CacheService, so they must be loaded first
     EventsModule,

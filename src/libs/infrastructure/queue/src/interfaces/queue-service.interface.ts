@@ -54,6 +54,14 @@ export interface QueueExportFilters {
   queueName?: string;
   queueType?: string;
   type?: string;
+  jobType?: string;
+  jobFamily?: string;
+  family?: string;
+  module?: string;
+  appointmentType?: string;
+  treatmentType?: string;
+  serviceBucket?: string;
+  queueCategory?: string;
   clinicId?: string;
   domain?: 'clinic';
   startDate?: string;
@@ -68,6 +76,12 @@ export interface QueueExportEntry {
   queueName: string;
   queueType: string;
   queueCategory: string;
+  jobType?: string;
+  jobFamily?: string;
+  appointmentType?: string;
+  treatmentType?: string;
+  serviceBucket?: string;
+  appointmentMode?: string;
   clinicId?: string;
   patientId?: string;
   doctorId?: string;
@@ -95,6 +109,9 @@ export interface QueueExportPayload {
     totalQueues: number;
     totalEntries: number;
     filters: Omit<QueueExportFilters, 'clinicId'> & { clinicId?: string };
+    availableQueueFilters?: string[];
+    availableQueueFilterCatalog?: unknown[];
+    activeQueueName?: string;
     queueSummaries: Array<{
       queueName: string;
       entries: number;

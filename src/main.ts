@@ -351,7 +351,7 @@ async function _setupWebSocketAdapter(
               allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
             },
             path: '/socket.io',
-            serveClient: false,
+            serveClient: true,
             transports: ['websocket', 'polling'],
             allowEIO3: false,
             pingTimeout: 60000,
@@ -972,10 +972,7 @@ async function bootstrap() {
     }
     const appInstance = app;
 
-    const enableSwagger = configService.getEnvBoolean(
-      'SWAGGER_ENABLED',
-      appConfig.environment !== 'production'
-    );
+    const enableSwagger = configService.getEnvBoolean('API_DOCS_ENABLED', true);
 
     // Configure Swagger with error handling
     if (enableSwagger) {
@@ -1005,8 +1002,9 @@ async function bootstrap() {
         // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
         // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
 
-        const swaggerPath =
-          typeof _swaggerUrl === 'string' ? _swaggerUrl.replace(/^\//, '') : 'docs';
+        const swaggerPath = String(
+          configService.getEnv('API_DOCS_PATH', _swaggerUrl || '/docs') || _swaggerUrl || '/docs'
+        ).replace(/^\//, '');
         logger.log(`Setting up Swagger at path: ${swaggerPath}`);
         SwaggerModule.setup(swaggerPath, appInstance, documentFactory, {
           ...swaggerCustomOptions,

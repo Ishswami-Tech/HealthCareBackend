@@ -115,35 +115,22 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.THERAPY,
-    label: 'Therapy Session',
-    description: 'Therapy-focused in-clinic treatment session',
-    category: AppointmentServiceCategory.THERAPY,
+    aliasTreatmentTypes: [TreatmentType.SURGERY],
+    label: 'Procedural Care',
+    description: 'Combined therapeutic and surgical procedure workflow',
+    category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
     queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'THERAPY',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: true,
-    active: true,
-    videoConsultationFee: 1000,
-  },
-  {
-    treatmentType: TreatmentType.SURGERY,
-    label: 'Surgical Procedure',
-    description: 'Minor surgical or interventional care under clinical supervision',
-    category: AppointmentServiceCategory.SURGERY,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'SURGICAL',
+    serviceBucket: 'PROCEDURAL_CARE',
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: false,
     active: true,
   },
   {
     treatmentType: TreatmentType.LAB_TEST,
-    label: 'Lab Test',
-    description: 'Diagnostic sample collection or lab-linked appointment',
+    label: 'Diagnostic / Preventive Care',
+    description: 'Combined diagnostic, imaging, and preventive care workflow',
     category: AppointmentServiceCategory.DIAGNOSIS,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON],
@@ -154,31 +141,31 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     active: true,
   },
   {
-    treatmentType: TreatmentType.IMAGING,
-    label: 'Imaging',
-    description: 'Imaging-linked appointment for diagnostic review or scan workflow',
-    category: AppointmentServiceCategory.DIAGNOSIS,
+    treatmentType: TreatmentType.SPECIAL_CASE,
+    label: 'Special Case / Complex Care',
+    description: 'Complex, sensitive, or unusual consultation that needs tailored handling',
+    category: AppointmentServiceCategory.CONSULTATION,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'DIAGNOSTIC',
-    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
-    assistantDoctorEligible: false,
-    active: true,
-  },
-  {
-    treatmentType: TreatmentType.VACCINATION,
-    label: 'Vaccination',
-    description: 'Vaccination and preventive immunization visit',
-    category: AppointmentServiceCategory.TREATMENT,
-    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON],
-    queueCategory: AppointmentQueueCategory.THERAPY_PROCEDURE,
-    serviceBucket: 'PREVENTIVE',
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'SPECIAL_CASE',
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
-    videoConsultationFee: 800,
+    videoConsultationFee: 600,
+  },
+  {
+    treatmentType: TreatmentType.GERIATRIC_CARE,
+    label: 'Senior Citizen',
+    description: 'Care pathway tailored for senior citizens and older adults',
+    category: AppointmentServiceCategory.CONSULTATION,
+    defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.HOME_VISIT],
+    queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
+    serviceBucket: 'SENIOR_CITIZEN',
+    billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
+    assistantDoctorEligible: true,
+    active: true,
   },
   {
     treatmentType: TreatmentType.VIDDHAKARMA,
@@ -234,13 +221,13 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.DOSHA_ANALYSIS,
-    label: 'Dosha Analysis',
-    description: 'Constitutional analysis with lifestyle and treatment recommendations',
+    label: 'Ayurvedic Procedures',
+    description: 'Combined Ayurvedic procedure workflow including dosha analysis',
     category: AppointmentServiceCategory.DIAGNOSIS,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
     appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
-    serviceBucket: 'DIAGNOSIS',
+    serviceBucket: 'AYURVEDIC_PROCEDURES',
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
@@ -260,7 +247,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.VIRECHANA,
-    label: 'Virechana',
+    label: 'Ayurvedic Procedures',
     description: 'Therapeutic purgation as part of Panchakarma care',
     category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -273,7 +260,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.ABHYANGA,
-    label: 'Abhyanga Massage',
+    label: 'Ayurvedic Procedures',
     description: 'Full-body Ayurvedic therapeutic oil massage',
     category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -286,7 +273,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.SWEDANA,
-    label: 'Swedana Steam Therapy',
+    label: 'Ayurvedic Procedures',
     description: 'Herbal steam therapy for detoxification and relaxation',
     category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -299,7 +286,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.BASTI,
-    label: 'Basti',
+    label: 'Ayurvedic Procedures',
     description: 'Therapeutic medicated enema under Ayurvedic care plan',
     category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -312,7 +299,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.NASYA,
-    label: 'Nasya',
+    label: 'Ayurvedic Procedures',
     description: 'Nasal administration therapy as part of Ayurvedic treatment',
     category: AppointmentServiceCategory.TREATMENT,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -325,7 +312,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.RAKTAMOKSHANA,
-    label: 'Raktamokshana',
+    label: 'Ayurvedic Procedures',
     description: 'Therapeutic bloodletting procedure under supervised care',
     category: AppointmentServiceCategory.SURGERY,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -795,18 +782,43 @@ export class AppointmentsService {
     return APPOINTMENT_SERVICE_CATALOG.map(service => ({
       ...service,
       appointmentModes: [...service.appointmentModes],
+      ...(service.aliasTreatmentTypes
+        ? { aliasTreatmentTypes: [...service.aliasTreatmentTypes] }
+        : {}),
     }));
   }
 
   private getAppointmentServiceMetadata(
     treatmentType?: TreatmentType | string | null
   ): AppointmentServiceMetadataDto {
+    const normalizedTreatmentType = this.resolveCatalogTreatmentType(treatmentType);
     return (
-      APPOINTMENT_SERVICE_CATALOG.find(service => service.treatmentType === treatmentType) ||
+      APPOINTMENT_SERVICE_CATALOG.find(
+        service =>
+          String(service.treatmentType) === String(normalizedTreatmentType) ||
+          service.aliasTreatmentTypes?.some(
+            alias => String(alias) === String(normalizedTreatmentType)
+          )
+      ) ||
       APPOINTMENT_SERVICE_CATALOG.find(
         service => service.treatmentType === TreatmentType.GENERAL_CONSULTATION
       )!
     );
+  }
+
+  private resolveCatalogTreatmentType(
+    treatmentType?: TreatmentType | string | null
+  ): string | null {
+    const normalized = String(treatmentType || '')
+      .trim()
+      .toUpperCase();
+    if (!normalized) {
+      return treatmentType ?? null;
+    }
+    if (normalized === String(TreatmentType.SURGERY)) {
+      return TreatmentType.THERAPY;
+    }
+    return normalized;
   }
 
   private asMetadataRecord(metadata: unknown): Record<string, unknown> {
