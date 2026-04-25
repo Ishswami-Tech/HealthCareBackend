@@ -1331,6 +1331,7 @@ export interface QueueEntryData {
   clinicId: string;
   status: string;
   priority: number;
+  displayLabel?: string;
   checkedInAt?: string;
   estimatedWaitTime?: number;
   position?: number;
@@ -1342,6 +1343,7 @@ export interface QueueEntryData {
   type?: string;
   notes?: string;
   queueCategory?: string;
+  serviceBucket?: string;
   laneType?: LaneType | string; // Phase 6: Formalized Lane Semantics
   queueOwnerId?: string;
   primaryDoctorId?: string;
