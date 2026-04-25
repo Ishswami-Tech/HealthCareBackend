@@ -921,18 +921,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.databaseService.executeHealthcareWrite(
           async client => {
-            // Fallback to raw Prisma client for the appointment table
-            const rawClient = client as unknown as {
-              appointment: {
-                update: (args: {
-                  where: { id: string };
-                  data: { status: string };
-                }) => Promise<void>;
-              };
-            };
-            await rawClient.appointment.update({
+            const transaction = client as Prisma.TransactionClient;
+            await transaction.appointment.update({
               where: { id: resolvedAppointmentId },
-              data: { status: 'COMPLETED' },
+              data: { status: AppointmentStatus.COMPLETED },
             });
           },
           {

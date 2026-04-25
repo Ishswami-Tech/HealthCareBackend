@@ -933,6 +933,9 @@ export class CoreAppointmentService {
     // Apply role-based filtering
     switch (context.role) {
       case 'DOCTOR':
+      case 'ASSISTANT_DOCTOR':
+        // For clinical roles, ensure we filter by the doctorId (which is the UUID in Doctor table)
+        // context.doctorId should be pre-resolved in the AppointmentsService wrapper.
         where['doctorId'] = context.doctorId || context.userId;
         break;
       case 'PATIENT':
@@ -946,14 +949,25 @@ export class CoreAppointmentService {
         break;
       case 'NURSE':
       case 'RECEPTIONIST':
-        // Can see all appointments in their clinic
+      case 'PHARMACIST':
+      case 'LAB_TECHNICIAN':
+      case 'SUPPORT_STAFF':
+      case 'CLINIC_ADMIN':
+      case 'CLINIC_LOCATION_HEAD':
+        // These roles can see all appointments in their clinic (already filtered by clinicId)
         // Enforce location scope when clinic context is location-tagged.
-        if (context.role === 'RECEPTIONIST' && context.locationId) {
+        if (
+          (context.role === 'RECEPTIONIST' ||
+            context.role === 'NURSE' ||
+            context.role === 'PHARMACIST') &&
+          context.locationId
+        ) {
           where['locationId'] = context.locationId;
         }
         break;
       default:
         // For unknown roles, restrict to user's own appointments
+        // Use an OR clause that checks both the direct UUIDs and potential User UUIDs
         where['OR'] = [{ doctorId: context.userId }, { patientId: context.userId }];
         break;
     }

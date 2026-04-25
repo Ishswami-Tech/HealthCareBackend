@@ -210,6 +210,115 @@ export class BillingService {
     return patientRecord?.userId ?? null;
   }
 
+  public async syncAppointmentAfterPayment(args: {
+    appointmentId: string;
+    clinicId: string;
+    paymentId: string;
+    paymentStatus: string;
+    amount?: number;
+    appointment?: AppointmentWithRelations | null;
+    userId?: string | null;
+    emitAppointmentUpdated?: boolean;
+  }): Promise<AppointmentWithRelations | null> {
+    const normalizedPaymentStatus = String(args.paymentStatus || '')
+      .trim()
+      .toLowerCase();
+    const appointment =
+      args.appointment ?? (await this.databaseService.findAppointmentByIdSafe(args.appointmentId));
+
+    if (!appointment) {
+      await Promise.all([
+        this.cacheService.invalidateAppointmentCache(
+          args.appointmentId,
+          undefined,
+          undefined,
+          args.clinicId
+        ),
+        args.userId
+          ? this.cacheService.invalidateUpcomingAppointmentsCache(args.userId)
+          : Promise.resolve(0),
+      ]);
+
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        'Appointment not found while syncing payment completion',
+        'BillingService',
+        {
+          appointmentId: args.appointmentId,
+          clinicId: args.clinicId,
+          paymentId: args.paymentId,
+          paymentStatus: normalizedPaymentStatus,
+        }
+      );
+
+      return null;
+    }
+
+    const resolvedClinicId = appointment.clinicId || args.clinicId;
+    const resolvedUserId = args.userId || (await this.resolveAppointmentBillingUserId(appointment));
+    const shouldEmit = args.emitAppointmentUpdated ?? true;
+
+    await Promise.all([
+      this.cacheService.invalidateAppointmentCache(
+        appointment.id,
+        appointment.patientId || undefined,
+        appointment.doctorId || undefined,
+        resolvedClinicId
+      ),
+      appointment.patientId
+        ? this.cacheService.invalidatePatientCache(appointment.patientId, resolvedClinicId)
+        : Promise.resolve(0),
+      appointment.doctorId
+        ? this.cacheService.invalidateDoctorCache(appointment.doctorId, resolvedClinicId)
+        : Promise.resolve(0),
+      resolvedUserId
+        ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedUserId)
+        : Promise.resolve(0),
+    ]);
+
+    if (shouldEmit) {
+      const eventPayload: EnterpriseEventPayload = {
+        eventId: `appointment-payment-updated-${appointment.id}-${args.paymentId}`,
+        eventType: 'appointment.updated',
+        category: EventCategory.APPOINTMENT,
+        priority: EventPriority.NORMAL,
+        timestamp: new Date().toISOString(),
+        source: 'BillingService',
+        version: '1.0.0',
+        ...(resolvedUserId ? { userId: resolvedUserId } : {}),
+        clinicId: resolvedClinicId,
+        metadata: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          clinicId: resolvedClinicId,
+          paymentId: args.paymentId,
+          paymentStatus: normalizedPaymentStatus,
+          amount: args.amount,
+          status: appointment.status,
+          source: 'BillingService',
+        },
+        payload: {
+          appointmentId: appointment.id,
+          patientId: appointment.patientId,
+          doctorId: appointment.doctorId,
+          clinicId: resolvedClinicId,
+          userId: resolvedUserId ?? appointment.patient?.userId ?? undefined,
+          paymentId: args.paymentId,
+          paymentStatus: normalizedPaymentStatus,
+          amount: args.amount,
+          status: appointment.status,
+          source: 'BillingService',
+        },
+      };
+
+      await this.eventService.emitEnterprise('appointment.updated', eventPayload);
+    }
+
+    return appointment;
+  }
+
   private isSoleProprietorModeEnabled(): boolean {
     const raw =
       this.configService.getEnv('SOLE_PROPRIETOR_MODE') ??
@@ -2752,28 +2861,17 @@ export class BillingService {
         const appointment = await this.databaseService.findAppointmentByIdSafe(
           payment.appointmentId
         );
-        if (appointment) {
-          await Promise.all([
-            this.cacheService.invalidateAppointmentCache(
-              appointment.id,
-              appointment.patientId || undefined,
-              appointment.doctorId || undefined,
-              appointment.clinicId || clinicId
-            ),
-            appointment.patientId
-              ? this.cacheService.invalidatePatientCache(
-                  appointment.patientId,
-                  appointment.clinicId || clinicId
-                )
-              : Promise.resolve(0),
-            appointment.doctorId
-              ? this.cacheService.invalidateDoctorCache(
-                  appointment.doctorId,
-                  appointment.clinicId || clinicId
-                )
-              : Promise.resolve(0),
-          ]);
-        }
+
+        await this.syncAppointmentAfterPayment({
+          appointmentId: payment.appointmentId,
+          clinicId: appointment?.clinicId || clinicId,
+          paymentId: payment.id,
+          paymentStatus: normalizedIncomingStatus,
+          amount: paymentStatus.amount,
+          appointment,
+          userId: payment.userId ?? null,
+          emitAppointmentUpdated: false,
+        });
       }
 
       if (incomingStatusLower === 'completed' && payment.subscriptionId) {

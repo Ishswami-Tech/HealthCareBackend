@@ -539,6 +539,11 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     return invalidated;
   }
 
+  async invalidateUpcomingAppointmentsCache(userId: string): Promise<number> {
+    const key = this.keyFactory.fromTemplate('appointments:upcoming:{userId}', { userId });
+    return this.invalidateCacheByPattern(key);
+  }
+
   async invalidateClinicCache(clinicId: string): Promise<number> {
     const pattern = this.keyFactory.clinic(clinicId, '*');
     return this.invalidateCacheByPattern(pattern);

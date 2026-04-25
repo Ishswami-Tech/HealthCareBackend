@@ -281,6 +281,15 @@ export class BillingEventsListener {
           // VIDEO_CALL awaiting slot confirmation: keep status unchanged - payment recorded,
           // doctor must confirm slot (appointments.service.confirmVideoSlot)
           if (isAwaitingSlot) {
+            await this.billingService.syncAppointmentAfterPayment({
+              appointmentId,
+              clinicId: payload.clinicId,
+              paymentId: payload.paymentId,
+              paymentStatus: payload.status,
+              appointment,
+              emitAppointmentUpdated: true,
+            });
+
             await this.loggingService.log(
               LogType.APPOINTMENT,
               LogLevel.INFO,
@@ -357,6 +366,18 @@ export class BillingEventsListener {
             },
           }
         );
+
+        const refreshedAppointment =
+          await this.databaseService.findAppointmentByIdSafe(appointmentId);
+
+        await this.billingService.syncAppointmentAfterPayment({
+          appointmentId,
+          clinicId: payload.clinicId,
+          paymentId: payload.paymentId,
+          paymentStatus: payload.status,
+          appointment: refreshedAppointment ?? appointment,
+          emitAppointmentUpdated: true,
+        });
 
         await this.loggingService.log(
           LogType.APPOINTMENT,

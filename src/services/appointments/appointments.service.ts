@@ -1888,11 +1888,42 @@ export class AppointmentsService {
     // Room creation is handled dynamically during generateMeetingToken
     // No explicit pre-creation is needed.
 
-    await this.eventService.emit('appointment.updated', {
-      appointmentId,
+    const appointmentWithRelations = appointment as AppointmentWithRelations & {
+      patient?: { userId?: string };
+      doctor?: { userId?: string };
+    };
+
+    await this.eventService.emitEnterprise('appointment.updated', {
+      eventId: `appointment-confirmed-slot-${appointmentId}-${Date.now()}`,
+      eventType: 'appointment.updated',
+      category: EventCategory.APPOINTMENT,
+      priority: EventPriority.NORMAL,
+      timestamp: new Date().toISOString(),
+      source: 'AppointmentsService',
+      version: '1.0.0',
+      ...(appointmentWithRelations.patient?.userId
+        ? { userId: appointmentWithRelations.patient.userId }
+        : {}),
       clinicId,
-      status: AppointmentStatus.CONFIRMED,
-      context: { userId },
+      metadata: {
+        appointmentId,
+        clinicId,
+        doctorId: appointment.doctorId,
+        patientId: appointment.patientId,
+        confirmedSlotIndex: dto.confirmedSlotIndex,
+        status: AppointmentStatus.CONFIRMED,
+        source: 'AppointmentsService',
+      },
+      payload: {
+        appointmentId,
+        clinicId,
+        doctorId: appointment.doctorId,
+        patientId: appointment.patientId,
+        confirmedSlotIndex: dto.confirmedSlotIndex,
+        status: AppointmentStatus.CONFIRMED,
+        appointment: updated,
+        context: { userId },
+      },
     });
 
     return {
@@ -2241,7 +2272,9 @@ export class AppointmentsService {
       _role === 'PATIENT'
         ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
         : null;
-    const doctor = _role === 'DOCTOR' ? await this.resolveDoctorEntityId(userId, clinicId) : null;
+    const isConsultantRole = [Role.DOCTOR, Role.ASSISTANT_DOCTOR].includes(_role as Role);
+
+    const doctor = isConsultantRole ? await this.resolveDoctorEntityId(userId, clinicId) : null;
 
     const context: AppointmentContext = {
       userId,
@@ -2249,8 +2282,8 @@ export class AppointmentsService {
       clinicId,
       ...(filters.locationId && { locationId: filters.locationId }),
       ...(doctor ? { doctorId: doctor } : {}),
-      ...(_role !== 'DOCTOR' && filters.doctorId ? { doctorId: filters.doctorId } : {}),
-      ...(_role !== 'DOCTOR' && filters.providerId ? { doctorId: filters.providerId } : {}),
+      ...(!isConsultantRole && filters.doctorId ? { doctorId: filters.doctorId } : {}),
+      ...(!isConsultantRole && filters.providerId ? { doctorId: filters.providerId } : {}),
       ...(_role !== 'PATIENT' && filters.patientId ? { patientId: filters.patientId } : {}),
       ...(_role === 'PATIENT' && patient?.id ? { patientId: patient.id } : {}),
     };
