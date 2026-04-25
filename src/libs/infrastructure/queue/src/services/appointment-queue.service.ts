@@ -58,6 +58,57 @@ export class AppointmentQueueService {
     return `queue:${domain}:${clinicId}:${ownerId}:${this.getQueueDate(date)}`;
   }
 
+  private normalizeQueueLabel(value?: string): string {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_');
+  }
+
+  private resolveDisplayLabel(queueCategory: string, treatmentType?: string): string {
+    const normalizedTreatment = this.normalizeQueueLabel(treatmentType);
+    const normalizedCategory = this.normalizeQueueLabel(queueCategory);
+
+    if (normalizedTreatment === 'general_consultation') return 'General Consultation';
+    if (normalizedTreatment === 'follow_up') return 'Follow Up';
+    if (normalizedTreatment === 'special_case') return 'Special Case / Complex Care';
+    if (normalizedTreatment === 'geriatric_care' || normalizedTreatment === 'senior_citizen')
+      return 'Senior Citizen';
+    if (
+      normalizedTreatment === 'lab_test' ||
+      normalizedTreatment === 'imaging' ||
+      normalizedTreatment === 'vaccination'
+    )
+      return 'Diagnostic / Preventive Care';
+    if (
+      normalizedTreatment === 'dosha_analysis' ||
+      normalizedTreatment === 'virechana' ||
+      normalizedTreatment === 'abhyanga' ||
+      normalizedTreatment === 'swedana' ||
+      normalizedTreatment === 'basti' ||
+      normalizedTreatment === 'nasya' ||
+      normalizedTreatment === 'raktamokshana'
+    ) {
+      return 'Ayurvedic Procedures';
+    }
+    if (
+      normalizedTreatment === 'therapy' ||
+      normalizedTreatment === 'surgery' ||
+      normalizedTreatment === 'therapy_procedure' ||
+      normalizedCategory === 'therapy_procedure'
+    ) {
+      return 'Procedural Care';
+    }
+    if (normalizedCategory === 'doctor_consultation') return 'Consultation';
+    if (normalizedCategory === 'medicine_desk') return 'Medicine Desk';
+    if (normalizedCategory === 'therapy_procedure') return 'Procedural Care';
+    return String(queueCategory || treatmentType || 'General Consultation')
+      .split(/[_\s-]+/)
+      .filter(Boolean)
+      .map(segment => segment.charAt(0).toUpperCase() + segment.slice(1).toLowerCase())
+      .join(' ');
+  }
+
   async enqueueOperationalItem(
     queueData: {
       entryId: string;
@@ -69,6 +120,7 @@ export class AppointmentQueueService {
       primaryDoctorId?: string | undefined;
       locationId?: string | undefined;
       queueCategory: string;
+      displayLabel?: string | undefined;
       laneType?: string | undefined;
       type?: string | undefined;
       notes?: string | undefined;
@@ -114,6 +166,9 @@ export class AppointmentQueueService {
         ...(queueData.notes && { notes: queueData.notes }),
         ...(queueData.locationId && { locationId: queueData.locationId }),
         queueCategory: queueData.queueCategory,
+        displayLabel:
+          queueData.displayLabel ||
+          this.resolveDisplayLabel(queueData.queueCategory, queueData.type),
         ...(queueData.laneType && { laneType: queueData.laneType }),
         queueOwnerId: queueData.queueOwnerId,
         ...(queueData.primaryDoctorId && { primaryDoctorId: queueData.primaryDoctorId }),
@@ -139,6 +194,9 @@ export class AppointmentQueueService {
             appointmentId: queueEntry.appointmentId,
             entryId: queueData.entryId,
             queueCategory: queueData.queueCategory,
+            displayLabel:
+              queueData.displayLabel ||
+              this.resolveDisplayLabel(queueData.queueCategory, queueData.type),
             position: totalInQueue,
             totalInQueue,
             clinicId: queueData.clinicId,
@@ -338,6 +396,7 @@ export class AppointmentQueueService {
           const nextEntry: QueueEntryData = {
             ...parsed,
             queueCategory: nextQueueCategory,
+            displayLabel: this.resolveDisplayLabel(nextQueueCategory, nextType || treatmentType),
             ...(nextType ? { type: nextType } : {}),
             ...(mergedNotes ? { notes: mergedNotes } : {}),
             queueOwnerId: parsed.queueOwnerId || ownerId || parsed.doctorId,
@@ -376,6 +435,7 @@ export class AppointmentQueueService {
             targetQueue: normalizedTargetQueue,
             treatmentType: nextType || treatmentType,
             queueCategory: nextQueueCategory,
+            displayLabel: this.resolveDisplayLabel(nextQueueCategory, nextType || treatmentType),
             previousQueueCategory,
           },
         });
@@ -392,6 +452,7 @@ export class AppointmentQueueService {
           queueCategory: nextQueueCategory,
           targetQueue: normalizedTargetQueue,
           treatmentType: nextType || treatmentType,
+          displayLabel: this.resolveDisplayLabel(nextQueueCategory, nextType || treatmentType),
         },
       };
     }
