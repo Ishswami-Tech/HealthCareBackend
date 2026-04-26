@@ -109,6 +109,69 @@ export class AppointmentQueueService {
       .join(' ');
   }
 
+  private async deleteCacheKeys(patterns: string[]): Promise<void> {
+    const keysToDelete = new Set<string>();
+
+    for (const pattern of patterns) {
+      const keys = await this.cacheService.keys(pattern);
+      for (const key of keys) {
+        keysToDelete.add(key);
+      }
+    }
+
+    for (const key of keysToDelete) {
+      await this.cacheService.del(key);
+    }
+  }
+
+  private async rewriteQueueList(queueKey: string, entries: string[]): Promise<void> {
+    await this.cacheService.del(queueKey);
+    for (const entry of entries) {
+      await this.cacheService.rPush(queueKey, entry);
+    }
+  }
+
+  private async invalidateQueueReadCaches(params: {
+    clinicId: string;
+    domain: string;
+    doctorId?: string | undefined;
+    date?: string | undefined;
+    locationId?: string | undefined;
+    appointmentId?: string | undefined;
+  }): Promise<void> {
+    const patterns: string[] = [];
+    const normalizedDate = this.getQueueDate(params.date);
+
+    if (params.doctorId) {
+      patterns.push(
+        `queue:doctor:${params.clinicId}:${params.doctorId}:${normalizedDate}:${params.domain}`
+      );
+      if (params.locationId) {
+        patterns.push(
+          `queue:doctor:${params.clinicId}:${params.doctorId}:${normalizedDate}:${params.domain}:${params.locationId}`
+        );
+      }
+      patterns.push(
+        `queue:status:${params.domain}:${params.clinicId}:${params.doctorId}:${normalizedDate}`
+      );
+    }
+
+    if (params.appointmentId) {
+      patterns.push(`queue:position:${params.clinicId}:${params.appointmentId}:${params.domain}`);
+      patterns.push(`queue:position:${params.appointmentId}:${params.clinicId}`);
+      patterns.push(`queue:position:${params.clinicId}:${params.appointmentId}:*`);
+    }
+
+    if (params.locationId) {
+      patterns.push(
+        `queue:stats:location:${params.clinicId}:${params.locationId}:${params.domain}`
+      );
+      patterns.push(`queue:metrics:${params.clinicId}:${params.locationId}:${params.domain}:*`);
+    }
+
+    await this.deleteCacheKeys(patterns);
+  }
+
   async enqueueOperationalItem(
     queueData: {
       entryId: string;
@@ -176,6 +239,13 @@ export class AppointmentQueueService {
       };
 
       await this.cacheService.rPush(queueKey, JSON.stringify(queueEntry));
+      await this.invalidateQueueReadCaches({
+        clinicId: queueData.clinicId,
+        domain,
+        doctorId: queueData.assignedDoctorId || queueData.queueOwnerId,
+        appointmentId: queueEntry.appointmentId,
+        locationId: queueData.locationId,
+      });
 
       if (this.typedEventService) {
         const totalInQueue = await this.cacheService.lLen(queueKey);
@@ -415,6 +485,26 @@ export class AppointmentQueueService {
         await this.cacheService.rPush(queueKey, entry);
       }
 
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId: ownerId,
+        date: queueKey.split(':')[4] || this.getQueueDate(),
+        locationId: (() => {
+          try {
+            const parsed = nextEntries.find(entry => {
+              const data = JSON.parse(entry) as QueueEntryData;
+              return String(data.entryId || data.appointmentId || '') === String(entryId);
+            });
+            if (!parsed) return undefined;
+            return (JSON.parse(parsed) as QueueEntryData).locationId;
+          } catch {
+            return undefined;
+          }
+        })(),
+        appointmentId,
+      });
+
       if (this.typedEventService) {
         await this.typedEventService.emitEnterprise('appointment.queue.updated', {
           eventId: `queue-transfer-${entryId}-${Date.now()}`,
@@ -504,11 +594,25 @@ export class AppointmentQueueService {
             : (PRIORITY_WEIGHTS[String(checkInData.priority).toUpperCase()] ?? 0),
       };
 
-      if (appointmentType) queueEntry.type = appointmentType;
+      if (appointmentType) {
+        queueEntry.type = appointmentType;
+        queueEntry.displayLabel = this.resolveDisplayLabel('DOCTOR_CONSULTATION', appointmentType);
+      }
+      if (!queueEntry.displayLabel) {
+        queueEntry.displayLabel = this.resolveDisplayLabel('DOCTOR_CONSULTATION', appointmentType);
+      }
       if (notes) queueEntry.notes = notes;
       if (locationId) queueEntry.locationId = locationId;
 
       await this.cacheService.rPush(cacheKey, JSON.stringify(queueEntry));
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId,
+        date,
+        appointmentId,
+        locationId,
+      });
 
       // Emit WebSocket event
       if (this.typedEventService) {
@@ -805,13 +909,43 @@ export class AppointmentQueueService {
           const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
           entryData.status = 'CONFIRMED';
           entryData.confirmedAt = new Date().toISOString();
+          const updatedEntries = [...entries];
+          updatedEntries[entryIndex] = JSON.stringify(entryData);
+          await this.rewriteQueueList(key, updatedEntries);
 
-          // Update the entry in the queue (CacheService handles serialization)
-          await this.cacheService.set(
-            `${key}:${entryIndex}`,
-            entryData as unknown as string,
-            this.QUEUE_CACHE_TTL
-          );
+          const keyParts = key.split(':');
+          const queueDate = keyParts[4] || this.getQueueDate();
+          await this.invalidateQueueReadCaches({
+            clinicId,
+            domain,
+            doctorId: entryData.doctorId || entryData.queueOwnerId || undefined,
+            date: queueDate,
+            locationId: entryData.locationId,
+            appointmentId,
+          });
+
+          if (this.typedEventService) {
+            await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+              eventId: `queue-confirm-${appointmentId}-${Date.now()}`,
+              eventType: 'appointment.queue.updated',
+              category: EventCategory.APPOINTMENT,
+              priority: EventPriority.NORMAL,
+              timestamp: new Date().toISOString(),
+              source: 'AppointmentQueueService',
+              version: '1.0.0',
+              payload: {
+                doctorId: entryData.doctorId || entryData.queueOwnerId,
+                domain,
+                action: 'CONFIRMED',
+                appointmentId,
+                clinicId,
+                queueOwnerId: entryData.queueOwnerId || entryData.doctorId,
+                queueCategory: entryData.queueCategory || 'DOCTOR_CONSULTATION',
+                displayLabel: entryData.displayLabel,
+                locationId: entryData.locationId,
+              },
+            });
+          }
 
           void this.loggingService.log(
             LogType.APPOINTMENT,
@@ -868,18 +1002,19 @@ export class AppointmentQueueService {
       entryData.status = 'IN_PROGRESS';
       entryData.startedAt = new Date().toISOString();
       entryData.actualWaitTime = this.calculateActualWaitTime(entryData.checkedInAt || '');
-
-      // Update the entry in the queue (CacheService handles serialization)
-      await this.cacheService.set(
-        `${queueKey}:${entryIndex}`,
-        entryData as unknown as string,
-        this.QUEUE_CACHE_TTL
-      );
+      const updatedEntries = [...entries];
+      updatedEntries[entryIndex] = JSON.stringify(entryData);
+      await this.rewriteQueueList(queueKey, updatedEntries);
 
       // Invalidate cache
-      await this.cacheService.del(
-        `queue:doctor:${clinicId}:${doctorId}:${new Date().toISOString().split('T')[0]}:${domain}`
-      );
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId,
+        date: new Date().toISOString().split('T')[0],
+        locationId: entryData.locationId,
+        appointmentId,
+      });
 
       // Emit WebSocket event for queue update (consultation started)
       if (this.typedEventService) {
@@ -910,6 +1045,9 @@ export class AppointmentQueueService {
               clinicId,
               queueOwnerId: doctorId,
               queueCategory: 'DOCTOR_CONSULTATION',
+              displayLabel:
+                entryData.displayLabel ||
+                this.resolveDisplayLabel('DOCTOR_CONSULTATION', entryData.type),
               queuePositions: updatedPositions,
             },
           });
@@ -985,13 +1123,18 @@ export class AppointmentQueueService {
         .filter(Boolean);
 
       // Clear and repopulate queue
-      await this.cacheService.del(queueKey);
-      for (const entry of reorderedEntries) {
-        await this.cacheService.rPush(queueKey, entry as string);
-      }
+      await this.rewriteQueueList(
+        queueKey,
+        reorderedEntries.map(entry => entry as string)
+      );
 
       // Invalidate cache
-      await this.cacheService.del(`queue:doctor:${clinicId}:${doctorId}:${date}:${domain}`);
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId,
+        date,
+      });
 
       // Emit WebSocket event for queue reorder
       if (this.typedEventService) {
@@ -1007,6 +1150,25 @@ export class AppointmentQueueService {
           await this.typedEventService.emitEnterprise('appointment.queue.reordered', {
             eventId: `queue-reordered-${doctorId}-${Date.now()}`,
             eventType: 'appointment.queue.reordered',
+            category: EventCategory.APPOINTMENT,
+            priority: EventPriority.NORMAL,
+            timestamp: new Date().toISOString(),
+            source: 'AppointmentQueueService',
+            version: '1.0.0',
+            payload: {
+              doctorId,
+              date,
+              domain,
+              action: 'REORDERED',
+              clinicId,
+              queueOwnerId: doctorId,
+              queueCategory: 'DOCTOR_CONSULTATION',
+              queuePositions: updatedPositions,
+            },
+          });
+          await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+            eventId: `queue-reordered-alias-${doctorId}-${Date.now()}`,
+            eventType: 'appointment.queue.updated',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
             timestamp: new Date().toISOString(),
@@ -1249,6 +1411,15 @@ export class AppointmentQueueService {
             await this.cacheService.rPush(key, entry);
           }
 
+          await this.invalidateQueueReadCaches({
+            clinicId,
+            domain,
+            doctorId: entryData.doctorId || entryData.queueOwnerId,
+            date: key.split(':')[4] || this.getQueueDate(),
+            locationId: entryData.locationId,
+            appointmentId,
+          });
+
           void this.loggingService.log(
             LogType.APPOINTMENT,
             LogLevel.INFO,
@@ -1345,10 +1516,18 @@ export class AppointmentQueueService {
         return { success: false, message: 'Patient not found in queue' };
       }
 
-      await this.cacheService.del(queueKey);
-      for (const entry of newEntries) {
-        await this.cacheService.rPush(queueKey, entry);
-      }
+      await this.rewriteQueueList(queueKey, newEntries);
+      const removedEntry = entries
+        .map(entry => JSON.parse(entry) as QueueEntryData)
+        .find(entry => entry.appointmentId === appointmentId);
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId,
+        date,
+        locationId: removedEntry?.locationId,
+        appointmentId,
+      });
 
       // Emit Event
       if (this.typedEventService) {
@@ -1368,6 +1547,7 @@ export class AppointmentQueueService {
             clinicId,
             queueOwnerId: doctorId,
             queueCategory: 'DOCTOR_CONSULTATION',
+            displayLabel: removedEntry?.displayLabel,
           },
         });
       }
@@ -1416,13 +1596,17 @@ export class AppointmentQueueService {
       entries[nextIndex] = JSON.stringify(entryData);
 
       // Replace list in Redis
-      await this.cacheService.del(queueKey);
-      for (const entry of entries) {
-        await this.cacheService.rPush(queueKey, entry);
-      }
+      await this.rewriteQueueList(queueKey, entries);
 
       // Invalidate cache
-      await this.cacheService.del(`queue:doctor:${clinicId}:${doctorId}:${date}:${domain}`);
+      await this.invalidateQueueReadCaches({
+        clinicId,
+        domain,
+        doctorId,
+        date,
+        locationId: entryData.locationId,
+        appointmentId,
+      });
 
       // Emit Event
       if (this.typedEventService) {
@@ -1444,6 +1628,7 @@ export class AppointmentQueueService {
             clinicId,
             queueOwnerId: doctorId,
             queueCategory: 'DOCTOR_CONSULTATION',
+            displayLabel: entryData.displayLabel,
           },
         });
       }
@@ -1468,6 +1653,12 @@ export class AppointmentQueueService {
       'PAUSED',
       3600
     );
+    await this.invalidateQueueReadCaches({
+      clinicId,
+      domain,
+      doctorId,
+      date,
+    });
 
     if (this.typedEventService) {
       await this.typedEventService.emitEnterprise('appointment.queue.updated', {
@@ -1498,6 +1689,12 @@ export class AppointmentQueueService {
   ): Promise<OperationResponse> {
     const date = new Date().toISOString().split('T')[0];
     await this.cacheService.del(`queue:status:${domain}:${clinicId}:${doctorId}:${date}`);
+    await this.invalidateQueueReadCaches({
+      clinicId,
+      domain,
+      doctorId,
+      date,
+    });
 
     if (this.typedEventService) {
       await this.typedEventService.emitEnterprise('appointment.queue.updated', {

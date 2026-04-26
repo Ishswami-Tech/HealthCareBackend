@@ -540,6 +540,7 @@ export class CheckInService {
       // 4. Invalidate relevant cache entries
       void this.cacheService.del(`appointment:${appointment.id}`);
       void this.cacheService.del(`queue:location:${appointment.locationId}`);
+      void this.cacheService.del(`queue:position:${appointment.id}:${clinicId}`);
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
