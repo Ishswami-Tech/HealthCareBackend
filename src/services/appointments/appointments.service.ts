@@ -1839,9 +1839,14 @@ export class AppointmentsService {
     }
 
     // Payment required before doctor can confirm: VIDEO_CALL is per-appointment, patient must pay first
-    const payments = await this.databaseService.findPaymentsSafe({
-      appointmentId,
-      status: 'COMPLETED',
+    const payments = await this.databaseService.executeRead(async prisma => {
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      return tx.payment.findMany({
+        where: {
+          appointmentId,
+          status: 'COMPLETED',
+        },
+      });
     });
     if (!payments || payments.length === 0) {
       throw this.errors.validationError(
@@ -1938,6 +1943,32 @@ export class AppointmentsService {
       },
     });
 
+    await this.eventService.emit('appointment.confirmed', {
+      appointmentId,
+      clinicId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      confirmedSlotIndex: dto.confirmedSlotIndex,
+      status: AppointmentStatus.CONFIRMED,
+      appointment: updated,
+      context: { userId },
+    });
+
+    await this.cacheService.invalidateAppointmentCache(
+      appointmentId,
+      appointment.patientId,
+      appointment.doctorId,
+      clinicId
+    );
+    await this.eventService.emit('doctor.availability.changed', {
+      clinicId,
+      appointmentId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      source: 'AppointmentsService.confirmVideoSlot',
+      timestamp: new Date().toISOString(),
+    });
+
     return {
       success: true,
       data: updated as unknown as Record<string, unknown>,
@@ -2009,9 +2040,14 @@ export class AppointmentsService {
     }
 
     // Payment required before final confirmation for video calls.
-    const payments = await this.databaseService.findPaymentsSafe({
-      appointmentId,
-      status: 'COMPLETED',
+    const payments = await this.databaseService.executeRead(async prisma => {
+      const tx = prisma as unknown as Prisma.TransactionClient;
+      return tx.payment.findMany({
+        where: {
+          appointmentId,
+          status: 'COMPLETED',
+        },
+      });
     });
     if (!payments || payments.length === 0) {
       throw this.errors.validationError(
@@ -2137,6 +2173,33 @@ export class AppointmentsService {
       finalSlot: { date: finalDate, time: finalTime },
       source: hasConfirmedIndex ? 'proposed' : 'custom',
       context: { userId },
+    });
+
+    await this.eventService.emit('appointment.confirmed', {
+      appointmentId,
+      clinicId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      confirmedSlotIndex: confirmedSlotValue,
+      finalSlot: { date: finalDate, time: finalTime },
+      status: AppointmentStatus.CONFIRMED,
+      appointment: updated,
+      context: { userId },
+    });
+
+    await this.cacheService.invalidateAppointmentCache(
+      appointmentId,
+      appointment.patientId,
+      appointment.doctorId,
+      clinicId
+    );
+    await this.eventService.emit('doctor.availability.changed', {
+      clinicId,
+      appointmentId,
+      doctorId: appointment.doctorId,
+      patientId: appointment.patientId,
+      source: 'AppointmentsService.confirmFinalVideoSlot',
+      timestamp: new Date().toISOString(),
     });
 
     return {
