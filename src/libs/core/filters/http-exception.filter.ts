@@ -147,7 +147,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     /^\/app(\/|$)/i, // Next.js app directory routes
     /^\/api\/route(\/|$)/i, // Next.js API routes
     /^\/index\.htm$/i, // Common index file probes
-    /^\/api-docs$/i, // Swagger docs (might be using /docs instead)
+    /^\/docs(?:-json|-yaml)?$/i, // Swagger docs
   ];
 
   /**

@@ -37,7 +37,7 @@ export default function createTestConfig(): Config {
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
-      swagger: getEnvWithDefault('API_DOCS_PATH', getEnvWithDefault('SWAGGER_URL', '/docs')),
+      swagger: getEnvWithDefault('SWAGGER_URL', '/docs'),
       bullBoard: getEnvWithDefault('BULL_BOARD_URL', '/queue-dashboard'),
       socket: getEnvWithDefault('SOCKET_URL', '/socket.io'),
       redisCommander: getEnvWithDefault('REDIS_COMMANDER_URL', 'http://localhost:8082'),

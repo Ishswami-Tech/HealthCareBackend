@@ -1,11 +1,12 @@
 import { DocumentBuilder, SwaggerCustomOptions } from '@nestjs/swagger';
-import { getEnvironment, getEnv } from './environment/utils';
+import type { Config } from '@core/types/config.types';
+import { getEnvironment } from './environment/utils';
 import developmentConfig from './environment/development.config';
 import productionConfig from './environment/production.config';
 import stagingConfig from './environment/staging.config';
 import testConfig from './environment/test.config';
 
-const getEnvironmentConfig = () => {
+const getEnvironmentConfig = (): Config => {
   // Use helper function (which uses dotenv) for environment variable access
   const nodeEnv = getEnvironment();
   if (nodeEnv === 'production') {
@@ -18,43 +19,6 @@ const getEnvironmentConfig = () => {
     return testConfig();
   }
   return developmentConfig();
-};
-
-// Helper function to get API servers based on environment
-const getApiServers = () => {
-  const config = getEnvironmentConfig();
-  const servers = [];
-
-  if (config.app.environment === 'production') {
-    servers.push(
-      { url: config.app.baseUrl, description: 'Production API Server' },
-      {
-        url: `${config.app.baseUrl}${config.urls.bullBoard}`,
-        description: 'Queue Dashboard',
-      }
-    );
-  } else {
-    // Docker-first development configuration
-    servers.push(
-      // Primary Docker network URLs - use config values
-      { url: config.app.baseUrl, description: 'Development API Server' },
-      {
-        url: `${config.app.baseUrl}${config.urls.bullBoard}`,
-        description: 'Queue Dashboard',
-      },
-      // Development services with Docker network URLs - use config values
-      {
-        url: config.urls.redisCommander || getEnv('REDIS_COMMANDER_URL') || 'http://localhost:8082',
-        description: 'Redis Commander',
-      },
-      {
-        url: config.urls.prismaStudio || getEnv('PRISMA_STUDIO_URL') || 'http://localhost:5555',
-        description: 'Prisma Studio',
-      }
-    );
-  }
-
-  return servers;
 };
 
 export const swaggerConfig = new DocumentBuilder()
@@ -100,15 +64,6 @@ ${
 ### Available Endpoints
 - API Documentation: ${getEnvironmentConfig().urls.swagger}
 - Health Check: /health
-- Queue Dashboard: ${getEnvironmentConfig().urls.bullBoard}
-${
-  getEnvironmentConfig().app.environment !== 'production'
-    ? `
-### Development Tools (Docker)
-- Redis Commander: ${getEnvironmentConfig().urls.redisCommander}
-- Prisma Studio: ${getEnvironmentConfig().urls.prismaStudio}`
-    : ''
-}
   `
   )
   .setVersion('1.0')
@@ -136,12 +91,7 @@ ${
   .addApiKey({ type: 'apiKey', in: 'header', name: 'x-session-id' }, 'session-id')
   .build();
 
-// Add servers after building the config
-getApiServers().forEach(server => {
-  if (swaggerConfig.servers) {
-    swaggerConfig.servers.push(server);
-  }
-});
+swaggerConfig.servers = [{ url: getEnvironmentConfig().app.baseUrl, description: 'API Server' }];
 
 export const swaggerCustomOptions: SwaggerCustomOptions = {
   swaggerOptions: {
@@ -162,7 +112,7 @@ export const swaggerCustomOptions: SwaggerCustomOptions = {
     layout: 'BaseLayout',
     deepLinking: true,
     tagsSorter: 'alpha',
-    urls: getApiServers(),
+    url: `${getEnvironmentConfig().app.baseUrl}${getEnvironmentConfig().urls.swagger}-json`,
     securityDefinitions: {
       'session-id': {
         type: 'apiKey',

@@ -94,17 +94,6 @@ export class BullBoardModule {
               password: config.get<string>('QUEUE_DASHBOARD_PASSWORD', resolvedDashboardPassword),
             },
             basePath: '/queue-dashboard',
-            middleware: (req: unknown, _res: unknown, next: unknown) => {
-              // Only handle queue-dashboard routes
-              const request = req as { url: string };
-              const nextFn = next as (value?: string) => void;
-              if (request.url.startsWith('/queue-dashboard')) {
-                nextFn();
-              } else {
-                // Pass through for non-queue routes
-                nextFn('route');
-              }
-            },
           }),
           inject: [ConfigService],
         }),

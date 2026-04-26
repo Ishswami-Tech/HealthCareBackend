@@ -47,7 +47,7 @@ export default function createDevelopmentConfig(): Config {
     },
     urls: {
       // Use helper functions (which use dotenv) for environment variable access
-      swagger: getEnvWithDefault('API_DOCS_PATH', getEnvWithDefault(ENV_VARS.SWAGGER_URL, '/docs')),
+      swagger: getEnvWithDefault(ENV_VARS.SWAGGER_URL, '/docs'),
       bullBoard: getEnvWithDefault(ENV_VARS.BULL_BOARD_URL, '/queue-dashboard'),
       socket: getEnvWithDefault(ENV_VARS.SOCKET_URL, '/socket.io'),
       redisCommander: getEnvWithDefault(ENV_VARS.REDIS_COMMANDER_URL, 'http://localhost:8082'),

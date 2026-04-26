@@ -271,21 +271,26 @@ export class LoggingController {
             params.append('page', currentPage.toString());
             
             if (currentTab === 'logs') {
-              const type = document.getElementById('logType').value;
-              const level = document.getElementById('logLevel').value;
-              const timeRange = document.getElementById('timeRange').value;
-              const searchInput = document.getElementById('searchInput') as HTMLInputElement;
-              const search = searchInput?.value?.trim();
+              const type = document.getElementById('logType')?.value || '';
+              const level = document.getElementById('logLevel')?.value || '';
+              const timeRange = document.getElementById('timeRange')?.value || '';
+              const searchInput = document.getElementById('searchInput');
+              const search =
+                searchInput instanceof HTMLInputElement ? searchInput.value.trim() : '';
               
               if (type) params.append('type', type);
               if (level) params.append('level', level);
               if (search) params.append('search', search);
               
               if (timeRange === 'custom') {
-                const startTime = document.getElementById('startTime') as HTMLInputElement;
-                const endTime = document.getElementById('endTime') as HTMLInputElement;
-                if (startTime?.value) params.append('startTime', new Date(startTime.value).toISOString());
-                if (endTime?.value) params.append('endTime', new Date(endTime.value).toISOString());
+                const startTime = document.getElementById('startTime');
+                const endTime = document.getElementById('endTime');
+                if (startTime instanceof HTMLInputElement && startTime.value) {
+                  params.append('startTime', new Date(startTime.value).toISOString());
+                }
+                if (endTime instanceof HTMLInputElement && endTime.value) {
+                  params.append('endTime', new Date(endTime.value).toISOString());
+                }
               } else if (timeRange === 'all') {
                 // Don't add time filters - show all logs from cache
                 // This allows viewing all available logs regardless of time
@@ -295,7 +300,7 @@ export class LoggingController {
                 params.append('startTime', startTime.toISOString());
               }
             } else {
-              const type = document.getElementById('eventType').value;
+              const type = document.getElementById('eventType')?.value || '';
               if (type) params.append('type', type);
             }
             
@@ -356,7 +361,8 @@ export class LoggingController {
             // Render logs or events based on current tab
             if (currentTab === 'logs') {
               container.innerHTML = totalInfo + paginationHtml + items.map(log => {
-                const metadata = typeof (log as { metadata?: unknown }).metadata === 'string' ? JSON.parse((log as { metadata?: unknown }).metadata) : (log as { metadata?: unknown }).metadata;
+                const metadata =
+                  typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
                 return '<div class="entry">' +
                   '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +
                   '<span class="level ' + log.level + '">' + log.level + '</span>' +
@@ -368,9 +374,8 @@ export class LoggingController {
             } else {
               // Render events
               container.innerHTML = totalInfo + paginationHtml + items.map(event => {
-                const eventData = typeof (event as { data?: unknown }).data === 'string' 
-                  ? JSON.parse((event as { data?: unknown }).data as string) 
-                  : (event as { data?: unknown }).data;
+                const eventData =
+                  typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                 return '<div class="entry">' +
                   '<span class="timestamp">' + new Date(event.timestamp).toLocaleString() + '</span>' +
                   '<span class="type">' + event.type + '</span>' +
@@ -391,7 +396,10 @@ export class LoggingController {
               clearInterval(refreshInterval);
               updateRefreshStatus(false, 'Auto-refresh stopped due to errors. Click Refresh to try again.');
             } else {
-              updateRefreshStatus(false, (error as Error).message);
+              updateRefreshStatus(
+                false,
+                error instanceof Error ? error.message : String(error)
+              );
             }
           } finally {
             isRefreshing = false;
