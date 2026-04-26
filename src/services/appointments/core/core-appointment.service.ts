@@ -1127,6 +1127,12 @@ export class CoreAppointmentService {
       for (const pattern of patterns) {
         await this.cacheService.delPattern(pattern);
       }
+
+      await this.eventService.emit('doctor.availability.changed', {
+        clinicId,
+        source: 'CoreAppointmentService.invalidateAppointmentCache',
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       void this.loggingService.log(
