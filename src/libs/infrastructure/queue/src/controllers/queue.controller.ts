@@ -1227,11 +1227,11 @@ export class QueueController {
     if (normalized === 'appointments') return 'Appointments';
     if (normalized === 'video') return 'Video';
     if (normalized === 'clinical_support') return 'Clinical Support';
-    if (normalized === 'special_case') return 'Special Case / Complex Care';
+    if (normalized === 'special_case') return 'Special Case';
     if (normalized === 'senior_citizen') return 'Senior Citizen';
     if (normalized === 'procedural_care') return 'Procedural Care';
     if (normalized === 'lab_test' || normalized === 'imaging' || normalized === 'vaccination')
-      return 'Diagnostic / Preventive Care';
+      return 'Diagnostic';
     if (normalized === 'dosha_analysis') return 'Ayurvedic Procedures';
     if (
       normalized === 'therapy' ||

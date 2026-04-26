@@ -228,13 +228,13 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         },
         {
           value: 'diagnostic_preventive',
-          label: 'Diagnostic / Preventive Care',
+          label: 'Diagnostic',
           description: 'Combined diagnostic, imaging, and preventive workflow',
           aliases: [TreatmentType.LAB_TEST, TreatmentType.IMAGING, TreatmentType.VACCINATION],
         },
         {
           value: TreatmentType.SPECIAL_CASE,
-          label: 'Special Case / Complex Care',
+          label: 'Special Case',
           description: 'Complex, sensitive, or unusual care needs',
         },
         {

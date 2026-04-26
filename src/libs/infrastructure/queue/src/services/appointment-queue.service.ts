@@ -71,7 +71,7 @@ export class AppointmentQueueService {
 
     if (normalizedTreatment === 'general_consultation') return 'General Consultation';
     if (normalizedTreatment === 'follow_up') return 'Follow Up';
-    if (normalizedTreatment === 'special_case') return 'Special Case / Complex Care';
+    if (normalizedTreatment === 'special_case') return 'Special Case';
     if (normalizedTreatment === 'geriatric_care' || normalizedTreatment === 'senior_citizen')
       return 'Senior Citizen';
     if (
@@ -79,7 +79,7 @@ export class AppointmentQueueService {
       normalizedTreatment === 'imaging' ||
       normalizedTreatment === 'vaccination'
     )
-      return 'Diagnostic / Preventive Care';
+      return 'Diagnostic';
     if (
       normalizedTreatment === 'dosha_analysis' ||
       normalizedTreatment === 'virechana' ||
