@@ -129,7 +129,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.LAB_TEST,
-    label: 'Diagnostic / Preventive Care',
+    label: 'Diagnostic',
     description: 'Combined diagnostic, imaging, and preventive care workflow',
     category: AppointmentServiceCategory.DIAGNOSIS,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
@@ -142,7 +142,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
   },
   {
     treatmentType: TreatmentType.SPECIAL_CASE,
-    label: 'Special Case / Complex Care',
+    label: 'Special Case',
     description: 'Complex, sensitive, or unusual consultation that needs tailored handling',
     category: AppointmentServiceCategory.CONSULTATION,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
