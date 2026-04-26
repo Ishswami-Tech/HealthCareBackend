@@ -140,15 +140,15 @@ export class InvoicePDFService {
     this.drawHeader(doc, data);
     this.drawSummaryCards(doc, data);
 
-    const serviceHeaderY = 250;
+    const serviceHeaderY = 310;
     const tableTop = serviceHeaderY + 26;
     const tableBottom = 575;
     this.drawSectionTitle(doc, serviceHeaderY, 'Services Rendered');
     const nextY = this.drawLineItemsTable(doc, data, tableTop, tableBottom);
 
-    const totalsY = Math.max(nextY + 18, 590);
+    const totalsY = Math.max(nextY + 18, 300);
     this.drawTotalsAndPayment(doc, data, totalsY);
-    this.drawNotes(doc, data, Math.max(totalsY + 182, 792));
+    this.drawNotes(doc, data, totalsY + 264);
     this.drawFooter(doc, data, pageHeight);
   }
 
@@ -236,7 +236,7 @@ export class InvoicePDFService {
 
     doc
       .font('Times-Bold')
-      .fontSize(26)
+      .fontSize(22)
       .fillColor(this.palette.ink)
       .text(data.clinicName, 54, headerY + 42, { width: 310 });
 
@@ -276,7 +276,7 @@ export class InvoicePDFService {
 
     doc
       .font('Times-Bold')
-      .fontSize(26)
+      .fontSize(22)
       .fillColor(this.palette.ink)
       .text(data.invoiceNumber, rightX, headerY + 28, {
         width: 300,
@@ -347,7 +347,7 @@ export class InvoicePDFService {
 
   private drawSummaryCards(doc: PDFDocumentInstance, data: InvoicePDFData): void {
     const cardY = 226;
-    const cardHeight = 70;
+    const cardHeight = 64;
     const cardWidth = (doc.page.width - 96) / 3;
     const gap = 12;
     const xPositions: [number, number, number] = [
@@ -398,7 +398,7 @@ export class InvoicePDFService {
         });
       doc
         .font('Helvetica-Bold')
-        .fontSize(13)
+        .fontSize(12)
         .fillColor(this.palette.ink)
         .text(card.title, x + 14, cardY + 27, {
           width: cardWidth - 28,
@@ -407,9 +407,9 @@ export class InvoicePDFService {
         });
       doc
         .font('Helvetica')
-        .fontSize(10)
+        .fontSize(9)
         .fillColor(this.palette.muted)
-        .text(card.sub, x + 14, cardY + 46, {
+        .text(card.sub, x + 14, cardY + 44, {
           width: cardWidth - 28,
           height: 18,
           lineGap: 2,
@@ -634,38 +634,38 @@ export class InvoicePDFService {
     const statusColors = this.getStatusColors(status);
 
     doc
-      .roundedRect(totalsX, y, totalsWidth, 138, 14)
+      .roundedRect(totalsX, y, totalsWidth, 124, 14)
       .fillAndStroke(this.palette.white, this.palette.border);
 
     this.drawTotalsRow(
       doc,
       totalsX,
-      y + 14,
+      y + 12,
       totalsWidth,
       'Subtotal',
       this.formatMoney(data.subtotal)
     );
-    this.drawTotalsRow(doc, totalsX, y + 40, totalsWidth, 'Tax / GST', this.formatMoney(data.tax));
+    this.drawTotalsRow(doc, totalsX, y + 36, totalsWidth, 'Tax / GST', this.formatMoney(data.tax));
     this.drawTotalsRow(
       doc,
       totalsX,
-      y + 66,
+      y + 60,
       totalsWidth,
       'Discount',
       data.discount > 0 ? `-${this.formatMoney(data.discount)}` : this.formatMoney(0)
     );
 
-    doc.roundedRect(totalsX, y + 93, totalsWidth, 34, 0).fillAndStroke('#4caf82', '#4caf82');
+    doc.roundedRect(totalsX, y + 84, totalsWidth, 34, 0).fillAndStroke('#4caf82', '#4caf82');
     doc
       .font('Helvetica-Bold')
       .fontSize(9.5)
       .fillColor(this.palette.white)
-      .text('TOTAL AMOUNT', totalsX + 14, y + 106, { characterSpacing: 1.2 });
+      .text('TOTAL AMOUNT', totalsX + 14, y + 97, { characterSpacing: 1.2 });
     doc
       .font('Times-Bold')
-      .fontSize(23)
+      .fontSize(20)
       .fillColor(this.palette.white)
-      .text(this.formatMoney(data.total), totalsX + 150, y + 99, {
+      .text(this.formatMoney(data.total), totalsX + 150, y + 93, {
         width: 132,
         align: 'right',
       });
@@ -673,7 +673,7 @@ export class InvoicePDFService {
     const paymentX = 32;
     const paymentWidth = 272;
     doc
-      .roundedRect(paymentX, y, paymentWidth, 138, 14)
+      .roundedRect(paymentX, y, paymentWidth, 124, 14)
       .fillAndStroke('#eafaf3', this.palette.border);
     doc
       .font('Helvetica-Bold')
@@ -696,7 +696,7 @@ export class InvoicePDFService {
 
     paymentItems.forEach((entry, index) => {
       const columnX = index % 2 === 0 ? leftColX : rightColX;
-      const rowY = y + 34 + Math.floor(index / 2) * 34;
+      const rowY = y + 32 + Math.floor(index / 2) * 32;
       doc
         .font('Helvetica')
         .fontSize(8.5)
@@ -711,16 +711,16 @@ export class InvoicePDFService {
 
     const journeyX = 32;
     const journeyWidth = doc.page.width - 64;
-    doc.roundedRect(journeyX, y + 154, journeyWidth, 122, 14).fillAndStroke('#ede9ff', '#d0c8f8');
+    doc.roundedRect(journeyX, y + 134, journeyWidth, 118, 14).fillAndStroke('#ede9ff', '#d0c8f8');
     doc
       .font('Helvetica-Bold')
       .fontSize(8.5)
       .fillColor(this.palette.purple)
-      .text('PAYMENT JOURNEY', journeyX + 16, y + 168, { characterSpacing: 1.4 });
+      .text('PAYMENT JOURNEY', journeyX + 16, y + 144, { characterSpacing: 1.4 });
 
     const journey = this.buildJourney(status, !!data.paidAt);
     const startX = journeyX + 18;
-    const stepYs: [number, number, number] = [y + 192, y + 224, y + 256];
+    const stepYs: [number, number, number] = [y + 164, y + 192, y + 220];
 
     journey.steps.forEach((step, index) => {
       const stepY = stepYs[index as 0 | 1 | 2];
@@ -746,7 +746,7 @@ export class InvoicePDFService {
       .font('Helvetica')
       .fontSize(9)
       .fillColor(this.palette.muted)
-      .text(journeyStatus, journeyX + 16, y + 264, {
+      .text(journeyStatus, journeyX + 16, y + 236, {
         width: journeyWidth - 32,
       });
   }
@@ -779,7 +779,7 @@ export class InvoicePDFService {
       data.termsAndConditions ||
       'Thank you for your business. Payment is due within 30 days. Please include the invoice number with your payment.';
 
-    doc.roundedRect(32, y, doc.page.width - 64, 96, 12).fillAndStroke('#fff9ec', '#f6d45a');
+    doc.roundedRect(32, y, doc.page.width - 64, 80, 12).fillAndStroke('#fff9ec', '#f6d45a');
     doc
       .font('Helvetica-Bold')
       .fontSize(8.5)
@@ -787,18 +787,18 @@ export class InvoicePDFService {
       .text('NOTES', 48, y + 12, { characterSpacing: 1.4 });
     doc
       .font('Times-Italic')
-      .fontSize(13.5)
+      .fontSize(12)
       .fillColor('#a07a30')
-      .text(noteText, 48, y + 28, {
+      .text(noteText, 48, y + 26, {
         width: doc.page.width - 96,
-        lineGap: 5,
+        lineGap: 3,
       });
 
     doc
       .font('Helvetica')
-      .fontSize(8.8)
+      .fontSize(8.5)
       .fillColor(this.palette.muted)
-      .text(termsText, 48, y + 74, {
+      .text(termsText, 48, y + 62, {
         width: doc.page.width - 96,
         align: 'center',
       });
