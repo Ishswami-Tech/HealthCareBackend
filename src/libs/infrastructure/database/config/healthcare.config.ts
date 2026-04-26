@@ -347,7 +347,7 @@ export const healthcareConfig = () => ({
     },
     apiDocumentation: {
       enabled: getEnvBoolean('API_DOCS_ENABLED', true),
-      path: getEnvWithDefault('API_DOCS_PATH', '/api/docs'),
+      path: getEnvWithDefault('SWAGGER_URL', '/docs'),
     },
   },
 });

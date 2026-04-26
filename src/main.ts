@@ -1002,21 +1002,19 @@ async function bootstrap() {
         // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
         // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
 
-        const swaggerPath = String(
-          configService.getEnv('API_DOCS_PATH', _swaggerUrl || '/docs') || _swaggerUrl || '/docs'
-        ).replace(/^\//, '');
-        logger.log(`Setting up Swagger at path: ${swaggerPath}`);
+        const swaggerPath = String(_swaggerUrl || '/docs')
+          .trim()
+          .replace(/^\//, '');
+        const swaggerRoutePath = swaggerPath.startsWith('/') ? swaggerPath : `/${swaggerPath}`;
+        logger.log(`Setting up Swagger at path: ${swaggerRoutePath}`);
         SwaggerModule.setup(swaggerPath, appInstance, documentFactory, {
           ...swaggerCustomOptions,
+          jsonDocumentUrl: `${swaggerRoutePath}-json`,
+          yamlDocumentUrl: `${swaggerRoutePath}-yaml`,
           swaggerOptions: {
             ...swaggerCustomOptions.swaggerOptions,
             // Set the default server based on environment
-            urls: [
-              {
-                url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${String(_swaggerUrl || '/docs')}/swagger.json`,
-                name: appConfig.environment === 'production' ? 'Production' : 'Development',
-              },
-            ],
+            url: `${String(envConfig.app.baseUrl || _apiUrl || '')}${swaggerRoutePath}-json`,
           },
         });
 

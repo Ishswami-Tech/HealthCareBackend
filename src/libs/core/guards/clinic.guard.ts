@@ -93,7 +93,8 @@ export class ClinicGuard implements CanActivate {
       '/queue',
       '/socket-test',
       '/docs',
-      '/api-docs',
+      '/docs-json',
+      '/docs-yaml',
     ];
     const isPublicModule = publicModules.some(module => request.url.startsWith(module));
 

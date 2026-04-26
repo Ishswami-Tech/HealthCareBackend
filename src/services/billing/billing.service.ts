@@ -360,8 +360,18 @@ export class BillingService {
         paymentId: args.paymentId,
         amount: args.amount,
         status: normalizedStatus,
+        ...(args.clinicId ? { clinicId: args.clinicId } : {}),
         ...(args.appointmentId && { appointmentId: args.appointmentId }),
         ...(args.subscriptionId && { subscriptionId: args.subscriptionId }),
+      },
+      payload: {
+        paymentId: args.paymentId,
+        amount: args.amount,
+        status: normalizedStatus,
+        clinicId: args.clinicId,
+        ...(args.userId ? { userId: args.userId } : {}),
+        ...(args.appointmentId ? { appointmentId: args.appointmentId } : {}),
+        ...(args.subscriptionId ? { subscriptionId: args.subscriptionId } : {}),
       },
     };
 

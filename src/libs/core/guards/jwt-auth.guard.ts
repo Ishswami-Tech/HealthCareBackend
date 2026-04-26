@@ -154,7 +154,14 @@ export class JwtAuthGuard implements CanActivate {
   /**
    * Public route prefixes (documentation, assets, etc.)
    */
-  private readonly publicPrefixPaths = ['/docs', '/swagger', '/api-json', '/favicon.ico'];
+  private readonly publicPrefixPaths = [
+    '/docs',
+    '/docs-json',
+    '/docs-yaml',
+    '/swagger',
+    '/api-json',
+    '/favicon.ico',
+  ];
 
   /**
    * Paths that remain accessible even when profile is incomplete.

@@ -934,6 +934,38 @@ export class QueueProcessor {
         throw new Error(`User or clinic not found for invoice ${invoiceId}`);
       }
 
+      const subscriptionPlanName =
+        invoice.subscription &&
+        typeof invoice.subscription === 'object' &&
+        'plan' in invoice.subscription &&
+        invoice.subscription.plan &&
+        typeof invoice.subscription.plan === 'object' &&
+        'name' in invoice.subscription.plan &&
+        typeof invoice.subscription.plan.name === 'string'
+          ? invoice.subscription.plan.name
+          : undefined;
+
+      const subscriptionPeriod =
+        invoice.subscription &&
+        typeof invoice.subscription === 'object' &&
+        'currentPeriodStart' in invoice.subscription &&
+        'currentPeriodEnd' in invoice.subscription
+          ? `${new Date(String(invoice.subscription.currentPeriodStart)).toLocaleDateString()} - ${new Date(
+              String(invoice.subscription.currentPeriodEnd)
+            ).toLocaleDateString()}`
+          : undefined;
+
+      const getUserAddress = (value: typeof user): string | undefined => {
+        if (!value || typeof value !== 'object') {
+          return undefined;
+        }
+        if ('address' in value && typeof value.address === 'string' && value.address.trim()) {
+          return value.address;
+        }
+        return undefined;
+      };
+      const userAddress = getUserAddress(user);
+
       // Prepare PDF data with proper type handling
       const pdfData: InvoicePDFData = {
         invoiceNumber: invoice.invoiceNumber,
@@ -947,6 +979,9 @@ export class QueueProcessor {
         userName: user.name || user.email || 'Unknown User',
         ...(user.email && { userEmail: user.email }),
         ...(user.phone && { userPhone: user.phone }),
+        ...(userAddress ? { userAddress } : {}),
+        ...(subscriptionPlanName && { subscriptionPlan: subscriptionPlanName }),
+        ...(subscriptionPeriod && { subscriptionPeriod }),
         lineItems: Array.isArray(invoice.lineItems)
           ? (invoice.lineItems as Array<{ description: string; amount: number }>)
           : [
@@ -960,8 +995,9 @@ export class QueueProcessor {
         discount: invoice.discount || 0,
         total: invoice.totalAmount,
         ...(invoice.paidAt && { paidAt: invoice.paidAt }),
-        notes: 'Thank you for your payment.',
-        termsAndConditions: 'Payment is due within 30 days.',
+        notes: `Thank you for your payment.${subscriptionPlanName ? ` This invoice is for ${subscriptionPlanName}.` : ''}`,
+        termsAndConditions:
+          'Payment is due within 30 days. Please include the invoice number with your payment.',
       };
 
       // Get payment details if invoice is paid
