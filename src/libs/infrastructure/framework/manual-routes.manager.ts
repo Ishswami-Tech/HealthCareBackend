@@ -12,7 +12,6 @@ import type { FastifyReply } from 'fastify';
 
 import { HealthController } from '@services/health/health.controller';
 import { AppController } from '../../../app.controller';
-import { LoggingController } from '@infrastructure/logging/logging.controller';
 
 interface IAppController {
   getDashboard?: (reply: FastifyReply) => Promise<unknown>;
@@ -21,13 +20,6 @@ interface IAppController {
 
 interface IHealthController {
   getHealth?: (reply: FastifyReply) => Promise<unknown>;
-}
-
-interface ILoggingController {
-  getUI?: (reply: FastifyReply) => Promise<unknown>;
-  getEventsPage?: (reply: FastifyReply) => Promise<unknown>;
-  getLogs?: (query: unknown) => Promise<unknown>;
-  getEvents?: (query: unknown) => Promise<unknown>;
 }
 
 export async function registerManualRoutes(
@@ -60,7 +52,6 @@ export async function registerManualRoutes(
 
     await registerRootRoute(app, fastifyInstance, loggingService);
     await registerHealthRoute(app, fastifyInstance, loggingService);
-    await registerLoggerRoutes(app, fastifyInstance, loggingService);
     await registerSocketTestRoute(app, fastifyInstance, loggingService);
   } catch (error) {
     await loggingService.log(
@@ -151,76 +142,6 @@ async function registerHealthRoute(
       LogType.SYSTEM,
       LogLevel.WARN,
       `Failed to register health route: ${error instanceof Error ? error.message : String(error)}`,
-      'ManualRoutesManager',
-      { error: error instanceof Error ? error.stack : String(error) }
-    );
-  }
-}
-
-async function registerLoggerRoutes(
-  app: INestApplication,
-  fastifyInstance: FastifyInstance,
-  loggingService: LoggingService
-): Promise<void> {
-  try {
-    const loggerController = await app.resolve(LoggingController);
-    const typedLoggerController = loggerController as ILoggingController | null;
-
-    if (!typedLoggerController) {
-      return;
-    }
-
-    if (typeof typedLoggerController.getUI === 'function') {
-      fastifyInstance.get?.('/logger', async (_request: unknown, reply: FastifyReply) => {
-        if (typedLoggerController.getUI) {
-          return typedLoggerController.getUI(reply);
-        }
-        return reply.code(500).send({ error: 'Logger UI handler not available' });
-      });
-    }
-
-    if (typeof typedLoggerController.getEventsPage === 'function') {
-      fastifyInstance.get?.('/logger/ui/events', async (_request: unknown, reply: FastifyReply) => {
-        if (typedLoggerController.getEventsPage) {
-          return typedLoggerController.getEventsPage(reply);
-        }
-        return reply.code(500).send({ error: 'Logger events UI handler not available' });
-      });
-    }
-
-    if (typeof typedLoggerController.getLogs === 'function') {
-      fastifyInstance.get?.('/logger/logs', async (request: unknown, reply: FastifyReply) => {
-        if (typedLoggerController.getLogs) {
-          const query = (request as { query?: unknown }).query ?? {};
-          const result = await typedLoggerController.getLogs(query);
-          return reply.send(result);
-        }
-        return reply.code(500).send({ error: 'Logger logs handler not available' });
-      });
-    }
-
-    if (typeof typedLoggerController.getEvents === 'function') {
-      fastifyInstance.get?.('/logger/events', async (request: unknown, reply: FastifyReply) => {
-        if (typedLoggerController.getEvents) {
-          const query = (request as { query?: unknown }).query ?? {};
-          const result = await typedLoggerController.getEvents(query);
-          return reply.send(result);
-        }
-        return reply.code(500).send({ error: 'Logger events handler not available' });
-      });
-    }
-
-    await loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Logger routes manually registered for Fastify (GET)',
-      'ManualRoutesManager'
-    );
-  } catch (error) {
-    await loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.WARN,
-      `Failed to register logger routes: ${error instanceof Error ? error.message : String(error)}`,
       'ManualRoutesManager',
       { error: error instanceof Error ? error.stack : String(error) }
     );
