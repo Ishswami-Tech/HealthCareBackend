@@ -41,15 +41,16 @@ type SwaggerDocumentBuilder = {
 };
 
 function loadLiveSwaggerModule(): LiveSwaggerModule | null {
-  const liveModulePath = path.join(process.cwd(), 'node_modules', '@nestjs', 'swagger');
-
-  if (!fs.existsSync(liveModulePath)) {
-    return null;
-  }
-
   try {
     // Use an absolute path so tsconfig path aliases do not redirect back to this shim.
     const require = createRequire(__filename);
+    const packageJsonPath = require.resolve('@nestjs/swagger/package.json');
+    const liveModulePath = path.dirname(packageJsonPath);
+
+    if (!fs.existsSync(liveModulePath)) {
+      return null;
+    }
+
     const loaded = require(liveModulePath) as Partial<LiveSwaggerModule>;
     if (loaded && loaded.SwaggerModule && loaded.DocumentBuilder) {
       return loaded as LiveSwaggerModule;

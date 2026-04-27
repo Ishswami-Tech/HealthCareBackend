@@ -194,6 +194,22 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
     }
   }
 
+  private getPublicMeetingBaseUrl(): string {
+    const normalizedDomain = this.normalizeHost(this.domain);
+    const domainHost = this.extractHost(normalizedDomain);
+    if (domainHost) {
+      return `https://${domainHost}`;
+    }
+
+    const normalizedApiUrl = this.normalizeUrl(this.apiUrl);
+    const apiHost = this.extractHost(normalizedApiUrl);
+    if (apiHost) {
+      return `https://${apiHost}`;
+    }
+
+    return normalizedApiUrl;
+  }
+
   /**
    * Get HTTP request config with SSL verification skipped in development
    */
@@ -382,7 +398,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       );
 
       const token = connectionResponse.data.token;
-      const meetingUrl = `${this.apiUrl}/#/sessions/${session.id}?token=${token}`;
+      const meetingUrl = `${this.getPublicMeetingBaseUrl()}/#/sessions/${session.id}?token=${token}`;
       const auditUserId = appointment.doctor?.userId || userId;
 
       await this.databaseService.executeHealthcareWrite(
