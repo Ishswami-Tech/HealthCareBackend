@@ -1599,12 +1599,12 @@ export class FollowUpPlanResponseDto {
  * @description Contains original appointment and all follow-ups
  */
 export class AppointmentChainResponseDto {
-  @ApiProperty({ description: 'Original appointment', type: AppointmentResponseDto })
+  @ApiProperty({ description: 'Original appointment', type: () => AppointmentResponseDto })
   original!: AppointmentResponseDto;
 
   @ApiProperty({
     description: 'Follow-up appointments',
-    type: [AppointmentResponseDto],
+    type: () => [AppointmentResponseDto],
   })
   followUps!: AppointmentResponseDto[];
 
@@ -1705,7 +1705,7 @@ export class RecurringSeriesResponseDto {
   @ApiProperty({ description: 'Series status' })
   status!: string;
 
-  @ApiProperty({ description: 'Appointments in series', type: [AppointmentResponseDto] })
+  @ApiProperty({ description: 'Appointments in series', type: () => [AppointmentResponseDto] })
   appointments!: AppointmentResponseDto[];
 
   @ApiProperty({ description: 'Total appointments' })
@@ -1801,7 +1801,7 @@ export class UpdateFollowUpPlanDto {
 export class AppointmentListResponseDto {
   @ApiProperty({
     description: 'List of appointments',
-    type: [AppointmentResponseDto],
+    type: () => [AppointmentResponseDto],
   })
   @IsArray({ message: 'Appointments must be an array' })
   @ValidateNested({ each: true })

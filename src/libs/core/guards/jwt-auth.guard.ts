@@ -159,6 +159,7 @@ export class JwtAuthGuard implements CanActivate {
     '/docs-json',
     '/docs-yaml',
     '/swagger',
+    '/queue-dashboard',
     '/api-json',
     '/favicon.ico',
   ];

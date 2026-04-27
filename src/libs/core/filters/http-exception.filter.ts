@@ -87,6 +87,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     /\/backend\/\.env$/i,
     /\/geoserver\/web\//i,
     /\/webui\//i,
+    /\/queue-dashboard(\/|$)/i,
     /\/stacks$/i,
     /\/api\/v\d+\/health(\/|$)/i, // Ignore /api/v1/health, /api/v2/health, etc. (common monitoring endpoints)
     /\/health(\/|$)/i, // Ignore /health endpoint variations

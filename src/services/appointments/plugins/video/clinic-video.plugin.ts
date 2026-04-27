@@ -32,7 +32,7 @@ export interface VideoPluginData {
  * Clinic Video Plugin for handling video consultation operations
  *
  * This plugin provides comprehensive video consultation functionality including:
- * - Legacy video call operations
+ * - Backward-compatible video consultation operations
  * - Unified video consultations (OpenVidu primary, Jitsi fallback)
  * - Real-time tracking and analytics
  * - HIPAA-compliant recording and data handling
@@ -92,7 +92,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
       switch (videoData.operation) {
         case 'createVideoCall':
         case 'createConsultationRoom':
-          // Legacy operations: Room creation is now handled automatically during generateMeetingToken
+          // Compatibility shim: room creation is now handled automatically during generateMeetingToken
           // Return success without calling non-existent videoService methods
           return { success: true, message: 'Room creation is handled dynamically.' };
 
@@ -210,16 +210,15 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     const pluginData = data;
     // Validate that required fields are present for each operation
     const requiredFields = {
-      // Legacy video call operations
+      // Backward-compatible video call operations
       createVideoCall: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
-      joinVideoCall: ['callId', 'userId'],
       endVideoCall: ['callId', 'userId'],
       startRecording: ['callId', 'userId'],
       stopRecording: ['callId', 'userId'],
       shareMedicalImage: ['callId', 'userId', 'imageData'],
       getVideoCallHistory: ['userId'],
 
-      // Jitsi consultation operations
+      // Current consultation operations
       createConsultationRoom: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
       generateJoinToken: ['appointmentId', 'userId', 'userRole', 'displayName'],
       startConsultationSession: ['appointmentId', 'userId', 'userRole'],

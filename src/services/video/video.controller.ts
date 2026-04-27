@@ -1168,7 +1168,7 @@ export class VideoController {
         );
       }
 
-      // Get consultation to find callId
+      // Resolve the consultation room identifier for media sharing
       const consultation = await this.videoService.getConsultationSession(appointmentId);
       if (!consultation) {
         throw this.errors.notFoundError(

@@ -492,7 +492,7 @@ export class CreateUserDto extends SimpleCreateUserDto {
   medicalConditions?: string[];
 
   @ApiPropertyOptional({
-    type: EmergencyContactDto,
+    type: () => EmergencyContactDto,
     description: 'Emergency contact details',
   })
   @IsOptional()
@@ -667,7 +667,7 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
 export class UserListResponseDto {
   @ApiProperty({
     description: 'List of users',
-    type: [UserResponseDto],
+    type: () => [UserResponseDto],
   })
   @ValidateNested({ each: true })
   @Type(() => UserResponseDto)
@@ -870,7 +870,7 @@ export class UpdateUserProfileDto {
   zipCode?: string;
 
   @ApiPropertyOptional({
-    type: EmergencyContactDto,
+    type: () => EmergencyContactDto,
     description: 'Emergency contact details',
   })
   @IsOptional()
