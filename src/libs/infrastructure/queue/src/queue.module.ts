@@ -14,9 +14,6 @@ import { getEnvWithDefault } from '../../../../config/environment/utils';
 import { QueueService } from './queue.service';
 import { QueueProcessor } from './queue.processor';
 
-import { createBullBoard } from '@bull-board/api';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { FastifyAdapter } from '@bull-board/fastify';
 import { QueueStatusGateway } from './sockets/queue-status.gateway';
 import { QueueMonitoringModule } from './monitoring/queue-monitoring.module';
 import { LoggingModule } from '@infrastructure/logging';
@@ -192,37 +189,6 @@ export class QueueModule {
         QueueProcessor,
         // QueueStatusGateway depends on QueueService and LoggingService (via LoggingModule import)
         ...(serviceName !== 'worker' ? [QueueStatusGateway] : []),
-        {
-          provide: 'BullBoard',
-          useFactory: (...queues: Queue[]) => {
-            const serverAdapter = new FastifyAdapter();
-
-            // Domain-aware Bull Board - only show queues for current domain
-            const domainQueues = queues.filter(queue => {
-              const queueName = queue.name;
-              if (serviceName === 'clinic') {
-                // Clinic API service should expose all registered queues it owns.
-                // Queue names are domain-agnostic (e.g., appointment-queue, notification-queue),
-                // so filtering by name substring "clinic" incorrectly hides valid queues.
-                return queueNames.includes(queueName);
-              } else if (serviceName === 'worker') {
-                return true; // Worker sees all queues
-              }
-              return true; // Worker sees all queues
-            });
-
-            createBullBoard({
-              queues: domainQueues.map(queue => new BullMQAdapter(queue)),
-              serverAdapter,
-              // Enhanced Bull Board configuration
-              options: {
-                uiBasePath: '/queue-dashboard',
-              },
-            });
-            return serverAdapter;
-          },
-          inject: queueNames.map((queueName: string) => getQueueToken(queueName)),
-        },
         // Enhanced worker configuration for 1M users
         ...(serviceName === 'worker'
           ? [
@@ -315,7 +281,7 @@ export class QueueModule {
             );
             return validQueues;
           },
-          inject: queueNames.map((queueName: string) => getQueueToken(queueName)),
+          inject: [getQueueToken(HEALTHCARE_QUEUE)],
         },
         // Always provide BULLMQ_WORKERS (empty array if not worker service)
         ...(serviceName !== 'worker'

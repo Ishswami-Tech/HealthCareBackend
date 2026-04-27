@@ -67,7 +67,7 @@ export class MyService {
 ### 1. Get Paginated Logs
 
 ```http
-GET /logger/logs/data?type=ERROR&level=ERROR&page=1&limit=50&search=error
+GET /logger/logs?type=ERROR&level=ERROR&page=1&limit=50&search=error
 ```
 
 **Query Parameters:**
@@ -115,7 +115,7 @@ GET /logger/logs/data?type=ERROR&level=ERROR&page=1&limit=50&search=error
 ### 2. Get Paginated Events
 
 ```http
-GET /logger/events/data?type=user.loggedIn&page=1&limit=50
+GET /logger/events?type=user.loggedIn&page=1&limit=50
 ```
 
 **Query Parameters:**
@@ -471,8 +471,8 @@ consistency.
 
 **Protection against abuse:**
 
-- `GET /logger/logs/data`: 100 requests/minute
-- `GET /logger/events/data`: 100 requests/minute
+- `GET /logger/logs`: 100 requests/minute
+- `GET /logger/events`: 100 requests/minute
 - `GET /logger/logs/clinic/:clinicId`: 100 requests/minute
 - `POST /logger/logs/clear`: 10 requests/minute (destructive operation)
 

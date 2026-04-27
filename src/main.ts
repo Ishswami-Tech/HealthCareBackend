@@ -808,9 +808,9 @@ async function bootstrap() {
         'docs',
         'queue-dashboard',
         'logger',
+        { path: 'logger/ui/events', method: 'GET' },
+        { path: 'logger/logs', method: 'GET' },
         { path: 'logger/events', method: 'GET' },
-        { path: 'logger/logs/data', method: 'GET' },
-        { path: 'logger/events/data', method: 'GET' },
         { path: 'logger/logs/clear', method: 'POST' },
         { path: 'logger/events/clear', method: 'POST' },
         'socket-test',
@@ -1002,12 +1002,10 @@ async function bootstrap() {
         // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()
         // The CSP directives include Swagger UI requirements ('unsafe-inline', 'unsafe-eval') for production
 
-        const swaggerPath = String(_swaggerUrl || '/docs')
-          .trim()
-          .replace(/^\//, '');
+        const swaggerPath = String(_swaggerUrl || '/docs').trim();
         const swaggerRoutePath = swaggerPath.startsWith('/') ? swaggerPath : `/${swaggerPath}`;
         logger.log(`Setting up Swagger at path: ${swaggerRoutePath}`);
-        SwaggerModule.setup(swaggerPath, appInstance, documentFactory, {
+        SwaggerModule.setup(swaggerRoutePath, appInstance, documentFactory, {
           ...swaggerCustomOptions,
           jsonDocumentUrl: `${swaggerRoutePath}-json`,
           yamlDocumentUrl: `${swaggerRoutePath}-yaml`,
