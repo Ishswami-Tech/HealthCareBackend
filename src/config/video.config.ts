@@ -21,6 +21,14 @@ export function isVideoEnabled(): boolean {
 }
 
 /**
+ * Check if video no-show enforcement is enabled.
+ * When disabled, the scheduler and join gates keep video appointments testable.
+ */
+export function isVideoNoShowEnabled(): boolean {
+  return getEnvBoolean('VIDEO_NO_SHOW_ENABLED', true);
+}
+
+/**
  * Get video provider type
  * @returns 'openvidu' | 'jitsi'
  */
@@ -43,6 +51,7 @@ export function getVideoProvider(): 'openvidu' | 'jitsi' {
  */
 export const videoConfig = (): VideoProviderConfig => {
   const enabled = isVideoEnabled();
+  const noShowEnabled = isVideoNoShowEnabled();
   const provider = getVideoProvider();
 
   const openviduConfig: VideoProviderConfig['openvidu'] = {
@@ -65,6 +74,7 @@ export const videoConfig = (): VideoProviderConfig => {
 
   return {
     enabled,
+    noShowEnabled,
     provider,
     openvidu: openviduConfig,
     // Jitsi configuration (for fallback)

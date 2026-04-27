@@ -594,7 +594,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
       throw new NotFoundException('This appointment has already been completed.');
     }
-    if (appointmentStatus === String(AppointmentStatus.NO_SHOW)) {
+    if (
+      this.configService.isVideoNoShowEnabled() &&
+      appointmentStatus === String(AppointmentStatus.NO_SHOW)
+    ) {
       throw new NotFoundException('This appointment was marked as no-show.');
     }
 

@@ -123,6 +123,10 @@ export class ConfigService {
     return checkVideoEnabled();
   }
 
+  isVideoNoShowEnabled(): boolean {
+    return this.getVideoConfig().noShowEnabled ?? true;
+  }
+
   getVideoProvider(): 'openvidu' | 'jitsi' {
     return getVideoProviderType();
   }

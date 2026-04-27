@@ -67,7 +67,6 @@ export class BullBoardModule {
             route: '/queue-dashboard',
             adapter: FastifyAdapter,
             boardOptions: {
-              uiBasePath: '/queue-dashboard',
               uiConfig: {
                 boardTitle: 'Healthcare Queue Dashboard',
               },
