@@ -51,6 +51,7 @@ export interface VideoTokenResponse {
  */
 export interface VideoProviderConfig {
   enabled: boolean;
+  noShowEnabled: boolean;
   provider: VideoProviderType;
   openvidu?: {
     url: string;

@@ -70,6 +70,9 @@ export class VideoAppointmentSchedulerService {
   @Cron(CronExpression.EVERY_MINUTE)
   async handleDoctorNoShows(): Promise<void> {
     try {
+      if (!this.configService.isVideoNoShowEnabled()) {
+        return;
+      }
       const graceTime = this.getGraceTime();
       const audit = this.buildSystemAudit();
 
@@ -123,6 +126,9 @@ export class VideoAppointmentSchedulerService {
   @Cron(CronExpression.EVERY_MINUTE)
   async handlePatientNoShows(): Promise<void> {
     try {
+      if (!this.configService.isVideoNoShowEnabled()) {
+        return;
+      }
       const graceTime = this.getGraceTime();
       const audit = this.buildSystemAudit();
 

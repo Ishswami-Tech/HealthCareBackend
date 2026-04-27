@@ -296,6 +296,8 @@ export interface WhatsappConfig {
 export interface VideoProviderConfig {
   /** Whether video is enabled */
   readonly enabled: boolean;
+  /** Whether video no-show enforcement is enabled */
+  readonly noShowEnabled: boolean;
   /** Video provider type */
   readonly provider: 'openvidu' | 'jitsi';
   /** OpenVidu configuration */
