@@ -98,7 +98,7 @@ export class GenerateVideoTokenDto {
 
   @ApiProperty({
     description: 'User information for video consultation',
-    type: VideoUserInfoDto,
+    type: () => VideoUserInfoDto,
   })
   @ValidateNested()
   @Type(() => VideoUserInfoDto)
@@ -1298,7 +1298,7 @@ export class CreateMedicalNoteDto {
   @IsNotEmpty()
   content!: string;
 
-  @ApiPropertyOptional({ type: PrescriptionDto })
+  @ApiPropertyOptional({ type: () => PrescriptionDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => PrescriptionDto)
@@ -1311,7 +1311,7 @@ export class CreateMedicalNoteDto {
   @Type(() => SymptomDto)
   symptoms?: SymptomDto[];
 
-  @ApiPropertyOptional({ type: TreatmentPlanDto })
+  @ApiPropertyOptional({ type: () => TreatmentPlanDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => TreatmentPlanDto)
@@ -1339,7 +1339,7 @@ export class UpdateMedicalNoteDto {
   @IsString()
   content?: string;
 
-  @ApiPropertyOptional({ type: PrescriptionDto })
+  @ApiPropertyOptional({ type: () => PrescriptionDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => PrescriptionDto)
@@ -1352,7 +1352,7 @@ export class UpdateMedicalNoteDto {
   @Type(() => SymptomDto)
   symptoms?: SymptomDto[];
 
-  @ApiPropertyOptional({ type: TreatmentPlanDto })
+  @ApiPropertyOptional({ type: () => TreatmentPlanDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => TreatmentPlanDto)
@@ -1465,7 +1465,7 @@ export class CreateAnnotationDto {
   @IsNotEmpty()
   data!: Record<string, unknown>;
 
-  @ApiPropertyOptional({ type: AnnotationPositionDto })
+  @ApiPropertyOptional({ type: () => AnnotationPositionDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => AnnotationPositionDto)
@@ -1698,19 +1698,19 @@ export class UpdateQualityMetricsDto {
   @IsNotEmpty()
   userId!: string;
 
-  @ApiPropertyOptional({ type: NetworkMetricsDto })
+  @ApiPropertyOptional({ type: () => NetworkMetricsDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => NetworkMetricsDto)
   networkMetrics?: NetworkMetricsDto;
 
-  @ApiPropertyOptional({ type: VideoQualityDto })
+  @ApiPropertyOptional({ type: () => VideoQualityDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => VideoQualityDto)
   videoQuality?: VideoQualityDto;
 
-  @ApiPropertyOptional({ type: AudioQualityDto })
+  @ApiPropertyOptional({ type: () => AudioQualityDto })
   @IsOptional()
   @ValidateNested()
   @Type(() => AudioQualityDto)
@@ -1718,13 +1718,13 @@ export class UpdateQualityMetricsDto {
 }
 
 export class QualityMetricsResponseDto {
-  @ApiProperty({ type: VideoQualityDto })
+  @ApiProperty({ type: () => VideoQualityDto })
   videoQuality!: VideoQualityDto;
 
-  @ApiProperty({ type: AudioQualityDto })
+  @ApiProperty({ type: () => AudioQualityDto })
   audioQuality!: AudioQualityDto;
 
-  @ApiProperty({ type: NetworkMetricsDto })
+  @ApiProperty({ type: () => NetworkMetricsDto })
   networkMetrics!: NetworkMetricsDto;
 
   @ApiProperty({ enum: ['excellent', 'good', 'fair', 'poor'] })

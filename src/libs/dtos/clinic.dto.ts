@@ -256,7 +256,7 @@ export class CreateClinicDto {
 
   @ApiPropertyOptional({
     description: 'The main location of the clinic',
-    type: CreateClinicLocationDto,
+    type: () => CreateClinicLocationDto,
   })
   @IsOptional()
   @IsObject()

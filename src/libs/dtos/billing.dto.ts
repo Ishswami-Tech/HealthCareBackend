@@ -377,7 +377,8 @@ export class SubscriptionResponseDto {
   metadata?: Record<string, unknown>;
   createdAt!: Date;
   updatedAt!: Date;
-  plan!: BillingPlanResponseDto;
+  @IsOptional()
+  plan?: BillingPlanResponseDto;
 }
 
 export class PaymentResponseDto {

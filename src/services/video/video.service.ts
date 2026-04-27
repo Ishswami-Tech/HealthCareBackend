@@ -69,12 +69,6 @@ export type { VideoCall, VideoCallSettings };
 
 // Type aliases for response data structures using existing ServiceResponse<T>
 type CreateVideoCallResponse = ServiceResponse<VideoCall>;
-type JoinVideoCallResponse = ServiceResponse<{
-  callId: string;
-  meetingUrl?: string;
-  joinToken: string;
-  settings: VideoCallSettings;
-}>;
 type RecordingResponse = ServiceResponse<{
   recordingId?: string;
   recordingUrl?: string;
@@ -1070,7 +1064,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    // Map to legacy format
+    // Map to the compact session status format expected by the consultation API
     const statusMap: Record<
       'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED',
       'pending' | 'started' | 'ended' | 'cancelled'
@@ -1368,83 +1362,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           originalError: String(error),
         },
         'VideoService.createVideoCall'
-      );
-    }
-  }
-
-  async joinVideoCall(callId: string, userId: string): Promise<JoinVideoCallResponse> {
-    const startTime: number = Date.now();
-
-    try {
-      // Get video call details
-      const videoCall: VideoCall | null = await this.getVideoCall(callId);
-      if (!videoCall) {
-        throw new NotFoundException('Video call not found');
-      }
-
-      // Validate user is a participant
-      if (!videoCall.participants.includes(userId)) {
-        throw new BadRequestException('User is not a participant in this call');
-      }
-
-      // Update call status if first participant
-      let updatedVideoCall: VideoCall = videoCall;
-      if (videoCall.status === 'scheduled') {
-        const now: Date = new Date();
-        updatedVideoCall = {
-          ...videoCall,
-          status: 'active',
-          startTime: now.toISOString(),
-        };
-        await this.updateVideoCall(updatedVideoCall);
-      }
-
-      // Generate join token
-      const joinToken: string = await this.generateJoinToken(callId, userId);
-
-      const responseTime: number = Date.now() - startTime;
-      void this.loggingService.log(
-        LogType.APPOINTMENT,
-        LogLevel.INFO,
-        'User joined video call successfully',
-        'VideoService',
-        { callId, userId, responseTime }
-      );
-
-      const response: JoinVideoCallResponse = {
-        success: true,
-        data: {
-          callId,
-          ...(updatedVideoCall.meetingUrl ? { meetingUrl: updatedVideoCall.meetingUrl } : {}),
-          joinToken,
-          settings: updatedVideoCall.settings,
-        },
-        message: 'User joined video call successfully',
-      };
-      return response;
-    } catch (error: unknown) {
-      const errorMessage: string = error instanceof Error ? error.message : String(error);
-      const errorStack: string | undefined = error instanceof Error ? error.stack : undefined;
-      void this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        `Failed to join video call: ${errorMessage}`,
-        'VideoService',
-        {
-          callId,
-          userId,
-          errorStack,
-        }
-      );
-      if (error instanceof Error) {
-        throw error;
-      }
-      throw new HealthcareError(
-        ErrorCode.INTERNAL_SERVER_ERROR,
-        'Failed to join video call',
-        undefined,
-        { callId, userId, originalError: String(error) },
-        'VideoService.joinVideoCall'
       );
     }
   }
@@ -1875,49 +1792,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       email: '',
     });
     return tokenResponse.meetingUrl;
-  }
-
-  /**
-   * Generate join token for video call
-   * @param callId - The video call ID
-   * @param userId - The user ID
-   * @returns JWT token for joining the video call
-   */
-  private async generateJoinToken(callId: string, userId: string): Promise<string> {
-    // Get video consultation to find appointment
-    const consultation = await this.getVideoConsultationByCallId(callId);
-    if (!consultation) {
-      throw new NotFoundException(`Video consultation not found for call ${callId}`);
-    }
-
-    // Get appointment to validate type
-    const appointment = await this.databaseService.findAppointmentByIdSafe(
-      consultation.appointmentId
-    );
-    if (!appointment) {
-      throw new NotFoundException(`Appointment ${consultation.appointmentId} not found`);
-    }
-    if (!isVideoCallAppointment(appointment)) {
-      throw new BadRequestException(
-        `Appointment ${consultation.appointmentId} is not a video consultation`
-      );
-    }
-
-    // Determine user role
-    const userRole = consultation.patientId === userId ? 'patient' : 'doctor';
-
-    // Generate token using the resolved video provider.
-    const tokenData = await this.generateMeetingToken(
-      consultation.appointmentId,
-      userId,
-      userRole,
-      {
-        displayName: 'User',
-        email: '',
-      }
-    );
-
-    return tokenData.token;
   }
 
   private async storeVideoCall(videoCall: VideoCall): Promise<void> {
