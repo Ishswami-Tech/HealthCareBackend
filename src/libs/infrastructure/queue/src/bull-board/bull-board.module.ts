@@ -63,15 +63,21 @@ export class BullBoardModule {
       imports: [
         forwardRef(() => LoggingModule),
         BullBoardNestModule.forRootAsync({
-          useFactory: () => ({
-            route: '/queue-dashboard',
-            adapter: FastifyAdapter,
-            boardOptions: {
-              uiConfig: {
-                boardTitle: 'Healthcare Queue Dashboard',
+          useFactory: () => {
+            const adapter = new FastifyAdapter();
+            // Explicitly set base path so static assets resolve correctly behind proxy
+            adapter.setBasePath('/queue-dashboard');
+
+            return {
+              route: '/queue-dashboard',
+              adapter: adapter as never,
+              boardOptions: {
+                uiConfig: {
+                  boardTitle: 'Healthcare Queue Dashboard',
+                },
               },
-            },
-          }),
+            };
+          },
         }),
         BullBoardNestModule.forFeature({
           name: HEALTHCARE_QUEUE,
