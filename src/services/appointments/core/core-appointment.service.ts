@@ -272,8 +272,9 @@ export class CoreAppointmentService {
       }
 
       // 4. Create appointment with enhanced metadata
-      // Extract date and time from appointmentDate
-      const appointmentDateTime = new Date(createDto.appointmentDate);
+      // Normalize the supplied slot before persisting so date-only inputs do not
+      // collapse to midnight UTC and surface as 05:30 in IST.
+      const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
       const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
       const appointmentData: Record<string, unknown> = {
@@ -601,7 +602,9 @@ export class CoreAppointmentService {
       // Handle date conversion properly for exactOptionalPropertyTypes
       const updateData: Record<string, unknown> = { ...updateDto };
       if (updateDto.appointmentDate) {
-        const appointmentDateTime = new Date(updateDto.appointmentDate);
+        const appointmentDateTime = this.resolveAppointmentDateTime(
+          updateDto as CreateAppointmentDto & { time?: string }
+        );
         const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
         updateData['date'] = new Date(`${dateStr}T00:00:00.000+05:30`);
         updateData['time'] = timeStr;
@@ -1161,6 +1164,36 @@ export class CoreAppointmentService {
     }).format(date);
 
     return { date: istDate, time: istTime };
+  }
+
+  private resolveAppointmentDateTime(createDto: CreateAppointmentDto): Date {
+    const appointmentDateValue = String(createDto.appointmentDate || '').trim();
+    const slotTimeValue = String(
+      (createDto as CreateAppointmentDto & { time?: string }).time || ''
+    ).trim();
+
+    if (appointmentDateValue && appointmentDateValue.includes('T')) {
+      const parsed = new Date(appointmentDateValue);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+
+    if (appointmentDateValue && /^\d{4}-\d{2}-\d{2}$/.test(appointmentDateValue)) {
+      const normalizedTime =
+        slotTimeValue && /^\d{2}:\d{2}/.test(slotTimeValue) ? slotTimeValue.slice(0, 5) : '00:00';
+      const parsed = new Date(`${appointmentDateValue}T${normalizedTime}:00+05:30`);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+
+    const parsed = new Date(appointmentDateValue);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
+
+    return new Date();
   }
 
   private calculateAppointmentMetrics(
