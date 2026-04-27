@@ -10,19 +10,19 @@
 
 ### Implementation Status
 
-| Metric                                 | Count    | Status                      |
-| -------------------------------------- | -------- | --------------------------- |
+| Metric                                 | Count    | Status                       |
+| -------------------------------------- | -------- | ---------------------------- |
 | **Total Actual Endpoints**             | **235+** | âœ… Implemented              |
 | **Postman Collection Endpoints**       | **235+** | âœ… Complete (100% coverage) |
-| **Documented in API_DOCUMENTATION.md** | **~60**  | âš ï¸ 26% coverage             |
-| **Fully Documented & Tested**          | **~30**  | âš ï¸ 13% coverage             |
+| **Documented in API_DOCUMENTATION.md** | **~60**  | âš ï¸ 26% coverage           |
+| **Fully Documented & Tested**          | **~30**  | âš ï¸ 13% coverage           |
 
 ### Key Findings
 
 1. âœ… **All 235+ endpoints are implemented** in the codebase
 2. âœ… **Postman collection is complete** with all endpoints
-3. âš ï¸ **API Documentation needs expansion** - Only ~60 endpoints documented in
-   detail
+3. âš ï¸ **API Documentation needs expansion** - Only ~60 endpoints documented
+   in detail
 4. âš ï¸ **Testing coverage** - Most endpoints need detailed documentation
 
 ### Total Endpoints by Controller
@@ -314,7 +314,8 @@
 
 1. âœ… `POST /communication/send` - Unified send (all channels)
 2. âœ… `POST /communication/appointment/reminder` - Appointment reminder
-3. âœ… `POST /communication/prescription/ready` - Prescription ready notification
+3. âœ… `POST /communication/prescription/ready` - Prescription ready
+   notification
 
 #### Push Notifications
 
@@ -426,8 +427,8 @@
 8. âœ… `GET /api/appointments/plugins/health/domain/:domain` - Domain health
 9. âœ… `GET /api/appointments/plugins/health/alerts` - Health alerts
 10. âœ… `GET /api/appointments/plugins/config` - Get plugin config
-11. âœ… `GET /api/appointments/plugins/config/:pluginName` - Get plugin config by
-    name
+11. âœ… `GET /api/appointments/plugins/config/:pluginName` - Get plugin config
+    by name
 12. âœ… `POST /api/appointments/plugins/config/:pluginName` - Update plugin
     config
 
@@ -436,7 +437,8 @@
 ### 14. PaymentController (`/api/payments`) - 3 Endpoints
 
 1. âœ… `POST /api/payments/cashfree/webhook` - Cashfree webhook
-2. âœ… `POST /api/payments/legacy/webhook` - Legacy webhook path (disabled by default)
+2. âœ… `POST /api/payments/legacy/webhook` - Legacy webhook path (disabled by
+   default)
 3. âœ… `POST /api/payments/callback` - Generic payment callback
 
 ---
@@ -454,8 +456,8 @@
 
 1. âœ… `GET /logger` - Logging dashboard
 2. âœ… `GET /logger/events` - Get events
-3. âœ… `GET /logger/logs/data` - Get log data
-4. âœ… `GET /logger/events/data` - Get event data
+3. âœ… `GET /logger/logs` - Get log data
+4. âœ… `GET /logger/events` - Get event data
 5. âœ… `POST /logger/logs/clear` - Clear logs
 6. âœ… `POST /logger/events/clear` - Clear events
 
@@ -641,6 +643,3 @@ bounce/complaint handling per audit.
 **Total Actual Endpoints**: **235+**  
 **Postman Collection Coverage**: **6%** (15/235+)  
 **Documentation Coverage**: **20%** (basic structure only)
-
-
-

@@ -41,8 +41,8 @@ export class LoggingInterceptor implements NestInterceptor {
     '/health',
     '/api-health',
     '/socket.io/socket.io.js',
-    '/logger/logs/data',
-    '/logger/events/data',
+    '/logger/logs',
+    '/logger/events',
     '/metrics',
     '/status',
   ];
