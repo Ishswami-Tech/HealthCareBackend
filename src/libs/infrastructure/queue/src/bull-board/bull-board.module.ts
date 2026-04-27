@@ -1,16 +1,7 @@
-import {
-  Module,
-  MiddlewareConsumer,
-  RequestMethod,
-  DynamicModule,
-  forwardRef,
-} from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { Module, DynamicModule, forwardRef } from '@nestjs/common';
 import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
 import { FastifyAdapter } from '@bull-board/fastify';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import { ConfigModule } from '@config/config.module';
-import { ConfigService } from '@config/config.service';
 import { isCacheEnabled } from '@config/cache.config';
 import { LoggingModule } from '@infrastructure/logging';
 import { BullBoardService } from './bull-board.service';
@@ -64,19 +55,6 @@ export class BullBoardModule {
       };
     }
 
-    const queueDashboardUser = process.env['QUEUE_DASHBOARD_USER']?.trim();
-    const queueDashboardPassword = process.env['QUEUE_DASHBOARD_PASSWORD']?.trim();
-
-    if ((!queueDashboardUser || !queueDashboardPassword) && !isDevelopment) {
-      throw new Error(
-        'QUEUE_DASHBOARD_USER and QUEUE_DASHBOARD_PASSWORD must be set when Bull Board is enabled'
-      );
-    }
-
-    const resolvedDashboardUser = queueDashboardUser || 'local-dashboard';
-    const resolvedDashboardPassword =
-      queueDashboardPassword || randomBytes(24).toString('base64url');
-
     // Full module with queue registrations when cache is enabled
     return {
       module: BullBoardModule,
@@ -85,17 +63,16 @@ export class BullBoardModule {
       imports: [
         forwardRef(() => LoggingModule),
         BullBoardNestModule.forRootAsync({
-          imports: [ConfigModule],
-          useFactory: (config: ConfigService) => ({
+          useFactory: () => ({
             route: '/queue-dashboard',
             adapter: FastifyAdapter,
-            auth: {
-              user: config.get<string>('QUEUE_DASHBOARD_USER', resolvedDashboardUser),
-              password: config.get<string>('QUEUE_DASHBOARD_PASSWORD', resolvedDashboardPassword),
+            boardOptions: {
+              uiBasePath: '/queue-dashboard',
+              uiConfig: {
+                boardTitle: 'Healthcare Queue Dashboard',
+              },
             },
-            basePath: '/queue-dashboard',
           }),
-          inject: [ConfigService],
         }),
         BullBoardNestModule.forFeature({
           name: HEALTHCARE_QUEUE,
@@ -103,21 +80,6 @@ export class BullBoardModule {
         }),
       ],
     };
-  }
-  /**
-   * Configure middleware for Bull Board routes
-   *
-   * @param consumer - Middleware consumer for route configuration
-   * @description Applies Bull Board middleware only to queue-dashboard routes for security
-   */
-  configure(consumer: MiddlewareConsumer): void {
-    // Only apply Bull Board middleware to queue-dashboard routes
-    consumer
-      .apply()
-      .forRoutes(
-        { path: 'queue-dashboard', method: RequestMethod.ALL },
-        { path: 'queue-dashboard/*', method: RequestMethod.ALL }
-      );
   }
 }
 
