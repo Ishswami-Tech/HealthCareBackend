@@ -1,11 +1,7 @@
 import { Module, DynamicModule, forwardRef } from '@nestjs/common';
-import { BullBoardModule as BullBoardNestModule } from '@bull-board/nestjs';
-import { FastifyAdapter } from '@bull-board/fastify';
-import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 import { isCacheEnabled } from '@config/cache.config';
 import { LoggingModule } from '@infrastructure/logging';
 import { BullBoardService } from './bull-board.service';
-import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
 
 /**
  * Bull Board Module for Queue Monitoring
@@ -55,29 +51,14 @@ export class BullBoardModule {
       };
     }
 
-    // Full module with queue registrations when cache is enabled
+    // Full module with queue registrations when cache is enabled.
+    // The dashboard is mounted directly on Fastify to avoid wrapper-level adapter
+    // constructor issues in @bull-board/nestjs while preserving the dashboard route.
     return {
       module: BullBoardModule,
       providers: [BullBoardService],
       exports: [BullBoardService],
-      imports: [
-        forwardRef(() => LoggingModule),
-        BullBoardNestModule.forRootAsync({
-          useFactory: () => ({
-            route: '/queue-dashboard',
-            adapter: FastifyAdapter,
-            boardOptions: {
-              uiConfig: {
-                boardTitle: 'Healthcare Queue Dashboard',
-              },
-            },
-          }),
-        }),
-        BullBoardNestModule.forFeature({
-          name: HEALTHCARE_QUEUE,
-          adapter: BullMQAdapter,
-        }),
-      ],
+      imports: [forwardRef(() => LoggingModule)],
     };
   }
 }
