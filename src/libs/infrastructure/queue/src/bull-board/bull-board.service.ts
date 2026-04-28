@@ -65,9 +65,9 @@ export class BullBoardService implements OnApplicationBootstrap {
 
     const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
     const bullBoardEnabled =
-      enableBullBoardEnv !== undefined
-        ? ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv)
-        : (process.env['NODE_ENV'] || 'development') === 'development';
+      enableBullBoardEnv === undefined
+        ? true
+        : ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv);
 
     if (!bullBoardEnabled) {
       this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
