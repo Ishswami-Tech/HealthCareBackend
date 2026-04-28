@@ -1,6 +1,19 @@
-import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  Optional,
+  forwardRef,
+} from '@nestjs/common';
+import { HttpAdapterHost } from '@nestjs/core';
 import { InjectQueue } from '@nestjs/bullmq';
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import { FastifyAdapter } from '@bull-board/fastify';
 import { Queue } from 'bullmq';
+
+import { isCacheEnabled } from '@config/cache.config';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
@@ -12,6 +25,14 @@ import { LogType, LogLevel } from '@core/types';
 
 import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
 
+type FastifyLikeInstance = {
+  register: (plugin: unknown, options?: { prefix?: string }) => unknown;
+};
+
+function isFastifyLikeInstance(value: unknown): value is FastifyLikeInstance {
+  return typeof (value as { register?: unknown } | null)?.register === 'function';
+}
+
 /**
  * Bull Board Service for Queue Management
  *
@@ -20,13 +41,75 @@ import { HEALTHCARE_QUEUE } from '@queue/src/queue.constants';
  * for real-time queue visualization and management.
  */
 @Injectable()
-export class BullBoardService {
+export class BullBoardService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(BullBoardService.name);
+  private bullBoardRegistered = false;
+
   constructor(
+    private readonly httpAdapterHost: HttpAdapterHost,
     @Optional() @InjectQueue(HEALTHCARE_QUEUE) private healthcareQueue: Queue | null,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService?: LoggingService
   ) {}
+
+  onApplicationBootstrap(): void {
+    if (this.bullBoardRegistered) {
+      return;
+    }
+
+    if (!isCacheEnabled()) {
+      this.logger.warn('Bull Board skipped: cache is disabled.');
+      return;
+    }
+
+    const enableBullBoardEnv = process.env['ENABLE_BULL_BOARD']?.trim().toLowerCase();
+    const bullBoardEnabled =
+      enableBullBoardEnv !== undefined
+        ? ['true', '1', 'yes', 'on'].includes(enableBullBoardEnv)
+        : (process.env['NODE_ENV'] || 'development') === 'development';
+
+    if (!bullBoardEnabled) {
+      this.logger.warn('Bull Board skipped: dashboard is disabled for this environment.');
+      return;
+    }
+
+    const httpAdapter = this.httpAdapterHost.httpAdapter;
+    if (!httpAdapter) {
+      this.logger.warn('Bull Board skipped: no HTTP adapter is available.');
+      return;
+    }
+
+    const appInstance: unknown = httpAdapter.getInstance();
+    if (!isFastifyLikeInstance(appInstance)) {
+      this.logger.warn('Bull Board skipped: Fastify instance is not available.');
+      return;
+    }
+
+    try {
+      const routePrefix = '/queue-dashboard';
+      const serverAdapter = new FastifyAdapter();
+      serverAdapter.setBasePath(routePrefix);
+
+      createBullBoard({
+        queues: this.healthcareQueue ? [new BullMQAdapter(this.healthcareQueue)] : [],
+        serverAdapter,
+        options: {
+          uiConfig: {
+            boardTitle: 'Healthcare Queue Dashboard',
+          },
+        },
+      });
+
+      appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
+      this.bullBoardRegistered = true;
+      this.logger.log('Bull Board registered at /queue-dashboard');
+    } catch (error) {
+      this.logger.error(
+        `Bull Board registration failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 
   /**
    * Get all registered queues for BullBoard
