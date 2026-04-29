@@ -108,7 +108,7 @@ services:
     environment:
       - OPENVIDU_SECRET=${OPENVIDU_SECRET}
       - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
+      - OPENVIDU_PUBLICURL=${OPENVIDU_PUBLICURL:-https://backend-service-v1-video.ishswami.in}
       - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
       - OPENVIDU_EDITION=ce
       - OPENVIDU_CDR=false
@@ -344,9 +344,8 @@ services:
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
       VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
       OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      # OPENVIDU_URL must be set in .env.production or environment variables
-      # Do NOT hardcode - use environment variable to allow proper configuration
-      OPENVIDU_URL: ${OPENVIDU_URL}
+      # Backend server-to-server OpenVidu REST endpoint.
+      OPENVIDU_URL: ${OPENVIDU_URL:-http://openvidu-server:4443}
       OPENVIDU_SECRET: ${OPENVIDU_SECRET}
     expose:
       - "${PORT:-8088}"
