@@ -37,6 +37,7 @@ export class AppointmentCommunicationsService {
 
     try {
       const roomId = `clinic:${clinicId}:queue:${doctorId}`;
+      const clinicRoomId = `clinic:${clinicId}`;
       const message: AppointmentSocketMessage = {
         type: 'queue_update',
         appointmentId: queueData.appointmentId,
@@ -61,6 +62,7 @@ export class AppointmentCommunicationsService {
         ...(message.data && { ...message.data }),
       };
       this.socketService.sendToRoom(roomId, 'queue_update', socketData);
+      this.socketService.sendToRoom(clinicRoomId, 'queue_update', socketData);
 
       // Cache the update
       const cacheKey = `queue:update:${clinicId}:${doctorId}:${queueData.appointmentId}`;
@@ -135,6 +137,7 @@ export class AppointmentCommunicationsService {
       // Also send to clinic room for admin visibility
       const clinicRoomId = `clinic:${clinicId}:appointments`;
       this.socketService.sendToRoom(clinicRoomId, 'appointment_status', socketData);
+      this.socketService.sendToRoom(`clinic:${clinicId}`, 'appointment_status', socketData);
 
       // Cache the status update
       const cacheKey = `appointment:status:${appointmentId}`;

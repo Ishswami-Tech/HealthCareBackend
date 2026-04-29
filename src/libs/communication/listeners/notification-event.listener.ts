@@ -282,6 +282,11 @@ export class NotificationEventListener implements OnModuleInit {
             socketRoom: `user:${doctorId}`,
           }); // Doctor
         }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
         return recipients;
       },
       shouldNotify: () => true,
@@ -318,6 +323,11 @@ export class NotificationEventListener implements OnModuleInit {
             socketRoom: `user:${doctorId}`,
           });
         }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
         return recipients;
       },
       shouldNotify: () => true,
@@ -352,6 +362,11 @@ export class NotificationEventListener implements OnModuleInit {
           recipients.push({
             userId: doctorId,
             socketRoom: `user:${doctorId}`,
+          });
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
           });
         }
         return recipients;
@@ -455,6 +470,47 @@ export class NotificationEventListener implements OnModuleInit {
         return true;
       },
     },
+    {
+      eventPattern: /^doctor\.availability\.changed$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket'],
+      priority: CommunicationPriority.NORMAL,
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          socketRoom?: string;
+        }> = [];
+
+        const eventPayload = payload as unknown as Record<string, unknown>;
+        const doctorId =
+          (payload.metadata?.['doctorId'] as string | undefined) ||
+          (eventPayload['doctorId'] as string | undefined);
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
+        }
+
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+
+        const appointmentId =
+          (payload.metadata?.['appointmentId'] as string | undefined) ||
+          (eventPayload['appointmentId'] as string | undefined);
+        if (appointmentId) {
+          recipients.push({
+            socketRoom: `appointment:${appointmentId}`,
+          });
+        }
+
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
     // Follow-up Appointment Events
     {
       eventPattern: /^appointment\.followup\.(plan\.created|scheduled)$/,
@@ -488,6 +544,11 @@ export class NotificationEventListener implements OnModuleInit {
           recipients.push({
             userId: doctorId,
             socketRoom: `user:${doctorId}`,
+          });
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
           });
         }
         return recipients;
