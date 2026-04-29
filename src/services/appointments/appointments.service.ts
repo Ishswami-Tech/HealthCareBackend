@@ -1823,6 +1823,20 @@ export class AppointmentsService {
       confirmedSlotIndex,
     });
     if (!canConfirmSlot) {
+      const appointmentStatus = String(appointment.status || '').toUpperCase();
+      const alreadyConfirmed =
+        appointmentStatus === String(AppointmentStatus.CONFIRMED) &&
+        confirmedSlotIndex !== null &&
+        confirmedSlotIndex !== undefined;
+
+      if (alreadyConfirmed) {
+        return {
+          success: true,
+          data: appointment as unknown as Record<string, unknown>,
+          message: 'Video slot was already confirmed.',
+        };
+      }
+
       throw this.errors.validationError(
         'status',
         'Appointment is not awaiting doctor slot confirmation',
@@ -2028,6 +2042,20 @@ export class AppointmentsService {
       confirmedSlotIndex,
     });
     if (!canConfirmSlot) {
+      const appointmentStatus = String(appointment.status || '').toUpperCase();
+      const alreadyConfirmed =
+        appointmentStatus === String(AppointmentStatus.CONFIRMED) &&
+        confirmedSlotIndex !== null &&
+        confirmedSlotIndex !== undefined;
+
+      if (alreadyConfirmed) {
+        return {
+          success: true,
+          data: appointment as unknown as Record<string, unknown>,
+          message: 'Final video slot was already confirmed.',
+        };
+      }
+
       throw this.errors.validationError(
         'status',
         'Appointment is not awaiting doctor slot confirmation',
