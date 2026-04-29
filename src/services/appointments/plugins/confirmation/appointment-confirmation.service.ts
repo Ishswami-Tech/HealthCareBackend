@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Logger, BadRequestException, Inject } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -142,7 +143,7 @@ export class AppointmentConfirmationService {
         success: true,
         appointmentId,
         domain,
-        checkedInAt: new Date().toISOString(),
+        checkedInAt: nowIso(),
         message: 'Check-in successful',
       };
     } catch (_error) {
@@ -365,7 +366,7 @@ export class AppointmentConfirmationService {
         appointmentId: decodedData.appointmentId,
         clinicId,
         domain,
-        verifiedAt: new Date().toISOString(),
+        verifiedAt: nowIso(),
         type: decodedData.type,
       };
     } catch (_error) {
@@ -466,7 +467,7 @@ export class AppointmentConfirmationService {
       success: true,
       appointmentId: _appointmentId,
       domain: _domain,
-      checkedInAt: new Date().toISOString(),
+      checkedInAt: nowIso(),
     });
   }
 
@@ -477,7 +478,7 @@ export class AppointmentConfirmationService {
       success: true,
       appointmentId: _appointmentId,
       domain: _domain,
-      confirmedAt: new Date().toISOString(),
+      confirmedAt: nowIso(),
     });
   }
 
@@ -519,7 +520,7 @@ export class AppointmentConfirmationService {
             name: medication.name,
             dosage: medication.dosage,
             frequency: medication.frequency,
-            startDate: new Date().toISOString(),
+            startDate: nowIso(),
             ...(medication.instructions !== undefined
               ? { instructions: medication.instructions }
               : {}),
@@ -537,7 +538,7 @@ export class AppointmentConfirmationService {
       appointmentId: appointmentId,
       doctorId: doctorId,
       domain: domain,
-      completedAt: new Date().toISOString(),
+      completedAt: nowIso(),
     });
   }
 

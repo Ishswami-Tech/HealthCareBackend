@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Main Bootstrap File
  *
@@ -409,13 +410,13 @@ async function _setupWebSocketAdapter(
                 // Use ConfigService (which uses dotenv) for environment variable access
                 socket.emit('welcome', {
                   message: 'Connected to WebSocket server',
-                  timestamp: new Date().toISOString(),
+                  timestamp: nowIso(),
                   environment: configService?.getEnvironment() || 'development',
                 });
 
                 heartbeat = setInterval(() => {
                   socket.emit('heartbeat', {
-                    timestamp: new Date().toISOString(),
+                    timestamp: nowIso(),
                   });
                 }, 30000);
               };
@@ -431,14 +432,14 @@ async function _setupWebSocketAdapter(
                 try {
                   socket.emit('echo', {
                     original: data,
-                    timestamp: new Date().toISOString(),
+                    timestamp: nowIso(),
                     processed: true,
                   });
                 } catch (_error) {
                   logger.error('Error processing socket message:', _error);
                   socket.emit('_error', {
                     message: 'Failed to process message',
-                    timestamp: new Date().toISOString(),
+                    timestamp: nowIso(),
                   });
                 }
               });

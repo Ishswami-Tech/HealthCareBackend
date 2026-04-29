@@ -37,6 +37,7 @@ import type {
   AppointmentResult,
   AppointmentMetricsData,
 } from '@core/types/appointment.types';
+import { parseIstDateTime, nowIso } from '../../../libs/utils/date-time.util';
 
 // CoreAppointmentMetrics is an alias for AppointmentMetricsData
 export type CoreAppointmentMetrics = AppointmentMetricsData;
@@ -880,9 +881,8 @@ export class CoreAppointmentService {
     clinicId: string
   ): TimeSlot[] {
     return appointments.map(appointment => {
-      const startTime = new Date(
-        `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
-      );
+      const startTime =
+        parseIstDateTime(appointment.date, appointment.time) ?? new Date(appointment.date);
       const endTime = new Date(startTime.getTime() + appointment.duration * 60000); // duration in minutes
 
       return {
@@ -1134,7 +1134,7 @@ export class CoreAppointmentService {
       await this.eventService.emit('doctor.availability.changed', {
         clinicId,
         source: 'CoreAppointmentService.invalidateAppointmentCache',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -1180,10 +1180,8 @@ export class CoreAppointmentService {
     }
 
     if (appointmentDateValue && /^\d{4}-\d{2}-\d{2}$/.test(appointmentDateValue)) {
-      const normalizedTime =
-        slotTimeValue && /^\d{2}:\d{2}/.test(slotTimeValue) ? slotTimeValue.slice(0, 5) : '00:00';
-      const parsed = new Date(`${appointmentDateValue}T${normalizedTime}:00+05:30`);
-      if (!Number.isNaN(parsed.getTime())) {
+      const parsed = parseIstDateTime(appointmentDateValue, slotTimeValue);
+      if (parsed) {
         return parsed;
       }
     }
@@ -1263,7 +1261,7 @@ export class CoreAppointmentService {
           userId: context.userId,
           role: context.role,
           clinicId: context.clinicId,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           ...(details as Record<string, unknown>),
           compliance: {
             hipaa: true,

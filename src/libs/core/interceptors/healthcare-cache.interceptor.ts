@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 // External imports
 import {
   Injectable,
@@ -31,7 +32,7 @@ import { CACHE_KEY, CACHE_INVALIDATE_KEY } from '@core/decorators';
 export class HealthcareCacheInterceptor implements NestInterceptor {
   constructor(
     @Inject(forwardRef(() => CacheService)) private readonly cacheService: CacheService,
-    private readonly reflector: Reflector,
+    @Inject(Reflector) private readonly reflector: Reflector,
     @Inject(forwardRef(() => LoggingService)) private readonly loggingService: LoggingService
   ) {}
 
@@ -597,7 +598,7 @@ export class HealthcareCacheInterceptor implements NestInterceptor {
     try {
       const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
       const auditData = {
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         operation,
         cacheKey,
         userId: request.user?.sub,

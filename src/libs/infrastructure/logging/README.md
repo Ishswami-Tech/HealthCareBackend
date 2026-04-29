@@ -255,7 +255,7 @@ await this.logger.log(
     clinicId: context.clinicId,
     patientId: 'patient123',
     action: 'READ',
-    timestamp: new Date().toISOString(),
+    timestamp: nowIso(),
   }
 );
 ```

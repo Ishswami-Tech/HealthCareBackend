@@ -6,6 +6,7 @@ import PDFDocument from 'pdfkit';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import { formatDateInIST } from '../../libs/utils/date-time.util';
 
 type InvoiceStatusKind = 'PAID' | 'PENDING' | 'OVERDUE' | 'DRAFT' | 'CANCELLED';
 type PDFDocumentInstance = InstanceType<typeof PDFDocument>;
@@ -954,7 +955,7 @@ export class InvoicePDFService {
   }
 
   private formatDate(date: Date): string {
-    return new Date(date).toLocaleDateString('en-IN', {
+    return formatDateInIST(date, {
       year: 'numeric',
       month: 'long',
       day: 'numeric',

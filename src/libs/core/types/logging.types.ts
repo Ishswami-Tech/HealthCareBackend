@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * ===================================================================
  * ENTERPRISE-GRADE LOGGING TYPES FOR 1M+ USERS
@@ -389,7 +390,7 @@ export function createLogData(
     context,
     metadata: {
       ...(metadata || {}),
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       environment: getEnvironment(),
       service: getEnvWithDefault('SERVICE_NAME', 'healthcare-backend'),
     },

@@ -1,8 +1,8 @@
+import { nowIso } from '@utils/date-time.util';
 import { HttpStatus, HttpException } from '@nestjs/common';
 import { ErrorCode } from './error-codes.enum';
 import { ErrorMessages } from './error-messages.constant';
 import type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
-
 // Re-export types for backward compatibility
 export type { ErrorMetadata, ApiErrorResponse } from '@core/types/infrastructure.types';
 
@@ -60,7 +60,7 @@ export class HealthcareError extends HttpException {
     const response = {
       code,
       message: errorMessage,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       ...(metadata && { metadata }),
       ...(context && { context }),
     };
@@ -68,7 +68,7 @@ export class HealthcareError extends HttpException {
 
     this.name = 'HealthcareError';
     this.code = code;
-    this.timestamp = new Date().toISOString();
+    this.timestamp = nowIso();
     this.metadata = metadata || {};
     this.isOperational = true;
     this.context = context || '';

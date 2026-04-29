@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Annotation Service
  * @class VideoAnnotationService
@@ -155,7 +156,7 @@ export class VideoAnnotationService {
         eventType: 'video.annotation.created',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoAnnotationService',
         version: '1.0.0',
         payload: {

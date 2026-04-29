@@ -3,6 +3,7 @@ import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-
 import { AppointmentNotificationService } from './appointment-notification.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { NotificationData } from '@core/types/appointment.types';
+import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 interface NotificationPluginData {
   operation: string;
@@ -180,8 +181,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       templateData: {
         patientName: pluginData.patientName || 'Patient',
         doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: (pluginData.appointmentDate ||
-          new Date().toISOString().split('T')[0]) as string,
+        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
         clinicName: pluginData.clinicName || 'Healthcare Clinic',
@@ -217,8 +217,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       templateData: {
         patientName: pluginData.patientName || 'Patient',
         doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: (pluginData.appointmentDate ||
-          new Date().toISOString().split('T')[0]) as string,
+        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
         clinicName: pluginData.clinicName || 'Healthcare Clinic',
@@ -254,8 +253,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       templateData: {
         patientName: pluginData.patientName || 'Patient',
         doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: (pluginData.appointmentDate ||
-          new Date().toISOString().split('T')[0]) as string,
+        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
         clinicName: pluginData.clinicName || 'Healthcare Clinic',
@@ -292,8 +290,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       templateData: {
         patientName: pluginData.patientName || 'Patient',
         doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: (pluginData.appointmentDate ||
-          new Date().toISOString().split('T')[0]) as string,
+        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
         clinicName: pluginData.clinicName || 'Healthcare Clinic',
@@ -329,8 +326,7 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
       templateData: {
         patientName: pluginData.patientName || 'Patient',
         doctorName: pluginData.doctorName || 'Doctor',
-        appointmentDate: (pluginData.appointmentDate ||
-          new Date().toISOString().split('T')[0]) as string,
+        appointmentDate: pluginData.appointmentDate || formatDateKeyInIST(new Date()),
         appointmentTime: pluginData.appointmentTime || '10:00',
         location: pluginData.location || 'Clinic',
         clinicName: pluginData.clinicName || 'Healthcare Clinic',

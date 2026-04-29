@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 // Use direct import to avoid TDZ issues with barrel exports
@@ -290,7 +291,7 @@ export class SNSBackupService implements OnModuleInit {
         Token: deviceToken,
         CustomUserData: JSON.stringify({
           platform,
-          createdAt: new Date().toISOString(),
+          createdAt: nowIso(),
         }),
       });
 

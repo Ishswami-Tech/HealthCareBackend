@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   Controller,
   Get,
@@ -49,7 +50,6 @@ import { Public } from '@core/decorators/public.decorator';
 import { Cache } from '@core/decorators';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import { RbacGuard } from '@core/rbac/rbac.guard';
-
 import { ClinicStatsResponseDto, ClinicOperatingHoursResponseDto } from '@dtos/clinic.dto';
 import { ClinicLocationService } from './services/clinic-location.service';
 
@@ -1076,7 +1076,7 @@ export class ClinicController {
 
     return {
       message: 'Clinic context test',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       user: {
         id: user?.sub,
         sub: user?.sub,

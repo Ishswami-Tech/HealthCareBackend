@@ -5,6 +5,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
+import { endOfIstDay, startOfIstDay } from '../../../../libs/utils/clock.util';
 
 import type { WaitlistEntry, WaitlistMetrics } from '@core/types/appointment.types';
 
@@ -280,12 +281,14 @@ export class AppointmentWaitlistService {
     time?: string
   ): Promise<boolean> {
     try {
+      const dayStart = startOfIstDay(date);
+      const dayEnd = endOfIstDay(date);
       // Check if doctor has any appointments on this date using countAppointmentsSafe
       const existingAppointments = await this.databaseService.countAppointmentsSafe({
         doctorId,
         date: {
-          gte: new Date(date.getFullYear(), date.getMonth(), date.getDate()),
-          lt: new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1),
+          gte: dayStart ?? new Date(date.getFullYear(), date.getMonth(), date.getDate()),
+          lt: dayEnd ?? new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1),
         },
         status: {
           in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],

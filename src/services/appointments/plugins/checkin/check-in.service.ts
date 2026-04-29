@@ -29,6 +29,7 @@ import type {
   LocationQueueResponse,
   QueueEntryData,
 } from '@core/types/appointment.types';
+import { formatDateKeyInIST, nowIso } from '../../../../libs/utils/date-time.util';
 type Appointment = AppointmentBase;
 type Patient = PatientBase;
 
@@ -341,7 +342,7 @@ export class CheckInService {
         appointments: appointments as CheckInAppointment[],
         clinicId,
         total: appointments.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -594,7 +595,7 @@ export class CheckInService {
         appointmentId,
         clinicId,
         ...queuePosition,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache for a shorter time (queue positions change frequently)
@@ -693,7 +694,7 @@ export class CheckInService {
         success: true,
         appointmentId,
         clinicId,
-        consultationStartedAt: new Date().toISOString(),
+        consultationStartedAt: nowIso(),
         message: 'Consultation started',
       };
     } catch (_error) {
@@ -731,7 +732,7 @@ export class CheckInService {
         clinicId,
         queue,
         total: queue.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -827,7 +828,7 @@ export class CheckInService {
         locationId: locationId,
         queue,
         total: queue.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -1123,7 +1124,7 @@ export class CheckInService {
     const response = await this.appointmentQueueService.getDoctorQueue(
       doctorId,
       clinicId,
-      new Date().toISOString().split('T')[0] || '',
+      formatDateKeyInIST(new Date()),
       'clinic'
     );
     return response.queue;
@@ -1190,7 +1191,7 @@ export class CheckInService {
     }
 
     const doctorId = firstAppointment.doctorId;
-    const queueDate = firstAppointment.date.toISOString().split('T')[0];
+    const queueDate = formatDateKeyInIST(firstAppointment.date);
     if (!queueDate) {
       throw new BadRequestException('Unable to determine queue date');
     }
@@ -1200,7 +1201,7 @@ export class CheckInService {
         throw new BadRequestException('All reordered appointments must belong to the same doctor');
       }
 
-      if (appointment.date.toISOString().split('T')[0] !== queueDate) {
+      if (formatDateKeyInIST(appointment.date) !== queueDate) {
         throw new BadRequestException('All reordered appointments must belong to the same date');
       }
 
@@ -1445,7 +1446,7 @@ export class CheckInService {
           success: true,
           checkInId: updated.id,
           verifiedBy,
-          verifiedAt: new Date().toISOString(),
+          verifiedAt: nowIso(),
           message: 'Check-in verified successfully',
         };
       },

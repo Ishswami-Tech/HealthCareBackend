@@ -13,6 +13,7 @@ import type {
   FollowUpResult,
   FollowUpReminder,
 } from '@core/types/appointment.types';
+import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 // Re-export types for backward compatibility
 export type { FollowUpPlan, FollowUpTemplate, FollowUpResult, FollowUpReminder };
@@ -691,7 +692,7 @@ export class AppointmentFollowUpService {
         templateData: {
           patientName: 'Patient', // This should be fetched from user data
           doctorName: 'Doctor', // This should be fetched from user data
-          appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
+          appointmentDate: formatDateKeyInIST(followUp.scheduledFor),
           appointmentTime: '10:00', // This should be fetched from appointment data
           location: 'Clinic', // This should be fetched from clinic data
           clinicName: 'Healthcare Clinic', // This should be fetched from clinic data
@@ -737,7 +738,7 @@ export class AppointmentFollowUpService {
         templateData: {
           patientName: 'Patient', // This should be fetched from user data
           doctorName: 'Doctor', // This should be fetched from user data
-          appointmentDate: followUp.scheduledFor.toISOString().split('T')[0] || '',
+          appointmentDate: formatDateKeyInIST(followUp.scheduledFor),
           appointmentTime: '10:00', // This should be fetched from appointment data
           location: 'Clinic', // This should be fetched from clinic data
           clinicName: 'Healthcare Clinic', // This should be fetched from clinic data

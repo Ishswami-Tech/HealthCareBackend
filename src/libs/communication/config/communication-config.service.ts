@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Communication Config Service
  * =============================
@@ -521,10 +522,10 @@ export class CommunicationConfigService implements OnModuleInit {
         ...currentSettings,
         communicationSettings: {
           ...communicationSettings,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso(),
           createdAt: communicationSettings.createdAt
             ? new Date(communicationSettings.createdAt).toISOString()
-            : new Date().toISOString(),
+            : nowIso(),
         },
       };
 

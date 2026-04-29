@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Virtual Background Service
  * @class VideoVirtualBackgroundService
@@ -113,7 +114,7 @@ export class VideoVirtualBackgroundService {
         eventType: 'video.virtual_background.updated',
         category: EventCategory.SYSTEM,
         priority: EventPriority.LOW,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoVirtualBackgroundService',
         version: '1.0.0',
         payload: {

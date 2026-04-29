@@ -433,7 +433,7 @@ export class AppointmentServiceMetadataDto {
 
 export class AppointmentServiceCatalogResponseDto {
   @ApiProperty({
-    type: [AppointmentServiceMetadataDto],
+    type: () => [AppointmentServiceMetadataDto],
     description: 'Backend-owned appointment service catalog',
   })
   services!: AppointmentServiceMetadataDto[];
@@ -788,7 +788,7 @@ export class AppointmentSearchDto {
 export class BulkCreateAppointmentsDto {
   @ApiProperty({
     description: 'Array of appointments to create',
-    type: [CreateAppointmentDto],
+    type: () => [CreateAppointmentDto],
   })
   @IsArray({ message: 'Appointments must be an array' })
   @ValidateNested({ each: true })
@@ -922,7 +922,7 @@ export class ProposeVideoSlotsDto {
   duration!: number;
 
   @ApiProperty({
-    type: [ProposedSlotItemDto],
+    type: () => [ProposedSlotItemDto],
     minItems: 3,
     maxItems: 4,
     example: [
@@ -2054,7 +2054,7 @@ export class AppointmentReassignmentCandidateDto {
 
 export class AppointmentReassignmentCandidatesResponseDto {
   @ApiProperty({
-    type: [AppointmentReassignmentCandidateDto],
+    type: () => [AppointmentReassignmentCandidateDto],
     description: 'Eligible and ineligible servicing doctor candidates for this appointment',
   })
   candidates!: AppointmentReassignmentCandidateDto[];
@@ -2088,7 +2088,7 @@ export class AssistantDoctorCoverageAssignmentDto {
 export class UpdateAssistantDoctorCoverageDto {
   @ApiProperty({
     description: 'Assistant doctor coverage configuration for the clinic',
-    type: [AssistantDoctorCoverageAssignmentDto],
+    type: () => [AssistantDoctorCoverageAssignmentDto],
   })
   @IsArray()
   @ValidateNested({ each: true })
@@ -2098,7 +2098,7 @@ export class UpdateAssistantDoctorCoverageDto {
 
 export class AssistantDoctorCoverageResponseDto {
   @ApiProperty({
-    type: [AssistantDoctorCoverageAssignmentDto],
+    type: () => [AssistantDoctorCoverageAssignmentDto],
     description: 'Assistant doctor coverage configuration persisted for the clinic',
   })
   entries!: AssistantDoctorCoverageAssignmentDto[];

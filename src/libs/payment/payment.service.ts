@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Payment Service
  * ===============
@@ -121,7 +122,7 @@ export class PaymentService {
           eventType: 'payment.intent.created',
           category: EventCategory.BILLING,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'PaymentService',
           version: '1.0.0',
           clinicId,
@@ -206,7 +207,7 @@ export class PaymentService {
           eventType: 'payment.refunded',
           category: EventCategory.BILLING,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'PaymentService',
           version: '1.0.0',
           clinicId,

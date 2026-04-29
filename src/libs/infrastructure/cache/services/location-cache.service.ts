@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import type { LoggerLike } from '@core/types';
 import { LogType, LogLevel } from '@core/types';
@@ -26,6 +26,7 @@ export class LocationCacheService {
   private readonly LOCATIONS_LIST_TTL = 3600; // Increased from 1800 to 1 hour for better hit rate
 
   constructor(
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     // Use string token to avoid importing LoggingService (prevents SWC TDZ circular-import issues)
     @Inject('LOGGING_SERVICE')

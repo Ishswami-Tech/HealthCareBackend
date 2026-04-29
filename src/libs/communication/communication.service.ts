@@ -34,6 +34,7 @@ import { EmailTemplatesService } from '@communication/channels/email/email-templ
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { SNSBackupService } from '@communication/channels/push/sns-backup.service';
 import { CommunicationHealthMonitorService } from './communication-health-monitor.service';
+import { formatTimeInIST, IST_TIMEZONE, nowIso } from '../utils/date-time.util';
 
 // Types
 import {
@@ -717,11 +718,11 @@ export class CommunicationService implements OnModuleInit {
             // Check quiet hours
             if (userPrefs.quietHours) {
               const now = new Date();
-              const currentTime = now.toLocaleTimeString('en-US', {
+              const currentTime = formatTimeInIST(now, {
                 hour12: false,
                 hour: '2-digit',
                 minute: '2-digit',
-                timeZone: userPrefs.quietHours.timezone || 'UTC',
+                timeZone: userPrefs.quietHours.timezone || IST_TIMEZONE,
               });
 
               const quietStart = userPrefs.quietHours.start || '22:00';
@@ -1492,7 +1493,7 @@ export class CommunicationService implements OnModuleInit {
         eventType: 'communication.sent',
         category: EventCategory.SYSTEM,
         priority: this.mapPriorityToEventPriority(request.priority),
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'CommunicationService',
         version: '1.0.0',
         payload: {

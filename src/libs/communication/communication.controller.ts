@@ -73,6 +73,7 @@ import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { RoleEnum as Role } from '@core/types';
 import { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
+import { formatDateTimeInIST, nowIso } from '../utils/date-time.util';
 
 /**
  * Unified Communication Controller
@@ -908,7 +909,7 @@ export class CommunicationController {
         },
       },
       period,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 
@@ -1035,7 +1036,7 @@ export class CommunicationController {
       case EmailTemplate.LOGIN_NOTIFICATION:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           device: 'Desktop',
           browser: 'Chrome',
           operatingSystem: 'Windows',
@@ -1046,14 +1047,14 @@ export class CommunicationController {
       case EmailTemplate.SECURITY_ALERT:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           action: 'All active sessions have been terminated for security.',
         };
         break;
       case EmailTemplate.SUSPICIOUS_ACTIVITY:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           supportEmail: 'support@healthcareapp.com',
         };
         break;
@@ -1109,7 +1110,7 @@ export class CommunicationController {
     return {
       healthy,
       services,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 
@@ -1198,7 +1199,7 @@ export class CommunicationController {
         failedRequests,
         successRate,
       },
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 
@@ -1240,7 +1241,7 @@ export class CommunicationController {
     return {
       alerts,
       alertConfig,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 

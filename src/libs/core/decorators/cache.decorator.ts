@@ -19,6 +19,7 @@ import {
   createParamDecorator,
   ExecutionContext,
 } from '@nestjs/common';
+import { formatDateKeyInIST } from '../../utils/date-time.util';
 
 // Internal imports - Types
 import type {
@@ -752,7 +753,7 @@ export const HealthcareKeyGenerators = {
    */
   daily: (context: ExecutionContext, ..._args: unknown[]): string => {
     const request = context.switchToHttp().getRequest<CustomFastifyRequest>();
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const date = formatDateKeyInIST(new Date());
     const params = request.params;
     const entityId =
       (params && typeof params === 'object' && 'id' in params ? String(params['id']) : undefined) ||

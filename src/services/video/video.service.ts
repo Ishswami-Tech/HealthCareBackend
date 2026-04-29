@@ -64,6 +64,7 @@ import {
 import { RbacService } from '@core/rbac/rbac.service';
 import { BillingService } from '@services/billing/billing.service';
 import { normalizeAppointmentId } from '@utils/appointment-id.utils';
+import { parseIstDateTime, nowIso } from '../../libs/utils/date-time.util';
 
 export type { VideoCall, VideoCallSettings };
 
@@ -501,7 +502,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       eventType: 'appointment.cancelled',
       category: EventCategory.APPOINTMENT,
       priority: EventPriority.HIGH,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: 'VideoService',
       version: '1.0.0',
       userId: updatedAppointment.patientId,
@@ -677,24 +678,11 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     time?: string | null;
     duration?: number | null;
   }): { startTime: Date | null; endTime: Date | null } | null {
-    if (!appointment.date || !appointment.time) {
-      return null;
-    }
-
-    const normalizedTime = this.normalizeTimeForDateParsing(appointment.time);
-    if (!normalizedTime) {
-      return null;
-    }
-
-    const dateValue =
-      typeof appointment.date === 'string' ? new Date(appointment.date) : appointment.date;
-    if (Number.isNaN(dateValue.getTime())) {
-      return null;
-    }
-
-    const datePart = dateValue.toISOString().slice(0, 10);
-    const startTime = new Date(`${datePart}T${normalizedTime}+05:30`);
-    if (Number.isNaN(startTime.getTime())) {
+    const startTime = parseIstDateTime(
+      appointment.date ?? undefined,
+      appointment.time ?? undefined
+    );
+    if (!startTime) {
       return null;
     }
 
@@ -704,17 +692,6 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         : 30;
     const endTime = new Date(startTime.getTime() + appointmentDurationMinutes * 60_000);
     return { startTime, endTime };
-  }
-
-  private normalizeTimeForDateParsing(timeValue: string): string | null {
-    const value = String(timeValue || '').trim();
-    if (/^\d{2}:\d{2}$/.test(value)) {
-      return `${value}:00`;
-    }
-    if (/^\d{2}:\d{2}:\d{2}$/.test(value)) {
-      return value;
-    }
-    return null;
   }
 
   /**
@@ -2481,7 +2458,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         eventType: 'video.recording.started',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoService',
         version: '1.0.0',
         payload: {
@@ -2546,7 +2523,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         eventType: 'video.recording.stopped',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoService',
         version: '1.0.0',
         payload: {
@@ -2753,7 +2730,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         eventType: 'video.participant.managed',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoService',
         version: '1.0.0',
         payload: {

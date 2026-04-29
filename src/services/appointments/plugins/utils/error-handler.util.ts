@@ -1,5 +1,5 @@
+import { nowIso } from '@utils/date-time.util';
 import { Logger, BadRequestException, InternalServerErrorException } from '@nestjs/common';
-
 export interface ErrorContext {
   pluginName: string;
   operation: string;
@@ -18,7 +18,7 @@ export class PluginErrorHandler {
     this.logger.error(`Plugin error in ${context.pluginName}: ${errorMessage}`, {
       ...context,
       error: errorStack,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
 
     // Create a standardized error response using NestJS exception
@@ -67,7 +67,7 @@ export class PluginErrorHandler {
       pluginName: context.pluginName,
       operation: context.operation,
       domain: context.domain,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 }

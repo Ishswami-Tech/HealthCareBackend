@@ -3,6 +3,7 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailTemplate, EmailContext } from '@core/types';
+import { formatDateTimeInIST, nowIso } from '../../../utils/date-time.util';
 
 class SendTestEmailDto {
   to!: string;
@@ -26,7 +27,7 @@ export class EmailController {
       return {
         status: isHealthy ? 'healthy' : 'unhealthy',
         service: 'Email Service',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         details: isHealthy
           ? 'Email service is operational'
           : 'Email service is experiencing issues',
@@ -35,7 +36,7 @@ export class EmailController {
       return {
         status: 'unhealthy',
         service: 'Email Service',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
@@ -122,7 +123,7 @@ export class EmailController {
       case EmailTemplate.LOGIN_NOTIFICATION:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           device: 'Desktop',
           browser: 'Chrome',
           operatingSystem: 'Windows',
@@ -133,14 +134,14 @@ export class EmailController {
       case EmailTemplate.SECURITY_ALERT:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           action: 'All active sessions have been terminated for security.',
         };
         break;
       case EmailTemplate.SUSPICIOUS_ACTIVITY:
         context = {
           name: 'Test User',
-          time: new Date().toLocaleString(),
+          time: formatDateTimeInIST(new Date()),
           supportEmail: 'support@healthcareapp.com',
         };
         break;

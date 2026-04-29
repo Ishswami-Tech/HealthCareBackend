@@ -149,6 +149,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
   private readonly clinicMetricsMethods: ClinicMetricsMethods;
 
   constructor(
+    @Inject(forwardRef(() => PrismaService))
     protected readonly prismaService: PrismaService,
     @Inject(forwardRef(() => ConnectionPoolManager))
     protected readonly connectionPoolManager: ConnectionPoolManager,
@@ -156,6 +157,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     protected readonly metricsService: DatabaseMetricsService,
     @Inject(forwardRef(() => ClinicIsolationService))
     protected readonly clinicIsolationService: ClinicIsolationService,
+    @Inject(forwardRef(() => HealthcareQueryOptimizerService))
     protected readonly queryOptimizer: HealthcareQueryOptimizerService,
     @Inject('LOGGING_SERVICE')
     protected readonly loggingService: LoggingService,
@@ -181,9 +183,9 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
     protected readonly strategyManager: QueryStrategyManager,
     @Inject(forwardRef(() => QueryMiddlewareChain))
     protected readonly middlewareChain: QueryMiddlewareChain,
-    @Inject(QueryOptionsBuilder)
+    @Inject(forwardRef(() => QueryOptionsBuilder))
     protected readonly queryOptionsBuilder: QueryOptionsBuilder,
-    @Inject(QueryKeyFactory)
+    @Inject(forwardRef(() => QueryKeyFactory))
     protected readonly queryKeyFactory: QueryKeyFactory,
     @Optional()
     @Inject('CACHE_SERVICE')

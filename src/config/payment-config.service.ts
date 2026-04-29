@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Payment Config Service
  * ======================
@@ -29,8 +30,11 @@ export class PaymentConfigService implements OnModuleInit {
   private readonly cacheTTL = 3600; // 1 hour
 
   constructor(
+    @Inject(forwardRef(() => ConfigService))
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
+    @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService,
@@ -261,10 +265,10 @@ export class PaymentConfigService implements OnModuleInit {
         ...currentSettings,
         paymentSettings: {
           ...paymentSettings,
-          updatedAt: new Date().toISOString(),
+          updatedAt: nowIso(),
           createdAt: paymentSettings.createdAt
             ? new Date(paymentSettings.createdAt).toISOString()
-            : new Date().toISOString(),
+            : nowIso(),
         },
       };
 

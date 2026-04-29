@@ -1,10 +1,10 @@
+import { nowIso } from '@utils/date-time.util';
 import { Controller, Get, Res, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { Public } from '@core/decorators/public.decorator';
 import { RateLimitGenerous } from '@security/rate-limit/rate-limit.decorator';
 import { FastifyReply } from 'fastify';
 import { HealthService } from './health.service';
-
 /**
  * Health controller uses HealthService only.
  * Database readiness comes from DatabaseService.getHealthStatus() via DatabaseHealthIndicator.
@@ -123,7 +123,7 @@ export class HealthController {
 
       return res.status(503).send({
         status: 'unhealthy',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         message: 'Application is not ready - database connection in progress or services unhealthy',
         database: {
           healthStatus: databaseStatus?.status,
@@ -136,7 +136,7 @@ export class HealthController {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       return res.status(503).send({
         status: 'unhealthy',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         message: `Health check failed: ${errorMessage}`,
       });
     }

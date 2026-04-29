@@ -46,6 +46,7 @@ export class BullBoardService implements OnApplicationBootstrap {
   private bullBoardRegistered = false;
 
   constructor(
+    @Inject(HttpAdapterHost)
     private readonly httpAdapterHost: HttpAdapterHost,
     @Optional() @InjectQueue(HEALTHCARE_QUEUE) private healthcareQueue: Queue | null,
     @Optional()
@@ -53,7 +54,7 @@ export class BullBoardService implements OnApplicationBootstrap {
     private readonly loggingService?: LoggingService
   ) {}
 
-  onApplicationBootstrap(): void {
+  async onApplicationBootstrap(): Promise<void> {
     if (this.bullBoardRegistered) {
       return;
     }
@@ -101,7 +102,8 @@ export class BullBoardService implements OnApplicationBootstrap {
         },
       });
 
-      appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
+      // Await registration to ensure the static plugin inside FastifyAdapter loads correctly
+      await appInstance.register(serverAdapter.registerPlugin(), { prefix: routePrefix });
       this.bullBoardRegistered = true;
       this.logger.log('Bull Board registered at /queue-dashboard');
     } catch (error) {

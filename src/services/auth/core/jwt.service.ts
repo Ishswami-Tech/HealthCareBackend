@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
@@ -516,7 +517,7 @@ export class JwtAuthService {
       await this.safeCacheSet(
         blacklistKey,
         {
-          blacklistedAt: new Date().toISOString(),
+          blacklistedAt: nowIso(),
           reason: reason || 'User logout',
         },
         this.BLACKLIST_CACHE_TTL

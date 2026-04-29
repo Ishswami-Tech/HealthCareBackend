@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Quality Service
  * @class VideoQualityService
@@ -134,7 +135,7 @@ export class VideoQualityService {
             eventType: 'video.quality.critical_warning',
             category: EventCategory.SYSTEM,
             priority: EventPriority.HIGH,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'VideoQualityService',
             version: '1.0.0',
             payload: {

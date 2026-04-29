@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, NotFoundException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import {
@@ -260,8 +261,8 @@ export class EHRService {
                 sleep: '',
                 stress: '',
                 notes: '',
-                createdAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
+                createdAt: nowIso(),
+                updatedAt: nowIso(),
               };
 
           return {
@@ -339,7 +340,7 @@ export class EHRService {
       summary: summaryText,
       keyFindings: keyFindings.length > 0 ? keyFindings : ['No significant findings identified.'],
       recommendations,
-      generatedAt: new Date().toISOString(),
+      generatedAt: nowIso(),
       modelName: 'HealthcareAI-Summary-v1 (Simulated)',
     };
   }

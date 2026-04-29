@@ -9,6 +9,7 @@ import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
 import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggerLike } from '@core/types';
+import { formatDateKeyInIST } from '../../../utils/date-time.util';
 
 /**
  * Comprehensive Cache Warming Service
@@ -387,7 +388,7 @@ export class CacheWarmingService implements OnModuleInit {
   async warmDoctorSchedule(doctorId: string, startDate: Date, endDate: Date): Promise<void> {
     try {
       const keyFactory = this.cacheService.getKeyFactory();
-      const dateKey = startDate.toISOString().split('T')[0] || '';
+      const dateKey = formatDateKeyInIST(startDate);
       const cacheKey = keyFactory.fromTemplate(
         'doctor:{doctorId}:clinic:{clinicId}:availability:{date}',
         {

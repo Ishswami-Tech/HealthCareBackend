@@ -158,7 +158,9 @@ export class DatabaseModule implements OnModuleInit {
 
   constructor(
     @Inject(forwardRef(() => ConfigService)) private configService: ConfigService,
+    @Inject(forwardRef(() => ConnectionPoolManager))
     private connectionPoolManager: ConnectionPoolManager,
+    @Inject(forwardRef(() => ClinicIsolationService))
     private clinicIsolationService: ClinicIsolationService,
     @Inject(forwardRef(() => LoggingService)) private loggingService: LoggingService
   ) {}

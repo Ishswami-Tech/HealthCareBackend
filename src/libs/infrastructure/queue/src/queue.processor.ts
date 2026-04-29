@@ -1,5 +1,5 @@
 import { Job } from 'bullmq';
-import { Inject, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { EHRService } from '../../../../services/ehr/ehr.service';
 import { AppointmentQueueService } from './services/appointment-queue.service';
@@ -18,6 +18,7 @@ import {
   type JobMetadata,
 } from '@core/types/queue.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
 
 // Import InvoicePDFService type (using forwardRef to avoid circular dependency)
 // Note: We use a type-only import to avoid runtime circular dependency issues
@@ -49,9 +50,12 @@ function safeStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+@Injectable()
 export class QueueProcessor {
   constructor(
+    @Inject('DATABASE_SERVICE')
     private readonly prisma: DatabaseService,
+    @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject('InvoicePDFService')
@@ -647,7 +651,7 @@ export class QueueProcessor {
         testName: report.testName || 'Unknown',
         hasResult: !!report.result,
         hasReferenceRange: !!report.referenceRange,
-        processedAt: new Date().toISOString(),
+        processedAt: nowIso(),
       };
 
       // 3. Update report with processed data
@@ -757,7 +761,7 @@ export class QueueProcessor {
       // 1. Extract DICOM metadata (placeholder - actual implementation would parse DICOM files)
       const dicomMetadata = {
         imageType: report.imageType || 'Unknown',
-        processedAt: new Date().toISOString(),
+        processedAt: nowIso(),
       };
 
       // 2. Update findings with processed metadata if needed
@@ -950,9 +954,15 @@ export class QueueProcessor {
         typeof invoice.subscription === 'object' &&
         'currentPeriodStart' in invoice.subscription &&
         'currentPeriodEnd' in invoice.subscription
-          ? `${new Date(String(invoice.subscription.currentPeriodStart)).toLocaleDateString()} - ${new Date(
-              String(invoice.subscription.currentPeriodEnd)
-            ).toLocaleDateString()}`
+          ? `${formatDateInIST(String(invoice.subscription.currentPeriodStart), {
+              year: 'numeric',
+              month: 'short',
+              day: '2-digit',
+            })} - ${formatDateInIST(String(invoice.subscription.currentPeriodEnd), {
+              year: 'numeric',
+              month: 'short',
+              day: '2-digit',
+            })}`
           : undefined;
 
       const getUserAddress = (value: typeof user): string | undefined => {
@@ -1387,7 +1397,7 @@ export class QueueProcessor {
         originalUrl: recordingUrl as string,
         duration: (duration as number) || recording.duration || 0,
         format: typeof formatValue === 'string' ? formatValue : 'mp4',
-        processedAt: new Date().toISOString(),
+        processedAt: nowIso(),
       };
 
       // 2. Generate transcoded URL (placeholder - actual implementation would:
@@ -1571,7 +1581,7 @@ export class QueueProcessor {
                 transcodedUrls,
                 formats: targetFormats,
                 resolutions: targetResolutions,
-                transcodedAt: new Date().toISOString(),
+                transcodedAt: nowIso(),
               },
             },
           });
@@ -1705,7 +1715,7 @@ export class QueueProcessor {
         appointmentId,
         qualityMetrics,
         engagementMetrics,
-        processedAt: new Date().toISOString(),
+        processedAt: nowIso(),
         metadata: {
           doctorId: 'doctorId' in appointment ? appointment.doctorId : undefined,
           patientId: 'patientId' in appointment ? appointment.patientId : undefined,

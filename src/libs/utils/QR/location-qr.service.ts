@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
@@ -27,7 +28,7 @@ export class LocationQrService {
       locationId,
       clinicId,
       type: 'LOCATION_CHECK_IN',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
 
     const signature = this.generateSignature(payload);
