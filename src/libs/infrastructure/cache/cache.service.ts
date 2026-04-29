@@ -229,7 +229,7 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
    * Cache data with automatic fetch on miss
    * This is the main method to use for all caching needs
    *
-   * Now supports multi-layer caching (L1 → L2 → L3):
+   * Now supports multi-layer caching (L1 â†’ L2 â†’ L3):
    * - L1: In-memory cache (fastest, process-local)
    * - L2: Distributed cache (Redis/Dragonfly - this service)
    * - L3: Database (via fetchFn)
@@ -529,15 +529,21 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     clinicId?: string
   ): Promise<number> {
     const patterns = [this.keyFactory.appointment(appointmentId, '*')];
+    const tags = [`appointment:${appointmentId}`];
 
     if (clinicId) {
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:list:*'));
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:*'));
+      tags.push(`clinic:${clinicId}`);
     }
 
     let invalidated = 0;
     for (const pattern of patterns) {
       invalidated += await this.invalidateCacheByPattern(pattern);
+    }
+
+    for (const tag of tags) {
+      invalidated += await this.invalidateCacheByTag(tag);
     }
 
     return invalidated;

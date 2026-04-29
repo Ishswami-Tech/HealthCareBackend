@@ -511,6 +511,10 @@ export class AppointmentsController {
     patterns: ['appointments:*', 'appointment:*'],
     tags: ['appointments', 'appointment_data'],
   })
+  @InvalidatePatientCache({
+    patterns: ['appointments:detail:*', 'appointments:my:*', 'appointments:upcoming:*'],
+    tags: ['appointments', 'appointment_details', 'patient_appointments', 'upcoming_appointments'],
+  })
   @ApiOperation({
     summary: 'Confirm video appointment slot',
     description:
@@ -556,6 +560,10 @@ export class AppointmentsController {
   @InvalidateAppointmentCache({
     patterns: ['appointments:*', 'appointment:*'],
     tags: ['appointments', 'appointment_data'],
+  })
+  @InvalidatePatientCache({
+    patterns: ['appointments:detail:*', 'appointments:my:*', 'appointments:upcoming:*'],
+    tags: ['appointments', 'appointment_details', 'patient_appointments', 'upcoming_appointments'],
   })
   @ApiOperation({
     summary: 'Confirm the final video slot',

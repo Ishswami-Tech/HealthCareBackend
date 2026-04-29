@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Database Service
  * @class DatabaseService
  * @description Main database service - single entry point for all database operations
@@ -387,6 +387,15 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
         : {}),
     };
 
+    const appointmentIdFromWhere =
+      queryOptions.where &&
+      typeof queryOptions.where === 'object' &&
+      !Array.isArray(queryOptions.where) &&
+      'id' in queryOptions.where &&
+      typeof queryOptions.where['id'] === 'string'
+        ? String(queryOptions.where['id'])
+        : '';
+
     const hasDiscriminatingParams =
       'where' in cacheParams ||
       'select' in cacheParams ||
@@ -621,6 +630,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
                   'database',
                   'read',
                   ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
+                  ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
                 ],
               });
             });
@@ -667,6 +677,7 @@ export class DatabaseService implements IHealthcareDatabaseClient, OnModuleInit,
                   'database',
                   'read',
                   ...(queryOptions.clinicId ? [`clinic:${queryOptions.clinicId}`] : []),
+                  ...(appointmentIdFromWhere ? [`appointment:${appointmentIdFromWhere}`] : []),
                 ],
               });
             });
