@@ -210,6 +210,27 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
     return normalizedApiUrl;
   }
 
+  private summarizeToken(token: string): {
+    tokenHost: string | null;
+    tokenSessionId: string | null;
+    tokenHasSecret: boolean;
+  } {
+    try {
+      const parsed = new URL(token);
+      return {
+        tokenHost: parsed.host,
+        tokenSessionId: parsed.searchParams.get('sessionId'),
+        tokenHasSecret: parsed.searchParams.has('token'),
+      };
+    } catch {
+      return {
+        tokenHost: null,
+        tokenSessionId: null,
+        tokenHasSecret: false,
+      };
+    }
+  }
+
   /**
    * Get HTTP request config with SSL verification skipped in development
    */
@@ -400,6 +421,40 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       const token = connectionResponse.data.token;
       const meetingUrl = `${this.getPublicMeetingBaseUrl()}/#/sessions/${session.id}?token=${token}`;
       const auditUserId = appointment.doctor?.userId || userId;
+
+      const tokenSummary = this.summarizeToken(token);
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'OpenVidu connection token generated',
+        'OpenViduVideoProvider.generateMeetingToken',
+        {
+          appointmentId: resolvedAppointmentId,
+          roomId,
+          sessionId: session.id,
+          apiUrl: this.apiUrl,
+          publicMeetingBaseUrl: this.getPublicMeetingBaseUrl(),
+          tokenSummary,
+          connectionResponseSession: connectionResponse.data.session ?? null,
+          connectionResponseId: connectionResponse.data.id ?? null,
+          meetingUrlHost: this.extractHost(meetingUrl),
+        }
+      );
+
+      if (connectionResponse.data.session && connectionResponse.data.session !== session.id) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'OpenVidu connection response session mismatch',
+          'OpenViduVideoProvider.generateMeetingToken',
+          {
+            appointmentId: resolvedAppointmentId,
+            requestedSessionId: session.id,
+            returnedSessionId: connectionResponse.data.session,
+            roomId,
+          }
+        );
+      }
 
       await this.databaseService.executeHealthcareWrite(
         async client => {

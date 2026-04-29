@@ -93,9 +93,88 @@ export class AppController {
       const baseUrl = appConfig.apiUrl || appConfig.baseUrl;
       const isProduction = appConfig.environment === 'production';
       const isSwaggerEnabled = this.configService.getEnvBoolean('API_DOCS_ENABLED', true);
+      const createFallbackHealthData = (): DetailedHealthCheckResponse => ({
+        status: 'degraded',
+        timestamp: nowIso(),
+        environment: appConfig.environment,
+        version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
+        systemMetrics: {
+          uptime: process.uptime(),
+          memoryUsage: {
+            heapTotal: 0,
+            heapUsed: 0,
+            rss: 0,
+            external: 0,
+            systemTotal: 0,
+            systemFree: 0,
+            systemUsed: 0,
+          },
+          cpuUsage: {
+            user: 0,
+            system: 0,
+            cpuCount: 0,
+            cpuModel: 'unknown',
+            cpuSpeed: 0,
+          },
+        },
+        services: {
+          api: {
+            status: 'unhealthy',
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          database: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          cache: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          queue: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          logger: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          video: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+          },
+          communication: {
+            status: 'unhealthy' as const,
+            responseTime: 0,
+            lastChecked: nowIso(),
+            details: 'Communication service unavailable',
+          },
+        },
+        processInfo: {
+          pid: process.pid,
+          ppid: process.ppid,
+          platform: process.platform,
+          versions: {},
+        },
+        memory: {
+          heapUsed: 0,
+          heapTotal: 0,
+          external: 0,
+          arrayBuffers: 0,
+        },
+        cpu: {
+          user: 0,
+          system: 0,
+        },
+      });
 
       // Get real-time service status using Terminus health checks
-      let healthData;
+      let healthData: DetailedHealthCheckResponse;
       try {
         // Use HealthService for health checks (standardized, reliable, includes realtime status)
         const healthCheckPromise = this.healthService.getDetailedHealth().then(healthResult => {
@@ -104,85 +183,7 @@ export class AppController {
         });
         const timeoutPromise = new Promise<DetailedHealthCheckResponse>(resolve => {
           setTimeout(() => {
-            resolve({
-              status: 'degraded',
-              timestamp: nowIso(),
-              environment: appConfig.environment,
-              version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
-              systemMetrics: {
-                uptime: process.uptime(),
-                memoryUsage: {
-                  heapTotal: 0,
-                  heapUsed: 0,
-                  rss: 0,
-                  external: 0,
-                  systemTotal: 0,
-                  systemFree: 0,
-                  systemUsed: 0,
-                },
-                cpuUsage: {
-                  user: 0,
-                  system: 0,
-                  cpuCount: 0,
-                  cpuModel: 'unknown',
-                  cpuSpeed: 0,
-                },
-              },
-              services: {
-                api: {
-                  status: 'unhealthy',
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                database: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                cache: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                queue: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                logger: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                video: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                },
-                communication: {
-                  status: 'unhealthy' as const,
-                  responseTime: 0,
-                  lastChecked: nowIso(),
-                  details: 'Communication service unavailable',
-                },
-              },
-              processInfo: {
-                pid: process.pid,
-                ppid: process.ppid,
-                platform: process.platform,
-                versions: {},
-              },
-              memory: {
-                heapUsed: 0,
-                heapTotal: 0,
-                external: 0,
-                arrayBuffers: 0,
-              },
-              cpu: {
-                user: 0,
-                system: 0,
-              },
-            });
+            resolve(createFallbackHealthData());
           }, 15000); // 15 second timeout (increased to allow health checks to complete)
         });
         healthData = await Promise.race([healthCheckPromise, timeoutPromise]);
@@ -207,80 +208,7 @@ export class AppController {
           console.error('Failed to log health check error:', logError);
         }
         // Create a default health data structure
-        healthData = {
-          status: 'degraded',
-          timestamp: nowIso(),
-          environment: this.configService?.getEnvironment() || 'development',
-          version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
-          systemMetrics: {
-            uptime: process.uptime(),
-            memoryUsage: {
-              heapTotal: 0,
-              heapUsed: 0,
-              rss: 0,
-              external: 0,
-              systemTotal: 0,
-              systemFree: 0,
-              systemUsed: 0,
-            },
-            cpuUsage: {
-              user: 0,
-              system: 0,
-              cpuCount: 0,
-              cpuModel: 'unknown',
-              cpuSpeed: 0,
-            },
-          },
-          services: {
-            api: {
-              status: 'unhealthy',
-              responseTime: 0,
-              lastChecked: nowIso(),
-            },
-            database: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: nowIso(),
-            },
-            cache: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: nowIso(),
-            },
-            queue: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: nowIso(),
-            },
-            logger: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: nowIso(),
-            },
-            communication: {
-              status: 'unhealthy' as const,
-              responseTime: 0,
-              lastChecked: nowIso(),
-              details: 'Communication service unavailable',
-            },
-          },
-          processInfo: {
-            pid: process.pid,
-            ppid: process.ppid,
-            platform: process.platform,
-            versions: {},
-          },
-          memory: {
-            heapUsed: 0,
-            heapTotal: 0,
-            external: 0,
-            arrayBuffers: 0,
-          },
-          cpu: {
-            user: 0,
-            system: 0,
-          },
-        };
+        healthData = createFallbackHealthData();
       }
 
       // Extract health services data once - reuse for all status checks
