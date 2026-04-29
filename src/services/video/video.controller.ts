@@ -24,6 +24,7 @@ import {
   Request,
   ParseUUIDPipe,
   ValidationPipe,
+  HttpException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -573,6 +574,9 @@ export class VideoController {
         this.errors.handleError(error, context);
         throw error;
       }
+      if (error instanceof HttpException) {
+        throw error;
+      }
       const healthcareError = this.errors.internalServerError(context);
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
@@ -672,6 +676,9 @@ export class VideoController {
       const context = 'VideoController.startConsultation';
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       const healthcareError = this.errors.internalServerError(context);
@@ -774,6 +781,9 @@ export class VideoController {
       const context = 'VideoController.endConsultation';
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof HttpException) {
         throw error;
       }
       const healthcareError = this.errors.internalServerError(context);
