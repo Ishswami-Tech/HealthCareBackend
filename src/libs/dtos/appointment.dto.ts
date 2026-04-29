@@ -650,6 +650,15 @@ export class AppointmentResponseDto {
   @IsString({ message: 'Notes must be a string' })
   notes?: string;
 
+  @ApiPropertyOptional({
+    example: 0,
+    description: '0-based index of the confirmed proposed video slot',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Confirmed slot index must be a number' })
+  @Min(0, { message: 'Confirmed slot index must be 0 or greater' })
+  confirmedSlotIndex?: number | null;
+
   @ApiProperty({
     example: '2024-01-01T00:00:00.000Z',
     description: 'Appointment creation timestamp',
