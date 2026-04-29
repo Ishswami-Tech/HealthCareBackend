@@ -21,6 +21,7 @@ import { LogType, LogLevel } from '@core/types';
 import { safeLog, safeLogError } from '@infrastructure/logging/logging.helper';
 import { HealthBroadcasterService } from './services/health-broadcaster.service';
 import { HealthCacheService } from './services/health-cache.service';
+import { getSocketCorsOrigin } from '@communication/channels/socket/socket-cors.util';
 import type {
   AggregatedHealthStatus,
   RealtimeHealthStatusPayload,
@@ -36,21 +37,6 @@ interface SubscribeResponse {
   status?: RealtimeHealthStatusPayload;
 }
 
-// Get CORS origin from environment (same pattern as other gateways)
-// Uses CORS_ORIGIN environment variable to restrict access to allowed origins only
-const getCorsOrigin = (): string | string[] => {
-  const corsOrigin = process.env['CORS_ORIGIN'] || '';
-  if (corsOrigin) {
-    // Split comma-separated origins and trim whitespace
-    return corsOrigin.split(',').map((o: string) => o.trim());
-  }
-  // Default to localhost origins only (more secure than '*')
-  // In production, CORS_ORIGIN should be set in environment variables
-  return process.env['NODE_ENV'] === 'production'
-    ? [] // Empty array = no origins allowed (secure default for production)
-    : ['http://localhost:3000', 'http://localhost:8088', 'http://localhost:8082'];
-};
-
 /**
  * Realtime Health Gateway
  * Provides real-time health status via Socket.IO
@@ -64,7 +50,7 @@ const getCorsOrigin = (): string | string[] => {
 @WebSocketGateway({
   namespace: '/health',
   cors: {
-    origin: getCorsOrigin(), // Restricted to CORS_ORIGIN environment variable
+    origin: getSocketCorsOrigin(),
     credentials: true,
   },
   transports: ['websocket', 'polling'],
@@ -98,7 +84,7 @@ export class RealtimeHealthGateway
 
   afterInit(server: Server): void {
     try {
-      // CORS is configured via WebSocketGateway decorator using getCorsOrigin()
+      // CORS is configured via WebSocketGateway decorator using getSocketCorsOrigin()
       // This ensures health namespace respects CORS_ORIGIN environment variable
       // Same security model as the main app gateway and other WebSocket gateways
 
@@ -118,7 +104,7 @@ export class RealtimeHealthGateway
       }
 
       // Get CORS origins for logging
-      const corsOrigins = getCorsOrigin();
+      const corsOrigins = getSocketCorsOrigin();
       const allowedOrigins = Array.isArray(corsOrigins)
         ? corsOrigins.join(', ')
         : corsOrigins === '*'
