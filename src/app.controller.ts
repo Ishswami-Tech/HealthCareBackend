@@ -212,16 +212,16 @@ export class AppController {
       }
 
       // Extract health services data once - reuse for all status checks
-      const healthServices =
-        (healthData && 'services' in healthData ? healthData.services : {}) || {};
+      const healthServices = ((healthData && 'services' in healthData ? healthData.services : {}) ||
+        {}) as Record<string, ServiceHealth | undefined>;
 
       // Check if services are running
       // API is always considered running if we can serve the dashboard
       const isApiRunning = true; // API is running if we can serve this page
 
       // Extract individual service statuses for real-time checks
-      const queueHealth = healthServices.queue as ServiceHealth | undefined;
-      const loggerHealth = healthServices.logger as ServiceHealth | undefined;
+      const queueHealth = healthServices['queue'];
+      const loggerHealth = healthServices['logger'];
       const communicationHealth = (healthServices as { communication?: ServiceHealth })
         .communication;
       const prismaStudioStatus = (healthServices as { prismaStudio?: ServiceHealth }).prismaStudio
