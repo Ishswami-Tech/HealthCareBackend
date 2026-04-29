@@ -90,7 +90,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       })();
 
     // Log configuration for debugging (async, don't await)
-    void this.loggingService.log(
+    void this.loggingService?.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'OpenVidu provider initialized',
@@ -125,7 +125,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       websocketHint: domainHost ? `wss://${domainHost}` : 'wss://<OPENVIDU_DOMAIN>',
     };
 
-    await this.loggingService.log(
+    await this.loggingService?.log(
       LogType.SYSTEM,
       LogLevel.INFO,
       'OpenVidu endpoint validation completed',
@@ -141,7 +141,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
     );
 
     if (apiHost && domainHost && apiHost !== domainHost) {
-      await this.loggingService.log(
+      await this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.WARN,
         'OpenVidu configuration mismatch detected',
@@ -423,7 +423,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       const auditUserId = appointment.doctor?.userId || userId;
 
       const tokenSummary = this.summarizeToken(token);
-      await this.loggingService.log(
+      await this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         'OpenVidu connection token generated',
@@ -442,7 +442,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       );
 
       if (connectionResponse.data.session && connectionResponse.data.session !== session.id) {
-        await this.loggingService.log(
+        await this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           'OpenVidu connection response session mismatch',
@@ -503,7 +503,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       };
       return response;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to generate OpenVidu meeting token: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -604,7 +604,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return (await this.getConsultationSession(resolvedAppointmentId))!;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to start OpenVidu consultation: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -656,7 +656,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         const axiosError = ovError as AxiosError;
         const status = axiosError?.response?.status;
         if (status !== 404) {
-          void this.loggingService.log(
+          void this.loggingService?.log(
             LogType.SYSTEM,
             LogLevel.WARN,
             `Failed to delete session in OpenVidu: ${ovError instanceof Error ? ovError.message : 'Unknown error'}`,
@@ -709,7 +709,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return (await this.getConsultationSession(resolvedAppointmentId))!;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to end OpenVidu consultation: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -777,7 +777,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         waitingRoomEnabled: (consultation as { waitingRoomEnabled: boolean }).waitingRoomEnabled,
       };
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get OpenVidu consultation session: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -828,7 +828,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return activeSessions;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to list OpenVidu sessions: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -849,7 +849,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
   async isHealthy(): Promise<boolean> {
     // Check if OpenVidu is enabled first
     if (!this.isEnabled()) {
-      await this.loggingService.log(
+      await this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.DEBUG,
         'OpenVidu is disabled in configuration',
@@ -999,7 +999,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
         // OpenVidu responded but with error status (service unavailable)
         if (response && response.status === 503) {
-          await this.loggingService.log(
+          await this.loggingService?.log(
             LogType.SYSTEM,
             LogLevel.WARN,
             `OpenVidu reported service unavailable on attempt ${attempt}`,
@@ -1034,7 +1034,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
           errorMessage.includes('connect ECONNREFUSED');
 
         // Enhanced logging with more diagnostic information
-        await this.loggingService.log(
+        await this.loggingService?.log(
           LogType.SYSTEM,
           attempt === maxRetries ? LogLevel.WARN : LogLevel.DEBUG,
           `OpenVidu health check attempt ${attempt}/${maxRetries} failed: ${errorMessage}`,
@@ -1066,7 +1066,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
         // If not a connection error (e.g., auth error, 500 error), OpenVidu is running but may have issues
         if (!isConnectionError) {
-          await this.loggingService.log(
+          await this.loggingService?.log(
             LogType.SYSTEM,
             LogLevel.DEBUG,
             'OpenVidu health check returned non-connection error - container is accessible but may have issues',
@@ -1104,7 +1104,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
     }
 
     // Log warning with detailed information
-    await this.loggingService.log(
+    await this.loggingService?.log(
       LogType.SYSTEM,
       LogLevel.WARN,
       `OpenVidu health check failed after ${maxRetries} attempts. Video features may be unavailable.`,
@@ -1179,7 +1179,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         })
       );
 
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `OpenVidu recording started: ${response.data.id}`,
@@ -1193,7 +1193,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return response.data;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to start OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1222,7 +1222,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         })
       );
 
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `OpenVidu recording stopped: ${recordingId}`,
@@ -1235,7 +1235,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return response.data;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to stop OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1261,7 +1261,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return response.data;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1290,7 +1290,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return response.data.content || [];
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to list OpenVidu recordings: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1314,7 +1314,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         this.getHttpConfig()
       );
 
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `OpenVidu recording deleted: ${recordingId}`,
@@ -1324,7 +1324,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         }
       );
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to delete OpenVidu recording: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1350,7 +1350,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return response.data;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get OpenVidu session info: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1372,7 +1372,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
       const sessionInfo = await this.getSessionInfo(sessionId);
       return sessionInfo.connections.content || [];
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get OpenVidu participants: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1396,7 +1396,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         this.getHttpConfig()
       );
 
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `OpenVidu participant kicked: ${connectionId}`,
@@ -1407,7 +1407,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         }
       );
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to kick OpenVidu participant: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1432,7 +1432,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         this.getHttpConfig()
       );
 
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.INFO,
         `OpenVidu stream force unpublished: ${streamId}`,
@@ -1443,7 +1443,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
         }
       );
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to force unpublish OpenVidu stream: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -1519,7 +1519,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
 
       return analytics;
     } catch (error) {
-      void this.loggingService.log(
+      void this.loggingService?.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to get OpenVidu session analytics: ${error instanceof Error ? error.message : 'Unknown error'}`,

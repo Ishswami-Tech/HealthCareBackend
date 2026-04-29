@@ -197,7 +197,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // On error, assume unhealthy and use shorter interval
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           `Background health check failed: ${errorMessage}`,
@@ -328,7 +328,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorStack = error instanceof Error ? error.stack : undefined;
 
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.DATABASE,
           LogLevel.ERROR,
           `Database health monitoring failed: ${errorMessage}`,
@@ -373,7 +373,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Health status will be checked on-demand if cache is unavailable
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.WARN,
           `Background health check failed: ${errorMessage}`,
@@ -1047,7 +1047,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           if (shouldLogFailure && this.loggingService) {
             const isVideoOnlyFailure = hasVideoFailure && !hasCriticalFailure;
-            void this.loggingService.log(
+            void this.loggingService?.log(
               isVideoOnlyFailure ? LogType.SYSTEM : LogType.ERROR,
               isVideoOnlyFailure ? LogLevel.WARN : LogLevel.ERROR,
               isVideoOnlyFailure
@@ -1216,7 +1216,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               // If only optional services are unhealthy, log as WARN instead of ERROR
               // This prevents excessive ERROR logs when only video (optional) is down
               if (onlyOptionalUnhealthy && this.loggingService) {
-                void this.loggingService.log(
+                void this.loggingService?.log(
                   LogType.SYSTEM,
                   LogLevel.WARN,
                   `Health check: Optional service(s) unhealthy (${unhealthyServices.join(', ')}). Core services are healthy.`,
@@ -2835,7 +2835,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // If checkDetailedHealth fails, return a basic health response
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.ERROR,
           LogLevel.ERROR,
           `Detailed health check failed: ${errorMessage}`,
@@ -3025,7 +3025,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       };
     } catch (_error) {
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.DATABASE,
           LogLevel.ERROR,
           `Database health check failed: ${_error instanceof Error ? _error.message : 'Unknown error'}`,
@@ -3070,7 +3070,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         } catch (healthCheckError) {
           // Fall through to fallback check
           if (this.loggingService) {
-            void this.loggingService.log(
+            void this.loggingService?.log(
               LogType.SYSTEM,
               LogLevel.DEBUG,
               `Cache health indicator failed: ${healthCheckError instanceof Error ? healthCheckError.message : 'Unknown error'}`,
@@ -3093,7 +3093,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
 
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.CACHE,
           LogLevel.DEBUG,
           `Cache health check error: ${errorMessage}`,
@@ -3207,7 +3207,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         } catch (healthCheckError) {
           // Fall through to fallback check
           if (this.loggingService) {
-            void this.loggingService.log(
+            void this.loggingService?.log(
               LogType.SYSTEM,
               LogLevel.DEBUG,
               `Queue health indicator failed, trying fallback: ${healthCheckError instanceof Error ? healthCheckError.message : 'Unknown error'}`,
@@ -3230,7 +3230,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
 
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.DEBUG,
           `Queue health check error: ${errorMessage}`,
@@ -3275,7 +3275,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         } catch (healthCheckError) {
           // Fall through to fallback check
           if (this.loggingService) {
-            void this.loggingService.log(
+            void this.loggingService?.log(
               LogType.SYSTEM,
               LogLevel.DEBUG,
               `Logger health indicator failed: ${healthCheckError instanceof Error ? healthCheckError.message : 'Unknown error'}`,
@@ -3307,7 +3307,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const errorMessage = _error instanceof Error ? _error.message : 'Unknown error';
 
       if (this.loggingService) {
-        void this.loggingService.log(
+        void this.loggingService?.log(
           LogType.SYSTEM,
           LogLevel.DEBUG,
           `Logger health check error: ${errorMessage}`,
