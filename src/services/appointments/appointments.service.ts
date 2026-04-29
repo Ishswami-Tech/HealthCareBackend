@@ -867,6 +867,10 @@ export class AppointmentsService {
     return parseIstDateTime(appointment.date, appointment.time);
   }
 
+  private normalizeVideoSlotDate(slotDate: string): Date | null {
+    return parseIstDateTime(slotDate, '12:00 am');
+  }
+
   private async syncPaidAppointmentBillingAfterReschedule(
     appointment: AppointmentWithRelations,
     newDate: string,
@@ -1382,7 +1386,7 @@ export class AppointmentsService {
   ): Promise<string | null> {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as Prisma.TransactionClient;
-      const doctor = await typedClient.doctor.findFirst({
+      const clinicScopedDoctor = await typedClient.doctor.findFirst({
         where: {
           clinics: {
             some: {
@@ -1394,7 +1398,21 @@ export class AppointmentsService {
         select: { id: true },
       });
 
-      return doctor?.id ?? null;
+      if (clinicScopedDoctor?.id) {
+        return clinicScopedDoctor.id;
+      }
+
+      // Fallback: some clinics persist appointment ownership by doctor entity ID
+      // without a doctor-clinic link being populated yet. In that case we still
+      // want the doctor workspace to resolve against the stored doctor record.
+      const globalDoctor = await typedClient.doctor.findFirst({
+        where: {
+          OR: [{ id: doctorIdentifier }, { userId: doctorIdentifier }],
+        },
+        select: { id: true },
+      });
+
+      return globalDoctor?.id ?? null;
     });
   }
 
@@ -1714,13 +1732,22 @@ export class AppointmentsService {
     }
 
     const { date: slotDate, time: slotTime } = firstSlot;
+    const normalizedSlotDate = this.normalizeVideoSlotDate(slotDate);
+    if (!normalizedSlotDate) {
+      throw this.errors.validationError(
+        'proposedSlots',
+        `Invalid date format: ${slotDate}`,
+        'AppointmentsService.proposeVideoAppointment'
+      );
+    }
+
     const appointmentData = {
       patientId,
       doctorId,
       clinicId,
       ...(dto.locationId ? { locationId: dto.locationId } : {}),
       type: AppointmentType.VIDEO_CALL,
-      date: new Date(slotDate),
+      date: normalizedSlotDate,
       time: slotTime,
       duration: dto.duration,
       // New flow: patient selection creates a scheduled appointment.
@@ -1839,6 +1866,14 @@ export class AppointmentsService {
       );
     }
     const { date: slotDate, time: slotTime } = slot;
+    const normalizedSlotDate = this.normalizeVideoSlotDate(slotDate);
+    if (!normalizedSlotDate) {
+      throw this.errors.validationError(
+        'confirmedSlotIndex',
+        `Invalid date format: ${slotDate}`,
+        'AppointmentsService.confirmVideoSlot'
+      );
+    }
 
     const isAvailable = await this.databaseService.executeRead(async prisma => {
       // Use raw query or logic to check overlap
@@ -1849,7 +1884,7 @@ export class AppointmentsService {
       const conflicts = await tx.appointment.findMany({
         where: {
           doctorId: appointment.doctorId,
-          date: new Date(slotDate),
+          date: normalizedSlotDate,
           time: slotTime,
           status: {
             in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
@@ -1870,7 +1905,7 @@ export class AppointmentsService {
     }
 
     const updated = await this.databaseService.updateAppointmentSafe(appointmentId, {
-      date: new Date(slotDate),
+      date: normalizedSlotDate,
       time: slotTime,
       status: AppointmentStatus.CONFIRMED,
       confirmedSlotIndex: dto.confirmedSlotIndex,
@@ -2056,13 +2091,21 @@ export class AppointmentsService {
       finalDate = slot.date;
       finalTime = slot.time;
       confirmedSlotValue = dto.confirmedSlotIndex!;
+      const normalizedFinalSlotDate = this.normalizeVideoSlotDate(finalDate);
+      if (!normalizedFinalSlotDate) {
+        throw this.errors.validationError(
+          'confirmedSlotIndex',
+          `Invalid date format: ${finalDate}`,
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
 
       const isAvailable = await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as Prisma.TransactionClient;
         const conflicts = await tx.appointment.findMany({
           where: {
             doctorId: appointment.doctorId,
-            date: new Date(finalDate),
+            date: normalizedFinalSlotDate,
             time: finalTime,
             status: {
               in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
@@ -2091,12 +2134,20 @@ export class AppointmentsService {
       }
       finalDate = dto.date;
       finalTime = dto.time;
+      const normalizedFinalSlotDate = this.normalizeVideoSlotDate(finalDate);
+      if (!normalizedFinalSlotDate) {
+        throw this.errors.validationError(
+          'slot',
+          `Invalid date format: ${finalDate}`,
+          'AppointmentsService.confirmFinalVideoSlot'
+        );
+      }
       const isAvailable = await this.databaseService.executeRead(async prisma => {
         const tx = prisma as unknown as Prisma.TransactionClient;
         const conflicts = await tx.appointment.findMany({
           where: {
             doctorId: appointment.doctorId,
-            date: new Date(finalDate),
+            date: normalizedFinalSlotDate,
             time: finalTime,
             status: {
               in: ['SCHEDULED', 'CONFIRMED', 'IN_PROGRESS'],
@@ -2118,8 +2169,16 @@ export class AppointmentsService {
     }
 
     const existingMetadata = (appointment.metadata as Record<string, unknown>) || {};
+    const normalizedFinalSlotDate = this.normalizeVideoSlotDate(finalDate);
+    if (!normalizedFinalSlotDate) {
+      throw this.errors.validationError(
+        'slot',
+        `Invalid date format: ${finalDate}`,
+        'AppointmentsService.confirmFinalVideoSlot'
+      );
+    }
     const updatePayload: Record<string, unknown> = {
-      date: new Date(finalDate),
+      date: normalizedFinalSlotDate,
       time: finalTime,
       status: AppointmentStatus.CONFIRMED,
       metadata: {
