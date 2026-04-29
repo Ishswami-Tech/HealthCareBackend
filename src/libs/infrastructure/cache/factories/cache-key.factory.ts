@@ -6,6 +6,7 @@
 
 import { Injectable } from '@nestjs/common';
 import type { ICacheKeyFactory } from '@core/types';
+import { formatDateKeyInIST } from '../../../utils/date-time.util';
 
 /**
  * Cache key factory implementation
@@ -131,7 +132,7 @@ export class CacheKeyFactory implements ICacheKeyFactory {
    * Generate daily cache key (includes date)
    */
   daily(entityId: string, entityType: string, suffix?: string): string {
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const date = formatDateKeyInIST(new Date());
     const parts = [this.KEY_PREFIX, 'daily', date, entityType, entityId];
     if (suffix) {
       parts.push(suffix);

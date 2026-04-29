@@ -52,6 +52,7 @@ import type {
   PaymentStatusResult,
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
+import { formatDateInIST, nowIso } from '../../libs/utils/date-time.util';
 
 // Import centralized types
 import type {
@@ -283,7 +284,7 @@ export class BillingService {
         eventType: 'appointment.updated',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'BillingService',
         version: '1.0.0',
         ...(resolvedUserId ? { userId: resolvedUserId } : {}),
@@ -351,7 +352,7 @@ export class BillingService {
       eventType,
       category: EventCategory.BILLING,
       priority: EventPriority.HIGH,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: 'BillingService',
       version: '1.0.0',
       clinicId: args.clinicId,
@@ -2479,7 +2480,7 @@ export class BillingService {
         discount: 0,
         // Appointment invoices are paid immediately through the gateway, so a future due date
         // is misleading in payment history. Keep a due date for schema requirements, but make it immediate.
-        dueDate: new Date().toISOString(),
+        dueDate: nowIso(),
         description: `Payment for ${appointmentType} appointment`,
         lineItems: {
           items: [
@@ -2604,7 +2605,7 @@ export class BillingService {
           status: InvoiceStatus.VOID,
           metadata: {
             supersededByInvoiceId: invoice.id,
-            supersededAt: new Date().toISOString(),
+            supersededAt: nowIso(),
             supersededByPaymentId: payment.id,
           },
         });
@@ -2852,7 +2853,7 @@ export class BillingService {
         orderId,
         requestedPaymentId: paymentId,
         verifiedTransactionId: paymentStatus.transactionId || paymentId,
-        receivedAt: new Date().toISOString(),
+        receivedAt: nowIso(),
         incomingStatus: incomingStatusLower,
       };
 
@@ -2959,19 +2960,19 @@ export class BillingService {
       platformFeeAmount: platformFee,
       doctorShareAmount: doctorShare,
       doctorId: appointment.doctorId,
-      preparedAt: new Date().toISOString(),
+      preparedAt: nowIso(),
       ledger: [
         {
           type: 'PLATFORM_CREDIT',
           amount: gross,
           reference: payment.id,
-          createdAt: new Date().toISOString(),
+          createdAt: nowIso(),
         },
         {
           type: 'DOCTOR_PAYABLE_CREDIT',
           amount: doctorShare,
           reference: payment.id,
-          createdAt: new Date().toISOString(),
+          createdAt: nowIso(),
         },
       ],
     };
@@ -3013,7 +3014,7 @@ export class BillingService {
         {
           type: 'PLATFORM_CREDIT',
           amount: gross,
-          at: new Date().toISOString(),
+          at: nowIso(),
           note: 'Subscription payment credited to platform revenue',
         },
       ],
@@ -3068,7 +3069,7 @@ export class BillingService {
     }
 
     payout['state'] = 'PAYOUT_READY';
-    payout['readyAt'] = new Date().toISOString();
+    payout['readyAt'] = nowIso();
 
     await this.updatePayment(payment.id, {
       metadata: {
@@ -3122,7 +3123,7 @@ export class BillingService {
     }
     if (payout['state'] === 'PAYOUT_PENDING') {
       payout['state'] = 'PAYOUT_READY';
-      payout['readyAt'] = new Date().toISOString();
+      payout['readyAt'] = nowIso();
     }
     if (payout['state'] !== 'PAYOUT_READY' && payout['state'] !== 'PAYOUT_SUCCESS') {
       throw new BadRequestException('Payout is not in a releasable state');
@@ -3146,17 +3147,17 @@ export class BillingService {
       type: 'PLATFORM_DEBIT',
       amount: Number(payout['doctorShareAmount'] || 0),
       reference: payment.id,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso(),
     });
     ledger.push({
       type: 'DOCTOR_PAYOUT_CREDIT',
       amount: Number(payout['doctorShareAmount'] || 0),
       reference: payment.id,
-      createdAt: new Date().toISOString(),
+      createdAt: nowIso(),
     });
 
     payout['state'] = 'PAYOUT_SUCCESS';
-    payout['paidAt'] = new Date().toISOString();
+    payout['paidAt'] = nowIso();
     payout['payoutReference'] = `manual-${Date.now()}`;
     payout['initiatedBy'] = initiatedBy;
     payout['ledger'] = ledger;
@@ -3488,11 +3489,11 @@ export class BillingService {
             type: 'REFUND_DEBIT',
             amount: refundAmountInRupees,
             reference: payment.id,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso(),
           });
           payout['doctorShareAmount'] = adjustedDoctorShare;
           payout['platformFeeAmount'] = adjustedPlatformFee;
-          payout['lastRefundAt'] = new Date().toISOString();
+          payout['lastRefundAt'] = nowIso();
           payout['ledger'] = ledger;
 
           await this.updatePayment(payment.id, {
@@ -3853,9 +3854,15 @@ export class BillingService {
       typeof invoice.subscription === 'object' &&
       'currentPeriodStart' in invoice.subscription &&
       'currentPeriodEnd' in invoice.subscription
-        ? `${new Date(String(invoice.subscription.currentPeriodStart)).toLocaleDateString()} - ${new Date(
-            String(invoice.subscription.currentPeriodEnd)
-          ).toLocaleDateString()}`
+        ? `${formatDateInIST(String(invoice.subscription.currentPeriodStart), {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+          })} - ${formatDateInIST(String(invoice.subscription.currentPeriodEnd), {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+          })}`
         : null;
 
     const pdfData: InvoicePDFData = {
@@ -4050,7 +4057,11 @@ export class BillingService {
         userName,
         invoice.invoiceNumber,
         invoice.totalAmount,
-        invoice.dueDate.toLocaleDateString(),
+        formatDateInIST(invoice.dueDate, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+        }),
         invoice.pdfUrl || ''
       );
 
@@ -4156,8 +4167,16 @@ export class BillingService {
         userName,
         subscriptionPlan?.name || 'Unknown Plan',
         subscriptionPlan?.amount || 0,
-        subscription.currentPeriodStart.toLocaleDateString(),
-        subscription.currentPeriodEnd.toLocaleDateString()
+        formatDateInIST(subscription.currentPeriodStart, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+        }),
+        formatDateInIST(subscription.currentPeriodEnd, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+        })
       );
 
       // Check if invoice exists for this subscription

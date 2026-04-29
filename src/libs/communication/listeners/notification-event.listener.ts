@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Notification Event Listener
  * ============================
@@ -820,7 +821,7 @@ export class NotificationEventListener implements OnModuleInit {
       eventType: (plain['eventType'] as string) || 'unknown',
       category: (plain['category'] as EventCategory) || EventCategory.SYSTEM,
       priority: (plain['priority'] as EventPriority) || EventPriority.NORMAL,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: (plain['source'] as string) || 'NotificationEventListener',
       version: '1.0.0',
       metadata: plain,

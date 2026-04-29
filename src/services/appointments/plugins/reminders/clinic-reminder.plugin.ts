@@ -3,6 +3,7 @@ import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-
 import { AppointmentReminderService } from './appointment-reminder.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { ReminderRule } from '@core/types/appointment.types';
+import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 interface ReminderPluginData {
   operation: string;
@@ -211,7 +212,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
-      appointmentDate: pluginData.appointmentDate ?? new Date().toISOString().split('T')[0],
+      appointmentDate: pluginData.appointmentDate ?? formatDateKeyInIST(new Date()),
       appointmentTime: pluginData.appointmentTime ?? '10:00',
       location: pluginData.location ?? 'Clinic',
       clinicName: pluginData.clinicName ?? 'Healthcare Clinic',
@@ -250,7 +251,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
-      appointmentDate: pluginData.appointmentDate ?? new Date().toISOString().split('T')[0],
+      appointmentDate: pluginData.appointmentDate ?? formatDateKeyInIST(new Date()),
       appointmentTime: pluginData.appointmentTime ?? '10:00',
       location: pluginData.location ?? 'Clinic',
       clinicName: pluginData.clinicName ?? 'Healthcare Clinic',
@@ -289,7 +290,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
-      appointmentDate: pluginData.appointmentDate ?? new Date().toISOString().split('T')[0],
+      appointmentDate: pluginData.appointmentDate ?? formatDateKeyInIST(new Date()),
       appointmentTime: pluginData.appointmentTime ?? '10:00',
       location: pluginData.location ?? 'Clinic',
       clinicName: pluginData.clinicName ?? 'Healthcare Clinic',
@@ -329,7 +330,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
-      appointmentDate: pluginData.appointmentDate ?? new Date().toISOString().split('T')[0],
+      appointmentDate: pluginData.appointmentDate ?? formatDateKeyInIST(new Date()),
       appointmentTime: pluginData.appointmentTime ?? '10:00',
       location: pluginData.location ?? 'Clinic',
       clinicName: pluginData.clinicName ?? 'Healthcare Clinic',

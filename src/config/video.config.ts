@@ -25,7 +25,7 @@ export function isVideoEnabled(): boolean {
  * When disabled, the scheduler and join gates keep video appointments testable.
  */
 export function isVideoNoShowEnabled(): boolean {
-  return getEnvBoolean('VIDEO_NO_SHOW_ENABLED', true);
+  return getEnvBoolean('VIDEO_NO_SHOW_ENABLED', false);
 }
 
 /**

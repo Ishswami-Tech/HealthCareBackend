@@ -21,6 +21,7 @@ import type {
 import type { UserUpdateInput, UserWhereInput } from '@core/types/input.types';
 import type { Doctor, Patient, Receptionist, ClinicAdmin, SuperAdmin, AuditLog } from '@core/types';
 import { AuditInfo } from '@core/types/database.types';
+import { formatISODateInIST, nowIso } from '../../libs/utils/date-time.util';
 
 export interface ProfileCompletionValidationResult {
   isComplete: boolean;
@@ -44,13 +45,7 @@ export class UsersService {
   private readonly authService: UsersAuthServiceLike;
 
   private formatDateToString(date: Date | string | null | undefined): string {
-    if (date instanceof Date) {
-      return date.toISOString().split('T')[0] || '';
-    }
-    if (typeof date === 'string') {
-      return date;
-    }
-    return '';
+    return formatISODateInIST(date);
   }
 
   /**
@@ -1804,7 +1799,7 @@ export class UsersService {
         await this.eventService.emit('profile.completed', {
           userId,
           role: userRole,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
         });
       }
 

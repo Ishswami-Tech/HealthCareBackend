@@ -12,6 +12,7 @@ import type {
   CreateTherapySessionDto,
   UpdateTherapySessionDto,
 } from '@core/types/appointment.types';
+import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
 
 @Injectable()
 export class AyurvedicTherapyService {
@@ -644,7 +645,7 @@ export class AyurvedicTherapyService {
     date?: Date
   ): Promise<TherapySession[]> {
     const startTime = Date.now();
-    const dateStr = date ? date.toISOString().split('T')[0] : 'all';
+    const dateStr = date ? formatDateKeyInIST(date) : 'all';
     const cacheKey = `therapy-sessions:doctor:${doctorId}:clinic:${clinicId}:date:${dateStr}`;
 
     try {

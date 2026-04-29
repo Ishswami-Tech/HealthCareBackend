@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { RoleService } from './role.service';
 import { PermissionService } from './permission.service';
@@ -37,12 +38,15 @@ export class RbacService {
    * @param loggingService - Service for logging security events
    */
   constructor(
+    @Inject(forwardRef(() => RoleService))
     private readonly roleService: RoleService,
+    @Inject(forwardRef(() => PermissionService))
     private readonly permissionService: PermissionService,
     @Inject(forwardRef(() => DatabaseService))
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => CacheService))
     private readonly cacheService: CacheService,
+    @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
   ) {}
 
@@ -111,7 +115,7 @@ export class RbacService {
           directPermission: hasDirectPermission,
           rolePermission: hasRolePermission,
           ownershipAccess: hasOwnershipAccess,
-          checkedAt: new Date().toISOString(),
+          checkedAt: nowIso(),
         },
       };
 
@@ -883,7 +887,7 @@ export class RbacService {
           totalRoles: roles.length,
           totalPermissions: rolePermissions.length,
           totalEffectivePermissions: effectivePermissions.size,
-          generatedAt: new Date().toISOString(),
+          generatedAt: nowIso(),
         },
       };
     } catch (_error) {

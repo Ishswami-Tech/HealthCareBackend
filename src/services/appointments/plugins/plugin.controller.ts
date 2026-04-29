@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Controller, Get, Post, Body, Param, Logger, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiSecurity } from '@nestjs/swagger';
 import { EnterprisePluginManager } from '@core/plugin-interface';
@@ -12,7 +13,6 @@ import { RequireResourcePermission } from '@core/rbac/rbac.decorators';
 import { Roles } from '@core/decorators/roles.decorator';
 import { Cache } from '@core/decorators';
 import { Role } from '@core/types/enums.types';
-
 @ApiTags('appointment plugins')
 @Controller('appointments/plugins')
 @ApiBearerAuth()
@@ -57,7 +57,7 @@ export class AppointmentPluginController {
       return {
         plugins: pluginInfo,
         total: pluginInfo.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -102,7 +102,7 @@ export class AppointmentPluginController {
         })),
         features: plugins.map((p: BasePlugin) => p.features || []).flat(),
         total: plugins.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -142,7 +142,7 @@ export class AppointmentPluginController {
         domain,
         features,
         total: features.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -201,7 +201,7 @@ export class AppointmentPluginController {
         domain,
         feature,
         operation,
-        executedAt: new Date().toISOString(),
+        executedAt: nowIso(),
         duration,
       };
     } catch (_error) {
@@ -224,7 +224,7 @@ export class AppointmentPluginController {
         domain: body.domain,
         feature: body.feature,
         operation: body.operation,
-        executedAt: new Date().toISOString(),
+        executedAt: nowIso(),
         duration,
       };
     }
@@ -277,7 +277,7 @@ export class AppointmentPluginController {
         total: body.operations.length,
         successful: typedResults.filter((r: PluginOperationResult) => r.success).length,
         failed: typedResults.filter((r: PluginOperationResult) => !r.success).length,
-        executedAt: new Date().toISOString(),
+        executedAt: nowIso(),
         duration,
       };
     } catch (error) {
@@ -322,7 +322,7 @@ export class AppointmentPluginController {
         })),
         healthSummary,
         uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       };
 
       const duration = Date.now() - startTime;
@@ -338,7 +338,7 @@ export class AppointmentPluginController {
       return {
         status: 'unhealthy',
         _error: errorMessage,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         duration,
       };
     }
@@ -372,7 +372,7 @@ export class AppointmentPluginController {
       return {
         metrics: healthMetrics,
         total: healthMetrics.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
         duration,
       };
     } catch (_error) {
@@ -412,7 +412,7 @@ export class AppointmentPluginController {
         domain,
         metrics: healthMetrics,
         total: healthMetrics.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
         duration,
       };
     } catch (_error) {
@@ -453,7 +453,7 @@ export class AppointmentPluginController {
         high: alerts.filter(a => a.severity === 'high').length,
         medium: alerts.filter(a => a.severity === 'medium').length,
         low: alerts.filter(a => a.severity === 'low').length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
         duration,
       };
     } catch (_error) {
@@ -490,7 +490,7 @@ export class AppointmentPluginController {
       return {
         configs,
         total: Object.keys(configs).length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
     } catch (_error) {
       const _duration = Date.now() - startTime;
@@ -528,7 +528,7 @@ export class AppointmentPluginController {
         return {
           success: false,
           _error: `Plugin ${pluginName} not found`,
-          retrievedAt: new Date().toISOString(),
+          retrievedAt: nowIso(),
         };
       }
 
@@ -539,7 +539,7 @@ export class AppointmentPluginController {
         success: true,
         pluginName,
         config,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
     } catch (_error) {
       const _duration = Date.now() - startTime;
@@ -574,7 +574,7 @@ export class AppointmentPluginController {
       return {
         success,
         pluginName,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       };
     } catch (_error) {
       const _duration = Date.now() - startTime;

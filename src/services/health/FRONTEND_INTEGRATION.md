@@ -461,7 +461,7 @@ export function HealthDashboard() {
         </div>
         {lastUpdate && (
           <div className="last-update">
-            Last update: {lastUpdate.toLocaleTimeString()}
+            Last update: {formatTimeInIST(lastUpdate)}
           </div>
         )}
       </div>

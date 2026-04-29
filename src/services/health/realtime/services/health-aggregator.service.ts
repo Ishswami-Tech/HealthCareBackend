@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Health Aggregator Service
  * Aggregates health check results from HealthService into unified status
@@ -92,7 +93,7 @@ export class HealthAggregatorService {
         socketHealth = {
           status: 'unhealthy',
           responseTime: 0,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           error: 'Socket health check failed',
         };
       }
@@ -181,7 +182,7 @@ export class HealthAggregatorService {
       // Get uptime
       const uptime = healthResponse.systemMetrics?.uptime || this.systemChecker.getUptime();
 
-      const timestamp = healthResponse.timestamp || new Date().toISOString();
+      const timestamp = healthResponse.timestamp || nowIso();
 
       return {
         overall,
@@ -215,7 +216,7 @@ export class HealthAggregatorService {
           errorRate: 100,
         },
         uptime: this.systemChecker.getUptime(),
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       };
     }
   }
@@ -237,7 +238,7 @@ export class HealthAggregatorService {
             ? 'degraded'
             : 'unhealthy',
       responseTime: service.responseTime || 0,
-      timestamp: service.lastChecked || new Date().toISOString(),
+      timestamp: service.lastChecked || nowIso(),
       ...(service.details && {
         details:
           typeof service.details === 'string'
@@ -254,7 +255,7 @@ export class HealthAggregatorService {
     return {
       status: result.status,
       responseTime: result.responseTime,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       ...(result.error && { error: result.error }),
       ...(result.details && {
         details: typeof result.details === 'string' ? { message: result.details } : result.details,

@@ -17,6 +17,7 @@ import type {
   LocationQueueStatsResponse,
   QueueMetricsResponse,
 } from '@core/types/appointment.types';
+import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
 
 // Re-export types for backward compatibility
 export type { QueueEntry, QueueEntryData, AppointmentQueueStats as QueueStats };
@@ -38,7 +39,9 @@ export class AppointmentQueueService {
   private typedEventService?: IEventService;
 
   constructor(
+    @Inject('CACHE_SERVICE')
     private readonly cacheService: CacheService,
+    @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService,
     @Optional()
     @Inject(forwardRef(() => EventService))
@@ -51,7 +54,7 @@ export class AppointmentQueueService {
   }
 
   private getQueueDate(date?: string): string {
-    return date || new Date().toISOString().split('T')[0] || '';
+    return date || formatDateKeyInIST(new Date()) || '';
   }
 
   private buildQueueKey(domain: string, clinicId: string, ownerId: string, date?: string): string {
@@ -215,7 +218,7 @@ export class AppointmentQueueService {
         doctorId: queueData.assignedDoctorId || queueData.queueOwnerId,
         clinicId: queueData.clinicId,
         status: 'WAITING',
-        checkedInAt: new Date().toISOString(),
+        checkedInAt: nowIso(),
         priority:
           queueData.laneType === 'VIP'
             ? 100
@@ -254,7 +257,7 @@ export class AppointmentQueueService {
           eventType: 'appointment.queue.updated',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.NORMAL,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentQueueService',
           version: '1.0.0',
           payload: {
@@ -395,7 +398,7 @@ export class AppointmentQueueService {
         eventType: 'appointment.queue.updated',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentQueueService',
         version: '1.0.0',
         payload: {
@@ -511,7 +514,7 @@ export class AppointmentQueueService {
           eventType: 'appointment.queue.updated',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentQueueService',
           version: '1.0.0',
           payload: {
@@ -565,7 +568,7 @@ export class AppointmentQueueService {
   ): Promise<OperationResponse> {
     const { appointmentId, doctorId, patientId, clinicId, appointmentType, notes, locationId } =
       checkInData;
-    const date = new Date().toISOString().split('T')[0];
+    const date = formatDateKeyInIST(new Date());
     // P1 FIX: Include clinicId in cache key for strict isolation
     const cacheKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
@@ -587,7 +590,7 @@ export class AppointmentQueueService {
         doctorId,
         clinicId,
         status: 'WAITING',
-        checkedInAt: new Date().toISOString(),
+        checkedInAt: nowIso(),
         priority:
           typeof checkInData.priority === 'number'
             ? checkInData.priority
@@ -622,7 +625,7 @@ export class AppointmentQueueService {
           eventType: 'appointment.queue.updated',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.NORMAL,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentQueueService',
           version: '1.0.0',
           payload: {
@@ -832,7 +835,7 @@ export class AppointmentQueueService {
             eventType: 'appointment.queue.position.updated',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'AppointmentQueueService',
             version: '1.0.0',
             appointmentId,
@@ -908,7 +911,7 @@ export class AppointmentQueueService {
         if (entryIndex !== -1) {
           const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
           entryData.status = 'CONFIRMED';
-          entryData.confirmedAt = new Date().toISOString();
+          entryData.confirmedAt = nowIso();
           const updatedEntries = [...entries];
           updatedEntries[entryIndex] = JSON.stringify(entryData);
           await this.rewriteQueueList(key, updatedEntries);
@@ -930,7 +933,7 @@ export class AppointmentQueueService {
               eventType: 'appointment.queue.updated',
               category: EventCategory.APPOINTMENT,
               priority: EventPriority.NORMAL,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
               source: 'AppointmentQueueService',
               version: '1.0.0',
               payload: {
@@ -986,7 +989,7 @@ export class AppointmentQueueService {
 
     try {
       // P1 FIX: Include clinicId in key
-      const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${new Date().toISOString().split('T')[0]}`;
+      const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${formatDateKeyInIST(new Date())}`;
       const entries = await this.cacheService.lRange(queueKey, 0, -1);
 
       const entryIndex = entries.findIndex(entry => {
@@ -1000,7 +1003,7 @@ export class AppointmentQueueService {
 
       const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
       entryData.status = 'IN_PROGRESS';
-      entryData.startedAt = new Date().toISOString();
+      entryData.startedAt = nowIso();
       entryData.actualWaitTime = this.calculateActualWaitTime(entryData.checkedInAt || '');
       const updatedEntries = [...entries];
       updatedEntries[entryIndex] = JSON.stringify(entryData);
@@ -1011,7 +1014,7 @@ export class AppointmentQueueService {
         clinicId,
         domain,
         doctorId,
-        date: new Date().toISOString().split('T')[0],
+        date: formatDateKeyInIST(new Date()),
         locationId: entryData.locationId,
         appointmentId,
       });
@@ -1034,7 +1037,7 @@ export class AppointmentQueueService {
             eventType: 'appointment.queue.updated',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'AppointmentQueueService',
             version: '1.0.0',
             payload: {
@@ -1152,7 +1155,7 @@ export class AppointmentQueueService {
             eventType: 'appointment.queue.reordered',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'AppointmentQueueService',
             version: '1.0.0',
             payload: {
@@ -1171,7 +1174,7 @@ export class AppointmentQueueService {
             eventType: 'appointment.queue.updated',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'AppointmentQueueService',
             version: '1.0.0',
             payload: {
@@ -1401,7 +1404,7 @@ export class AppointmentQueueService {
           const entryData = JSON.parse(entries[entryIndex] || '{}') as QueueEntryData;
           entryData.priority = priority;
           entryData.status = 'EMERGENCY';
-          entryData.emergencyAt = new Date().toISOString();
+          entryData.emergencyAt = nowIso();
 
           // Remove from current position and add to front of queue
           const updatedEntries = entries.filter((_, index) => index !== entryIndex);
@@ -1502,7 +1505,7 @@ export class AppointmentQueueService {
     clinicId: string,
     domain: string
   ): Promise<OperationResponse> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = formatDateKeyInIST(new Date());
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
     try {
@@ -1536,7 +1539,7 @@ export class AppointmentQueueService {
           eventType: 'appointment.queue.updated',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.NORMAL,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentQueueService',
           version: '1.0.0',
           payload: {
@@ -1571,7 +1574,7 @@ export class AppointmentQueueService {
     domain: string,
     appointmentId: string
   ): Promise<OperationResponse & { nextPatient?: QueueEntryData }> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = formatDateKeyInIST(new Date());
     // P1 FIX: Include clinicId
     const queueKey = `queue:${domain}:${clinicId}:${doctorId}:${date}`;
 
@@ -1590,7 +1593,7 @@ export class AppointmentQueueService {
 
       const entryData = JSON.parse(entries[nextIndex] || '{}') as QueueEntryData;
       entryData.status = 'IN_PROGRESS';
-      entryData.startedAt = new Date().toISOString();
+      entryData.startedAt = nowIso();
 
       // Update local array
       entries[nextIndex] = JSON.stringify(entryData);
@@ -1615,7 +1618,7 @@ export class AppointmentQueueService {
           eventType: 'appointment.queue.updated',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentQueueService',
           version: '1.0.0',
           payload: {
@@ -1647,7 +1650,7 @@ export class AppointmentQueueService {
   }
 
   async pauseQueue(doctorId: string, clinicId: string, domain: string): Promise<OperationResponse> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = formatDateKeyInIST(new Date());
     await this.cacheService.set(
       `queue:status:${domain}:${clinicId}:${doctorId}:${date}`,
       'PAUSED',
@@ -1666,7 +1669,7 @@ export class AppointmentQueueService {
         eventType: 'appointment.queue.updated',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentQueueService',
         version: '1.0.0',
         payload: {
@@ -1687,7 +1690,7 @@ export class AppointmentQueueService {
     clinicId: string,
     domain: string
   ): Promise<OperationResponse> {
-    const date = new Date().toISOString().split('T')[0];
+    const date = formatDateKeyInIST(new Date());
     await this.cacheService.del(`queue:status:${domain}:${clinicId}:${doctorId}:${date}`);
     await this.invalidateQueueReadCaches({
       clinicId,
@@ -1702,7 +1705,7 @@ export class AppointmentQueueService {
         eventType: 'appointment.queue.updated',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentQueueService',
         version: '1.0.0',
         payload: {

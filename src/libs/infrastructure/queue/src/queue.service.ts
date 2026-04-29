@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * ENTERPRISE QUEUE SERVICE (BullMQ) - PRODUCTION READY EDITION
  * =====================================================================
@@ -488,8 +489,9 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     private readonly configService: ConfigService,
     @Inject('BULLMQ_QUEUES') private readonly bullQueues: Queue[],
     @Inject('BULLMQ_WORKERS') private readonly bullWorkers: Worker[] = [],
+    @Inject(forwardRef(() => QueueMonitoringService))
     private readonly monitoringService: QueueMonitoringService,
-    @Inject(forwardRef(() => LoggingService))
+    @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService
   ) {
     void this.loggingService.log(
@@ -863,7 +865,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
             ...(job.options?.tenantId && { tenantId: job.options.tenantId }),
             auditLevel: job.options?.auditLevel || 'basic',
             classification: job.options?.classification || 'internal',
-            createdAt: new Date().toISOString(),
+            createdAt: nowIso(),
             ...(job.options?.correlationId && { correlationId: job.options.correlationId }),
           },
         };
@@ -1171,7 +1173,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       defaults,
       queues,
       liveStatuses: await this.getAllQueueStatuses(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     };
     if (clinicId) snapshot.clinicId = clinicId;
     return snapshot;
@@ -1201,7 +1203,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         ...normalizedUpdate,
         queueName: effectiveQueueName,
         ...(scopeClinicId ? { clinicId: scopeClinicId } : {}),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       });
     } else {
       const current = this.getStoredQueueDefaults(scopeClinicId);
@@ -1210,7 +1212,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         ...normalizedUpdate,
         queueName: current.queueName,
         ...(scopeClinicId ? { clinicId: scopeClinicId } : {}),
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       });
     }
 
@@ -1266,7 +1268,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         requestedCapacity > 0
           ? Math.min(100, Math.round((current.currentLoad / requestedCapacity) * 100))
           : 0,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     };
     this.queueCapacityOverrides.set(this.buildCapacityKey(scopeClinicId, effectiveQueueName), next);
     return next;
@@ -1328,7 +1330,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
     );
 
     const metadata: QueueExportPayload['metadata'] = {
-      exportedAt: new Date().toISOString(),
+      exportedAt: nowIso(),
       format,
       queueNames,
       totalQueues: queueNames.length,
@@ -1705,7 +1707,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
   }
 
   private defaultQueueConfig(queueName: string, clinicId?: string): QueueConfigState {
-    const updatedAt = new Date().toISOString();
+    const updatedAt = nowIso();
     const defaults: QueueConfigState = {
       queueName,
       maxWaitTime: 30,
@@ -1847,7 +1849,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       availableSlots,
       utilizationPercent,
       metrics,
-      updatedAt: override?.updatedAt || new Date().toISOString(),
+      updatedAt: override?.updatedAt || nowIso(),
     };
     const scopedBaseState = clinicId?.trim()
       ? { ...baseState, clinicId: clinicId.trim() }
@@ -2241,7 +2243,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
 
       // Update job data
       (job.data as { status: string; confirmedAt: string }).status = 'CONFIRMED';
-      (job.data as { status: string; confirmedAt: string }).confirmedAt = new Date().toISOString();
+      (job.data as { status: string; confirmedAt: string }).confirmedAt = nowIso();
 
       // Update the job in the queue
       await this.updateJob(queueName, job.id as string, job.data);
@@ -2302,7 +2304,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           actualWaitTime: number;
           checkedInAt: string;
         }
-      ).startedAt = new Date().toISOString();
+      ).startedAt = nowIso();
       (
         job.data as {
           status: string;
@@ -2368,7 +2370,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
       (job.data as { priority: number; status: string; emergencyAt: string }).priority = priority;
       (job.data as { priority: number; status: string; emergencyAt: string }).status = 'EMERGENCY';
       (job.data as { priority: number; status: string; emergencyAt: string }).emergencyAt =
-        new Date().toISOString();
+        nowIso();
 
       // Remove and re-add with higher priority
       await this.updateJob(queueName, job.id as string, job.data);
@@ -2741,7 +2743,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
         queueName,
         metrics,
         isHealthy: metrics.errorRate < 0.05,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: nowIso(),
       };
     } catch (_error) {
       // Return default status instead of throwing
@@ -2767,7 +2769,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
           errorRate: 0,
         },
         isHealthy: true,
-        lastUpdated: new Date().toISOString(),
+        lastUpdated: nowIso(),
       };
     }
   }
@@ -2823,7 +2825,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
             queueName,
             metrics,
             isHealthy: metrics.errorRate < 0.05,
-            lastUpdated: new Date().toISOString(),
+            lastUpdated: nowIso(),
           };
         } catch (_error) {
           void this.loggingService.log(
@@ -2838,7 +2840,7 @@ export class QueueService implements OnModuleInit, OnModuleDestroy, IQueueServic
             metrics: null,
             isHealthy: false,
             _error: _error instanceof Error ? _error.message : 'Unknown error',
-            lastUpdated: new Date().toISOString(),
+            lastUpdated: nowIso(),
           };
         }
       }

@@ -27,6 +27,7 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
 
 // Internal imports - Public decorator
 import { Public } from '@core/decorators';
+import { formatDateTimeInIST, IST_TIMEZONE } from '../../utils/date-time.util';
 
 @ApiTags('logging')
 @Controller({ path: 'logger', version: VERSION_NEUTRAL })
@@ -220,6 +221,25 @@ export class LoggingController {
         let totalItems = 0;
         let totalPages = 0;
 
+        const DISPLAY_TIMEZONE = '${IST_TIMEZONE}';
+
+        function formatTimestamp(value) {
+          if (!value) {
+            return '';
+          }
+
+          return new Intl.DateTimeFormat('en-IN', {
+            timeZone: DISPLAY_TIMEZONE,
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true,
+          }).format(new Date(value));
+        }
+
         function updateRefreshStatus(isLoading, error = null) {
           const statusElement = document.getElementById(currentTab === 'logs' ? 'refreshStatus' : 'eventRefreshStatus');
           const refreshButton = document.getElementById(currentTab === 'logs' ? 'refreshButton' : 'eventRefreshButton');
@@ -235,7 +255,7 @@ export class LoggingController {
             refreshButton.disabled = true;
           } else {
             lastRefreshTime = new Date();
-            const timeString = lastRefreshTime.toLocaleTimeString();
+            const timeString = formatTimestamp(lastRefreshTime);
             statusElement.innerHTML = 'Last updated: ' + timeString;
             refreshButton.disabled = false;
           }
@@ -364,7 +384,7 @@ export class LoggingController {
                 const metadata =
                   typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
                 return '<div class="entry">' +
-                  '<span class="timestamp">' + new Date(log.timestamp).toLocaleString() + '</span>' +
+                  '<span class="timestamp">' + (log.formattedTimestamp || formatTimestamp(log.timestamp)) + '</span>' +
                   '<span class="level ' + log.level + '">' + log.level + '</span>' +
                   '<span class="type">' + log.type + '</span>' +
                   '<div class="message">' + log.message + '</div>' +
@@ -377,7 +397,7 @@ export class LoggingController {
                 const eventData =
                   typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
                 return '<div class="entry">' +
-                  '<span class="timestamp">' + new Date(event.timestamp).toLocaleString() + '</span>' +
+                  '<span class="timestamp">' + (event.formattedTimestamp || formatTimestamp(event.timestamp)) + '</span>' +
                   '<span class="type">' + event.type + '</span>' +
                   '<div class="message">Event: ' + event.type + '</div>' +
                   '<div class="metadata">' + JSON.stringify(eventData, null, 2) + '</div>' +
@@ -616,6 +636,7 @@ export class LoggingController {
         message: string;
         context: string;
         timestamp: string;
+        formattedTimestamp: string;
         metadata: Record<string, unknown>;
         clinicId?: string;
         userId?: string;
@@ -662,6 +683,7 @@ export class LoggingController {
           message: logEntry.message,
           context: logEntry.context,
           timestamp: logEntry.timestamp,
+          formattedTimestamp: formatDateTimeInIST(logEntry.timestamp),
           metadata: logEntry.metadata || {},
           ...(logEntry.clinicId && { clinicId: logEntry.clinicId }),
           ...(logEntry.userId && { userId: logEntry.userId }),
@@ -748,6 +770,7 @@ export class LoggingController {
         type: string;
         data: Record<string, unknown>;
         timestamp: string | Date;
+        formattedTimestamp: string;
         clinicId?: string;
         userId?: string;
       }>;
@@ -768,7 +791,21 @@ export class LoggingController {
       return {
         success: true,
         data: {
-          events: result.events,
+          events: result.events.map((event: unknown) => {
+            const eventEntry = event as {
+              id: string;
+              type: string;
+              data: Record<string, unknown>;
+              timestamp: string | Date;
+              clinicId?: string;
+              userId?: string;
+            };
+
+            return {
+              ...eventEntry,
+              formattedTimestamp: formatDateTimeInIST(eventEntry.timestamp),
+            };
+          }),
           pagination: {
             page: result.meta.page,
             limit: result.meta.limit,

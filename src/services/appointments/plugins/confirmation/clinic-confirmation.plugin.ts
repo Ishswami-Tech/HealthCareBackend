@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentConfirmationService } from './appointment-confirmation.service';
@@ -94,7 +95,7 @@ export class ClinicConfirmationPlugin extends BaseAppointmentPlugin {
           appointmentId: pluginData.appointmentId,
           doctorId: pluginData.doctorId,
           domain: 'clinic',
-          completedAt: new Date().toISOString(),
+          completedAt: nowIso(),
           fallback: true,
         };
 

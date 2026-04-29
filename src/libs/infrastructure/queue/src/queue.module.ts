@@ -267,7 +267,7 @@ export class QueueModule {
 
                   return workers;
                 },
-                inject: [QueueProcessor, DatabaseService, ConfigService],
+                inject: [QueueProcessor, 'DATABASE_SERVICE', ConfigService],
               },
             ]
           : []),

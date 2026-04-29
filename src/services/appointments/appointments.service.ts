@@ -10,6 +10,13 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import { HealthcareErrorsService } from '@core/errors';
 import { RbacService } from '@core/rbac/rbac.service';
+import {
+  parseIstDateTime,
+  formatDateInIST,
+  formatDateTimeInIST,
+  formatDateKeyInIST,
+  nowIso,
+} from '../../libs/utils/date-time.util';
 
 // Core Services
 import { CoreAppointmentService } from './core/core-appointment.service';
@@ -503,10 +510,12 @@ export class AppointmentsService {
         continue;
       }
 
-      const formattedExpiry = expiryAt.toLocaleString('en-IN', {
-        dateStyle: 'medium',
-        timeStyle: 'short',
-        timeZone: 'Asia/Kolkata',
+      const formattedExpiry = formatDateTimeInIST(expiryAt, {
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
       });
       const reason = `Auto-cancelled: doctor did not confirm any proposed slot before ${formattedExpiry} IST.`;
 
@@ -683,7 +692,7 @@ export class AppointmentsService {
             eventType: 'appointment.noshow',
             category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             source: 'AppointmentsService',
             version: '1.0.0',
             userId: appointment.patientId,
@@ -752,7 +761,7 @@ export class AppointmentsService {
         eventType: 'communication.patient.notification',
         category: EventCategory.NOTIFICATION,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentsService',
         version: '1.0.0',
         userId: appointment.patientId,
@@ -828,8 +837,7 @@ export class AppointmentsService {
   }
 
   private buildAppointmentScheduleLabel(date: Date | string, time: string): string {
-    const appointmentDate = typeof date === 'string' ? new Date(date) : date;
-    const formattedDate = appointmentDate.toLocaleDateString('en-IN', {
+    const formattedDate = formatDateInIST(date, {
       year: 'numeric',
       month: 'long',
       day: 'numeric',
@@ -848,7 +856,7 @@ export class AppointmentsService {
       : [];
 
     const parsedSlotTimes = candidateSlots
-      .map(slot => this.parseAppointmentDateTimeInIST(slot?.date, slot?.time))
+      .map(slot => parseIstDateTime(slot?.date, slot?.time))
       .filter((value): value is Date => Boolean(value))
       .sort((left, right) => right.getTime() - left.getTime());
 
@@ -856,41 +864,7 @@ export class AppointmentsService {
       return parsedSlotTimes[0] ?? null;
     }
 
-    return this.parseAppointmentDateTimeInIST(appointment.date, appointment.time);
-  }
-
-  private parseAppointmentDateTimeInIST(
-    dateInput: Date | string | undefined,
-    timeInput: string | undefined
-  ): Date | null {
-    if (!dateInput || !timeInput) {
-      return null;
-    }
-
-    const normalizedTime = this.normalizeTimeForDateParsing(timeInput);
-    if (!normalizedTime) {
-      return null;
-    }
-
-    const dateValue = typeof dateInput === 'string' ? new Date(dateInput) : dateInput;
-    if (Number.isNaN(dateValue.getTime())) {
-      return null;
-    }
-
-    const datePart = dateValue.toISOString().slice(0, 10);
-    const parsed = new Date(`${datePart}T${normalizedTime}+05:30`);
-    return Number.isNaN(parsed.getTime()) ? null : parsed;
-  }
-
-  private normalizeTimeForDateParsing(timeValue: string): string | null {
-    const value = String(timeValue || '').trim();
-    if (/^\d{2}:\d{2}$/.test(value)) {
-      return `${value}:00`;
-    }
-    if (/^\d{2}:\d{2}:\d{2}$/.test(value)) {
-      return value;
-    }
-    return null;
+    return parseIstDateTime(appointment.date, appointment.time);
   }
 
   private async syncPaidAppointmentBillingAfterReschedule(
@@ -955,7 +929,7 @@ export class AppointmentsService {
         ...existingPaymentMetadata,
         appointmentDate: newDate,
         appointmentTime: newTime,
-        rescheduledAt: new Date().toISOString(),
+        rescheduledAt: nowIso(),
         previousAppointmentDate: appointment.date.toISOString(),
         previousAppointmentTime: appointment.time,
         billingSyncUpdatedBy: userId,
@@ -978,7 +952,7 @@ export class AppointmentsService {
           previousAppointmentTime: appointment.time,
           previousSchedule,
           rescheduledSchedule,
-          rescheduledAt: new Date().toISOString(),
+          rescheduledAt: nowIso(),
           billingSyncUpdatedBy: userId,
         },
       });
@@ -1595,7 +1569,7 @@ export class AppointmentsService {
         eventType: 'appointment.created',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentsService',
         version: '1.0.0',
         userId: createDto.patientId,
@@ -1710,8 +1684,8 @@ export class AppointmentsService {
     }
 
     for (const slot of dto.proposedSlots) {
-      const slotDateTime = new Date(`${slot.date}T${slot.time}`);
-      if (isNaN(slotDateTime.getTime())) {
+      const slotDateTime = parseIstDateTime(slot.date, slot.time);
+      if (!slotDateTime) {
         throw this.errors.validationError(
           'proposedSlots',
           `Invalid date/time format: ${slot.date} ${slot.time}`,
@@ -1915,7 +1889,7 @@ export class AppointmentsService {
       eventType: 'appointment.updated',
       category: EventCategory.APPOINTMENT,
       priority: EventPriority.NORMAL,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: 'AppointmentsService',
       version: '1.0.0',
       ...(appointmentWithRelations.patient?.userId
@@ -1966,7 +1940,7 @@ export class AppointmentsService {
       doctorId: appointment.doctorId,
       patientId: appointment.patientId,
       source: 'AppointmentsService.confirmVideoSlot',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
 
     return {
@@ -2151,7 +2125,7 @@ export class AppointmentsService {
       metadata: {
         ...existingMetadata,
         finalSlotConfirmedBy: userId,
-        finalSlotConfirmedAt: new Date().toISOString(),
+        finalSlotConfirmedAt: nowIso(),
         finalSlotSource: hasConfirmedIndex ? 'PROPOSED_SLOT' : 'CUSTOM_SLOT',
         finalSlotReason: dto.reason || null,
       },
@@ -2199,7 +2173,7 @@ export class AppointmentsService {
       doctorId: appointment.doctorId,
       patientId: appointment.patientId,
       source: 'AppointmentsService.confirmFinalVideoSlot',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
 
     return {
@@ -2248,7 +2222,7 @@ export class AppointmentsService {
     // Production policy: Allow rescheduling up to 24h before.
     // Temporarily disabled for testing so short-notice appointment changes can be exercised.
     // const appointmentDateTime = new Date(
-    //   `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+    //   parseIstDateTime(appointment.date, appointment.time)
     // );
     // const now = new Date();
     // const minNoticeMs = 24 * 60 * 60 * 1000;
@@ -2509,7 +2483,7 @@ export class AppointmentsService {
         eventType: 'appointment.updated',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentsService',
         version: '1.0.0',
         userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -2612,7 +2586,7 @@ export class AppointmentsService {
         // Temporarily disabled for testing so near-term appointments can be cancelled.
         // if (role === 'PATIENT') {
         //   const apptTime = new Date(
-        //     `${appointment.date.toISOString().split('T')[0]}T${appointment.time}`
+        //     parseIstDateTime(appointment.date, appointment.time)
         //   );
         //   const nowTime = new Date();
         //   const fourHoursMs = 4 * 60 * 60 * 1000;
@@ -2833,7 +2807,7 @@ export class AppointmentsService {
         newDoctorId,
         reassignedBy: userId,
         reason: reason || 'Operational reassignment',
-        reassignedAt: new Date().toISOString(),
+        reassignedAt: nowIso(),
         reassignedByRole: role,
       },
     };
@@ -2897,7 +2871,7 @@ export class AppointmentsService {
       eventType: 'appointment.reassigned',
       category: EventCategory.APPOINTMENT,
       priority: EventPriority.HIGH,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: 'AppointmentsService',
       version: '1.0.0',
       userId: appointment.patientId,
@@ -2998,7 +2972,7 @@ export class AppointmentsService {
         eventType: 'appointment.cancelled',
         category: EventCategory.APPOINTMENT,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'AppointmentsService',
         version: '1.0.0',
         userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -3226,7 +3200,7 @@ export class AppointmentsService {
           appointmentId,
           doctorId: finalDoctorId,
           clinicId,
-          completedAt: new Date().toISOString(),
+          completedAt: nowIso(),
           fallback: true,
         };
       }
@@ -3491,7 +3465,7 @@ export class AppointmentsService {
           eventType: 'appointment.completed',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'AppointmentsService',
           version: '1.0.0',
           userId: appointment?.patientId || userId,
@@ -3942,7 +3916,7 @@ export class AppointmentsService {
       async () => {
         const filters: AppointmentFilterDto = {
           patientId: userId,
-          startDate: new Date().toISOString().split('T')[0] || '',
+          startDate: formatDateKeyInIST(new Date()),
           status: AppointmentStatus.SCHEDULED,
         };
 
@@ -5096,7 +5070,7 @@ export class AppointmentsService {
           operation,
           userId,
           clinicId,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           details,
         }
       );

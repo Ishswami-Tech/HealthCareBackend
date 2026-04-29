@@ -31,6 +31,7 @@ import { QueueService } from '../queue.service';
 import { HEALTHCARE_QUEUE } from '../queue.constants';
 import { JobType } from '@core/types/queue.types';
 import { AppointmentQueueService } from '../services/appointment-queue.service';
+import { formatDateKeyInIST, nowIso } from '../../../../utils/date-time.util';
 
 interface QueueQuery {
   type?: string;
@@ -405,7 +406,7 @@ export class QueueController {
     const updated = await this.queueService.updateJob(jobHit.queueName, patientId, {
       ...this.jobData(jobHit.job),
       status,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     });
     return {
       success: true,
@@ -952,7 +953,7 @@ export class QueueController {
 
     const clinicId = this.requireClinicId(req, body.clinicId);
     const notificationId = body.notificationId.trim();
-    const now = new Date().toISOString();
+    const now = nowIso();
     const job = await this.queueService.addJob(
       JobType.NOTIFICATION,
       'notification_send',
@@ -1010,7 +1011,7 @@ export class QueueController {
       throw new BadRequestException('Notification not found');
     }
 
-    const now = new Date().toISOString();
+    const now = nowIso();
     const updatedJob = await this.queueService.patchJobData(HEALTHCARE_QUEUE, notificationId, {
       status: 'READ',
       readAt: now,
@@ -1630,11 +1631,11 @@ export class QueueController {
   private safeDate(value: string): string {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) throw new BadRequestException(`Invalid date: ${value}`);
-    return d.toISOString().split('T')[0] || '';
+    return formatDateKeyInIST(d);
   }
 
   private today(): string {
-    return new Date().toISOString().split('T')[0] || '';
+    return formatDateKeyInIST(new Date());
   }
 
   private requireClinicId(req: ClinicAuthenticatedRequest, fallback?: string): string {

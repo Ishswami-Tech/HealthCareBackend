@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * PHI Cache Strategy
  * @class PHICacheStrategy
@@ -99,7 +100,7 @@ export class PHICacheStrategy extends BaseCacheStrategy {
         {
           key,
           operation,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
         }
       );
     } catch {

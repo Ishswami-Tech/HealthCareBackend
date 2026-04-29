@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Health Broadcaster Service
  * Broadcasts health status via Socket.IO
@@ -150,7 +151,7 @@ export class HealthBroadcasterService implements OnModuleInit {
 
     try {
       const heartbeat: HealthHeartbeat = {
-        t: new Date().toISOString(),
+        t: nowIso(),
         o: overallStatus,
       };
 

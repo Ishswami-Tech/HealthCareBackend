@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Write Query Strategy
  * @class WriteQueryStrategy
@@ -69,7 +70,7 @@ export class WriteQueryStrategy extends BaseQueryStrategy {
             clinicId: context.clinicId,
             userId: context.userId,
             executionTime,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
           }
         );
       }

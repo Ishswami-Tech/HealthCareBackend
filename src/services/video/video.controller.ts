@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Controller
  * @class VideoController
@@ -534,7 +535,7 @@ export class VideoController {
         eventType: 'video.token.generated',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoController',
         version: '1.0.0',
         payload: {
@@ -972,7 +973,7 @@ export class VideoController {
         eventType: 'video.technical.issue.reported',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoController',
         version: '1.0.0',
         payload: {
@@ -1207,7 +1208,7 @@ export class VideoController {
         eventType: 'video.medical.image.shared',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoController',
         version: '1.0.0',
         payload: {
@@ -1289,7 +1290,7 @@ export class VideoController {
         duration: 0,
         size: 0,
         status: result.status as 'starting' | 'started' | 'stopped' | 'ready' | 'failed',
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
       };
 
       return response;
@@ -1329,7 +1330,7 @@ export class VideoController {
         duration: result.duration,
         size: 0,
         status: 'stopped',
-        createdAt: new Date().toISOString(),
+        createdAt: nowIso(),
       };
 
       return response;

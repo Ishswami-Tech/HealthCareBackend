@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   Injectable,
   Optional,
@@ -23,7 +24,6 @@ import { LoggingService } from '@infrastructure/logging';
 import { CommunicationHealthMonitorService } from '@communication/communication-health-monitor.service';
 import cluster from 'cluster';
 import * as os from 'os';
-
 /**
  * Independent Health Service
  *
@@ -666,7 +666,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
     return {
       status: 'degraded',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       environment: this.config?.getEnvironment() || 'development',
       version: this.config?.getEnv('npm_package_version') || '0.0.1',
       systemMetrics: {
@@ -692,43 +692,43 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         api: {
           status: 'healthy',
           responseTime: 10,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'API service is running and responding',
         },
         database: {
           status: 'unhealthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Health check service unavailable - cannot determine status',
         },
         cache: {
           status: 'unhealthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Health check service unavailable - cannot determine status',
         },
         queue: {
           status: 'unhealthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Health check service unavailable - cannot determine status',
         },
         logger: {
           status: 'unhealthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Health check service unavailable - cannot determine status',
         },
         video: {
           status: 'unhealthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Health check service unavailable - cannot determine status',
         },
         communication: {
           status: 'healthy' as const,
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details:
             'Communication health monitoring is clinic-specific and not monitored at system level',
         },
@@ -879,7 +879,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     status: isHealthy ? 'healthy' : 'unhealthy',
                     responseTime:
                       typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details: message,
                   };
 
@@ -909,7 +909,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 services[serviceKey] = {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: errorMessage,
                 };
 
@@ -1071,7 +1071,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
           return {
             status: overallStatus,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             environment,
             version: this.config?.getEnv('npm_package_version') || '0.0.1',
             systemMetrics: this.getSystemMetrics(),
@@ -1079,33 +1079,33 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               api: {
                 status: apiStatus,
                 responseTime,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: 'API service is running and responding',
               },
               database: services['database'] || {
                 status: databaseStatus,
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               },
               cache: services['cache'] || {
                 status: cacheStatus,
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               },
               queue: services['queue'] || {
                 status: queueStatus,
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               },
               logger: services['logging'] || {
                 status: loggerStatus,
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               },
               video: services['video'] || {
                 status: videoStatus,
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: 'Video health check not available',
               },
               communication: (() => {
@@ -1136,7 +1136,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   return {
                     status: 'healthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details:
                       'Communication health monitoring is clinic-specific and not monitored at system level',
                     communicationHealth: {
@@ -1148,7 +1148,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   return {
                     status: 'healthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details:
                       'Communication health monitoring is clinic-specific and not monitored at system level',
                     communicationHealth: {
@@ -1205,7 +1205,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     status: 'unhealthy', // ServiceHealth only supports 'healthy' | 'unhealthy', not 'degraded'
                     responseTime:
                       typeof data['responseTime'] === 'number' ? data['responseTime'] : 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details: isInStartupGracePeriod
                       ? `${details} (Service is starting up - this is expected during initialization)`
                       : details,
@@ -1230,7 +1230,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
 
               return {
                 status: 'degraded',
-                timestamp: new Date().toISOString(),
+                timestamp: nowIso(),
                 environment: this.config?.getEnvironment() || 'development',
                 version: this.config?.getEnv('npm_package_version') || '0.0.1',
                 systemMetrics: this.getSystemMetrics(),
@@ -1238,39 +1238,39 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   api: {
                     status: 'healthy',
                     responseTime: Math.round(performance.now() - startTime),
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details: 'API service is running and responding',
                   },
                   database: services['database'] || {
                     status: 'unhealthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                   },
                   cache: services['cache'] || {
                     status: 'unhealthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                   },
                   queue: services['queue'] || {
                     status: 'unhealthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                   },
                   logger: services['logging'] || {
                     status: 'unhealthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                   },
                   video: services['video'] || {
                     status: 'unhealthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details: 'Video health check not available',
                   },
                   communication: {
                     status: 'healthy' as const,
                     responseTime: 0,
-                    lastChecked: new Date().toISOString(),
+                    lastChecked: nowIso(),
                     details:
                       'Communication health monitoring is clinic-specific and not monitored at system level',
                   },
@@ -1311,7 +1311,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Database health check failed',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
             }
           })(),
@@ -1322,7 +1322,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   status: 'unhealthy',
                   details: 'Database health check timeout',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 }),
               5000
             )
@@ -1355,7 +1355,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Cache health check failed',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
             }
           })(),
@@ -1366,7 +1366,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   status: 'unhealthy',
                   details: 'Cache health check timeout',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 }),
               3000
             )
@@ -1385,7 +1385,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Cache health check failed',
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
           };
         }),
         // Queue health check
@@ -1407,7 +1407,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Queue health check failed',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
             }
           })(),
@@ -1418,7 +1418,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   status: 'unhealthy',
                   details: 'Queue health check timeout',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 }),
               3000
             )
@@ -1437,7 +1437,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Queue health check failed',
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
           };
         }),
         // Logger health check
@@ -1459,7 +1459,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 status: 'unhealthy' as const,
                 details: error instanceof Error ? error.message : 'Logger health check failed',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
             }
           })(),
@@ -1470,7 +1470,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   status: 'unhealthy',
                   details: 'Logger health check timeout',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 }),
               2000
             )
@@ -1489,7 +1489,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             status: 'unhealthy',
             details: error instanceof Error ? error.message : 'Logger health check failed',
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
           };
         }),
       ]);
@@ -1510,7 +1510,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     ? healthCheckResults[0].reason.message
                     : 'Cache check failed - no result returned',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -1526,7 +1526,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Cache check extraction failed',
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
 
@@ -1542,7 +1542,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     ? healthCheckResults[1].reason.message
                     : 'Queue check failed - no result returned',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -1558,7 +1558,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Queue check extraction failed',
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
 
@@ -1574,7 +1574,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                     ? healthCheckResults[2].reason.message
                     : 'Logger check failed - no result returned',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
               };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -1590,7 +1590,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'unhealthy' as const,
           details: error instanceof Error ? error.message : 'Logger check extraction failed',
           responseTime: 0,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
       // Safely get system metrics - always try to get real values
@@ -1693,7 +1693,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       });
       const result: HealthCheckResponse = {
         status: 'healthy',
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         environment,
         version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
@@ -1701,27 +1701,27 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           api: {
             status: 'healthy',
             responseTime: Math.round(performance.now() - startTime),
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'API service is running',
           },
           database: {
             status: dbHealth.status,
             responseTime: dbHealth.responseTime || 0,
-            lastChecked: dbHealth.lastChecked || new Date().toISOString(),
+            lastChecked: dbHealth.lastChecked || nowIso(),
             details: dbHealth.details || dbHealth.error || 'Database status unknown',
             ...(dbHealth.error && { error: dbHealth.error }),
           },
           cache: {
             status: cacheHealth.status,
             responseTime: cacheHealth.responseTime || 0,
-            lastChecked: cacheHealth.lastChecked || new Date().toISOString(),
+            lastChecked: cacheHealth.lastChecked || nowIso(),
             details: cacheHealth.details || cacheHealth.error || 'Cache status unknown',
             ...(cacheHealth.error && { error: cacheHealth.error }),
           },
           queue: {
             status: normalizedQueueHealth.status,
             responseTime: normalizedQueueHealth.responseTime || 0,
-            lastChecked: normalizedQueueHealth.lastChecked || new Date().toISOString(),
+            lastChecked: normalizedQueueHealth.lastChecked || nowIso(),
             details:
               normalizedQueueHealth.details ||
               normalizedQueueHealth.error ||
@@ -1731,7 +1731,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           logger: {
             status: normalizedLoggerHealth.status,
             responseTime: normalizedLoggerHealth.responseTime || 0,
-            lastChecked: normalizedLoggerHealth.lastChecked || new Date().toISOString(),
+            lastChecked: normalizedLoggerHealth.lastChecked || nowIso(),
             details:
               normalizedLoggerHealth.details ||
               normalizedLoggerHealth.error ||
@@ -1741,13 +1741,13 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           video: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Video health check not available',
           },
           communication: {
             status: 'healthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details:
               'Communication health monitoring is clinic-specific and not monitored at system level',
           },
@@ -1937,7 +1937,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         api: {
           status: 'healthy' as const, // API is healthy if we can respond
           responseTime: 10,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'API service is running and responding',
         },
       };
@@ -1993,7 +1993,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 status: isHealthy ? 'healthy' : 'unhealthy',
                 responseTime:
                   typeof dbResult?.['responseTime'] === 'number' ? dbResult['responseTime'] : 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: isHealthy
                   ? typeof dbResult?.['message'] === 'string'
                     ? dbResult['message']
@@ -2029,7 +2029,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 services['database'] = {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: errorDetails,
                   error: errorDetails,
                 };
@@ -2039,7 +2039,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['database'] = {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Database health indicator not available',
             };
           }
@@ -2087,7 +2087,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   typeof cacheResult?.['responseTime'] === 'number'
                     ? cacheResult['responseTime']
                     : 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: isHealthy
                   ? typeof cacheResult?.['message'] === 'string'
                     ? cacheResult['message']
@@ -2125,7 +2125,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 services['cache'] = {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: errorDetails,
                   error: errorDetails,
                 };
@@ -2135,7 +2135,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['cache'] = {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Cache health indicator not available',
             };
           }
@@ -2184,7 +2184,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   typeof queueResult?.['responseTime'] === 'number'
                     ? queueResult['responseTime']
                     : 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: isHealthy
                   ? typeof queueResult?.['message'] === 'string'
                     ? queueResult['message']
@@ -2222,7 +2222,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 services['queue'] = {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: errorDetails,
                   error: errorDetails,
                 };
@@ -2232,7 +2232,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['queue'] = {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Queue health indicator not available',
             };
           }
@@ -2284,7 +2284,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   typeof loggerResult?.['responseTime'] === 'number'
                     ? loggerResult['responseTime']
                     : 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: isHealthy
                   ? typeof loggerResult?.['message'] === 'string'
                     ? loggerResult['message']
@@ -2322,7 +2322,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 services['logging'] = {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: errorDetails,
                   error: errorDetails,
                 };
@@ -2332,7 +2332,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['logging'] = {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Logging health indicator not available',
             };
           }
@@ -2382,7 +2382,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   typeof videoResult?.['responseTime'] === 'number'
                     ? videoResult['responseTime']
                     : 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: isHealthy
                   ? (typeof videoResult?.['message'] === 'string'
                       ? videoResult['message']
@@ -2427,7 +2427,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               services['video'] = {
                 status: 'unhealthy',
                 responseTime: 0,
-                lastChecked: new Date().toISOString(),
+                lastChecked: nowIso(),
                 details: errorDetails,
                 error: errorDetails,
               };
@@ -2445,7 +2445,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             services['video'] = {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Video health indicator not available',
             };
           }
@@ -2464,7 +2464,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Ensure all required services are present
       return {
         status: overallStatus,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         environment: this.config?.getEnvironment() || 'development',
         version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics,
@@ -2472,43 +2472,43 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           api: services['api'] || {
             status: 'healthy' as const,
             responseTime: 10,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'API service is running and responding',
           },
           database: services['database'] || {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Database health check not available',
           },
           cache: services['cache'] || {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Cache health check not available',
           },
           queue: services['queue'] || {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Queue health check not available',
           },
           logger: services['logging'] || {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Logger health check not available',
           },
           video: services['video'] || {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Video health check not available',
           },
           communication: {
             status: 'healthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details:
               'Communication health monitoring is clinic-specific and not monitored at system level',
           },
@@ -2533,7 +2533,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         result.services.database = {
           status: 'healthy',
           responseTime: dbVerification.avgResponseTime,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'PostgreSQL connection verified after retry',
         };
       }
@@ -2544,7 +2544,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         result.services.cache = {
           status: 'healthy',
           responseTime: 1,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
           details: 'Cache connection verified after retry',
         };
       }
@@ -2798,7 +2798,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
             status:
               isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: errorDetails,
           };
         }
@@ -2823,7 +2823,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               status:
                 isInStartupGracePeriod || isDevMode ? ('healthy' as const) : ('unhealthy' as const),
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: errorDetails,
             };
           }
@@ -2849,7 +2849,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       // Return a basic health response by calling performHealthCheck
       const baseHealth = await this.performHealthCheck().catch(() => ({
         status: 'degraded' as const,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         environment: this.config?.getEnvironment() || 'development',
         version: this.config?.getEnv('npm_package_version') || '0.0.1',
         systemMetrics: {
@@ -2875,49 +2875,49 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           api: {
             status: 'healthy' as const, // API is healthy if we can respond
             responseTime: 10, // Small response time
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'API service is running and responding',
           },
           database: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           cache: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           queue: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           logger: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           video: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           socket: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
           communication: {
             status: 'unhealthy' as const,
             responseTime: 0,
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
             details: 'Health check service unavailable - cannot determine status',
           },
         },
@@ -2972,7 +2972,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'unhealthy',
           details: 'Database health indicator is not available',
           responseTime: Math.round(performance.now() - startTime),
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
 
@@ -3009,7 +3009,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'unhealthy',
           details: errorMessage,
           responseTime,
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
 
@@ -3021,7 +3021,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'healthy',
         details: 'PostgreSQL connected',
         responseTime,
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     } catch (_error) {
       if (this.loggingService) {
@@ -3038,7 +3038,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         error: _error instanceof Error ? _error.message : 'Unknown error',
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     }
   }
@@ -3065,7 +3065,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               typeof cacheResult?.['responseTime'] === 'number'
                 ? cacheResult['responseTime']
                 : Math.round(performance.now() - startTime),
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
           };
         } catch (healthCheckError) {
           // Fall through to fallback check
@@ -3086,7 +3086,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: 'Cache health indicator is not available',
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     } catch (_error) {
       // Outer catch for any unexpected errors
@@ -3106,7 +3106,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: `Cache health check failed: ${errorMessage}`,
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     }
   }
@@ -3176,7 +3176,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       connectedClients: 0,
       usedMemory: 0,
       totalKeys: 0,
-      lastSave: new Date().toISOString(),
+      lastSave: nowIso(),
     };
   }
 
@@ -3201,7 +3201,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 typeof queueResult?.['responseTime'] === 'number'
                   ? queueResult['responseTime']
                   : Math.round(performance.now() - startTime),
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             };
           }
         } catch (healthCheckError) {
@@ -3223,7 +3223,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: 'Queue health indicator is not available',
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     } catch (_error) {
       // Outer catch for any unexpected errors
@@ -3243,7 +3243,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: `Queue health check failed: ${errorMessage}`,
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     }
   }
@@ -3270,7 +3270,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
               typeof loggerResult?.['responseTime'] === 'number'
                 ? loggerResult['responseTime']
                 : Math.round(performance.now() - startTime),
-            lastChecked: new Date().toISOString(),
+            lastChecked: nowIso(),
           };
         } catch (healthCheckError) {
           // Fall through to fallback check
@@ -3292,7 +3292,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
           status: 'healthy',
           details: 'Logger service is available',
           responseTime: Math.round(performance.now() - startTime),
-          lastChecked: new Date().toISOString(),
+          lastChecked: nowIso(),
         };
       }
 
@@ -3300,7 +3300,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: 'Logger service is not available',
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     } catch (_error) {
       // Outer catch for any unexpected errors
@@ -3320,7 +3320,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'unhealthy',
         details: `Logger health check failed: ${errorMessage}`,
         responseTime: Math.round(performance.now() - startTime),
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       };
     }
   }
@@ -3340,7 +3340,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       details:
         'Communication health monitoring is clinic-specific and not monitored at system level',
       responseTime: 0,
-      lastChecked: new Date().toISOString(),
+      lastChecked: nowIso(),
     });
   }
 
@@ -3350,7 +3350,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       status: 'healthy',
       details: 'Socket health monitoring is clinic-specific and not monitored at system level',
       responseTime: 0,
-      lastChecked: new Date().toISOString(),
+      lastChecked: nowIso(),
     });
   }
 
@@ -3360,7 +3360,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       status: 'healthy',
       details: 'Email health monitoring is clinic-specific and not monitored at system level',
       responseTime: 0,
-      lastChecked: new Date().toISOString(),
+      lastChecked: nowIso(),
     });
   }
 
@@ -3440,7 +3440,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       status: 'unhealthy',
       details: `${serviceName} is not accessible. Tried: ${urls.join(', ')}. Errors: ${errors.join('; ')}`,
       responseTime: 0,
-      lastChecked: new Date().toISOString(),
+      lastChecked: nowIso(),
     };
   }
 
@@ -3458,7 +3458,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       status: 'healthy',
       details: `${serviceName} check skipped (HttpService removed - external services are optional)`,
       responseTime: 0,
-      lastChecked: new Date().toISOString(),
+      lastChecked: nowIso(),
     });
   }
 
@@ -3492,7 +3492,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'healthy',
         details: `${serviceName} endpoint check skipped (HttpService removed)`,
         responseTime: 0,
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -3501,7 +3501,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         status: 'healthy', // Return healthy even on error as HttpService is removed
         details: `${serviceName} endpoint check skipped (HttpService removed): ${errorMessage}`,
         responseTime: 0,
-        lastChecked: new Date().toISOString(),
+        lastChecked: nowIso(),
       });
     }
   }

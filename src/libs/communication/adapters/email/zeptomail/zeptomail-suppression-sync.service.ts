@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * ZeptoMail Suppression List Sync Service
  * =======================================
@@ -120,7 +121,7 @@ export class ZeptoMailSuppressionSyncService implements OnModuleInit, OnModuleDe
             {
               metadata: {
                 syncedFromZeptoMail: true,
-                syncedAt: new Date().toISOString(),
+                syncedAt: nowIso(),
               },
             }
           );

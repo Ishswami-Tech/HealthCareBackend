@@ -1,10 +1,10 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentResourceService } from './appointment-resource.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { Resource } from '@core/types/appointment.types';
-
 interface ResourcePluginData {
   operation: string;
   resourceData?: Omit<Resource, 'id' | 'createdAt' | 'updatedAt'>;
@@ -246,7 +246,7 @@ export class ClinicResourcePlugin extends BaseAppointmentPlugin {
       version: this.version,
       status: 'healthy',
       operations: this.getSupportedOperations().length,
-      lastCheck: new Date().toISOString(),
+      lastCheck: nowIso(),
     };
   }
 }

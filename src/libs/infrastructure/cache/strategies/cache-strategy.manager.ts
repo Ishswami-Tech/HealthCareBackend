@@ -4,7 +4,7 @@
  * @description Manages and selects appropriate cache strategy
  */
 
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import type { ICacheStrategy, ICacheProvider } from '@core/types';
 import type { CacheOperationOptions } from '@core/types';
 import { SWRCacheStrategy } from '@infrastructure/cache/strategies/swr-cache.strategy';
@@ -32,6 +32,7 @@ export class CacheStrategyManager {
   private readonly cacheProvider: ICacheProvider;
 
   constructor(
+    @Inject(forwardRef(() => CacheProviderFactory))
     private readonly providerFactory: CacheProviderFactory,
     // Use string token to avoid importing logging module (prevents SWC TDZ circular-import issues)
     @Inject('LOGGING_SERVICE')

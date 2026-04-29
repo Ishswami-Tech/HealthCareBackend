@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 // External imports
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 // IMPORTANT: avoid importing from the @config barrel in infra boot code (SWC TDZ/cycles).
@@ -368,7 +369,7 @@ export class LoggingService {
       await this.cacheService?.set(
         'system_metrics',
         {
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           metrics: JSON.stringify(metrics),
           count: metrics.length,
         },
@@ -1362,7 +1363,7 @@ export class LoggingService {
     const performanceData = {
       operation,
       duration,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       ...(metadata || {}),
     };
 
@@ -1714,7 +1715,7 @@ export class LoggingService {
       ...details,
       priority: 'CRITICAL',
       requiresImmedateAttention: true,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
   }
 

@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Transcription Service
  * @class VideoTranscriptionService
@@ -196,7 +197,7 @@ export class VideoTranscriptionService {
         eventType: 'video.transcription.created',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoTranscriptionService',
         version: '1.0.0',
         payload: {
@@ -419,7 +420,7 @@ export class VideoTranscriptionService {
         eventType: 'video.transcription.saved_to_ehr',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoTranscriptionService',
         version: '1.0.0',
         payload: {

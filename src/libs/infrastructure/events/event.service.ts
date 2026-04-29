@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * ===================================================================
  * CENTRALIZED EVENT SERVICE - SINGLE SOURCE OF TRUTH
@@ -128,6 +129,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
   private readonly rateLimitWindow = 1000; // 1 second window
 
   constructor(
+    @Inject(EventEmitter2)
     private readonly eventEmitter: EventEmitter2,
     @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService,
@@ -291,7 +293,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       eventType: event,
       category: EventCategory.SYSTEM,
       priority: EventPriority.NORMAL,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       source: 'EventService',
       version: '1.0.0',
       payload,
@@ -316,7 +318,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         eventType: event,
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'EventService',
         version: '1.0.0',
         payload,
@@ -706,7 +708,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       ...payload,
       eventId: payload.eventId || this.generateEventId(),
       eventType,
-      timestamp: payload.timestamp || new Date().toISOString(),
+      timestamp: payload.timestamp || nowIso(),
       source: payload.source || 'EventService',
       version: payload.version || '1.0.0',
       priority: options?.priority || payload.priority || EventPriority.NORMAL,
@@ -794,7 +796,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       eventId: enrichedPayload.eventId,
       result: enrichedPayload,
       processingTime: Date.now() - startTime,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 
@@ -899,7 +901,7 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
         retryable: true,
       },
       processingTime: Date.now() - startTime,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
   }
 

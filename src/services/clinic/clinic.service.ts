@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   Injectable,
   Optional,
@@ -439,7 +440,7 @@ export class ClinicService {
         eventType: 'clinic.created',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'ClinicService',
         version: '1.0.0',
         clinicId: clinic.id,
@@ -717,7 +718,7 @@ export class ClinicService {
         eventType: 'clinic.updated',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'ClinicService',
         version: '1.0.0',
         clinicId: clinic.id,
@@ -1236,7 +1237,7 @@ export class ClinicService {
         eventType: 'clinic.deleted',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'ClinicService',
         version: '1.0.0',
         clinicId: id,

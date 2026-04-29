@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@config/config.service';
@@ -1276,7 +1277,7 @@ export class AuthService {
             ipAddress: sessionMetadata?.ipAddress,
             userAgent: sessionMetadata?.userAgent,
             reason: verificationResult.message,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
           }
         );
         // Return proper 400 error instead of 500
@@ -1648,7 +1649,7 @@ export class AuthService {
 
       await this.eventService.emit('profile.completed', {
         userId,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       });
 
       // Invalidate user cache
@@ -2149,7 +2150,7 @@ export class AuthService {
         failedCount,
         ipAddress: metadata?.ipAddress,
         userAgent: metadata?.userAgent,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       }
     );
 

@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * REAL-TIME QUEUE STATUS GATEWAY
  * ==============================
@@ -162,7 +163,7 @@ export class QueueStatusGateway
         this.broadcastQueueMetrics(queueName, {
           action,
           queuePositions,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
         });
       }
 
@@ -323,7 +324,7 @@ export class QueueStatusGateway
       client.emit('subscription_confirmed', {
         queueName,
         filters,
-        subscribedAt: new Date().toISOString(),
+        subscribedAt: nowIso(),
       });
     } catch (_error) {
       safeLogError(this.loggingService, _error, 'QueueStatusGateway.handleSubscribeQueue');
@@ -338,7 +339,7 @@ export class QueueStatusGateway
     const updateData = {
       queueName,
       metrics,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
 
     const subscribers = this.queueSubscriptions.get(queueName);
@@ -393,7 +394,7 @@ export class QueueStatusGateway
     client.emit('initial_status', {
       connected: true,
       tenantId,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
   }
 

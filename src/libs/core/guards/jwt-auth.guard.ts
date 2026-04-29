@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   Injectable,
   CanActivate,
@@ -850,7 +851,7 @@ export class JwtAuthGuard implements CanActivate {
     details: Record<string, unknown>
   ): Promise<void> {
     try {
-      const timestamp = new Date().toISOString();
+      const timestamp = nowIso();
       const event = {
         timestamp,
         eventType,

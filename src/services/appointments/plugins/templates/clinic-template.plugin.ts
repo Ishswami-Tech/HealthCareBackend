@@ -1,10 +1,10 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Optional, Inject, forwardRef } from '@nestjs/common';
 import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-plugin.service';
 import { AppointmentTemplateService } from './appointment-template.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { AppointmentTemplate } from '@core/types/appointment.types';
-
 @Injectable()
 export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
   constructor(
@@ -195,7 +195,7 @@ export class ClinicTemplatePlugin extends BaseAppointmentPlugin {
       version: this.version,
       status: 'healthy',
       operations: this.getSupportedOperations().length,
-      lastCheck: new Date().toISOString(),
+      lastCheck: nowIso(),
     };
   }
 }

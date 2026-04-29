@@ -9,6 +9,7 @@ import * as bcrypt from 'bcryptjs'; // Use bcryptjs to match AuthService
 import * as fs from 'fs';
 import * as path from 'path';
 import { createRequire } from 'module';
+import { formatTimeInIST } from '../../../utils/date-time.util';
 
 // Use __filename for CommonJS compatibility (ts-node uses CommonJS)
 // Note: Reserved for future use if dynamic module loading is needed
@@ -1518,7 +1519,7 @@ async function main() {
           const daysFromNow = Math.floor(index / 2) + 1; // 2 appointments per day
           const appointmentDateTime = generateAppointmentDateTime(daysFromNow);
 
-          const timeString = appointmentDateTime.toLocaleTimeString('en-US', {
+          const timeString = formatTimeInIST(appointmentDateTime, {
             hour12: false,
             hour: '2-digit',
             minute: '2-digit',

@@ -69,9 +69,13 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     private readonly cacheRepository: CacheRepository,
     @Inject(CacheKeyFactory)
     private readonly keyFactory: CacheKeyFactory,
+    @Inject(forwardRef(() => CircuitBreakerService))
     private readonly circuitBreaker: CircuitBreakerService,
+    @Inject(forwardRef(() => CacheMetricsService))
     private readonly metrics: CacheMetricsService,
+    @Inject(forwardRef(() => FeatureFlagsService))
     private readonly featureFlags: FeatureFlagsService,
+    @Inject(forwardRef(() => CacheVersioningService))
     private readonly versioning: CacheVersioningService,
     @Inject(forwardRef(() => CacheHealthMonitorService))
     private readonly healthMonitor: CacheHealthMonitorService,

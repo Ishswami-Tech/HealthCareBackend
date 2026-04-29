@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   ExceptionFilter,
   Catch,
@@ -229,7 +230,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       path: request.url,
       method: request.method,
       statusCode: status,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       message: errorMessage,
       ...(stackTrace && { stack: stackTrace }),
       body: this.sanitizeRequestBody(request.body),
@@ -285,7 +286,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     // Create a mutable response object since ErrorResponse has readonly properties
     const errorResponse: Record<string, unknown> = {
       statusCode: status,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       path: request.url,
       method: request.method,
       ...(typeof exceptionResponse === 'object' && exceptionResponse !== null

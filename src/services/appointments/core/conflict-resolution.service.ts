@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { EventService } from '@infrastructure/events/event.service';
 import type {
@@ -11,7 +12,6 @@ import type {
 } from '@core/types/appointment.types';
 import { type IEventService, isEventService, EventCategory, EventPriority } from '@core/types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
-
 // Re-export for backward compatibility
 export type {
   TimeSlot,
@@ -156,7 +156,7 @@ export class ConflictResolutionService {
           eventType: 'appointment.conflict-resolved',
           category: EventCategory.APPOINTMENT,
           priority: EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'ConflictResolutionService',
           version: '1.0.0',
           payload: {

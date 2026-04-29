@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Realtime Health Gateway
  * Socket.IO gateway for real-time health status broadcasting
@@ -181,7 +182,7 @@ export class RealtimeHealthGateway
       } else {
         // Send default status if no cache
         const defaultStatus: RealtimeHealthStatusPayload = {
-          t: new Date().toISOString(),
+          t: nowIso(),
           o: 'healthy',
           s: {},
           u: 0,

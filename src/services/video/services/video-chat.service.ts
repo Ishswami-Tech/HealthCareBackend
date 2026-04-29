@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Chat Service
  * @class VideoChatService
@@ -198,7 +199,7 @@ export class VideoChatService {
         eventType: 'video.chat.message.sent',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoChatService',
         version: '1.0.0',
         payload: {
@@ -323,7 +324,7 @@ export class VideoChatService {
             consultationId,
             userId,
             isTyping: false,
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
           });
         }, this.TYPING_TIMEOUT);
 
@@ -337,7 +338,7 @@ export class VideoChatService {
         consultationId,
         userId,
         isTyping,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       });
     } catch (error) {
       void this.loggingService.log(

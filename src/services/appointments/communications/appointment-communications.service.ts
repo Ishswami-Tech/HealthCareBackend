@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { SocketService } from '@communication/channels/socket/socket.service';
 // SocketEventData type not used in this file
@@ -41,7 +42,7 @@ export class AppointmentCommunicationsService {
         appointmentId: queueData.appointmentId,
         clinicId,
         userId: '', // Will be filled by client
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         data: {
           appointmentId: queueData.appointmentId,
           position: queueData.position,
@@ -116,7 +117,7 @@ export class AppointmentCommunicationsService {
           status: statusData.status,
           ...(statusData.message && { message: statusData.message }),
         },
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       };
 
       // Send to user's personal room - convert to SocketEventData format
@@ -193,7 +194,7 @@ export class AppointmentCommunicationsService {
           doctorId,
           patientId,
         },
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       };
 
       // Send to both patient and doctor - convert to SocketEventData format
@@ -269,7 +270,7 @@ export class AppointmentCommunicationsService {
         clinicId,
         userId,
         data: notificationData,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       };
 
       // Send to user's notification room - convert to SocketEventData format
@@ -334,7 +335,7 @@ export class AppointmentCommunicationsService {
           doctors: 0,
           admins: 0,
         },
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
         message: 'Active socket connection metrics are not currently wired for this clinic flow',
       };
 

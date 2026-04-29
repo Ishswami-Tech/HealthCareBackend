@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   Controller,
   Get,
@@ -36,6 +37,7 @@ import {
   ApiHeader,
   ApiConsumes,
   ApiProduces,
+  ApiExtraModels,
 } from '@nestjs/swagger';
 import { UseGuards } from '@nestjs/common';
 import { Role, AppointmentStatus } from '@core/types/enums.types';
@@ -57,6 +59,7 @@ import {
   InvalidateAppointmentCache,
   Public,
 } from '@core/decorators';
+import { isSameIstDay, startOfIstDay } from '../../libs/utils/clock.util';
 import {
   CreateAppointmentDto,
   UpdateAppointmentDto,
@@ -112,6 +115,27 @@ import type { AppointmentWithRelations } from '@core/types/database.types';
 
 @ApiTags('appointments')
 @Controller('appointments')
+@ApiExtraModels(
+  CreateAppointmentDto,
+  UpdateAppointmentDto,
+  AppointmentResponseDto,
+  AppointmentListResponseDto,
+  AppointmentFilterDto,
+  ScheduleFollowUpDto,
+  FollowUpPlanResponseDto,
+  AppointmentChainResponseDto,
+  RecurringSeriesResponseDto,
+  AppointmentServiceCatalogResponseDto,
+  AppointmentReassignmentCandidatesResponseDto,
+  AssistantDoctorCoverageResponseDto,
+  UpdateAssistantDoctorCoverageDto,
+  ConfirmVideoSlotDto,
+  ConfirmVideoFinalSlotDto,
+  RejectVideoProposalDto,
+  ScanLocationQRDto,
+  ScanLocationQRResponseDto,
+  LocationQRCodeResponseDto
+)
 @ApiBearerAuth()
 @ApiSecurity('session-id')
 @ApiHeader({
@@ -249,13 +273,13 @@ export class AppointmentsController {
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
   @ApiBody({
-    type: CreateAppointmentDto,
+    type: () => CreateAppointmentDto,
     description: 'Appointment creation data',
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Appointment created successfully',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -359,7 +383,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment service catalog retrieved successfully',
-    type: AppointmentServiceCatalogResponseDto,
+    type: () => AppointmentServiceCatalogResponseDto,
   })
   getAppointmentServiceCatalog(): ServiceResponse<AppointmentServiceCatalogResponseDto> {
     const services = this.appointmentService.getAppointmentServiceCatalog();
@@ -384,7 +408,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Assistant doctor coverage fetched successfully',
-    type: AssistantDoctorCoverageResponseDto,
+    type: () => AssistantDoctorCoverageResponseDto,
   })
   async getAssistantDoctorCoverage(
     @Request() req: ClinicAuthenticatedRequest
@@ -409,11 +433,11 @@ export class AppointmentsController {
     description:
       'Stores clinic-level assistant-doctor coverage assignments in the normalized relational model.',
   })
-  @ApiBody({ type: UpdateAssistantDoctorCoverageDto })
+  @ApiBody({ type: () => UpdateAssistantDoctorCoverageDto })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Assistant doctor coverage saved successfully',
-    type: AssistantDoctorCoverageResponseDto,
+    type: () => AssistantDoctorCoverageResponseDto,
   })
   async updateAssistantDoctorCoverage(
     @Body(ValidationPipe) dto: UpdateAssistantDoctorCoverageDto,
@@ -450,7 +474,7 @@ export class AppointmentsController {
     description:
       'Patient proposes 3-4 time slots for a video appointment. Doctor will select one to confirm.',
   })
-  @ApiBody({ type: ProposeVideoSlotsDto })
+  @ApiBody({ type: () => ProposeVideoSlotsDto })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Video appointment proposed successfully',
@@ -493,7 +517,7 @@ export class AppointmentsController {
       "Doctor selects one of the patient's proposed time slots to confirm the appointment.",
   })
   @ApiParam({ name: 'id', description: 'Appointment ID' })
-  @ApiBody({ type: ConfirmVideoSlotDto })
+  @ApiBody({ type: () => ConfirmVideoSlotDto })
   @ApiResponse({ status: HttpStatus.OK, description: 'Slot confirmed successfully' })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -539,7 +563,7 @@ export class AppointmentsController {
       "Doctor can either confirm one of the patient's proposed slots or set a custom final slot and finalize the appointment.",
   })
   @ApiParam({ name: 'id', description: 'Appointment ID' })
-  @ApiBody({ type: ConfirmVideoFinalSlotDto })
+  @ApiBody({ type: () => ConfirmVideoFinalSlotDto })
   @ApiResponse({ status: HttpStatus.OK, description: 'Final video slot confirmed successfully' })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -587,7 +611,7 @@ export class AppointmentsController {
       'Doctor rejects the proposed video slots. The appointment is cancelled and refunds are triggered automatically.',
   })
   @ApiParam({ name: 'id', description: 'Appointment ID' })
-  @ApiBody({ type: RejectVideoProposalDto })
+  @ApiBody({ type: () => RejectVideoProposalDto })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Video appointment proposal rejected and refund triggered',
@@ -658,14 +682,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return user appointments',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean' },
-        data: { $ref: '#/components/schemas/AppointmentListResponseDto' },
-        message: { type: 'string' },
-      },
-    },
+    type: () => AppointmentListResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -806,14 +823,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return all appointments',
-    schema: {
-      type: 'object',
-      properties: {
-        success: { type: 'boolean' },
-        data: { $ref: '#/components/schemas/AppointmentListResponseDto' },
-        message: { type: 'string' },
-      },
-    },
+    type: () => AppointmentListResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -1127,9 +1137,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return doctor availability',
-    schema: {
-      $ref: '#/components/schemas/DoctorAvailabilityResponseDto',
-    },
+    type: () => DoctorAvailabilityResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -1188,28 +1196,12 @@ export class AppointmentsController {
         throw new BadRequestException('Date must be in YYYY-MM-DD format');
       }
 
-      // Fix: Interpret the requested date string carefully in local time
-      const dateParts = date.split('-');
-      const yearStr = dateParts[0] || '2000';
-      const monthStr = dateParts[1] || '01';
-      const dayStr = dateParts[2] || '01';
+      const requestedDate = startOfIstDay(date);
+      const todayIST = startOfIstDay(new Date());
 
-      // Enforce Indian Standard Time (IST) exactly for calculating "today"
-      const now = new Date();
-      const istOptions = {
-        timeZone: 'Asia/Kolkata',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      } as const;
-      const istParts = new Intl.DateTimeFormat('en-US', istOptions).formatToParts(now);
-      const istYear = parseInt(istParts.find(p => p.type === 'year')?.value || '2000', 10);
-      const istMonth = parseInt(istParts.find(p => p.type === 'month')?.value || '1', 10);
-      const istDay = parseInt(istParts.find(p => p.type === 'day')?.value || '1', 10);
-
-      const requestedDate = new Date(parseInt(yearStr), parseInt(monthStr) - 1, parseInt(dayStr));
-      const todayIST = new Date(istYear, istMonth - 1, istDay);
-      todayIST.setHours(0, 0, 0, 0);
+      if (!requestedDate || !todayIST) {
+        throw new BadRequestException('Invalid date provided');
+      }
 
       if (requestedDate.getTime() < todayIST.getTime()) {
         throw new BadRequestException('Cannot check availability for past dates');
@@ -1582,7 +1574,7 @@ export class AppointmentsController {
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
   @ApiBody({
-    type: UpdateAppointmentDto,
+    type: () => UpdateAppointmentDto,
     description: 'Appointment update data',
   })
   @ApiResponse({
@@ -2520,7 +2512,7 @@ export class AppointmentsController {
           appointmentTime: appointment.date
             ? `${appointment.date.toISOString()} ${appointment.time}`
             : 'N/A',
-          currentTime: new Date().toISOString(),
+          currentTime: nowIso(),
         }
       );
 
@@ -2705,7 +2697,7 @@ export class AppointmentsController {
   @ApiConsumes('application/json')
   @ApiProduces('application/json')
   @ApiBody({
-    type: ScanLocationQRDto,
+    type: () => ScanLocationQRDto,
     description: 'QR code scan data',
   })
   @ApiResponse({
@@ -2860,8 +2852,10 @@ export class AppointmentsController {
       }
 
       // Step 3: Handle multiple appointments or specific appointment selection
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+      const today = startOfIstDay(new Date());
+      if (!today) {
+        throw new BadRequestException('Unable to determine current date');
+      }
 
       // Appointments without a recorded clinic arrival can still be confirmed into queue
       const eligibleAppointments = appointments.filter(a => !a.checkedInAt);
@@ -2879,8 +2873,8 @@ export class AppointmentsController {
             const dateA = new Date(a.date);
             const dateB = new Date(b.date);
 
-            const aIsToday = dateA.toDateString() === today.toDateString();
-            const bIsToday = dateB.toDateString() === today.toDateString();
+            const aIsToday = isSameIstDay(dateA, today);
+            const bIsToday = isSameIstDay(dateB, today);
 
             if (aIsToday && !bIsToday) return -1;
             if (!aIsToday && bIsToday) return 1;
@@ -2971,7 +2965,7 @@ export class AppointmentsController {
             appointmentId: existingAppointment.id,
             locationId: location.id,
             locationName: location.locationName,
-            checkedInAt: existingAppointment.checkedInAt?.toISOString() || new Date().toISOString(),
+            checkedInAt: existingAppointment.checkedInAt?.toISOString() || nowIso(),
             queuePosition: queuePosition?.position || 0,
             totalInQueue: queuePosition?.totalInQueue || 0,
             estimatedWaitTime: queuePosition?.estimatedWaitTime || 0,
@@ -4117,7 +4111,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Follow-up plans retrieved successfully',
-    type: [FollowUpPlanResponseDto],
+    type: () => [FollowUpPlanResponseDto],
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -4204,12 +4198,12 @@ export class AppointmentsController {
   })
   @ApiBody({
     description: 'Appointment scheduling details',
-    type: ScheduleFollowUpDto,
+    type: () => ScheduleFollowUpDto,
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Appointment scheduled successfully',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -4308,7 +4302,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Follow-up appointments retrieved successfully',
-    type: [AppointmentResponseDto],
+    type: () => [AppointmentResponseDto],
   })
   @PatientCache()
   async getAppointmentFollowUps(
@@ -4390,12 +4384,12 @@ export class AppointmentsController {
     type: 'string',
   })
   @ApiBody({
-    type: UpdateFollowUpPlanDto,
+    type: () => UpdateFollowUpPlanDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Follow-up plan updated successfully',
-    type: FollowUpPlanResponseDto,
+    type: () => FollowUpPlanResponseDto,
   })
   @InvalidateAppointmentCache()
   async updateFollowUpPlan(
@@ -4555,12 +4549,12 @@ export class AppointmentsController {
     description: 'Creates a series of recurring appointments from a template',
   })
   @ApiBody({
-    type: CreateRecurringSeriesDto,
+    type: () => CreateRecurringSeriesDto,
   })
   @ApiResponse({
     status: HttpStatus.CREATED,
     description: 'Recurring series created successfully',
-    type: RecurringSeriesResponseDto,
+    type: () => RecurringSeriesResponseDto,
   })
   @InvalidateAppointmentCache()
   async createRecurringSeries(
@@ -4646,7 +4640,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Series details retrieved successfully',
-    type: RecurringSeriesResponseDto,
+    type: () => RecurringSeriesResponseDto,
   })
   @PatientCache()
   async getRecurringSeries(
@@ -4727,12 +4721,12 @@ export class AppointmentsController {
     type: 'string',
   })
   @ApiBody({
-    type: UpdateRecurringSeriesDto,
+    type: () => UpdateRecurringSeriesDto,
   })
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Series updated successfully',
-    type: RecurringSeriesResponseDto,
+    type: () => RecurringSeriesResponseDto,
   })
   @InvalidateAppointmentCache()
   async updateRecurringSeries(
@@ -4900,7 +4894,7 @@ export class AppointmentsController {
 
     return {
       message: 'Appointment context test',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       user: {
         id: user?.sub,
         sub: user?.sub,

@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * EVENT-TO-SOCKET BROADCASTER
  * ============================
@@ -40,6 +41,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     'billing.',
     'ehr.',
     'appointment.',
+    'doctor.availability.',
     'user.',
     'clinic.',
     'notification.',
@@ -136,12 +138,19 @@ export class EventSocketBroadcaster implements OnModuleInit {
 
       // Extract event data
       const eventData = this.normalizePayload(payload);
+      const socketData = this.createSocketData(event, eventData);
 
       // Determine target rooms
       const rooms = this.determineTargetRooms(event, eventData);
 
+      // Availability changes should be visible to every connected client immediately.
+      // Room-based delivery still happens below for finer-grained targeting.
+      if (event.startsWith('doctor.availability.')) {
+        this.socketService.broadcast(event, socketData);
+      }
+
       // Broadcast to all target rooms
-      this.broadcastToRooms(event, rooms, eventData);
+      this.broadcastToRooms(event, rooms, socketData);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -280,6 +289,24 @@ export class EventSocketBroadcaster implements OnModuleInit {
       }
     }
 
+    if (event.startsWith('doctor.availability.')) {
+      if (payload.clinicId) {
+        rooms.add(`clinic:${payload.clinicId}:role:DOCTOR`);
+        rooms.add(`clinic:${payload.clinicId}:role:RECEPTIONIST`);
+      }
+
+      if (payload.userId) {
+        rooms.add(`user:${payload.userId}`);
+      }
+
+      const doctorId = (payload as Record<string, unknown>)['doctorId'];
+      if (typeof doctorId === 'string' && doctorId.trim().length > 0) {
+        const normalizedDoctorId = doctorId.trim();
+        rooms.add(`doctor:${normalizedDoctorId}`);
+        rooms.add(`user:${normalizedDoctorId}`);
+      }
+    }
+
     // Resource-specific rooms
     if (payload.appointmentId) {
       rooms.add(`appointment:${payload.appointmentId}`);
@@ -326,7 +353,13 @@ export class EventSocketBroadcaster implements OnModuleInit {
    * Check if event is relevant to doctors
    */
   private isDoctorRelevant(event: string): boolean {
-    const doctorEvents = ['appointment.', 'ehr.', 'notification.patient', 'user.patient'];
+    const doctorEvents = [
+      'appointment.',
+      'doctor.availability.',
+      'ehr.',
+      'notification.patient',
+      'user.patient',
+    ];
 
     return doctorEvents.some(pattern => event.startsWith(pattern));
   }
@@ -335,53 +368,43 @@ export class EventSocketBroadcaster implements OnModuleInit {
    * Check if event is relevant to receptionists
    */
   private isReceptionistRelevant(event: string): boolean {
-    const receptionistEvents = ['appointment.', 'notification.appointment', 'user.patient'];
+    const receptionistEvents = [
+      'appointment.',
+      'doctor.availability.',
+      'notification.appointment',
+      'user.patient',
+    ];
 
     return receptionistEvents.some(pattern => event.startsWith(pattern));
   }
 
   /**
-   * Broadcast event to multiple rooms
+   * Convert normalized event payload into the socket-safe payload shape.
    */
-  private broadcastToRooms(event: string, rooms: string[], data: EventPayload): void {
-    if (!this.socketService) return;
-
-    // Convert EventPayload to SocketEventData by filtering out undefined values
+  private createSocketData(
+    event: string,
+    data: EventPayload
+  ): Record<
+    string,
+    string | number | boolean | null | string[] | Record<string, string | number | boolean | null>
+  > {
     const socketData: Record<
       string,
       string | number | boolean | null | string[] | Record<string, string | number | boolean | null>
     > = {
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
       eventType: event,
     };
 
-    // Add defined properties only (SocketEventData doesn't allow undefined)
-    if (data.userId !== undefined) {
-      socketData['userId'] = data.userId;
-    }
-    if (data.clinicId !== undefined) {
-      socketData['clinicId'] = data.clinicId;
-    }
-    if (data.appointmentId !== undefined) {
-      socketData['appointmentId'] = data.appointmentId;
-    }
-    if (data.subscriptionId !== undefined) {
-      socketData['subscriptionId'] = data.subscriptionId;
-    }
-    if (data.invoiceId !== undefined) {
-      socketData['invoiceId'] = data.invoiceId;
-    }
-    if (data.paymentId !== undefined) {
-      socketData['paymentId'] = data.paymentId;
-    }
-    if (data.ehrRecordId !== undefined) {
-      socketData['ehrRecordId'] = data.ehrRecordId;
-    }
-    if (data.roles !== undefined) {
-      socketData['roles'] = data.roles;
-    }
+    if (data.userId !== undefined) socketData['userId'] = data.userId;
+    if (data.clinicId !== undefined) socketData['clinicId'] = data.clinicId;
+    if (data.appointmentId !== undefined) socketData['appointmentId'] = data.appointmentId;
+    if (data.subscriptionId !== undefined) socketData['subscriptionId'] = data.subscriptionId;
+    if (data.invoiceId !== undefined) socketData['invoiceId'] = data.invoiceId;
+    if (data.paymentId !== undefined) socketData['paymentId'] = data.paymentId;
+    if (data.ehrRecordId !== undefined) socketData['ehrRecordId'] = data.ehrRecordId;
+    if (data.roles !== undefined) socketData['roles'] = data.roles;
 
-    // Add other properties from index signature
     for (const [key, value] of Object.entries(data)) {
       if (
         ![
@@ -410,6 +433,22 @@ export class EventSocketBroadcaster implements OnModuleInit {
           | Record<string, string | number | boolean | null>;
       }
     }
+
+    return socketData;
+  }
+
+  /**
+   * Broadcast event to multiple rooms
+   */
+  private broadcastToRooms(
+    event: string,
+    rooms: string[],
+    socketData: Record<
+      string,
+      string | number | boolean | null | string[] | Record<string, string | number | boolean | null>
+    >
+  ): void {
+    if (!this.socketService) return;
 
     for (const room of rooms) {
       try {
@@ -440,7 +479,7 @@ export class EventSocketBroadcaster implements OnModuleInit {
     }
 
     const targetRooms = rooms || this.determineTargetRooms(event, payload);
-    this.broadcastToRooms(event, targetRooms, payload);
+    this.broadcastToRooms(event, targetRooms, this.createSocketData(event, payload));
   }
 
   /**

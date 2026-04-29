@@ -8,6 +8,7 @@ import { HealthService } from './services/health/health.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import type { ServiceHealth, DetailedHealthCheckResponse } from '@core/types/common.types';
+import { formatDateTimeInIST, IST_TIMEZONE, nowIso } from './libs/utils/date-time.util';
 
 // Local types for dashboard
 interface ServiceInfo {
@@ -105,7 +106,7 @@ export class AppController {
           setTimeout(() => {
             resolve({
               status: 'degraded',
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
               environment: appConfig.environment,
               version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
               systemMetrics: {
@@ -131,37 +132,37 @@ export class AppController {
                 api: {
                   status: 'unhealthy',
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 database: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 cache: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 queue: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 logger: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 video: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                 },
                 communication: {
                   status: 'unhealthy' as const,
                   responseTime: 0,
-                  lastChecked: new Date().toISOString(),
+                  lastChecked: nowIso(),
                   details: 'Communication service unavailable',
                 },
               },
@@ -208,7 +209,7 @@ export class AppController {
         // Create a default health data structure
         healthData = {
           status: 'degraded',
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           environment: this.configService?.getEnvironment() || 'development',
           version: this.configService?.getEnv('npm_package_version', '0.0.1') || '0.0.1',
           systemMetrics: {
@@ -234,32 +235,32 @@ export class AppController {
             api: {
               status: 'unhealthy',
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             },
             database: {
               status: 'unhealthy' as const,
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             },
             cache: {
               status: 'unhealthy' as const,
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             },
             queue: {
               status: 'unhealthy' as const,
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             },
             logger: {
               status: 'unhealthy' as const,
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
             },
             communication: {
               status: 'unhealthy' as const,
               responseTime: 0,
-              lastChecked: new Date().toISOString(),
+              lastChecked: nowIso(),
               details: 'Communication service unavailable',
             },
           },
@@ -494,7 +495,7 @@ export class AppController {
           statusText: isSystemHealthy ? 'All systems operational' : 'System partially degraded',
           healthyCount: healthyServices,
           totalCount: totalServices,
-          lastChecked: new Date().toLocaleString(),
+          lastChecked: formatDateTimeInIST(new Date()),
           details: `${healthyServices} of ${totalServices} services are healthy`,
         },
         services: servicesData
@@ -514,7 +515,9 @@ export class AppController {
                     (serviceData.status === 'healthy'
                       ? 'Service is responding normally'
                       : 'Service is experiencing issues'),
-                lastChecked: serviceData.lastChecked || new Date().toLocaleString(),
+                lastChecked: serviceData.lastChecked
+                  ? formatDateTimeInIST(serviceData.lastChecked)
+                  : formatDateTimeInIST(new Date()),
                 metrics: serviceMetrics || {},
                 ...(serviceData.error && { error: serviceData.error }),
               };
@@ -756,7 +759,7 @@ export class AppController {
             
             const timestampEl = document.createElement('div');
             timestampEl.className = 'timestamp';
-            timestampEl.textContent = new Date().toLocaleTimeString();
+            timestampEl.textContent = formatDateTime(new Date());
             
             messageEl.appendChild(contentEl);
             messageEl.appendChild(timestampEl);
@@ -851,7 +854,7 @@ export class AppController {
 
       return logs.slice(0, limit).map(
         (log): DashboardLogEntry => ({
-          timestamp: log.timestamp || new Date().toISOString(),
+          timestamp: log.timestamp || nowIso(),
           level: (log.level as string) || 'info',
           message: log.message || 'No message',
           source: (log.type as string) || 'Unknown',
@@ -874,7 +877,7 @@ export class AppController {
         .fill(null)
         .map(
           (_, i): DashboardLogEntry => ({
-            timestamp: new Date().toISOString(),
+            timestamp: nowIso(),
             level: 'info',
             message: `This is a placeholder log entry ${i + 1}`,
             source: 'System',
@@ -893,18 +896,8 @@ export class AppController {
     baseUrl: string
   ): string {
     // Add this helper function at the beginning of generateDashboardHtml
-    const formatDateTime = (dateString: string) => {
-      const date = new Date(dateString);
-      return new Intl.DateTimeFormat('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: true,
-      }).format(date);
-    };
+    const formatDateTime = (dateValue: string | Date | number | null | undefined) =>
+      formatDateTimeInIST(dateValue);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -1883,7 +1876,7 @@ export class AppController {
                     if (label && label.textContent.includes('Last Checked')) {
                         const value = metric.querySelector('.metric-value');
                         if (value) {
-                            value.textContent = new Date(serviceData.timestamp).toLocaleString();
+                            value.textContent = formatDateTime(serviceData.timestamp);
                         }
                     }
                 });
@@ -1917,7 +1910,7 @@ export class AppController {
         function updateLastChecked(timestamp) {
             const lastCheckedElement = document.querySelector('.health-card-header span');
             if (lastCheckedElement && timestamp) {
-                lastCheckedElement.textContent = 'Last checked: ' + new Date(timestamp).toLocaleString();
+                lastCheckedElement.textContent = 'Last checked: ' + formatDateTime(timestamp);
             }
         }
         
@@ -1980,7 +1973,7 @@ export class AppController {
                     
                     const lastCheckedElement = document.querySelector('.overall-health .last-checked');
                     if (lastCheckedElement && healthData.timestamp) {
-                        lastCheckedElement.textContent = \`Last checked: \${new Date(healthData.timestamp).toLocaleString()}\`;
+                        lastCheckedElement.textContent = \`Last checked: \${formatDateTime(healthData.timestamp)}\`;
                     }
                 }
                 
@@ -2021,7 +2014,7 @@ export class AppController {
                             // Update last checked
                             const lastCheckedElement = serviceElement.querySelector('.last-checked');
                             if (lastCheckedElement && service.lastChecked) {
-                                lastCheckedElement.textContent = \`Last checked: \${new Date(service.lastChecked).toLocaleString()}\`;
+                                lastCheckedElement.textContent = \`Last checked: \${formatDateTime(service.lastChecked)}\`;
                             }
                         }
                     });
@@ -2080,6 +2073,24 @@ export class AppController {
             }
         }
         
+        const IST_TIMEZONE = '${IST_TIMEZONE}';
+
+        function formatDateTime(value) {
+            if (!value) {
+                return '';
+            }
+            return new Intl.DateTimeFormat('en-IN', {
+                timeZone: IST_TIMEZONE,
+                year: 'numeric',
+                month: 'short',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true,
+            }).format(new Date(value));
+        }
+
         // Helper function to format bytes
         function formatBytes(bytes) {
             if (bytes === 0) return '0 Bytes';

@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, Inject, forwardRef, Optional } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { SocketService } from '@communication/channels/socket/socket.service';
@@ -467,7 +468,7 @@ export class VideoConsultationTracker {
       this.socketService.sendToRoom(`consultation_${appointmentId}`, 'connection_quality_update', {
         userId,
         quality,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: this.webhookEnabled ? 'hybrid' : 'socket-only', // Indicate source for debugging
       });
     } catch (_error) {
@@ -687,7 +688,7 @@ export class VideoConsultationTracker {
           eventType: 'consultation.event',
           category: EventCategory.SYSTEM,
           priority: EventPriority.NORMAL,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'VideoConsultationTracker',
           version: '1.0.0',
           payload: {

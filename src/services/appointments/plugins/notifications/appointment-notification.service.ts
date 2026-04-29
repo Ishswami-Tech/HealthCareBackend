@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
@@ -23,7 +24,6 @@ import type {
   NotificationResult,
   NotificationTemplate,
 } from '@core/types/appointment.types';
-
 // Re-export types for backward compatibility
 export type { NotificationData, NotificationResult, NotificationTemplate };
 
@@ -608,7 +608,7 @@ export class AppointmentNotificationService {
       appointmentId,
       type,
       data: socketData as Record<string, SocketEventPrimitive>,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
     void this.socketService.sendToUser(patientId, 'appointment_notification', eventData);
 
@@ -617,7 +617,7 @@ export class AppointmentNotificationService {
       appointmentId,
       patientId,
       type,
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     };
     void this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', clinicEventData);
 

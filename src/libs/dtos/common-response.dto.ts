@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { ApiProperty } from '@nestjs/swagger';
 
 /**
@@ -41,7 +42,7 @@ export class BaseResponseDto {
   constructor(message: string, status: string = 'success') {
     this.status = status;
     this.message = message;
-    this.timestamp = new Date().toISOString();
+    this.timestamp = nowIso();
   }
 }
 

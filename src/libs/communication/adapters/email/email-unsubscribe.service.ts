@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Email Unsubscribe Service
  * ==========================
@@ -138,7 +139,7 @@ export class EmailUnsubscribeService {
       // Add to suppression list
       await this.suppressionListService.handleUnsubscribe(unsubscribeEmail, userId, {
         token: token.substring(0, 10) + '...', // Log partial token for security
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
       });
 
       // Update user preferences if user found
@@ -201,7 +202,7 @@ export class EmailUnsubscribeService {
     // Add to suppression list
     await this.suppressionListService.handleUnsubscribe(normalizedEmail, undefined, {
       method: 'direct_email',
-      timestamp: new Date().toISOString(),
+      timestamp: nowIso(),
     });
 
     // Try to find and update user

@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Appointment Plugin Initializer Service
  *
@@ -103,7 +104,7 @@ export class AppointmentPluginInitializer implements OnModuleInit {
       const context: PluginContext = {
         metadata: {
           service: 'appointments',
-          initializedAt: new Date().toISOString(),
+          initializedAt: nowIso(),
         },
       };
 

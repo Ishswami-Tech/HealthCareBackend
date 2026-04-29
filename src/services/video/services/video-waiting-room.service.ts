@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 /**
  * Video Waiting Room Service
  * @class VideoWaitingRoomService
@@ -222,7 +223,7 @@ export class VideoWaitingRoomService {
         eventType: 'video.waiting_room.joined',
         category: EventCategory.SYSTEM,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoWaitingRoomService',
         version: '1.0.0',
         payload: {
@@ -426,7 +427,7 @@ export class VideoWaitingRoomService {
         eventType: 'video.waiting_room.admitted',
         category: EventCategory.SYSTEM,
         priority: EventPriority.HIGH,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'VideoWaitingRoomService',
         version: '1.0.0',
         payload: {

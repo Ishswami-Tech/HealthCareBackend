@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import {
   BadRequestException,
   Injectable,
@@ -6,7 +7,6 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { EventService } from '@infrastructure/events/event.service';
-
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
 
@@ -140,7 +140,7 @@ export class QueueMonitoringService {
           eventType: 'queue.metrics.updated',
           category: EventCategory.QUEUE,
           priority: EventPriority.LOW,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'QueueMonitoringService',
           version: '1.0.0',
           payload: {
@@ -242,7 +242,7 @@ export class QueueMonitoringService {
         eventType: 'queue.alert.resolved',
         category: EventCategory.QUEUE,
         priority: EventPriority.NORMAL,
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'QueueMonitoringService',
         version: '1.0.0',
         payload: {
@@ -456,7 +456,7 @@ export class QueueMonitoringService {
           eventType: 'queue.report.generated',
           category: EventCategory.QUEUE,
           priority: EventPriority.NORMAL,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'QueueMonitoringService',
           version: '1.0.0',
           payload: {
@@ -558,7 +558,7 @@ export class QueueMonitoringService {
               eventType: 'queue.health.changed',
               category: EventCategory.QUEUE,
               priority: EventPriority.HIGH,
-              timestamp: new Date().toISOString(),
+              timestamp: nowIso(),
               source: 'QueueMonitoringService',
               version: '1.0.0',
               payload: {
@@ -687,7 +687,7 @@ export class QueueMonitoringService {
           eventType: 'queue.alert.created',
           category: EventCategory.QUEUE,
           priority: alert.severity === 'critical' ? EventPriority.CRITICAL : EventPriority.HIGH,
-          timestamp: new Date().toISOString(),
+          timestamp: nowIso(),
           source: 'QueueMonitoringService',
           version: '1.0.0',
           payload: { alert },
@@ -790,7 +790,7 @@ export class QueueMonitoringService {
         eventType,
         category: EventCategory.QUEUE,
         priority: this.mapSeverityToPriority(alert.severity),
-        timestamp: new Date().toISOString(),
+        timestamp: nowIso(),
         source: 'QueueMonitoringService',
         version: '1.0.0',
         payload: {

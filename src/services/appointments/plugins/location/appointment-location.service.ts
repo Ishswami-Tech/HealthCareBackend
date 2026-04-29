@@ -1,3 +1,4 @@
+import { nowIso } from '@utils/date-time.util';
 import { Injectable, NotFoundException, Optional, Inject, forwardRef } from '@nestjs/common';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
@@ -52,7 +53,7 @@ export class AppointmentLocationService {
             locations: cached,
             total: cached.length,
             domain,
-            retrievedAt: new Date().toISOString(),
+            retrievedAt: nowIso(),
           };
         }
 
@@ -63,7 +64,7 @@ export class AppointmentLocationService {
             locations,
             total: locations.length,
             domain,
-            retrievedAt: new Date().toISOString(),
+            retrievedAt: nowIso(),
           };
           void this.loggingService.log(
             LogType.SYSTEM,
@@ -102,7 +103,7 @@ export class AppointmentLocationService {
         locations,
         total: locations.length,
         domain,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -155,7 +156,7 @@ export class AppointmentLocationService {
           return {
             location: cached,
             domain,
-            retrievedAt: new Date().toISOString(),
+            retrievedAt: nowIso(),
           };
         }
 
@@ -173,7 +174,7 @@ export class AppointmentLocationService {
           const result = {
             location,
             domain,
-            retrievedAt: new Date().toISOString(),
+            retrievedAt: nowIso(),
           };
 
           void this.loggingService.log(
@@ -205,7 +206,7 @@ export class AppointmentLocationService {
       const result = {
         location,
         domain,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -256,7 +257,7 @@ export class AppointmentLocationService {
         locationId,
         domain,
         total: doctors.length,
-        retrievedAt: new Date().toISOString(),
+        retrievedAt: nowIso(),
       };
 
       // Cache the result
@@ -310,7 +311,7 @@ export class AppointmentLocationService {
         locationId,
         domain,
         stats,
-        calculatedAt: new Date().toISOString(),
+        calculatedAt: nowIso(),
       };
 
       // Cache the result
