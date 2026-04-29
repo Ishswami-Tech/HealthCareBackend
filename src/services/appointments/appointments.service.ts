@@ -1747,6 +1747,7 @@ export class AppointmentsService {
       clinicId,
       ...(dto.locationId ? { locationId: dto.locationId } : {}),
       type: AppointmentType.VIDEO_CALL,
+      treatmentType: dto.treatmentType || TreatmentType.GENERAL_CONSULTATION,
       date: normalizedSlotDate,
       time: slotTime,
       duration: dto.duration,

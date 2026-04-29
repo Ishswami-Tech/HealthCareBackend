@@ -921,6 +921,16 @@ export class ProposeVideoSlotsDto {
   @Max(120)
   duration!: number;
 
+  @ApiPropertyOptional({
+    example: 'GENERAL_CONSULTATION',
+    description: 'Clinical intent of the video appointment',
+    enum: TreatmentType,
+    default: TreatmentType.GENERAL_CONSULTATION,
+  })
+  @IsOptional()
+  @IsEnum(TreatmentType, { message: 'Treatment type must be a valid type' })
+  treatmentType?: TreatmentType = TreatmentType.GENERAL_CONSULTATION;
+
   @ApiProperty({
     type: () => [ProposedSlotItemDto],
     minItems: 3,
