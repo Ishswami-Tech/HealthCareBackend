@@ -435,11 +435,20 @@ Since `CACHE_PROVIDER=dragonfly`, Redis is not needed. Set
 | `VIDEO_ENABLED`             | `true`                                                              |
 | `VIDEO_PROVIDER`            | `openvidu`                                                          |
 | `OPENVIDU_URL`              | `https://video.ishswami.in`                                         |
+| `OPENVIDU_PUBLICURL`        | `https://video.ishswami.in`                                         |
 | `OPENVIDU_SECRET`           | `YOUR_OPENVIDU_SECRET`                                              |
 | `OPENVIDU_DOMAIN`           | `video.ishswami.in`                                                 |
 | `OPENVIDU_WEBHOOK_ENABLED`  | `false`                                                             |
 | `OPENVIDU_WEBHOOK_ENDPOINT` | `https://backend-service-v1.ishswami.in/api/v1/webhooks/openvidu`   |
 | `OPENVIDU_WEBHOOK_EVENTS`   | `sessionCreated,sessionDestroyed,participantJoined,participantLeft` |
+
+Deployment guardrail:
+
+- `OPENVIDU_URL`, `OPENVIDU_PUBLICURL`, and `OPENVIDU_DOMAIN` must all point to
+  the same public video host.
+- Do not deploy with `localhost`, `openvidu-server`, or any internal-only host
+  in those variables.
+- The deploy script fails fast if these values diverge.
 
 **Google OAuth Configuration:**
 

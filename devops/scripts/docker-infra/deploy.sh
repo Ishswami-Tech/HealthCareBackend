@@ -65,6 +65,154 @@ normalize_bool() {
     esac
 }
 
+extract_url_origin() {
+    local value="${1:-}"
+    if [[ -z "${value}" ]]; then
+        echo ""
+        return 0
+    fi
+
+    local normalized="${value}"
+    if [[ ! "${normalized}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then
+        normalized="https://${normalized}"
+    fi
+
+    normalized="${normalized%/}"
+
+    if [[ "${normalized}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://([^/]+) ]]; then
+        local scheme="${BASH_REMATCH[1]}"
+        local authority="${BASH_REMATCH[2]}"
+        authority="${authority%%/*}"
+        authority="${authority#*@}"
+        if [[ "${scheme}" == "https" && "${authority}" =~ :443$ ]]; then
+            authority="${authority%:443}"
+        elif [[ "${scheme}" == "http" && "${authority}" =~ :80$ ]]; then
+            authority="${authority%:80}"
+        fi
+        echo "${scheme}://${authority}"
+    else
+        echo ""
+    fi
+}
+
+extract_url_host() {
+    local origin
+    origin="$(extract_url_origin "${1:-}")"
+    if [[ -z "${origin}" ]]; then
+        echo ""
+        return 0
+    fi
+
+    if [[ "${origin}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)(:([0-9]+))?$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo ""
+    fi
+}
+
+validate_openvidu_configuration() {
+    local openvidu_url="${OPENVIDU_URL:-}"
+    local openvidu_domain="${OPENVIDU_DOMAIN:-}"
+    local openvidu_publicurl="${OPENVIDU_PUBLICURL:-${OPENVIDU_URL:-}}"
+
+    if [[ -z "${openvidu_url}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL environment variable is not set!"
+        log_error "This will cause OpenVidu health checks to fail with hardcoded URL errors"
+        log_error "Please ensure OPENVIDU_URL is set in GitHub Actions environment variables"
+        log_error "Current OPENVIDU_URL value: '${OPENVIDU_URL:-EMPTY}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ -z "${openvidu_domain}" ]]; then
+        log_error "CRITICAL: OPENVIDU_DOMAIN environment variable is not set!"
+        log_error "The OpenVidu deployment must advertise the public host used by the browser"
+        log_error "Current OPENVIDU_DOMAIN value: '${OPENVIDU_DOMAIN:-EMPTY}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    local openvidu_url_origin
+    local openvidu_public_origin
+    openvidu_url_origin="$(extract_url_origin "${openvidu_url}")"
+    openvidu_public_origin="$(extract_url_origin "${openvidu_publicurl}")"
+
+    if [[ -z "${openvidu_url_origin}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL is not a valid URL: '${openvidu_url}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ -z "${openvidu_public_origin}" ]]; then
+        log_error "CRITICAL: OPENVIDU_PUBLICURL is not a valid URL: '${openvidu_publicurl}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_url_origin}" != https://* ]]; then
+        log_error "CRITICAL: OPENVIDU_URL must use HTTPS in production: '${openvidu_url}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_public_origin}" != https://* ]]; then
+        log_error "CRITICAL: OPENVIDU_PUBLICURL must use HTTPS in production: '${openvidu_publicurl}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    local openvidu_url_host
+    local openvidu_domain_host
+    local openvidu_public_host
+    openvidu_url_host="$(extract_url_host "${openvidu_url}")"
+    openvidu_domain_host="$(extract_url_host "${openvidu_domain}")"
+    openvidu_public_host="$(extract_url_host "${openvidu_publicurl}")"
+
+    if [[ -z "${openvidu_url_host}" || -z "${openvidu_domain_host}" || -z "${openvidu_public_host}" ]]; then
+        log_error "CRITICAL: Failed to parse OpenVidu host values"
+        log_error "OPENVIDU_URL='${openvidu_url}'"
+        log_error "OPENVIDU_DOMAIN='${openvidu_domain}'"
+        log_error "OPENVIDU_PUBLICURL='${openvidu_publicurl}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_url_host}" == localhost || "${openvidu_url_host}" == 127.0.0.1 || "${openvidu_url_host}" == "::1" || "${openvidu_url_host}" == "[::1]" || "${openvidu_url_host}" == openvidu-server ]]; then
+        log_error "CRITICAL: OPENVIDU_URL points to a non-public host: '${openvidu_url}'"
+        log_error "Use the public video host that browsers can reach through Cloudflare or your reverse proxy"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_domain_host}" == localhost || "${openvidu_domain_host}" == 127.0.0.1 || "${openvidu_domain_host}" == "::1" || "${openvidu_domain_host}" == "[::1]" || "${openvidu_domain_host}" == openvidu-server ]]; then
+        log_error "CRITICAL: OPENVIDU_DOMAIN points to a non-public host: '${openvidu_domain}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_public_host}" == localhost || "${openvidu_public_host}" == 127.0.0.1 || "${openvidu_public_host}" == "::1" || "${openvidu_public_host}" == "[::1]" || "${openvidu_public_host}" == openvidu-server ]]; then
+        log_error "CRITICAL: OPENVIDU_PUBLICURL points to a non-public host: '${openvidu_publicurl}'"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_url_host}" != "${openvidu_domain_host}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_DOMAIN must match the same public host"
+        log_error "OPENVIDU_URL host: ${openvidu_url_host}"
+        log_error "OPENVIDU_DOMAIN host: ${openvidu_domain_host}"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_url_host}" != "${openvidu_public_host}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_PUBLICURL must match the same public host"
+        log_error "OPENVIDU_URL host: ${openvidu_url_host}"
+        log_error "OPENVIDU_PUBLICURL host: ${openvidu_public_host}"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    if [[ "${openvidu_url_origin}" != "${openvidu_public_origin}" ]]; then
+        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_PUBLICURL must use the same origin"
+        log_error "OPENVIDU_URL origin: ${openvidu_url_origin}"
+        log_error "OPENVIDU_PUBLICURL origin: ${openvidu_public_origin}"
+        return "${EXIT_CRITICAL}"
+    fi
+
+    log_success "OpenVidu configuration validated: ${openvidu_public_origin} (${openvidu_domain_host})"
+    export OPENVIDU_PUBLICURL="${openvidu_url_origin}"
+    export OPENVIDU_DOMAIN="${openvidu_domain_host}"
+    return 0
+}
+
 INFRA_CHANGED=$(normalize_bool "$INFRA_CHANGED")
 APP_CHANGED=$(normalize_bool "$APP_CHANGED")
 INFRA_HEALTHY=$(normalize_bool "$INFRA_HEALTHY")
@@ -673,25 +821,23 @@ deploy_application() {
     # This guarantees new code is deployed when image changes
     # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
     
-    # CRITICAL: Validate OPENVIDU_URL is set before starting containers
-    # This prevents containers from starting with hardcoded/empty OPENVIDU_URL
-    if [[ -z "${OPENVIDU_URL:-}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL environment variable is not set!"
-        log_error "This will cause OpenVidu health checks to fail with hardcoded URL errors"
-        log_error "Please ensure OPENVIDU_URL is set in GitHub Actions environment variables"
-        log_error "Current OPENVIDU_URL value: '${OPENVIDU_URL:-EMPTY}'"
+    # CRITICAL: Validate OpenVidu deployment configuration before starting containers
+    # This prevents containers from starting with internal-only or mismatched public URLs
+    if ! validate_openvidu_configuration; then
         exit $EXIT_CRITICAL
     fi
-    
+
     # Log the URL being used (masked for security)
     local masked_url="${OPENVIDU_URL}"
-    if [[ "${masked_url}" =~ ^https?://([^:]+) ]]; then
+    if [[ "${masked_url}" =~ ^https?://([^/:]+) ]]; then
         masked_url="${BASH_REMATCH[1]}"
     fi
     log_info "Using OPENVIDU_URL: ${masked_url} (from environment variable)"
-    
-    # Explicitly export OPENVIDU_URL to ensure docker-compose can access it
+
+    # Explicitly export OpenVidu variables to ensure docker-compose can access them
     export OPENVIDU_URL="${OPENVIDU_URL}"
+    export OPENVIDU_PUBLICURL="${OPENVIDU_PUBLICURL:-${OPENVIDU_URL}}"
+    export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
     
     log_info "Starting application containers with NEW image (ONLY api and worker, NOT infrastructure containers)..."
     log_info "Using image: ${DOCKER_IMAGE}"
