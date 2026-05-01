@@ -123,13 +123,6 @@ validate_openvidu_configuration() {
         return "${EXIT_CRITICAL}"
     fi
 
-    if [[ -z "${openvidu_domain}" ]]; then
-        log_error "CRITICAL: OPENVIDU_DOMAIN environment variable is not set!"
-        log_error "The OpenVidu deployment must advertise the public host used by the browser"
-        log_error "Current OPENVIDU_DOMAIN value: '${OPENVIDU_DOMAIN:-EMPTY}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
     local openvidu_url_origin
     local openvidu_public_origin
     openvidu_url_origin="$(extract_url_origin "${openvidu_url}")"
@@ -159,6 +152,9 @@ validate_openvidu_configuration() {
     local openvidu_domain_host
     local openvidu_public_host
     openvidu_url_host="$(extract_url_host "${openvidu_url}")"
+    if [[ -z "${openvidu_domain}" && -n "${openvidu_url_host}" ]]; then
+        openvidu_domain="${openvidu_url_host}"
+    fi
     openvidu_domain_host="$(extract_url_host "${openvidu_domain}")"
     openvidu_public_host="$(extract_url_host "${openvidu_publicurl}")"
 
@@ -208,7 +204,7 @@ validate_openvidu_configuration() {
     fi
 
     log_success "OpenVidu configuration validated: ${openvidu_public_origin} (${openvidu_domain_host})"
-    export OPENVIDU_PUBLICURL="${openvidu_url_origin}"
+    export OPENVIDU_PUBLICURL="${openvidu_public_origin}"
     export OPENVIDU_DOMAIN="${openvidu_domain_host}"
     return 0
 }
@@ -463,6 +459,28 @@ deploy_application() {
     if ! validate_container_name "${CONTAINER_PREFIX}worker"; then
         log_error "Invalid worker container name"
         return 1
+    fi
+
+    # Ensure compose interpolation always has a public OpenVidu URL/domain.
+    # This is a safe fallback for deployments where the source env file is incomplete.
+    if [[ -z "${OPENVIDU_PUBLICURL:-}" && -n "${OPENVIDU_URL:-}" ]]; then
+        export OPENVIDU_PUBLICURL="${OPENVIDU_URL}"
+        log_warning "OPENVIDU_PUBLICURL was missing; derived it from OPENVIDU_URL"
+    fi
+
+    if [[ -z "${OPENVIDU_DOMAIN:-}" && -n "${OPENVIDU_URL:-}" ]]; then
+        local openvidu_domain_guess="${OPENVIDU_URL#*://}"
+        openvidu_domain_guess="${openvidu_domain_guess%%/*}"
+        openvidu_domain_guess="${openvidu_domain_guess%%:*}"
+        if [[ -n "${openvidu_domain_guess}" ]]; then
+            export OPENVIDU_DOMAIN="${openvidu_domain_guess}"
+            log_warning "OPENVIDU_DOMAIN was missing; derived it from OPENVIDU_URL"
+        fi
+    fi
+
+    if [[ -z "${COTURN_DOMAIN:-}" && -n "${OPENVIDU_DOMAIN:-}" ]]; then
+        export COTURN_DOMAIN="${OPENVIDU_DOMAIN}"
+        log_warning "COTURN_DOMAIN was missing; derived it from OPENVIDU_DOMAIN"
     fi
     
     # Authenticate with GitHub Container Registry if credentials are available
@@ -835,9 +853,18 @@ deploy_application() {
     log_info "Using OPENVIDU_URL: ${masked_url} (from environment variable)"
 
     # Explicitly export OpenVidu variables to ensure docker-compose can access them
+    if [[ -z "${OPENVIDU_PUBLICURL:-}" && -n "${OPENVIDU_URL:-}" ]]; then
+        export OPENVIDU_PUBLICURL="${OPENVIDU_URL}"
+    fi
+
+    if [[ -z "${OPENVIDU_DOMAIN:-}" && -n "${OPENVIDU_URL:-}" ]]; then
+        export OPENVIDU_DOMAIN="$(extract_url_host "${OPENVIDU_URL}")"
+    fi
+
     export OPENVIDU_URL="${OPENVIDU_URL}"
-    export OPENVIDU_PUBLICURL="${OPENVIDU_PUBLICURL:-${OPENVIDU_URL}}"
+    export OPENVIDU_PUBLICURL="${OPENVIDU_PUBLICURL}"
     export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
+    export COTURN_DOMAIN="${COTURN_DOMAIN:-${OPENVIDU_DOMAIN}}"
     
     log_info "Starting application containers with NEW image (ONLY api and worker, NOT infrastructure containers)..."
     log_info "Using image: ${DOCKER_IMAGE}"
