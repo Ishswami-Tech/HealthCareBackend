@@ -73,6 +73,8 @@ extract_url_origin() {
     fi
 
     local normalized="${value}"
+    normalized="${normalized#"${normalized%%[![:space:]]*}"}"
+    normalized="${normalized%"${normalized##*[![:space:]]}"}"
     if [[ ! "${normalized}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then
         normalized="https://${normalized}"
     fi
@@ -104,7 +106,7 @@ extract_url_host() {
     fi
 
     if [[ "${origin}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)(:([0-9]+))?$ ]]; then
-        echo "${BASH_REMATCH[1]}"
+        echo "${BASH_REMATCH[1],,}"
     else
         echo ""
     fi
@@ -183,24 +185,22 @@ validate_openvidu_configuration() {
     fi
 
     if [[ "${openvidu_url_host}" != "${openvidu_domain_host}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_DOMAIN must match the same public host"
-        log_error "OPENVIDU_URL host: ${openvidu_url_host}"
-        log_error "OPENVIDU_DOMAIN host: ${openvidu_domain_host}"
-        return "${EXIT_CRITICAL}"
+        log_warning "OPENVIDU_DOMAIN host '${openvidu_domain_host}' differs from OPENVIDU_URL host '${openvidu_url_host}'"
+        log_warning "Normalizing OPENVIDU_DOMAIN to the public OpenVidu host derived from OPENVIDU_URL"
+        openvidu_domain_host="${openvidu_url_host}"
     fi
 
     if [[ "${openvidu_url_host}" != "${openvidu_public_host}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_PUBLICURL must match the same public host"
-        log_error "OPENVIDU_URL host: ${openvidu_url_host}"
-        log_error "OPENVIDU_PUBLICURL host: ${openvidu_public_host}"
-        return "${EXIT_CRITICAL}"
+        log_warning "OPENVIDU_PUBLICURL host '${openvidu_public_host}' differs from OPENVIDU_URL host '${openvidu_url_host}'"
+        log_warning "Normalizing OPENVIDU_PUBLICURL to the public OpenVidu origin derived from OPENVIDU_URL"
+        openvidu_public_host="${openvidu_url_host}"
+        openvidu_public_origin="${openvidu_url_origin}"
     fi
 
     if [[ "${openvidu_url_origin}" != "${openvidu_public_origin}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL and OPENVIDU_PUBLICURL must use the same origin"
-        log_error "OPENVIDU_URL origin: ${openvidu_url_origin}"
-        log_error "OPENVIDU_PUBLICURL origin: ${openvidu_public_origin}"
-        return "${EXIT_CRITICAL}"
+        log_warning "OPENVIDU_PUBLICURL origin '${openvidu_public_origin}' differs from OPENVIDU_URL origin '${openvidu_url_origin}'"
+        log_warning "Normalizing OPENVIDU_PUBLICURL to the public OpenVidu origin derived from OPENVIDU_URL"
+        openvidu_public_origin="${openvidu_url_origin}"
     fi
 
     log_success "OpenVidu configuration validated: ${openvidu_public_origin} (${openvidu_domain_host})"
