@@ -6,6 +6,7 @@ import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { IEventService } from '@core/types';
 import { isEventService } from '@core/types';
 import { LaneType } from '@core/types/enums.types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 
 import type { AppointmentQueueStats } from '@core/types';
 import type {
@@ -125,6 +126,32 @@ export class AppointmentQueueService {
     for (const key of keysToDelete) {
       await this.cacheService.del(key);
     }
+  }
+
+  private async emitAppointmentQueueEvent(
+    eventType: 'appointment.queue.updated' | 'appointment.queue.position.updated',
+    params: {
+      eventId: string;
+      priority?: EventPriority;
+      appointmentId?: string;
+      payload: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    if (!this.typedEventService) {
+      return;
+    }
+
+    await this.typedEventService.emitEnterprise(eventType, {
+      eventId: params.eventId,
+      eventType,
+      category: EventCategory.APPOINTMENT,
+      priority: params.priority ?? EventPriority.NORMAL,
+      timestamp: nowIso(),
+      source: 'AppointmentQueueService',
+      version: '1.0.0',
+      ...(params.appointmentId ? { appointmentId: params.appointmentId } : {}),
+      payload: params.payload,
+    } as EnterpriseEventPayload);
   }
 
   private async rewriteQueueList(queueKey: string, entries: string[]): Promise<void> {
@@ -250,36 +277,29 @@ export class AppointmentQueueService {
         locationId: queueData.locationId,
       });
 
-      if (this.typedEventService) {
-        const totalInQueue = await this.cacheService.lLen(queueKey);
-        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-          eventId: `queue-enqueue-${queueData.entryId}-${Date.now()}`,
-          eventType: 'appointment.queue.updated',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.NORMAL,
-          timestamp: nowIso(),
-          source: 'AppointmentQueueService',
-          version: '1.0.0',
-          payload: {
-            doctorId: queueData.queueOwnerId,
-            domain,
-            action: 'CHECK_IN',
-            appointmentId: queueEntry.appointmentId,
-            entryId: queueData.entryId,
-            queueCategory: queueData.queueCategory,
-            displayLabel:
-              queueData.displayLabel ||
-              this.resolveDisplayLabel(queueData.queueCategory, queueData.type),
-            position: totalInQueue,
-            totalInQueue,
-            clinicId: queueData.clinicId,
-            queueOwnerId: queueData.queueOwnerId,
-            locationId: queueData.locationId,
-            primaryDoctorId: queueData.primaryDoctorId,
-            assignedDoctorId: queueData.assignedDoctorId,
-          },
-        });
-      }
+      const totalInQueue = await this.cacheService.lLen(queueKey);
+      await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+        eventId: `queue-enqueue-${queueData.entryId}-${Date.now()}`,
+        priority: EventPriority.NORMAL,
+        payload: {
+          doctorId: queueData.queueOwnerId,
+          domain,
+          action: 'CHECK_IN',
+          appointmentId: queueEntry.appointmentId,
+          entryId: queueData.entryId,
+          queueCategory: queueData.queueCategory,
+          displayLabel:
+            queueData.displayLabel ||
+            this.resolveDisplayLabel(queueData.queueCategory, queueData.type),
+          position: totalInQueue,
+          totalInQueue,
+          clinicId: queueData.clinicId,
+          queueOwnerId: queueData.queueOwnerId,
+          locationId: queueData.locationId,
+          primaryDoctorId: queueData.primaryDoctorId,
+          assignedDoctorId: queueData.assignedDoctorId,
+        },
+      });
 
       return { success: true, message: 'Queue item added successfully' };
     } catch (error) {
@@ -385,33 +405,26 @@ export class AppointmentQueueService {
       await this.cacheService.rPush(queueKey, entry);
     }
 
-    if (this.typedEventService) {
-      const queueCategory =
-        remainingEntries.length > 0
-          ? (() => {
-              const parsed = JSON.parse(remainingEntries[0] || '{}') as QueueEntryData;
-              return typeof parsed.queueCategory === 'string' ? parsed.queueCategory : undefined;
-            })()
-          : undefined;
-      await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-        eventId: `queue-remove-${entryId}-${Date.now()}`,
-        eventType: 'appointment.queue.updated',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.NORMAL,
-        timestamp: nowIso(),
-        source: 'AppointmentQueueService',
-        version: '1.0.0',
-        payload: {
-          doctorId: queueOwnerId,
-          domain,
-          action: 'REMOVED',
-          entryId,
-          clinicId,
-          queueOwnerId,
-          ...(queueCategory ? { queueCategory } : {}),
-        },
-      });
-    }
+    const queueCategory =
+      remainingEntries.length > 0
+        ? (() => {
+            const parsed = JSON.parse(remainingEntries[0] || '{}') as QueueEntryData;
+            return typeof parsed.queueCategory === 'string' ? parsed.queueCategory : undefined;
+          })()
+        : undefined;
+    await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+      eventId: `queue-remove-${entryId}-${Date.now()}`,
+      priority: EventPriority.NORMAL,
+      payload: {
+        doctorId: queueOwnerId,
+        domain,
+        action: 'REMOVED',
+        entryId,
+        clinicId,
+        queueOwnerId,
+        ...(queueCategory ? { queueCategory } : {}),
+      },
+    });
 
     return { success: true, message: 'Queue item removed successfully' };
   }
@@ -508,31 +521,24 @@ export class AppointmentQueueService {
         appointmentId,
       });
 
-      if (this.typedEventService) {
-        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-          eventId: `queue-transfer-${entryId}-${Date.now()}`,
-          eventType: 'appointment.queue.updated',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.HIGH,
-          timestamp: nowIso(),
-          source: 'AppointmentQueueService',
-          version: '1.0.0',
-          payload: {
-            action: 'TRANSFERRED',
-            entryId,
-            appointmentId,
-            clinicId,
-            domain,
-            queueOwnerId: ownerId,
-            doctorId: ownerId,
-            targetQueue: normalizedTargetQueue,
-            treatmentType: nextType || treatmentType,
-            queueCategory: nextQueueCategory,
-            displayLabel: this.resolveDisplayLabel(nextQueueCategory, nextType || treatmentType),
-            previousQueueCategory,
-          },
-        });
-      }
+      await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+        eventId: `queue-transfer-${entryId}-${Date.now()}`,
+        priority: EventPriority.HIGH,
+        payload: {
+          action: 'TRANSFERRED',
+          entryId,
+          appointmentId,
+          clinicId,
+          domain,
+          queueOwnerId: ownerId,
+          doctorId: ownerId,
+          targetQueue: normalizedTargetQueue,
+          treatmentType: nextType || treatmentType,
+          queueCategory: nextQueueCategory,
+          displayLabel: this.resolveDisplayLabel(nextQueueCategory, nextType || treatmentType),
+          previousQueueCategory,
+        },
+      });
 
       return {
         success: true,
@@ -618,30 +624,23 @@ export class AppointmentQueueService {
       });
 
       // Emit WebSocket event
-      if (this.typedEventService) {
-        const totalInQueue = await this.cacheService.lLen(cacheKey);
-        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-          eventId: `queue-checkin-${appointmentId}-${Date.now()}`,
-          eventType: 'appointment.queue.updated',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.NORMAL,
-          timestamp: nowIso(),
-          source: 'AppointmentQueueService',
-          version: '1.0.0',
-          payload: {
-            doctorId,
-            domain,
-            action: 'CHECK_IN',
-            appointmentId,
-            position: totalInQueue,
-            totalInQueue,
-            clinicId,
-            queueOwnerId: doctorId,
-            locationId,
-            queueCategory: 'DOCTOR_CONSULTATION',
-          },
-        });
-      }
+      const totalInQueue = await this.cacheService.lLen(cacheKey);
+      await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+        eventId: `queue-checkin-${appointmentId}-${Date.now()}`,
+        priority: EventPriority.NORMAL,
+        payload: {
+          doctorId,
+          domain,
+          action: 'CHECK_IN',
+          appointmentId,
+          position: totalInQueue,
+          totalInQueue,
+          clinicId,
+          queueOwnerId: doctorId,
+          locationId,
+          queueCategory: 'DOCTOR_CONSULTATION',
+        },
+      });
 
       void this.loggingService.log(
         LogType.APPOINTMENT,
@@ -828,35 +827,28 @@ export class AppointmentQueueService {
       await this.cacheService.set(cacheKey, result as unknown as string, 60);
 
       // Emit WebSocket event for queue position update
-      if (this.typedEventService) {
-        try {
-          await this.typedEventService.emitEnterprise('appointment.queue.position.updated', {
-            eventId: `queue-position-${appointmentId}-${Date.now()}`,
-            eventType: 'appointment.queue.position.updated',
-            category: EventCategory.APPOINTMENT,
-            priority: EventPriority.NORMAL,
-            timestamp: nowIso(),
-            source: 'AppointmentQueueService',
-            version: '1.0.0',
+      try {
+        await this.emitAppointmentQueueEvent('appointment.queue.position.updated', {
+          eventId: `queue-position-${appointmentId}-${Date.now()}`,
+          priority: EventPriority.NORMAL,
+          appointmentId,
+          payload: {
             appointmentId,
-            payload: {
-              appointmentId,
-              position,
-              totalInQueue,
-              estimatedWaitTime,
-              doctorId,
-              domain,
-            },
-          });
-        } catch (eventError) {
-          // Don't fail queue position retrieval if event emission fails
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `Failed to emit queue position event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
-            'AppointmentQueueService'
-          );
-        }
+            position,
+            totalInQueue,
+            estimatedWaitTime,
+            doctorId,
+            domain,
+          },
+        });
+      } catch (eventError) {
+        // Don't fail queue position retrieval if event emission fails
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Failed to emit queue position event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
+          'AppointmentQueueService'
+        );
       }
 
       await this.loggingService.log(
@@ -927,28 +919,21 @@ export class AppointmentQueueService {
             appointmentId,
           });
 
-          if (this.typedEventService) {
-            await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-              eventId: `queue-confirm-${appointmentId}-${Date.now()}`,
-              eventType: 'appointment.queue.updated',
-              category: EventCategory.APPOINTMENT,
-              priority: EventPriority.NORMAL,
-              timestamp: nowIso(),
-              source: 'AppointmentQueueService',
-              version: '1.0.0',
-              payload: {
-                doctorId: entryData.doctorId || entryData.queueOwnerId,
-                domain,
-                action: 'CONFIRMED',
-                appointmentId,
-                clinicId,
-                queueOwnerId: entryData.queueOwnerId || entryData.doctorId,
-                queueCategory: entryData.queueCategory || 'DOCTOR_CONSULTATION',
-                displayLabel: entryData.displayLabel,
-                locationId: entryData.locationId,
-              },
-            });
-          }
+          await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+            eventId: `queue-confirm-${appointmentId}-${Date.now()}`,
+            priority: EventPriority.NORMAL,
+            payload: {
+              doctorId: entryData.doctorId || entryData.queueOwnerId,
+              domain,
+              action: 'CONFIRMED',
+              appointmentId,
+              clinicId,
+              queueOwnerId: entryData.queueOwnerId || entryData.doctorId,
+              queueCategory: entryData.queueCategory || 'DOCTOR_CONSULTATION',
+              displayLabel: entryData.displayLabel,
+              locationId: entryData.locationId,
+            },
+          });
 
           void this.loggingService.log(
             LogType.APPOINTMENT,
@@ -1020,49 +1005,42 @@ export class AppointmentQueueService {
       });
 
       // Emit WebSocket event for queue update (consultation started)
-      if (this.typedEventService) {
-        try {
-          // Recalculate queue positions after consultation started
-          const updatedEntries = await this.cacheService.lRange(queueKey, 0, -1);
-          const updatedPositions = updatedEntries.map((entry, index) => {
-            const entryData = JSON.parse(entry) as QueueEntryData;
-            return {
-              appointmentId: entryData.appointmentId,
-              position: index + 1,
-            };
-          });
+      try {
+        // Recalculate queue positions after consultation started
+        const updatedEntries = await this.cacheService.lRange(queueKey, 0, -1);
+        const updatedPositions = updatedEntries.map((entry, index) => {
+          const entryData = JSON.parse(entry) as QueueEntryData;
+          return {
+            appointmentId: entryData.appointmentId,
+            position: index + 1,
+          };
+        });
 
-          await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-            eventId: `queue-updated-${doctorId}-${Date.now()}`,
-            eventType: 'appointment.queue.updated',
-            category: EventCategory.APPOINTMENT,
-            priority: EventPriority.NORMAL,
-            timestamp: nowIso(),
-            source: 'AppointmentQueueService',
-            version: '1.0.0',
-            payload: {
-              doctorId,
-              domain,
-              action: 'STARTED',
-              appointmentId,
-              clinicId,
-              queueOwnerId: doctorId,
-              queueCategory: 'DOCTOR_CONSULTATION',
-              displayLabel:
-                entryData.displayLabel ||
-                this.resolveDisplayLabel('DOCTOR_CONSULTATION', entryData.type),
-              queuePositions: updatedPositions,
-            },
-          });
-        } catch (eventError) {
-          // Don't fail if event emission fails
-          void this.loggingService.log(
-            LogType.SYSTEM,
-            LogLevel.WARN,
-            `Failed to emit queue update event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
-            'AppointmentQueueService'
-          );
-        }
+        await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+          eventId: `queue-updated-${doctorId}-${Date.now()}`,
+          priority: EventPriority.NORMAL,
+          payload: {
+            doctorId,
+            domain,
+            action: 'STARTED',
+            appointmentId,
+            clinicId,
+            queueOwnerId: doctorId,
+            queueCategory: 'DOCTOR_CONSULTATION',
+            displayLabel:
+              entryData.displayLabel ||
+              this.resolveDisplayLabel('DOCTOR_CONSULTATION', entryData.type),
+            queuePositions: updatedPositions,
+          },
+        });
+      } catch (eventError) {
+        // Don't fail if event emission fails
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Failed to emit queue update event: ${eventError instanceof Error ? eventError.message : String(eventError)}`,
+          'AppointmentQueueService'
+        );
       }
 
       void this.loggingService.log(
@@ -1169,14 +1147,9 @@ export class AppointmentQueueService {
               queuePositions: updatedPositions,
             },
           });
-          await this.typedEventService.emitEnterprise('appointment.queue.updated', {
+          await this.emitAppointmentQueueEvent('appointment.queue.updated', {
             eventId: `queue-reordered-alias-${doctorId}-${Date.now()}`,
-            eventType: 'appointment.queue.updated',
-            category: EventCategory.APPOINTMENT,
             priority: EventPriority.NORMAL,
-            timestamp: nowIso(),
-            source: 'AppointmentQueueService',
-            version: '1.0.0',
             payload: {
               doctorId,
               date,
@@ -1533,27 +1506,20 @@ export class AppointmentQueueService {
       });
 
       // Emit Event
-      if (this.typedEventService) {
-        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-          eventId: `queue-remove-${appointmentId}-${Date.now()}`,
-          eventType: 'appointment.queue.updated',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.NORMAL,
-          timestamp: nowIso(),
-          source: 'AppointmentQueueService',
-          version: '1.0.0',
-          payload: {
-            doctorId,
-            domain,
-            action: 'REMOVED',
-            appointmentId,
-            clinicId,
-            queueOwnerId: doctorId,
-            queueCategory: 'DOCTOR_CONSULTATION',
-            displayLabel: removedEntry?.displayLabel,
-          },
-        });
-      }
+      await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+        eventId: `queue-remove-${appointmentId}-${Date.now()}`,
+        priority: EventPriority.NORMAL,
+        payload: {
+          doctorId,
+          domain,
+          action: 'REMOVED',
+          appointmentId,
+          clinicId,
+          queueOwnerId: doctorId,
+          queueCategory: 'DOCTOR_CONSULTATION',
+          displayLabel: removedEntry?.displayLabel,
+        },
+      });
 
       return { success: true, message: 'Patient removed from queue' };
     } catch (error) {
@@ -1612,29 +1578,22 @@ export class AppointmentQueueService {
       });
 
       // Emit Event
-      if (this.typedEventService) {
-        await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-          eventId: `queue-callnext-${doctorId}-${Date.now()}`,
-          eventType: 'appointment.queue.updated',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.HIGH,
-          timestamp: nowIso(),
-          source: 'AppointmentQueueService',
-          version: '1.0.0',
-          payload: {
-            doctorId,
-            domain,
-            action: 'CALL_NEXT',
-            appointmentId: entryData.appointmentId,
-            entryId: entryData.entryId,
-            nextPatient: entryData,
-            clinicId,
-            queueOwnerId: doctorId,
-            queueCategory: 'DOCTOR_CONSULTATION',
-            displayLabel: entryData.displayLabel,
-          },
-        });
-      }
+      await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+        eventId: `queue-callnext-${doctorId}-${Date.now()}`,
+        priority: EventPriority.HIGH,
+        payload: {
+          doctorId,
+          domain,
+          action: 'CALL_NEXT',
+          appointmentId: entryData.appointmentId,
+          entryId: entryData.entryId,
+          nextPatient: entryData,
+          clinicId,
+          queueOwnerId: doctorId,
+          queueCategory: 'DOCTOR_CONSULTATION',
+          displayLabel: entryData.displayLabel,
+        },
+      });
 
       return { success: true, message: 'Next patient called', nextPatient: entryData };
     } catch (error) {
@@ -1663,25 +1622,18 @@ export class AppointmentQueueService {
       date,
     });
 
-    if (this.typedEventService) {
-      await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-        eventId: `queue-pause-${doctorId}-${Date.now()}`,
-        eventType: 'appointment.queue.updated',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.NORMAL,
-        timestamp: nowIso(),
-        source: 'AppointmentQueueService',
-        version: '1.0.0',
-        payload: {
-          doctorId,
-          domain,
-          action: 'PAUSED',
-          clinicId,
-          queueOwnerId: doctorId,
-          queueCategory: 'DOCTOR_CONSULTATION',
-        },
-      });
-    }
+    await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+      eventId: `queue-pause-${doctorId}-${Date.now()}`,
+      priority: EventPriority.NORMAL,
+      payload: {
+        doctorId,
+        domain,
+        action: 'PAUSED',
+        clinicId,
+        queueOwnerId: doctorId,
+        queueCategory: 'DOCTOR_CONSULTATION',
+      },
+    });
     return { success: true, message: 'Queue paused' };
   }
 
@@ -1699,25 +1651,18 @@ export class AppointmentQueueService {
       date,
     });
 
-    if (this.typedEventService) {
-      await this.typedEventService.emitEnterprise('appointment.queue.updated', {
-        eventId: `queue-resume-${doctorId}-${Date.now()}`,
-        eventType: 'appointment.queue.updated',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.NORMAL,
-        timestamp: nowIso(),
-        source: 'AppointmentQueueService',
-        version: '1.0.0',
-        payload: {
-          doctorId,
-          domain,
-          action: 'RESUMED',
-          clinicId,
-          queueOwnerId: doctorId,
-          queueCategory: 'DOCTOR_CONSULTATION',
-        },
-      });
-    }
+    await this.emitAppointmentQueueEvent('appointment.queue.updated', {
+      eventId: `queue-resume-${doctorId}-${Date.now()}`,
+      priority: EventPriority.NORMAL,
+      payload: {
+        doctorId,
+        domain,
+        action: 'RESUMED',
+        clinicId,
+        queueOwnerId: doctorId,
+        queueCategory: 'DOCTOR_CONSULTATION',
+      },
+    });
     return { success: true, message: 'Queue resumed' };
   }
 

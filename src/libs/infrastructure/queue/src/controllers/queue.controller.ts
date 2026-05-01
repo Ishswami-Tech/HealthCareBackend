@@ -208,8 +208,6 @@ export class QueueController {
     const domain = 'clinic' as const;
     const queueDate = this.safeDate(query.date || this.today());
 
-    const statuses = this.parseStatuses(query.status);
-
     if (query.doctorId) {
       const doctorQueue = await this.appointmentQueueService.getDoctorQueue(
         query.doctorId,
@@ -226,43 +224,33 @@ export class QueueController {
           )
         )
         .filter(entry => this.matchEntry(entry, query));
-      return { success: true, data, meta: { clinicId, domain, total: data.length } };
-    }
-
-    const usesLogicalQueueFilter = this.hasLogicalQueueFilter(query);
-    const clinicQueue = await this.appointmentQueueService.getClinicQueue(
-      clinicId,
-      queueDate,
-      domain
-    );
-    if (clinicQueue.length > 0 && !usesLogicalQueueFilter) {
-      const data = clinicQueue
-        .map((entry, index) =>
-          this.operationalEntry(
-            entry as unknown as QueueEntryLike,
-            Number(entry.position || index + 1),
-            clinicQueue.length
-          )
-        )
-        .filter(entry => this.matchEntry(entry, query));
-      const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
       return {
         success: true,
-        data: data.slice(0, limit),
+        data,
         meta: {
           clinicId,
           domain,
           total: data.length,
           source: 'operational-queue',
           date: queueDate,
-          ...this.queueDashboardMeta(),
         },
       };
     }
 
-    const jobs = await this.queueService.getJobs(HEALTHCARE_QUEUE, { status: statuses, domain });
-    const rows = jobs.map((job, idx) => this.jobEntry(job, idx + 1, jobs.length, clinicId));
-    const data = rows.filter(entry => this.matchEntry(entry, query));
+    const clinicQueue = await this.appointmentQueueService.getClinicQueue(
+      clinicId,
+      queueDate,
+      domain
+    );
+    const data = clinicQueue
+      .map((entry, index) =>
+        this.operationalEntry(
+          entry as unknown as QueueEntryLike,
+          Number(entry.position || index + 1),
+          clinicQueue.length
+        )
+      )
+      .filter(entry => this.matchEntry(entry, query));
     const limit = query.limit ? Math.max(1, Number(query.limit)) : 100;
     return {
       success: true,
@@ -271,7 +259,7 @@ export class QueueController {
         clinicId,
         domain,
         total: data.length,
-        source: 'job-queue-fallback',
+        source: 'operational-queue',
         date: queueDate,
         ...this.queueDashboardMeta(),
       },

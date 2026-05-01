@@ -8,6 +8,7 @@ import { QueueService, AppointmentQueueService } from '@infrastructure/queue';
 import { LoggingService } from '@infrastructure/logging';
 import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
+import type { EnterpriseEventPayload } from '@core/types/event.types';
 import { HealthcareErrorsService } from '@core/errors';
 import { RbacService } from '@core/rbac/rbac.service';
 import {
@@ -442,6 +443,39 @@ export class AppointmentsService {
     checkStatuses: [AppointmentStatus.SCHEDULED] as const,
   };
 
+  private async emitAppointmentEnterpriseEvent(
+    eventType:
+      | 'appointment.created'
+      | 'appointment.updated'
+      | 'appointment.reassigned'
+      | 'appointment.cancelled'
+      | 'appointment.completed'
+      | 'appointment.noshow',
+    params: {
+      eventId: string;
+      clinicId: string;
+      payload: Record<string, unknown>;
+      userId?: string;
+      metadata?: Record<string, unknown>;
+      priority?: EventPriority;
+      source?: string;
+    }
+  ): Promise<void> {
+    await this.eventService.emitEnterprise(eventType, {
+      eventId: params.eventId,
+      eventType,
+      category: EventCategory.APPOINTMENT,
+      priority: params.priority ?? EventPriority.HIGH,
+      timestamp: nowIso(),
+      source: params.source ?? 'AppointmentsService',
+      version: '1.0.0',
+      ...(params.userId ? { userId: params.userId } : {}),
+      clinicId: params.clinicId,
+      ...(params.metadata ? { metadata: params.metadata } : {}),
+      payload: params.payload,
+    } as EnterpriseEventPayload);
+  }
+
   @Cron(CronExpression.EVERY_DAY_AT_3AM)
   async handleNoShowCancellationCron() {
     await this.processNoShowCancellations();
@@ -687,16 +721,11 @@ export class AppointmentsService {
           }
 
           // Emit event for no-show cancellation reporting
-          await this.eventService.emitEnterprise('appointment.noshow', {
+          await this.emitAppointmentEnterpriseEvent('appointment.noshow', {
             eventId: `noshow-${appointment.id}-${Date.now()}`,
-            eventType: 'appointment.noshow',
-            category: EventCategory.APPOINTMENT,
-            priority: EventPriority.NORMAL,
-            timestamp: nowIso(),
-            source: 'AppointmentsService',
-            version: '1.0.0',
-            userId: appointment.patientId,
             clinicId: appointment.clinicId,
+            priority: EventPriority.NORMAL,
+            userId: appointment.patientId,
             payload: {
               appointmentId: appointment.id,
               doctorId: appointment.doctorId,
@@ -1582,16 +1611,11 @@ export class AppointmentsService {
       // No explicit pre-creation is needed.
 
       // Emit enterprise event for real-time WebSocket broadcasting
-      await this.eventService.emitEnterprise('appointment.created', {
+      await this.emitAppointmentEnterpriseEvent('appointment.created', {
         eventId: `appointment-created-${(result.data as Record<string, unknown>)?.['id'] as string}-${Date.now()}`,
-        eventType: 'appointment.created',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.HIGH,
-        timestamp: nowIso(),
-        source: 'AppointmentsService',
-        version: '1.0.0',
-        userId: createDto.patientId,
         clinicId,
+        userId: createDto.patientId,
+        priority: EventPriority.HIGH,
         payload: {
           appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
           userId: createDto.patientId,
@@ -1934,18 +1958,13 @@ export class AppointmentsService {
       doctor?: { userId?: string };
     };
 
-    await this.eventService.emitEnterprise('appointment.updated', {
+    await this.emitAppointmentEnterpriseEvent('appointment.updated', {
       eventId: `appointment-confirmed-slot-${appointmentId}-${Date.now()}`,
-      eventType: 'appointment.updated',
-      category: EventCategory.APPOINTMENT,
+      clinicId,
       priority: EventPriority.NORMAL,
-      timestamp: nowIso(),
-      source: 'AppointmentsService',
-      version: '1.0.0',
       ...(appointmentWithRelations.patient?.userId
         ? { userId: appointmentWithRelations.patient.userId }
         : {}),
-      clinicId,
       metadata: {
         appointmentId,
         clinicId,
@@ -2566,16 +2585,11 @@ export class AppointmentsService {
       }
 
       // Emit enterprise event for real-time WebSocket broadcasting
-      await this.eventService.emitEnterprise('appointment.updated', {
+      await this.emitAppointmentEnterpriseEvent('appointment.updated', {
         eventId: `appointment-updated-${appointmentId}-${Date.now()}`,
-        eventType: 'appointment.updated',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.NORMAL,
-        timestamp: nowIso(),
-        source: 'AppointmentsService',
-        version: '1.0.0',
-        userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
         clinicId,
+        priority: EventPriority.NORMAL,
+        userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
         payload: {
           appointmentId,
           userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -2954,16 +2968,10 @@ export class AppointmentsService {
       );
     }
 
-    await this.eventService.emitEnterprise('appointment.reassigned', {
+    await this.emitAppointmentEnterpriseEvent('appointment.reassigned', {
       eventId: `appointment-reassigned-${appointmentId}-${Date.now()}`,
-      eventType: 'appointment.reassigned',
-      category: EventCategory.APPOINTMENT,
-      priority: EventPriority.HIGH,
-      timestamp: nowIso(),
-      source: 'AppointmentsService',
-      version: '1.0.0',
-      userId: appointment.patientId,
       clinicId,
+      userId: appointment.patientId,
       payload: {
         appointmentId,
         previousDoctorId: appointment.doctorId,
@@ -3055,16 +3063,10 @@ export class AppointmentsService {
       }
 
       // Emit enterprise event for real-time WebSocket broadcasting
-      await this.eventService.emitEnterprise('appointment.cancelled', {
+      await this.emitAppointmentEnterpriseEvent('appointment.cancelled', {
         eventId: `appointment-cancelled-${appointmentId}-${Date.now()}`,
-        eventType: 'appointment.cancelled',
-        category: EventCategory.APPOINTMENT,
-        priority: EventPriority.HIGH,
-        timestamp: nowIso(),
-        source: 'AppointmentsService',
-        version: '1.0.0',
-        userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
         clinicId,
+        userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
         payload: {
           appointmentId,
           userId: (result.data as Record<string, unknown>)?.['patientId'] as string,
@@ -3548,16 +3550,10 @@ export class AppointmentsService {
           appointmentId,
           clinicId
         )) as AppointmentWithRelations | null;
-        await this.eventService.emitEnterprise('appointment.completed', {
+        await this.emitAppointmentEnterpriseEvent('appointment.completed', {
           eventId: `appointment-completed-${appointmentId}-${Date.now()}`,
-          eventType: 'appointment.completed',
-          category: EventCategory.APPOINTMENT,
-          priority: EventPriority.HIGH,
-          timestamp: nowIso(),
-          source: 'AppointmentsService',
-          version: '1.0.0',
-          userId: appointment?.patientId || userId,
           clinicId,
+          userId: appointment?.patientId || userId,
           payload: {
             appointmentId,
             clinicId,

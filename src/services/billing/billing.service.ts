@@ -117,6 +117,31 @@ export class BillingService {
     ]);
   }
 
+  private async emitBillingPaymentStateEvents(params: {
+    paymentId: string;
+    clinicId: string;
+    appointmentId?: string;
+    status?: string;
+  }): Promise<void> {
+    await this.eventService.emit('billing.payment.updated', {
+      paymentId: params.paymentId,
+    });
+    await this.eventService.emit('payment.pending', {
+      paymentId: params.paymentId,
+      clinicId: params.clinicId,
+      ...(params.appointmentId
+        ? {
+            appointmentId: params.appointmentId,
+            status: params.status ?? 'pending',
+          }
+        : {}),
+    });
+  }
+
+  private async emitBillingPaymentUpdatedEvent(paymentId: string): Promise<void> {
+    await this.eventService.emit('billing.payment.updated', { paymentId });
+  }
+
   private assertBillingEntityAccess(
     entity: { clinicId?: string | null; userId?: string | null },
     requester?: BillingAccessContext
@@ -1558,10 +1583,7 @@ export class BillingService {
             }
           );
 
-          await this.eventService.emit('billing.payment.updated', {
-            paymentId: updatedPayment.id,
-          });
-          await this.eventService.emit('payment.pending', {
+          await this.emitBillingPaymentStateEvents({
             paymentId: updatedPayment.id,
             clinicId: updatedPayment.clinicId,
             ...(updatedPayment.appointmentId
@@ -1647,10 +1669,7 @@ export class BillingService {
             }
           );
 
-          await this.eventService.emit('billing.payment.updated', {
-            paymentId: updatedPayment.id,
-          });
-          await this.eventService.emit('payment.pending', {
+          await this.emitBillingPaymentStateEvents({
             paymentId: updatedPayment.id,
             clinicId: updatedPayment.clinicId,
             ...(updatedPayment.appointmentId
@@ -1695,7 +1714,7 @@ export class BillingService {
       { paymentId: id }
     );
 
-    await this.eventService.emit('billing.payment.updated', { paymentId: id });
+    await this.emitBillingPaymentUpdatedEvent(id);
 
     const paymentMetadata =
       payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
@@ -2624,12 +2643,11 @@ export class BillingService {
         }
       );
 
-      await this.eventService.emit('billing.payment.updated', { paymentId: payment.id });
-      await this.eventService.emit('payment.pending', {
+      await this.emitBillingPaymentStateEvents({
         paymentId: payment.id,
+        clinicId: appointment.clinicId,
         appointmentId: appointment.id,
         status: PaymentStatus.PENDING.toLowerCase(),
-        clinicId: appointment.clinicId,
       });
       await this.invalidateUserPaymentCaches(billingUserId || appointment.patientId);
     } else {

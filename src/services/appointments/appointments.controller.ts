@@ -248,7 +248,6 @@ export class AppointmentsController {
     Role.PATIENT,
     Role.RECEPTIONIST,
     Role.DOCTOR,
-    Role.ASSISTANT_DOCTOR,
     Role.NURSE,
     Role.SUPER_ADMIN,
     Role.CLINIC_ADMIN,
@@ -504,7 +503,7 @@ export class AppointmentsController {
   @Post(':id/video/confirm-slot')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.NURSE)
+  @Roles(Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @InvalidateAppointmentCache({
@@ -554,7 +553,7 @@ export class AppointmentsController {
   @Post(':id/video/confirm-final-slot')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.RECEPTIONIST, Role.NURSE)
+  @Roles(Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update')
   @InvalidateAppointmentCache({
@@ -606,7 +605,7 @@ export class AppointmentsController {
   @Post(':id/video/reject')
   @RateLimitAPI()
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR)
+  @Roles(Role.DOCTOR)
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'delete')
   @InvalidateAppointmentCache({

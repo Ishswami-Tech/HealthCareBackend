@@ -104,6 +104,9 @@ export class QueueStatusGateway
         this.eventService.on('appointment.queue.position.updated', (event: unknown) =>
           this.handleQueuePositionUpdate(event as EnterpriseEventPayload)
         );
+        this.eventService.on('queue.metrics.updated', (event: unknown) =>
+          this.handleQueueMetricsUpdate(event as EnterpriseEventPayload)
+        );
       }
 
       this.isInitialized = !!this.loggingService;
@@ -191,6 +194,39 @@ export class QueueStatusGateway
       if (doctorId) this.server.to(`doctor:${doctorId}`).emit('queue.position.updated', payload);
     } catch (error) {
       safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueuePositionUpdate');
+    }
+  }
+
+  private handleQueueMetricsUpdate(event: EnterpriseEventPayload) {
+    try {
+      const payload = event.payload as {
+        queueName?: string;
+        domain?: string;
+        metrics?: unknown;
+        clinicId?: string;
+        locationId?: string;
+      };
+      const { queueName, domain, metrics, clinicId, locationId } = payload;
+
+      if (queueName) {
+        const update = {
+          queueName,
+          domain,
+          metrics,
+          clinicId,
+          locationId,
+          timestamp: nowIso(),
+        };
+
+        const subscribers = this.queueSubscriptions.get(queueName);
+        if (subscribers) {
+          subscribers.forEach(clientId => {
+            this.server.to(clientId).emit('queue_metrics_update', update);
+          });
+        }
+      }
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'QueueStatusGateway.handleQueueMetricsUpdate');
     }
   }
 
@@ -326,6 +362,8 @@ export class QueueStatusGateway
         filters,
         subscribedAt: nowIso(),
       });
+
+      void this.sendQueueSnapshot(client, queueName);
     } catch (_error) {
       safeLogError(this.loggingService, _error, 'QueueStatusGateway.handleSubscribeQueue');
       client.emit('subscription_error', {
@@ -349,6 +387,20 @@ export class QueueStatusGateway
       });
     }
     this.updateConnectionMetrics();
+  }
+
+  private async sendQueueSnapshot(client: Socket, queueName: string) {
+    try {
+      if (!queueName) return;
+      const status = await this.queueService.getQueueStatus(queueName);
+      client.emit('queue_status', {
+        queueName,
+        status,
+        timestamp: nowIso(),
+      });
+    } catch (error) {
+      safeLogError(this.loggingService, error, 'QueueStatusGateway.sendQueueSnapshot');
+    }
   }
 
   private extractTenantId(client: Socket): string {

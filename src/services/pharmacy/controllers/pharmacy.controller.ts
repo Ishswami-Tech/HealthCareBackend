@@ -17,6 +17,9 @@ import {
   UpdateInventoryDto,
   CreatePrescriptionDto,
   UpdatePrescriptionStatusDto,
+  DispensePrescriptionDto,
+  ReversePrescriptionDispenseDto,
+  PharmacyBatchAuditQueryDto,
   PharmacyStatsDto,
   CreateSupplierDto,
   UpdateSupplierDto,
@@ -52,10 +55,19 @@ export class PharmacyController {
   @Cache({ ttl: 300, tags: ['pharmacy', 'inventory'], priority: 'normal' })
   @RateLimitAPI()
   @ApiOperation({ summary: 'Get all medicines in inventory' })
-  async getInventory(@Request() req: ClinicAuthenticatedRequest) {
+  async getInventory(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('lowStock') lowStock?: string,
+    @Query('expiringSoon') expiringSoon?: string,
+    @Query('expiringDays') expiringDays?: string
+  ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.findAllMedicines(clinicId);
+    return this.pharmacyService.findAllMedicines(clinicId, {
+      ...(lowStock === 'true' ? { lowStock: true } : {}),
+      ...(expiringSoon === 'true' ? { expiringSoon: true } : {}),
+      ...(expiringDays ? { expiringDays: Number(expiringDays) || 90 } : {}),
+    });
   }
 
   /**
@@ -111,6 +123,21 @@ export class PharmacyController {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
     return this.pharmacyService.findLowStock(clinicId);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/inventory/expiring-soon
+   * @access PHARMACIST, CLINIC_ADMIN
+   */
+  @Get('inventory/expiring-soon')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @Cache({ ttl: 600, tags: ['pharmacy', 'expiring-soon'], priority: 'high' })
+  @RateLimitAPI()
+  @RequireResourcePermission('inventory', 'read')
+  @ApiOperation({ summary: 'Get medicines expiring soon' })
+  async getExpiringSoon(@Request() req: ClinicAuthenticatedRequest, @Query('days') days?: string) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.findExpiringSoon(clinicId, Number(days) || 90);
   }
 
   /**
@@ -177,7 +204,62 @@ export class PharmacyController {
   ) {
     // 🔒 TENANT ISOLATION: Use validated clinicId from guard context
     const clinicId = req.clinicContext?.clinicId;
-    return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId);
+    return this.pharmacyService.updatePrescriptionStatus(id, dto.status, clinicId, dto.notes);
+  }
+
+  /**
+   * @endpoint POST /pharmacy/prescriptions/:id/dispense
+   * @access PHARMACIST
+   * @description Dispense one or more prescription items, supporting partial completion.
+   */
+  @Post('prescriptions/:id/dispense')
+  @Roles(Role.PHARMACIST)
+  @RequireResourcePermission('prescriptions', 'update')
+  @ApiOperation({ summary: 'Dispense prescription items (partial or full)' })
+  async dispensePrescription(
+    @Param('id') id: string,
+    @Body() dto: DispensePrescriptionDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.dispensePrescription(id, dto, clinicId);
+  }
+
+  /**
+   * @endpoint POST /pharmacy/prescriptions/:id/reverse-dispense
+   * @access PHARMACIST
+   * @description Reverse a dispense correction and restore stock
+   */
+  @Post('prescriptions/:id/reverse-dispense')
+  @Roles(Role.PHARMACIST)
+  @RequireResourcePermission('prescriptions', 'update')
+  @ApiOperation({ summary: 'Reverse prescription dispense' })
+  async reverseDispense(
+    @Param('id') id: string,
+    @Body() dto: ReversePrescriptionDispenseDto,
+    @Request() req: ClinicAuthenticatedRequest
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.reversePrescriptionDispense(id, dto, clinicId);
+  }
+
+  /**
+   * @endpoint GET /pharmacy/audit/batches
+   * @access PHARMACIST, CLINIC_ADMIN
+   * @description Get pharmacy batch audit entries
+   */
+  @Get('audit/batches')
+  @Roles(Role.PHARMACIST, Role.CLINIC_ADMIN)
+  @RequireResourcePermission('prescriptions', 'read')
+  @Cache({ ttl: 120, tags: ['pharmacy', 'batch-audit'], priority: 'normal' })
+  @RateLimitAPI()
+  @ApiOperation({ summary: 'Get pharmacy batch audit entries' })
+  async getBatchAudit(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query() query: PharmacyBatchAuditQueryDto
+  ) {
+    const clinicId = req.clinicContext?.clinicId;
+    return this.pharmacyService.getPharmacyBatchAudit(clinicId, query);
   }
 
   @Get('prescriptions/:id/payment-summary')

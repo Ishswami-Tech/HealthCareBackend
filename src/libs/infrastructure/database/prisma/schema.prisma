@@ -548,16 +548,22 @@ model Prescription {
 }
 
 model PrescriptionItem {
-  id             String       @id @default(uuid())
-  prescriptionId String
-  medicineId     String?
-  quantity       Int          @default(1)
-  dosage         String?
-  frequency      String?
-  duration       String?
-  clinicId       String
-  medicine       Medicine?    @relation(fields: [medicineId], references: [id])
-  prescription   Prescription @relation(fields: [prescriptionId], references: [id])
+  id                       String       @id @default(uuid())
+  prescriptionId           String
+  medicineId               String?
+  quantity                 Int          @default(1)
+  dispensedQuantity        Int          @default(0)
+  dispensedAt              DateTime?
+  dispensedBatchNumber     String?
+  dispensedBatchExpiryDate DateTime?
+  dispenseBatchHistory     Json?
+  dispenseEventHistory     Json?
+  dosage                   String?
+  frequency                String?
+  duration                 String?
+  clinicId                 String
+  medicine                 Medicine?    @relation(fields: [medicineId], references: [id])
+  prescription             Prescription @relation(fields: [prescriptionId], references: [id])
 
   @@index([clinicId])
 }
@@ -2173,6 +2179,7 @@ enum MedicineType {
 
 enum PrescriptionStatus {
   PENDING
+  PARTIAL
   FILLED
   CANCELLED
 }

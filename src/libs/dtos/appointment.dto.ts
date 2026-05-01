@@ -509,6 +509,21 @@ export class UpdateAppointmentDto {
   notes?: string;
 
   @ApiPropertyOptional({
+    example: {
+      consultationDraft: {
+        diagnosis: 'Seasonal allergy',
+        prescription: 'Herbal decoction',
+        notes: 'Patient reports mild congestion',
+        savedAt: '2026-04-30T04:30:00.000Z',
+      },
+    },
+    description: 'Structured appointment metadata for draft and workflow state',
+  })
+  @IsOptional()
+  @IsObject({ message: 'Metadata must be an object' })
+  metadata?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
     example: 'doctor-uuid-456',
     description: 'New doctor ID for the appointment',
   })
@@ -649,6 +664,21 @@ export class AppointmentResponseDto {
   @IsOptional()
   @IsString({ message: 'Notes must be a string' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: {
+      consultationDraft: {
+        diagnosis: 'Seasonal allergy',
+        prescription: 'Herbal decoction',
+        notes: 'Patient reports mild congestion',
+        savedAt: '2026-04-30T04:30:00.000Z',
+      },
+    },
+    description: 'Structured appointment metadata for draft and workflow state',
+  })
+  @IsOptional()
+  @IsObject({ message: 'Metadata must be an object' })
+  metadata?: Record<string, unknown>;
 
   @ApiPropertyOptional({
     example: 0,
@@ -1910,6 +1940,21 @@ export class UpdateAppointmentStatusDto {
   @IsOptional()
   @IsString({ message: 'Notes must be a string' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    example: {
+      consultationDraft: {
+        diagnosis: 'Seasonal allergy',
+        prescription: 'Herbal decoction',
+        notes: 'Patient reports mild congestion',
+        savedAt: '2026-04-30T04:30:00.000Z',
+      },
+    },
+    description: 'Structured appointment metadata for workflow state and audits',
+  })
+  @IsOptional()
+  @IsObject({ message: 'Metadata must be an object' })
+  metadata?: Record<string, unknown>;
 
   // --- Check-in Specific Fields ---
   @ApiPropertyOptional({ description: 'QR Code for check-in verification' })
