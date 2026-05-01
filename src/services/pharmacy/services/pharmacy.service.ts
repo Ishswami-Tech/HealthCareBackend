@@ -11,6 +11,7 @@ import {
   CreateMedicineDto,
   UpdateInventoryDto,
   CreatePrescriptionDto,
+  DispensePrescriptionDto,
   PrescriptionStatus,
   CreateSupplierDto,
   UpdateSupplierDto,
@@ -22,6 +23,80 @@ import { PaymentService } from '@payment/payment.service';
 import type { PaymentIntentOptions, PaymentResult } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 import { AppointmentQueueService } from '@infrastructure/queue';
+
+type PrescriptionDispenseItem = {
+  id?: string;
+  prescriptionItemId?: string | null;
+  medicineId?: string | null;
+  quantity?: number | null;
+  dispensedQuantity?: number | null;
+  dispensedAt?: Date | string | null;
+  dispensedBatchNumber?: string | null;
+  dispensedBatchExpiryDate?: Date | string | null;
+  dispenseBatchHistory?: PrescriptionDispenseBatchHistoryEntry[] | null;
+  dispenseEventHistory?: PrescriptionDispenseBatchHistoryEntry[] | null;
+  medicine?: {
+    price?: number | null;
+    name?: string | null;
+    stock?: number | null;
+  } | null;
+};
+
+type PrescriptionDispenseBatchHistoryEntry = {
+  quantity: number;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
+  dispensedAt: string;
+  medicineId?: string | null;
+  originalMedicineId?: string | null;
+  substituteMedicineId?: string | null;
+  eventType?: 'DISPENSE' | 'SUBSTITUTION' | 'REVERSAL';
+  reason?: string | null;
+  reversedAt?: string | null;
+  reversalReason?: string | null;
+};
+
+type PrescriptionDispenseRequestItem = {
+  medicineId: string;
+  prescriptionItemId?: string;
+  substituteMedicineId?: string;
+  substitutionReason?: string;
+  quantity: number;
+  lots: Array<{
+    quantity: number;
+    batchNumber?: string;
+    expiryDate?: string;
+  }>;
+};
+
+type PharmacyBatchAuditEntry = {
+  prescriptionId: string;
+  prescriptionItemId: string;
+  patientId: string;
+  patientName: string;
+  doctorId: string;
+  doctorName: string;
+  medicineId: string;
+  medicineName: string;
+  originalMedicineId: string;
+  originalMedicineName: string;
+  substituteMedicineId?: string | null;
+  substituteMedicineName?: string | null;
+  batchNumber?: string | null;
+  expiryDate?: string | null;
+  quantity: number;
+  eventType: 'DISPENSE' | 'SUBSTITUTION' | 'REVERSAL';
+  eventAt: string;
+  reason?: string | null;
+  reversedAt?: string | null;
+  reversalReason?: string | null;
+};
+
+type InventoryFilterOptions = {
+  lowStock?: boolean;
+  expiringSoon?: boolean;
+  expiringDays?: number;
+};
 
 @Injectable()
 export class PharmacyService {
@@ -85,9 +160,7 @@ export class PharmacyService {
     return this.isSupportedPaymentProvider(normalized) ? normalized : undefined;
   }
 
-  private getPrescriptionTotal(prescription: {
-    items?: Array<{ quantity?: number | null; medicine?: { price?: number | null } | null }>;
-  }): number {
+  private getPrescriptionTotal(prescription: { items?: PrescriptionDispenseItem[] }): number {
     return Number(
       (prescription.items || [])
         .reduce((sum, item) => {
@@ -120,7 +193,7 @@ export class PharmacyService {
     prescription: {
       id: string;
       date?: Date | string | null;
-      items?: Array<{ quantity?: number | null; medicine?: { price?: number | null } | null }>;
+      items?: PrescriptionDispenseItem[];
     },
     payments: Array<{
       id: string;
@@ -155,6 +228,212 @@ export class PharmacyService {
       canDispense: totalAmount <= 0 || pendingAmount <= 0,
       payments: linkedPayments,
     };
+  }
+
+  private getPrescriptionItemRemainingQuantity(item: PrescriptionDispenseItem): number {
+    return Math.max(0, Number(item.quantity || 0) - Number(item.dispensedQuantity || 0));
+  }
+
+  private getPrescriptionDispenseStatus(items: PrescriptionDispenseItem[]): PrescriptionStatus {
+    return items.every(item => this.getPrescriptionItemRemainingQuantity(item) <= 0)
+      ? PrescriptionStatus.FILLED
+      : PrescriptionStatus.PARTIAL;
+  }
+
+  private normalizeDispenseRequestItems(
+    items?: DispensePrescriptionDto['items']
+  ): PrescriptionDispenseRequestItem[] {
+    if (!items || items.length === 0) {
+      return [];
+    }
+
+    const aggregated = new Map<string, PrescriptionDispenseRequestItem>();
+
+    for (const item of items) {
+      const requestKey = String(item.prescriptionItemId || item.medicineId);
+      const current: PrescriptionDispenseRequestItem = aggregated.get(requestKey) || {
+        medicineId: item.medicineId,
+        ...(item.prescriptionItemId ? { prescriptionItemId: item.prescriptionItemId } : {}),
+        quantity: 0,
+        lots: [],
+      };
+
+      const lotQuantity = Number(item.quantity || 0);
+      current.quantity += lotQuantity;
+      current.lots.push({
+        quantity: lotQuantity,
+        ...(item.batchNumber ? { batchNumber: item.batchNumber } : {}),
+        ...(item.expiryDate ? { expiryDate: item.expiryDate } : {}),
+      });
+
+      aggregated.set(requestKey, current);
+    }
+
+    return Array.from(aggregated.values());
+  }
+
+  private buildFullDispenseRequestItems(
+    prescriptionItems: PrescriptionDispenseItem[]
+  ): PrescriptionDispenseRequestItem[] {
+    return prescriptionItems
+      .filter(item => this.getPrescriptionItemRemainingQuantity(item) > 0 && item.medicineId)
+      .map(item => ({
+        medicineId: String(item.medicineId),
+        quantity: this.getPrescriptionItemRemainingQuantity(item),
+        ...(item.id ? { prescriptionItemId: String(item.id) } : {}),
+        lots: [
+          {
+            quantity: this.getPrescriptionItemRemainingQuantity(item),
+          },
+        ],
+      }));
+  }
+
+  private normalizeStoredDispenseBatchHistory(
+    history: PrescriptionDispenseItem['dispenseBatchHistory']
+  ): PrescriptionDispenseBatchHistoryEntry[] {
+    if (!Array.isArray(history)) {
+      return [];
+    }
+
+    return history
+      .map((entry): PrescriptionDispenseBatchHistoryEntry | null => {
+        const quantity = Number(entry?.quantity || 0);
+        if (quantity <= 0) {
+          return null;
+        }
+
+        return {
+          quantity,
+          ...(entry?.batchNumber ? { batchNumber: entry.batchNumber } : {}),
+          ...(entry?.expiryDate ? { expiryDate: entry.expiryDate } : {}),
+          dispensedAt: String(entry?.dispensedAt || new Date().toISOString()),
+        } as PrescriptionDispenseBatchHistoryEntry;
+      })
+      .filter((entry): entry is PrescriptionDispenseBatchHistoryEntry => Boolean(entry));
+  }
+
+  private normalizeStoredDispenseEventHistory(
+    history: PrescriptionDispenseItem['dispenseEventHistory']
+  ): PrescriptionDispenseBatchHistoryEntry[] {
+    if (!Array.isArray(history)) {
+      return [];
+    }
+
+    return history
+      .map((entry): PrescriptionDispenseBatchHistoryEntry | null => {
+        const quantity = Number(entry?.quantity || 0);
+        if (quantity <= 0) {
+          return null;
+        }
+
+        return {
+          quantity,
+          ...(entry?.batchNumber ? { batchNumber: entry.batchNumber } : {}),
+          ...(entry?.expiryDate ? { expiryDate: entry.expiryDate } : {}),
+          ...(entry?.medicineId ? { medicineId: entry.medicineId } : {}),
+          ...(entry?.originalMedicineId ? { originalMedicineId: entry.originalMedicineId } : {}),
+          ...(entry?.substituteMedicineId
+            ? { substituteMedicineId: entry.substituteMedicineId }
+            : {}),
+          eventType:
+            entry?.eventType === 'REVERSAL'
+              ? 'REVERSAL'
+              : entry?.eventType === 'SUBSTITUTION'
+                ? 'SUBSTITUTION'
+                : 'DISPENSE',
+          dispensedAt: String(entry?.dispensedAt || new Date().toISOString()),
+          ...(entry?.reason ? { reason: entry.reason } : {}),
+          ...(entry?.reversedAt ? { reversedAt: String(entry.reversedAt) } : {}),
+          ...(entry?.reversalReason ? { reversalReason: entry.reversalReason } : {}),
+        } as PrescriptionDispenseBatchHistoryEntry;
+      })
+      .filter((entry): entry is PrescriptionDispenseBatchHistoryEntry => Boolean(entry));
+  }
+
+  private buildDispenseEventHistoryEntry(args: {
+    quantity: number;
+    medicineId: string;
+    originalMedicineId: string;
+    substituteMedicineId?: string | null;
+    batchNumber?: string | null;
+    expiryDate?: string | null;
+    eventType?: 'DISPENSE' | 'SUBSTITUTION' | 'REVERSAL';
+    reason?: string | null;
+    dispensedAt?: Date;
+    reversedAt?: Date | null;
+    reversalReason?: string | null;
+  }): PrescriptionDispenseBatchHistoryEntry {
+    return {
+      quantity: Number(args.quantity || 0),
+      medicineId: args.medicineId,
+      originalMedicineId: args.originalMedicineId,
+      ...(args.substituteMedicineId ? { substituteMedicineId: args.substituteMedicineId } : {}),
+      ...(args.batchNumber ? { batchNumber: args.batchNumber } : {}),
+      ...(args.expiryDate ? { expiryDate: args.expiryDate } : {}),
+      eventType: args.eventType || 'DISPENSE',
+      dispensedAt: String(args.dispensedAt?.toISOString() || new Date().toISOString()),
+      ...(args.reason ? { reason: args.reason } : {}),
+      ...(args.reversedAt ? { reversedAt: args.reversedAt.toISOString() } : {}),
+      ...(args.reversalReason ? { reversalReason: args.reversalReason } : {}),
+    };
+  }
+
+  private appendDispenseHistory(
+    existingHistory: PrescriptionDispenseItem['dispenseBatchHistory'],
+    entries: PrescriptionDispenseBatchHistoryEntry[]
+  ): PrescriptionDispenseBatchHistoryEntry[] {
+    return [...this.normalizeStoredDispenseBatchHistory(existingHistory), ...entries];
+  }
+
+  private appendDispenseEventHistory(
+    existingHistory: PrescriptionDispenseItem['dispenseEventHistory'],
+    entries: PrescriptionDispenseBatchHistoryEntry[]
+  ): PrescriptionDispenseBatchHistoryEntry[] {
+    return [...this.normalizeStoredDispenseEventHistory(existingHistory), ...entries];
+  }
+
+  private async recordPharmacyAuditLog(args: {
+    userId: string;
+    action: string;
+    description: string;
+    clinicId?: string | null;
+    resourceType?: string;
+    resourceId?: string;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          auditLog: { create: (input: PrismaDelegateArgs) => Promise<unknown> };
+        };
+
+        await typedClient.auditLog.create({
+          data: {
+            userId: args.userId,
+            action: args.action,
+            description: args.description,
+            clinicId: args.clinicId ?? null,
+            resourceType: args.resourceType ?? 'PHARMACY',
+            resourceId: args.resourceId ?? null,
+            metadata: args.metadata ?? {},
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      },
+      {
+        userId: args.userId,
+        clinicId: args.clinicId ?? 'unknown',
+        resourceType: args.resourceType ?? 'PHARMACY',
+        operation: 'CREATE',
+        resourceId: args.resourceId ?? '',
+        userRole: 'system',
+        details: {
+          action: args.action,
+          description: args.description,
+          ...(args.metadata || {}),
+        },
+      }
+    );
   }
 
   private getMedicineDeskQueueOwnerId(clinicId: string): string {
@@ -225,6 +504,7 @@ export class PharmacyService {
         ? context.queuePosition
         : null;
     const isActiveQueueEntry = queuePosition !== null;
+    const prescriptionStatus = String(prescription.status || '').toUpperCase();
     const lifecycleStatus = this.getMedicineDeskQueueLifecycleStatus({
       prescriptionStatus: prescription.status ?? null,
       paymentStatus: context.paymentState.paymentStatus,
@@ -243,7 +523,7 @@ export class PharmacyService {
           : lifecycleStatus === 'CANCELLED'
             ? 'CANCELLED'
             : 'PENDING',
-      status: lifecycleStatus,
+      status: prescriptionStatus === 'PARTIAL' ? 'PARTIAL' : lifecycleStatus,
       position: queuePosition,
       queuePosition,
       activeQueueEntry: isActiveQueueEntry,
@@ -357,10 +637,7 @@ export class PharmacyService {
       locationId?: string | null;
       date?: Date | string | null;
       status?: PrescriptionStatus | string | null;
-      items?: Array<{
-        quantity?: number | null;
-        medicine?: { price?: number | null; name?: string | null } | null;
-      }>;
+      items?: PrescriptionDispenseItem[];
       patient?: {
         id?: string;
         name?: string | null;
@@ -455,7 +732,7 @@ export class PharmacyService {
   private async emitMedicineDeskQueueUpdated(
     clinicId: string,
     prescriptionId: string,
-    action: 'CREATED' | 'PAYMENT_UPDATED' | 'DISPENSED' | 'CANCELLED'
+    action: 'CREATED' | 'PAYMENT_UPDATED' | 'DISPENSED' | 'PARTIALLY_DISPENSED' | 'CANCELLED'
   ) {
     try {
       const queue = await this.getMedicineDeskQueue(clinicId);
@@ -606,15 +883,40 @@ export class PharmacyService {
     }
   }
 
-  async findAllMedicines(clinicId?: string) {
+  async findAllMedicines(clinicId?: string, filters?: InventoryFilterOptions) {
     return await this.databaseService.executeHealthcareRead(async client => {
       const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
       const where: Record<string, unknown> = {};
       if (clinicId) where['clinicId'] = clinicId;
 
-      return await typedClient.medicine.findMany({
+      const medicines = await typedClient.medicine.findMany({
         where: where as PrismaDelegateArgs,
       } as PrismaDelegateArgs);
+
+      const normalizedExpiringDays = Math.max(1, Number(filters?.expiringDays || 90));
+      const expiryThreshold = Date.now() + normalizedExpiringDays * 24 * 60 * 60 * 1000;
+
+      return medicines.filter(medicine => {
+        const stock = Number(medicine.stock || 0);
+        const minStockThreshold = Number(medicine.minStockThreshold || 0);
+        const expiryDate = medicine.expiryDate ? new Date(medicine.expiryDate).getTime() : null;
+
+        if (filters?.lowStock && stock > minStockThreshold) {
+          return false;
+        }
+
+        if (filters?.expiringSoon) {
+          if (expiryDate === null) {
+            return false;
+          }
+
+          if (expiryDate > expiryThreshold) {
+            return false;
+          }
+        }
+
+        return true;
+      });
     });
   }
 
@@ -874,8 +1176,13 @@ export class PharmacyService {
   async updatePrescriptionStatus(
     prescriptionId: string,
     status: PrescriptionStatus,
-    clinicId?: string
+    clinicId?: string,
+    notes?: string
   ) {
+    if (status === PrescriptionStatus.FILLED) {
+      return await this.dispensePrescription(prescriptionId, notes ? { notes } : {}, clinicId);
+    }
+
     const prescription = await this.databaseService.executeHealthcareWrite(
       async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -903,13 +1210,12 @@ export class PharmacyService {
           throw new BadRequestException('Cannot update a cancelled prescription');
         }
 
-        const payments = await this.databaseService.findPaymentsSafe({
-          clinicId: existing.clinicId,
-        });
-
         const updatedPrescription = await typedClient.prescription.update({
           where: { id: prescriptionId } as PrismaDelegateArgs,
-          data: { status } as PrismaDelegateArgs,
+          data: {
+            status,
+            ...(notes ? { notes } : {}),
+          } as PrismaDelegateArgs,
           include: {
             items: {
               include: {
@@ -918,27 +1224,6 @@ export class PharmacyService {
             },
           } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
-
-        const paymentState = this.buildPrescriptionPaymentState(updatedPrescription, payments);
-
-        if (status === PrescriptionStatus.FILLED && !paymentState.canDispense) {
-          throw new BadRequestException(
-            `Prescription payment is pending. Remaining amount: INR ${paymentState.pendingAmount}`
-          );
-        }
-
-        if (status === PrescriptionStatus.FILLED && updatedPrescription.items) {
-          for (const item of updatedPrescription.items) {
-            if (item.medicineId) {
-              await typedClient.medicine.update({
-                where: { id: item.medicineId } as PrismaDelegateArgs,
-                data: {
-                  stock: { decrement: item.quantity || 1 },
-                } as PrismaDelegateArgs,
-              });
-            }
-          }
-        }
 
         return updatedPrescription;
       },
@@ -949,7 +1234,7 @@ export class PharmacyService {
         operation: 'UPDATE',
         resourceId: prescriptionId,
         userRole: 'system',
-        details: { status },
+        details: { status, ...(notes ? { notes } : {}) },
       }
     );
 
@@ -970,14 +1255,832 @@ export class PharmacyService {
     }
 
     if (clinicId) {
-      await this.emitMedicineDeskQueueUpdated(
-        clinicId,
-        prescriptionId,
-        status === PrescriptionStatus.FILLED ? 'DISPENSED' : 'CANCELLED'
-      );
+      await this.emitMedicineDeskQueueUpdated(clinicId, prescriptionId, 'CANCELLED');
     }
 
     return prescription;
+  }
+
+  async dispensePrescription(
+    prescriptionId: string,
+    dto: DispensePrescriptionDto,
+    clinicId?: string
+  ) {
+    const dispenseSummary = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          prescriptionItem: {
+            update: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
+        };
+
+        const existing = await typedClient.prescription.findUnique({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+          include: {
+            items: {
+              include: {
+                medicine: true,
+              },
+            },
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        if (!existing) {
+          throw new NotFoundException('Prescription not found');
+        }
+
+        if (clinicId && existing.clinicId !== clinicId) {
+          throw new BadRequestException('Prescription does not belong to this clinic');
+        }
+
+        const normalizedStatus = String(existing.status || '').toUpperCase();
+        if (normalizedStatus === 'CANCELLED') {
+          throw new BadRequestException('Cancelled prescriptions cannot be dispensed');
+        }
+
+        if (normalizedStatus === 'FILLED') {
+          throw new BadRequestException(
+            'Cannot modify a prescription that has already been dispensed'
+          );
+        }
+
+        const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
+        const payments = await this.databaseService.findPaymentsSafe({
+          clinicId: existing.clinicId,
+        });
+        const paymentState = this.buildPrescriptionPaymentState(
+          {
+            id: String(existing.id),
+            date: existing.date,
+            items: existingItems,
+          },
+          payments
+        );
+
+        if (!paymentState.canDispense) {
+          throw new BadRequestException(
+            `Prescription payment is pending. Remaining amount: INR ${paymentState.pendingAmount}`
+          );
+        }
+
+        const requestItems = this.normalizeDispenseRequestItems(dto.items);
+        const effectiveRequestItems =
+          requestItems.length > 0
+            ? requestItems
+            : this.buildFullDispenseRequestItems(existingItems);
+
+        if (effectiveRequestItems.length === 0) {
+          throw new BadRequestException('Prescription has already been fully dispensed');
+        }
+
+        const existingByItemId = new Map(
+          existingItems
+            .filter(item => Boolean(item.id))
+            .map(item => [String(item.id), item] as const)
+        );
+        const existingByMedicineId = new Map<string, PrescriptionDispenseItem[]>();
+        for (const item of existingItems) {
+          if (!item.medicineId) {
+            continue;
+          }
+
+          const key = String(item.medicineId);
+          const currentItems = existingByMedicineId.get(key) || [];
+          currentItems.push(item);
+          existingByMedicineId.set(key, currentItems);
+        }
+        const inventoryMedicineIds = Array.from(
+          new Set(
+            effectiveRequestItems.flatMap(item =>
+              [item.medicineId, item.substituteMedicineId].filter(Boolean)
+            )
+          )
+        ) as string[];
+        const inventoryMedicines = inventoryMedicineIds.length
+          ? await typedClient.medicine.findMany({
+              where: {
+                clinicId: existing.clinicId,
+                id: {
+                  in: inventoryMedicineIds,
+                },
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs)
+          : [];
+        const medicineById = new Map(
+          inventoryMedicines.map(medicine => [String(medicine.id), medicine] as const)
+        );
+        const dispenseAt = dto.dispensedAt ? new Date(dto.dispensedAt) : new Date();
+
+        if (Number.isNaN(dispenseAt.getTime())) {
+          throw new BadRequestException('Invalid dispensedAt value');
+        }
+
+        let totalRequestedQuantity = 0;
+        let totalDispensedQuantity = 0;
+        const appliedRequests: Array<{
+          prescriptionItemId: string;
+          requestItem: PrescriptionDispenseRequestItem;
+          inventoryMedicineId: string;
+          lotHistory: PrescriptionDispenseBatchHistoryEntry[];
+          eventHistory: PrescriptionDispenseBatchHistoryEntry[];
+        }> = [];
+
+        for (const requestItem of effectiveRequestItems) {
+          const inventoryMedicineId = requestItem.substituteMedicineId || requestItem.medicineId;
+          const inventoryMedicine = medicineById.get(inventoryMedicineId);
+
+          if (!inventoryMedicine) {
+            throw new BadRequestException(
+              requestItem.substituteMedicineId
+                ? `Substitute medicine ${inventoryMedicineId} is not part of this clinic inventory`
+                : `Medicine ${requestItem.medicineId} is not part of this clinic inventory`
+            );
+          }
+
+          const prescriptionItem = requestItem.prescriptionItemId
+            ? existingByItemId.get(requestItem.prescriptionItemId)
+            : (existingByMedicineId.get(requestItem.medicineId) || []).find(
+                item => this.getPrescriptionItemRemainingQuantity(item) > 0
+              );
+
+          if (!prescriptionItem) {
+            throw new BadRequestException(
+              requestItem.prescriptionItemId
+                ? `Prescription item ${requestItem.prescriptionItemId} is not part of this prescription`
+                : `Medicine ${requestItem.medicineId} is not part of this prescription`
+            );
+          }
+
+          const remainingQuantity = this.getPrescriptionItemRemainingQuantity(prescriptionItem);
+          if (remainingQuantity <= 0) {
+            throw new BadRequestException(
+              `Medicine ${requestItem.medicineId} has already been fully dispensed`
+            );
+          }
+
+          if (requestItem.quantity > remainingQuantity) {
+            throw new BadRequestException(
+              `Requested quantity for medicine ${requestItem.medicineId} exceeds remaining quantity (${remainingQuantity})`
+            );
+          }
+
+          const availableStock = Number(inventoryMedicine.stock || 0);
+          if (availableStock < requestItem.quantity) {
+            throw new BadRequestException(
+              `Insufficient stock for medicine ${inventoryMedicineId}. Available: ${availableStock}, requested: ${requestItem.quantity}`
+            );
+          }
+
+          const requestLots =
+            requestItem.lots.length > 0
+              ? requestItem.lots
+              : [
+                  {
+                    quantity: requestItem.quantity,
+                  },
+                ];
+          const lotHistory: PrescriptionDispenseBatchHistoryEntry[] = requestLots.map(lot => ({
+            quantity: Number(lot.quantity || 0),
+            ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
+            ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
+            medicineId: inventoryMedicineId,
+            originalMedicineId: requestItem.medicineId,
+            ...(requestItem.substituteMedicineId
+              ? { substituteMedicineId: requestItem.substituteMedicineId }
+              : {}),
+            eventType: requestItem.substituteMedicineId
+              ? ('SUBSTITUTION' as const)
+              : ('DISPENSE' as const),
+            ...(requestItem.substitutionReason ? { reason: requestItem.substitutionReason } : {}),
+            dispensedAt: dispenseAt.toISOString(),
+          }));
+          const eventHistory = requestLots.map(lot =>
+            this.buildDispenseEventHistoryEntry({
+              quantity: Number(lot.quantity || 0),
+              medicineId: inventoryMedicineId,
+              originalMedicineId: requestItem.medicineId,
+              ...(requestItem.substituteMedicineId
+                ? { substituteMedicineId: requestItem.substituteMedicineId }
+                : {}),
+              ...(lot.batchNumber ? { batchNumber: lot.batchNumber } : {}),
+              ...(lot.expiryDate ? { expiryDate: lot.expiryDate } : {}),
+              eventType: requestItem.substituteMedicineId ? 'SUBSTITUTION' : 'DISPENSE',
+              ...(requestItem.substitutionReason ? { reason: requestItem.substitutionReason } : {}),
+              dispensedAt: dispenseAt,
+            })
+          );
+          const latestBatchNumber =
+            [...requestLots].reverse().find(lot => Boolean(lot.batchNumber))?.batchNumber || null;
+          const latestBatchExpiryDate =
+            [...requestLots].reverse().find(lot => Boolean(lot.expiryDate))?.expiryDate || null;
+
+          totalRequestedQuantity += requestItem.quantity;
+          totalDispensedQuantity += requestItem.quantity;
+
+          await typedClient.medicine.update({
+            where: { id: inventoryMedicineId } as PrismaDelegateArgs,
+            data: {
+              stock: { decrement: requestItem.quantity },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          const nextDispensedQuantity =
+            Number(prescriptionItem.dispensedQuantity || 0) + requestItem.quantity;
+
+          await typedClient.prescriptionItem.update({
+            where: { id: String(prescriptionItem.id) } as PrismaDelegateArgs,
+            data: {
+              dispensedQuantity: nextDispensedQuantity,
+              dispensedAt: dispenseAt,
+              ...(latestBatchNumber ? { dispensedBatchNumber: latestBatchNumber } : {}),
+              ...(latestBatchExpiryDate
+                ? { dispensedBatchExpiryDate: new Date(latestBatchExpiryDate) }
+                : {}),
+              dispenseBatchHistory: this.appendDispenseHistory(
+                prescriptionItem.dispenseBatchHistory || null,
+                lotHistory
+              ),
+              dispenseEventHistory: this.appendDispenseEventHistory(
+                prescriptionItem.dispenseEventHistory || null,
+                eventHistory
+              ),
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          appliedRequests.push({
+            prescriptionItemId: String(prescriptionItem.id),
+            requestItem,
+            inventoryMedicineId,
+            lotHistory,
+            eventHistory,
+          });
+        }
+
+        const requestItemsByItemId = new Map(
+          effectiveRequestItems
+            .filter(item => Boolean(item.prescriptionItemId))
+            .map(item => [String(item.prescriptionItemId), item] as const)
+        );
+        const requestItemsByMedicineId = new Map<string, PrescriptionDispenseRequestItem[]>();
+        for (const item of effectiveRequestItems) {
+          if (item.prescriptionItemId) {
+            continue;
+          }
+
+          const currentItems = requestItemsByMedicineId.get(item.medicineId) || [];
+          currentItems.push(item);
+          requestItemsByMedicineId.set(item.medicineId, currentItems);
+        }
+
+        const updatedItems = existingItems.map(item => {
+          const requestItem = item.id
+            ? requestItemsByItemId.get(String(item.id))
+            : item.medicineId
+              ? (requestItemsByMedicineId.get(String(item.medicineId)) || [])[0]
+              : undefined;
+          const dispensedQuantity = Number(item.dispensedQuantity || 0);
+          const nextDispensedQuantity = requestItem
+            ? dispensedQuantity + requestItem.quantity
+            : dispensedQuantity;
+          const appliedRequest = item.id
+            ? appliedRequests.find(entry => entry.prescriptionItemId === String(item.id))
+            : item.medicineId
+              ? appliedRequests.find(
+                  entry => entry.requestItem.medicineId === String(item.medicineId)
+                )
+              : undefined;
+          const requestLots =
+            appliedRequest?.requestItem.lots && appliedRequest.requestItem.lots.length > 0
+              ? appliedRequest.requestItem.lots
+              : requestItem
+                ? [{ quantity: requestItem.quantity }]
+                : [];
+          const latestBatchNumber =
+            [...requestLots].reverse().find(lot => Boolean(lot.batchNumber))?.batchNumber || null;
+          const latestBatchExpiryDate =
+            [...requestLots].reverse().find(lot => Boolean(lot.expiryDate))?.expiryDate || null;
+
+          return {
+            ...item,
+            dispensedQuantity: nextDispensedQuantity,
+            dispensedAt: requestItem ? dispenseAt : item.dispensedAt || null,
+            ...(latestBatchNumber ? { dispensedBatchNumber: latestBatchNumber } : {}),
+            ...(latestBatchExpiryDate
+              ? { dispensedBatchExpiryDate: new Date(latestBatchExpiryDate) }
+              : {}),
+            ...(requestItem
+              ? {
+                  dispenseBatchHistory: this.appendDispenseHistory(
+                    item.dispenseBatchHistory || null,
+                    appliedRequest?.lotHistory || []
+                  ),
+                  dispenseEventHistory: this.appendDispenseEventHistory(
+                    item.dispenseEventHistory || null,
+                    appliedRequest?.eventHistory || []
+                  ),
+                }
+              : {}),
+          };
+        });
+
+        const nextStatus = this.getPrescriptionDispenseStatus(updatedItems);
+        const remainingQuantity = updatedItems.reduce(
+          (sum, item) => sum + this.getPrescriptionItemRemainingQuantity(item),
+          0
+        );
+
+        await typedClient.prescription.update({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+          data: {
+            status: nextStatus,
+            ...(dto.notes ? { notes: dto.notes } : {}),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        return {
+          status: nextStatus,
+          dispensedAt: dispenseAt,
+          totalRequestedQuantity,
+          totalDispensedQuantity,
+          remainingQuantity,
+        };
+      },
+      {
+        userId: 'system',
+        clinicId: clinicId ?? 'unknown',
+        resourceType: 'PRESCRIPTION',
+        operation: 'UPDATE',
+        resourceId: prescriptionId,
+        userRole: 'system',
+        details: {
+          action: 'DISPENSE',
+          ...(dto.notes ? { notes: dto.notes } : {}),
+        },
+      }
+    );
+
+    const hydratedPrescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
+    const resolvedClinicId = clinicId || String(hydratedPrescription.clinicId || '');
+    const [enrichedPrescription] = await this.enrichPrescriptionsWithPaymentState(
+      [
+        hydratedPrescription as unknown as {
+          id: string;
+          clinicId: string;
+          patientId?: string;
+          doctorId?: string;
+          locationId?: string | null;
+          date?: Date | string | null;
+          status?: PrescriptionStatus | string | null;
+          items?: PrescriptionDispenseItem[];
+          patient?: {
+            id?: string;
+            name?: string | null;
+            user?: {
+              id?: string | null;
+              name?: string | null;
+              phone?: string | null;
+              email?: string | null;
+            } | null;
+          } | null;
+          doctor?: {
+            id?: string;
+            name?: string | null;
+            user?: {
+              id?: string | null;
+              name?: string | null;
+              role?: string | null;
+            } | null;
+          } | null;
+          location?: {
+            id?: string;
+            name?: string | null;
+          } | null;
+        },
+      ],
+      resolvedClinicId || undefined
+    );
+
+    if (resolvedClinicId) {
+      await this.emitMedicineDeskQueueUpdated(
+        resolvedClinicId,
+        prescriptionId,
+        String(dispenseSummary.status || '').toUpperCase() === 'FILLED'
+          ? 'DISPENSED'
+          : 'PARTIALLY_DISPENSED'
+      );
+    }
+
+    return {
+      ...enrichedPrescription,
+      dispenseSummary,
+    };
+  }
+
+  async reversePrescriptionDispense(
+    prescriptionId: string,
+    dto: { reason: string; items?: Array<{ prescriptionItemId?: string; quantity?: number }> },
+    clinicId?: string
+  ) {
+    const reversalSummary = await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          prescriptionItem: {
+            update: (args: PrismaDelegateArgs) => Promise<unknown>;
+          };
+        };
+
+        const existing = await typedClient.prescription.findUnique({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+          include: {
+            items: {
+              include: {
+                medicine: true,
+              },
+            },
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        if (!existing) {
+          throw new NotFoundException('Prescription not found');
+        }
+
+        if (clinicId && existing.clinicId !== clinicId) {
+          throw new BadRequestException('Prescription does not belong to this clinic');
+        }
+
+        const existingItems = (existing.items || []) as PrescriptionDispenseItem[];
+        const targetItemIds = (dto.items || [])
+          .map(item => item.prescriptionItemId)
+          .filter((value): value is string => Boolean(value));
+        const itemsToReverse =
+          targetItemIds.length > 0
+            ? existingItems.filter(item => targetItemIds.includes(String(item.id || '')))
+            : existingItems.filter(item => Number(item.dispensedQuantity || 0) > 0);
+
+        if (itemsToReverse.length === 0) {
+          throw new BadRequestException(
+            'No dispensed prescription items are available for reversal'
+          );
+        }
+
+        const now = new Date();
+        const reversedItemIds: string[] = [];
+
+        for (const item of itemsToReverse) {
+          const requestedReversalQuantity = (dto.items || []).find(
+            reversalItem => String(reversalItem.prescriptionItemId || '') === String(item.id || '')
+          )?.quantity;
+          const currentDispensedQuantity = Number(item.dispensedQuantity || 0);
+          if (
+            typeof requestedReversalQuantity === 'number' &&
+            requestedReversalQuantity > 0 &&
+            requestedReversalQuantity !== currentDispensedQuantity
+          ) {
+            throw new BadRequestException(
+              `Reversal quantity for item ${item.id} must match the currently dispensed quantity (${currentDispensedQuantity})`
+            );
+          }
+
+          const eventHistory = this.normalizeStoredDispenseEventHistory(
+            item.dispenseEventHistory || item.dispenseBatchHistory || null
+          );
+          const reversibleEvents = eventHistory.filter(
+            entry => entry.eventType !== 'REVERSAL' && !entry.reversedAt
+          );
+
+          if (reversibleEvents.length === 0) {
+            continue;
+          }
+
+          const reversalTotal = reversibleEvents.reduce(
+            (sum, entry) => sum + Number(entry.quantity || 0),
+            0
+          );
+          const medicineUpdates = reversibleEvents.reduce((accumulator, entry) => {
+            const medicineId = String(entry.medicineId || item.medicineId || '');
+            if (!medicineId) {
+              return accumulator;
+            }
+
+            accumulator.set(
+              medicineId,
+              (accumulator.get(medicineId) || 0) + Number(entry.quantity || 0)
+            );
+            return accumulator;
+          }, new Map<string, number>());
+
+          for (const [medicineId, quantity] of medicineUpdates.entries()) {
+            await typedClient.medicine.update({
+              where: { id: medicineId } as PrismaDelegateArgs,
+              data: {
+                stock: { increment: quantity },
+              } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          }
+
+          const updatedEventHistory = eventHistory.map(entry => {
+            if (entry.eventType === 'REVERSAL' || entry.reversedAt) {
+              return entry;
+            }
+
+            return {
+              ...entry,
+              reversedAt: now.toISOString(),
+              reversalReason: dto.reason,
+            };
+          });
+
+          const latestReversibleEvent = reversibleEvents[reversibleEvents.length - 1];
+          const originalReversibleEvent = reversibleEvents[0];
+          const reversalEvent = this.buildDispenseEventHistoryEntry({
+            quantity: reversalTotal,
+            medicineId: String(latestReversibleEvent?.medicineId || item.medicineId || ''),
+            originalMedicineId: String(
+              item.medicineId || originalReversibleEvent?.originalMedicineId || ''
+            ),
+            eventType: 'REVERSAL',
+            reason: dto.reason,
+            dispensedAt: now,
+            reversedAt: now,
+            reversalReason: dto.reason,
+          });
+
+          await typedClient.prescriptionItem.update({
+            where: { id: String(item.id) } as PrismaDelegateArgs,
+            data: {
+              dispensedQuantity: 0,
+              dispensedAt: null,
+              dispensedBatchNumber: null,
+              dispensedBatchExpiryDate: null,
+              dispenseBatchHistory: this.appendDispenseHistory(item.dispenseBatchHistory || null, [
+                ...reversibleEvents.map(entry =>
+                  this.buildDispenseEventHistoryEntry({
+                    quantity: Number(entry.quantity || 0),
+                    medicineId: String(entry.medicineId || item.medicineId || ''),
+                    originalMedicineId: String(entry.originalMedicineId || item.medicineId || ''),
+                    ...(entry.substituteMedicineId
+                      ? { substituteMedicineId: entry.substituteMedicineId }
+                      : {}),
+                    ...(entry.batchNumber ? { batchNumber: entry.batchNumber } : {}),
+                    ...(entry.expiryDate ? { expiryDate: entry.expiryDate } : {}),
+                    eventType: 'REVERSAL',
+                    ...(entry.reason ? { reason: entry.reason } : {}),
+                    dispensedAt: new Date(entry.dispensedAt),
+                    reversedAt: now,
+                    reversalReason: dto.reason,
+                  })
+                ),
+              ]),
+              dispenseEventHistory: [...updatedEventHistory, reversalEvent],
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+
+          reversedItemIds.push(String(item.id));
+        }
+
+        const refreshedItems = existingItems.map(item =>
+          reversedItemIds.includes(String(item.id))
+            ? {
+                ...item,
+                dispensedQuantity: 0,
+                dispensedAt: null,
+                dispensedBatchNumber: null,
+                dispensedBatchExpiryDate: null,
+              }
+            : item
+        );
+        const nextStatus = this.getPrescriptionDispenseStatus(refreshedItems);
+
+        await typedClient.prescription.update({
+          where: { id: prescriptionId } as PrismaDelegateArgs,
+          data: {
+            status: nextStatus,
+            notes: `${existing.notes ? `${existing.notes}\n` : ''}Reversal: ${dto.reason}`.trim(),
+          } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+
+        return {
+          reversedItemCount: reversedItemIds.length,
+          status: nextStatus,
+          reversedAt: now.toISOString(),
+        };
+      },
+      {
+        userId: 'system',
+        clinicId: clinicId ?? 'unknown',
+        resourceType: 'PRESCRIPTION',
+        operation: 'UPDATE',
+        resourceId: prescriptionId,
+        userRole: 'system',
+        details: {
+          action: 'REVERSE_DISPENSE',
+          reason: dto.reason,
+        },
+      }
+    );
+
+    const hydratedPrescription = await this.getPrescriptionByIdForAccess(prescriptionId, clinicId);
+    const resolvedClinicId = clinicId || String(hydratedPrescription.clinicId || '');
+
+    if (resolvedClinicId) {
+      await this.emitMedicineDeskQueueUpdated(
+        resolvedClinicId,
+        prescriptionId,
+        String(reversalSummary.status || '').toUpperCase() === 'FILLED'
+          ? 'DISPENSED'
+          : 'PARTIALLY_DISPENSED'
+      );
+      await this.eventService.emit('pharmacy.medicine_desk.updated', {
+        clinicId: resolvedClinicId,
+        prescriptionId,
+        action: 'PRESCRIPTION_REVERSED',
+      });
+    }
+
+    return {
+      ...hydratedPrescription,
+      reversalSummary,
+    };
+  }
+
+  async getPharmacyBatchAudit(
+    clinicId?: string,
+    filters?: {
+      prescriptionId?: string;
+      medicineId?: string;
+      batchNumber?: string;
+      patientId?: string;
+      startDate?: string;
+      endDate?: string;
+    }
+  ): Promise<PharmacyBatchAuditEntry[]> {
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+      const where: Record<string, unknown> = {};
+      if (clinicId) where['clinicId'] = clinicId;
+      if (filters?.prescriptionId) where['id'] = filters.prescriptionId;
+
+      const prescriptions = (await typedClient.prescription.findMany({
+        where: where as PrismaDelegateArgs,
+        include: {
+          items: {
+            include: {
+              medicine: true,
+            },
+          },
+          patient: {
+            include: {
+              user: true,
+            },
+          },
+          doctor: {
+            include: {
+              user: true,
+            },
+          },
+        } as PrismaDelegateArgs,
+      } as PrismaDelegateArgs)) as Array<{
+        id: string;
+        clinicId: string;
+        patientId: string;
+        doctorId: string;
+        patient?: {
+          user?: { name?: string | null } | null;
+        } | null;
+        doctor?: {
+          user?: { name?: string | null } | null;
+        } | null;
+        items?: PrescriptionDispenseItem[];
+      }>;
+
+      const medicineIds = new Set<string>();
+      for (const prescription of prescriptions) {
+        for (const item of prescription.items || []) {
+          if (item.medicineId) {
+            medicineIds.add(String(item.medicineId));
+          }
+          for (const event of this.normalizeStoredDispenseEventHistory(
+            item.dispenseEventHistory || item.dispenseBatchHistory || null
+          )) {
+            if (event.medicineId) medicineIds.add(String(event.medicineId));
+            if (event.originalMedicineId) medicineIds.add(String(event.originalMedicineId));
+            if (event.substituteMedicineId) medicineIds.add(String(event.substituteMedicineId));
+          }
+        }
+      }
+
+      const medicineRecords = medicineIds.size
+        ? await typedClient.medicine.findMany({
+            where: {
+              clinicId: clinicId || undefined,
+              id: { in: Array.from(medicineIds) },
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)
+        : [];
+      const medicineById = new Map(
+        medicineRecords.map(medicine => [String(medicine.id), medicine] as const)
+      );
+
+      const startTime = filters?.startDate ? new Date(filters.startDate).getTime() : null;
+      const endTime = filters?.endDate ? new Date(filters.endDate).getTime() : null;
+
+      const entries: PharmacyBatchAuditEntry[] = [];
+
+      for (const prescription of prescriptions) {
+        if (filters?.patientId && prescription.patientId !== filters.patientId) {
+          continue;
+        }
+
+        const patientName =
+          prescription.patient?.user?.name || `Patient ${prescription.patientId.slice(0, 8)}`;
+        const doctorName =
+          prescription.doctor?.user?.name || `Doctor ${prescription.doctorId.slice(0, 8)}`;
+
+        for (const item of prescription.items || []) {
+          const normalizedEvents = this.normalizeStoredDispenseEventHistory(
+            item.dispenseEventHistory || item.dispenseBatchHistory || null
+          );
+
+          for (const event of normalizedEvents) {
+            const eventAt = event.reversedAt || event.dispensedAt;
+            const eventTimestamp = new Date(eventAt).getTime();
+
+            if (Number.isNaN(eventTimestamp)) {
+              continue;
+            }
+
+            if (startTime !== null && eventTimestamp < startTime) {
+              continue;
+            }
+
+            if (endTime !== null && eventTimestamp > endTime) {
+              continue;
+            }
+
+            if (filters?.batchNumber && String(event.batchNumber || '') !== filters.batchNumber) {
+              continue;
+            }
+
+            const medicineId = String(
+              event.medicineId || item.medicineId || event.originalMedicineId || ''
+            );
+            const originalMedicineId = String(
+              event.originalMedicineId || item.medicineId || medicineId
+            );
+            const substituteMedicineId = event.substituteMedicineId || null;
+
+            if (
+              filters?.medicineId &&
+              ![
+                medicineId,
+                originalMedicineId,
+                substituteMedicineId || '',
+                String(item.medicineId || ''),
+              ].includes(filters.medicineId)
+            ) {
+              continue;
+            }
+
+            entries.push({
+              prescriptionId: prescription.id,
+              prescriptionItemId: String(item.id || ''),
+              patientId: prescription.patientId,
+              patientName,
+              doctorId: prescription.doctorId,
+              doctorName,
+              medicineId,
+              medicineName: String(
+                medicineById.get(medicineId)?.name || item.medicine?.name || 'Medicine'
+              ),
+              originalMedicineId,
+              originalMedicineName: String(
+                medicineById.get(originalMedicineId)?.name || item.medicine?.name || 'Medicine'
+              ),
+              ...(substituteMedicineId
+                ? {
+                    substituteMedicineId,
+                    substituteMedicineName: String(
+                      medicineById.get(substituteMedicineId)?.name || substituteMedicineId
+                    ),
+                  }
+                : {}),
+              ...(event.batchNumber ? { batchNumber: event.batchNumber } : {}),
+              ...(event.expiryDate ? { expiryDate: event.expiryDate } : {}),
+              quantity: Number(event.quantity || 0),
+              eventType: event.eventType || 'DISPENSE',
+              eventAt,
+              ...(event.reason ? { reason: event.reason } : {}),
+              ...(event.reversedAt ? { reversedAt: event.reversedAt } : {}),
+              ...(event.reversalReason ? { reversalReason: event.reversalReason } : {}),
+            });
+          }
+        }
+      }
+
+      return entries.sort(
+        (left, right) => new Date(right.eventAt).getTime() - new Date(left.eventAt).getTime()
+      );
+    });
   }
 
   async getStats(clinicId?: string) {
@@ -1013,10 +2116,7 @@ export class PharmacyService {
           clinicId: string;
           date?: Date | string | null;
           status?: PrescriptionStatus | string | null;
-          items?: Array<{
-            quantity?: number | null;
-            medicine?: { price?: number | null } | null;
-          }>;
+          items?: PrescriptionDispenseItem[];
         }>,
         clinicId
       );
@@ -1142,18 +2242,13 @@ export class PharmacyService {
   }
 
   async findLowStock(clinicId?: string) {
-    return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
-      const where: Record<string, unknown> = {};
-      if (clinicId) where['clinicId'] = clinicId;
+    return await this.findAllMedicines(clinicId, { lowStock: true });
+  }
 
-      // Prisma cannot compare two columns directly in the current delegate path,
-      // so we fetch clinic medicines and apply the threshold filter here.
-      const medicines = await typedClient.medicine.findMany({
-        where: where as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
-
-      return medicines.filter(m => (m.stock ?? 0) <= (m.minStockThreshold ?? 0));
+  async findExpiringSoon(clinicId?: string, expiringDays: number = 90) {
+    return await this.findAllMedicines(clinicId, {
+      expiringSoon: true,
+      expiringDays,
     });
   }
 

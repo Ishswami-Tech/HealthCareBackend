@@ -10,6 +10,7 @@ import {
   IsArray,
   ValidateNested,
   IsEnum,
+  IsIn,
   Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -26,6 +27,7 @@ export enum MedicineType {
 
 export enum PrescriptionStatus {
   PENDING = 'PENDING',
+  PARTIAL = 'PARTIAL',
   FILLED = 'FILLED',
   CANCELLED = 'CANCELLED',
 }
@@ -193,12 +195,149 @@ export class CreatePrescriptionDto {
 
 export class UpdatePrescriptionStatusDto {
   @ApiProperty({
-    enum: PrescriptionStatus,
-    enumName: 'PrescriptionStatus',
+    enum: [PrescriptionStatus.FILLED, PrescriptionStatus.CANCELLED],
     example: PrescriptionStatus.FILLED,
   })
-  @IsEnum(PrescriptionStatus)
+  @IsIn([PrescriptionStatus.FILLED, PrescriptionStatus.CANCELLED])
   status!: PrescriptionStatus;
+
+  @ApiPropertyOptional({ example: 'Prescription cancelled at patient request' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class DispensePrescriptionItemDto {
+  @ApiProperty({ example: 'med-uuid-123', description: 'Medicine ID' })
+  @IsString()
+  medicineId!: string;
+
+  @ApiPropertyOptional({
+    example: 'prescription-item-uuid-123',
+    description:
+      'Specific prescription item ID to dispense against when duplicate medicine lines exist',
+  })
+  @IsOptional()
+  @IsString()
+  prescriptionItemId?: string;
+
+  @ApiPropertyOptional({
+    example: 'medicine-uuid-substitute-123',
+    description:
+      'Optional substitute medicine ID to use when the prescribed medicine is unavailable',
+  })
+  @IsOptional()
+  @IsString()
+  substituteMedicineId?: string;
+
+  @ApiPropertyOptional({
+    example: 'Exact medicine was not available in stock',
+    description: 'Reason for using a substitute medicine',
+  })
+  @IsOptional()
+  @IsString()
+  substitutionReason?: string;
+
+  @ApiProperty({ example: 1, description: 'Quantity to dispense in this request' })
+  @IsInt()
+  @Min(1)
+  quantity!: number;
+
+  @ApiPropertyOptional({ example: 'BATCH-2026-04', description: 'Inventory batch number used' })
+  @IsOptional()
+  @IsString()
+  batchNumber?: string;
+
+  @ApiPropertyOptional({ example: '2027-12-31', description: 'Batch expiry date' })
+  @IsOptional()
+  @IsDateString()
+  expiryDate?: string;
+}
+
+export class DispensePrescriptionDto {
+  @ApiPropertyOptional({
+    type: [DispensePrescriptionItemDto],
+    description:
+      'Medicines to dispense in this request. Omit the array to dispense all remaining quantities.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => DispensePrescriptionItemDto)
+  items?: DispensePrescriptionItemDto[];
+
+  @ApiPropertyOptional({ example: 'Partial dispense completed at pharmacy desk' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @ApiPropertyOptional({ example: '2026-04-30T09:00:00.000Z' })
+  @IsOptional()
+  @IsDateString()
+  dispensedAt?: string;
+}
+
+export class ReversePrescriptionDispenseItemDto {
+  @ApiPropertyOptional({
+    example: 'prescription-item-uuid-123',
+    description: 'Specific prescription item ID to reverse',
+  })
+  @IsOptional()
+  @IsString()
+  prescriptionItemId?: string;
+
+  @ApiPropertyOptional({
+    example: 1,
+    description: 'Quantity to reverse from the most recent dispense events',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  quantity?: number;
+}
+
+export class ReversePrescriptionDispenseDto {
+  @ApiPropertyOptional({
+    type: [ReversePrescriptionDispenseItemDto],
+    description:
+      'Dispense items to reverse. Omit to reverse the latest dispense event across items.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReversePrescriptionDispenseItemDto)
+  items?: ReversePrescriptionDispenseItemDto[];
+
+  @ApiProperty({ example: 'Incorrect batch selection during dispensing' })
+  @IsString()
+  reason!: string;
+}
+
+export class PharmacyBatchAuditQueryDto {
+  @ApiPropertyOptional({ example: 'medicine-uuid-123' })
+  @IsOptional()
+  @IsString()
+  medicineId?: string;
+
+  @ApiPropertyOptional({ example: 'BATCH-2026-04' })
+  @IsOptional()
+  @IsString()
+  batchNumber?: string;
+
+  @ApiPropertyOptional({ example: 'patient-uuid-123' })
+  @IsOptional()
+  @IsString()
+  patientId?: string;
+
+  @ApiPropertyOptional({ example: '2026-05-01T00:00:00.000Z' })
+  @IsOptional()
+  @IsDateString()
+  startDate?: string;
+
+  @ApiPropertyOptional({ example: '2026-05-31T23:59:59.999Z' })
+  @IsOptional()
+  @IsDateString()
+  endDate?: string;
 }
 
 export class PharmacyStatsDto {
