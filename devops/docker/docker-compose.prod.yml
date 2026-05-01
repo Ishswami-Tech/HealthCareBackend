@@ -181,7 +181,7 @@ services:
       # Security: Use environment variable for password (set in .env.production)
       - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
       # Domain configuration: Use same domain as Video service (set in .env.production)
-      - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
+      - COTURN_DOMAIN=${COTURN_DOMAIN:?COTURN_DOMAIN is required}
       # TLS is optional - set to "true" only if Let's Encrypt certificates exist
       - COTURN_TLS_ENABLED=${COTURN_TLS_ENABLED:-false}
     volumes:
@@ -191,16 +191,16 @@ services:
     command:
       - |
         # Check if TLS certificates exist and TLS is enabled
-        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
-        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
+        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN}/fullchain.pem"
+        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN}/privkey.pem"
 
         # Base TURN server arguments (always used)
         TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
         TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
         TURN_ARGS="$${TURN_ARGS} --fingerprint --lt-cred-mech"
         TURN_ARGS="$${TURN_ARGS} --user=openvidu:$${COTURN_PASSWORD:-openvidu}"
-        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
-        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
+        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN}"
+        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN}"
         TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
         TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
 

@@ -297,5 +297,5 @@ ENTRYPOINT ["/app/entrypoint.sh"]
 # Run migrations automatically before starting the app
 # Docker Compose depends_on ensures PostgreSQL is ready
 # Check if migrations exist, otherwise use db push for fresh database
-CMD ["sh", "-c", "if [ -d 'src/libs/infrastructure/database/prisma/migrations' ] && [ \"$(ls -A src/libs/infrastructure/database/prisma/migrations 2>/dev/null)\" ]; then echo 'Migrations found, running migrate deploy...'; node scripts/run-prisma.js migrate || echo 'Migration failed, continuing...'; else echo 'No migrations found, using db push for initial setup...'; node scripts/run-prisma.js push || echo 'Database setup completed or skipped'; fi && node dist/main.js"]
+CMD ["sh", "-c", "if [ -d 'src/libs/infrastructure/database/prisma/migrations' ] && [ \"$(ls -A src/libs/infrastructure/database/prisma/migrations 2>/dev/null)\" ]; then echo 'Migrations found, running migrate deploy...'; node scripts/run-prisma.js migrate; else echo 'No migrations found, using db push for initial setup...'; node scripts/run-prisma.js push; fi && node dist/main.js"]
 
