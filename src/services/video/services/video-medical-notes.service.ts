@@ -144,7 +144,8 @@ export class VideoMedicalNotesService {
 
       // Emit real-time update via Socket.IO
       const mappedNote = this.mapToMedicalNote(noteResult);
-      this.socketService.sendToRoom(`consultation_${dto.consultationId}`, 'medical_note_created', {
+      const socketPayload = {
+        action: 'note_created',
         note: {
           id: mappedNote.id,
           consultationId: mappedNote.consultationId,
@@ -156,7 +157,12 @@ export class VideoMedicalNotesService {
           savedToEHR: mappedNote.savedToEHR,
           createdAt: mappedNote.createdAt.toISOString(),
         } as Record<string, string | boolean | null>,
-      });
+      };
+      this.socketService.sendToRoom(
+        `consultation_${dto.consultationId}`,
+        'note_created',
+        socketPayload
+      );
 
       // Emit event
       await this.eventService.emitEnterprise('video.medical_note.created', {
@@ -271,22 +277,24 @@ export class VideoMedicalNotesService {
 
       // Emit real-time update
       const mappedNote = this.mapToMedicalNote(updatedResult);
+      const socketPayload = {
+        action: 'note_updated',
+        note: {
+          id: mappedNote.id,
+          consultationId: mappedNote.consultationId,
+          userId: mappedNote.userId,
+          noteType: mappedNote.noteType,
+          title: mappedNote.title || null,
+          content: mappedNote.content,
+          isAutoSaved: mappedNote.isAutoSaved,
+          savedToEHR: mappedNote.savedToEHR,
+          updatedAt: mappedNote.updatedAt.toISOString(),
+        } as Record<string, string | boolean | null>,
+      };
       this.socketService.sendToRoom(
         `consultation_${updatedResult.consultationId}`,
-        'medical_note_updated',
-        {
-          note: {
-            id: mappedNote.id,
-            consultationId: mappedNote.consultationId,
-            userId: mappedNote.userId,
-            noteType: mappedNote.noteType,
-            title: mappedNote.title || null,
-            content: mappedNote.content,
-            isAutoSaved: mappedNote.isAutoSaved,
-            savedToEHR: mappedNote.savedToEHR,
-            updatedAt: mappedNote.updatedAt.toISOString(),
-          } as Record<string, string | boolean | null>,
-        }
+        'note_updated',
+        socketPayload
       );
 
       return mappedNote;
