@@ -59,6 +59,7 @@ export const videoConfig = (): VideoProviderConfig => {
     secret: getEnv('OPENVIDU_SECRET') || '',
     domain: getEnv('OPENVIDU_DOMAIN') || '',
     enabled: provider === 'openvidu' && enabled,
+    recordingEnabled: getEnvBoolean('VIDEO_RECORDING_ENABLED', false),
     webhookEnabled: getEnvBoolean('OPENVIDU_WEBHOOK_ENABLED', false),
   };
 

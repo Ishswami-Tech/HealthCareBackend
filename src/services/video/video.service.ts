@@ -260,6 +260,91 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private isRecordingFeatureEnabled(): boolean {
+    return this.configService.getEnvBoolean('VIDEO_RECORDING_ENABLED', false);
+  }
+
+  private async createRecordingRecord(args: {
+    consultationId: string;
+    recordingId: string;
+    fileName: string;
+    filePath: string;
+    storageProvider: string;
+  }): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const delegate = getVideoRecordingDelegate(client);
+        return await delegate.create({
+          data: {
+            consultationId: args.consultationId,
+            fileName: args.fileName,
+            filePath: args.filePath,
+            format: 'mp4',
+            quality: '720p',
+            storageProvider: args.storageProvider,
+            isProcessed: false,
+          },
+        });
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'CREATE_VIDEO_RECORDING',
+        resourceType: 'VIDEO_RECORDING',
+        resourceId: args.recordingId,
+        timestamp: new Date(),
+      }
+    );
+  }
+
+  private async updateConsultationRecordingReference(args: {
+    consultationId: string;
+    recordingId: string;
+    recordingUrl?: string | undefined;
+    duration?: number | undefined;
+    isRecording?: boolean;
+  }): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        const updateData: {
+          recordingId?: string;
+          recordingUrl?: string | null;
+          duration?: number;
+          isRecording?: boolean;
+        } = {};
+
+        if (args.recordingId) {
+          updateData.recordingId = args.recordingId;
+        }
+        if (args.recordingUrl !== undefined) {
+          updateData.recordingUrl = args.recordingUrl ?? null;
+        }
+        if (args.duration !== undefined) {
+          updateData.duration = args.duration;
+        }
+        if (args.isRecording !== undefined) {
+          updateData.isRecording = args.isRecording;
+        }
+
+        return await delegate.update({
+          where: { id: args.consultationId },
+          data: updateData,
+        });
+      },
+      {
+        userId: 'system',
+        userRole: 'system',
+        clinicId: '',
+        operation: 'UPDATE_VIDEO_CONSULTATION',
+        resourceType: 'VIDEO_CONSULTATION',
+        resourceId: args.consultationId,
+        timestamp: new Date(),
+      }
+    );
+  }
+
   /**
    * Get current provider name (for health monitoring)
    * @returns Current provider name or null if not initialized
@@ -2416,6 +2501,16 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   ): Promise<{ recordingId: string; status: string }> {
     try {
+      if (!this.isRecordingFeatureEnabled()) {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Recording is currently disabled',
+          undefined,
+          { appointmentId },
+          'VideoService.startSessionRecording'
+        );
+      }
+
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
@@ -2451,6 +2546,28 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       };
 
       const recording = await activeProvider.startRecording(consultation.roomId, options);
+
+      try {
+        await this.createRecordingRecord({
+          consultationId: consultation.id,
+          recordingId: recording.id,
+          fileName: `recording-${recording.id}.mp4`,
+          filePath: `/recordings/${recording.id}.mp4`,
+          storageProvider: 'openvidu',
+        });
+      } catch (createError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Recording started but failed to create recording metadata: ${createError instanceof Error ? createError.message : 'Unknown error'}`,
+          'VideoService.startSessionRecording',
+          {
+            appointmentId,
+            recordingId: recording.id,
+            error: createError instanceof Error ? createError.message : String(createError),
+          }
+        );
+      }
 
       // Emit event
       await this.eventService.emitEnterprise('video.recording.started', {
@@ -2496,6 +2613,16 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     recordingId: string
   ): Promise<{ recordingId: string; url?: string; duration: number }> {
     try {
+      if (!this.isRecordingFeatureEnabled()) {
+        throw new HealthcareError(
+          ErrorCode.VALIDATION_INVALID_FORMAT,
+          'Recording is currently disabled',
+          undefined,
+          { appointmentId, recordingId },
+          'VideoService.stopSessionRecording'
+        );
+      }
+
       const provider = await this.getProvider();
       if (provider.providerName !== 'openvidu') {
         throw new HealthcareError(
@@ -2516,6 +2643,17 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       };
 
       const recording = await activeProvider.stopRecording(recordingId);
+
+      const consultation = await this.getConsultationSession(appointmentId);
+      if (consultation) {
+        await this.updateConsultationRecordingReference({
+          consultationId: consultation.id,
+          recordingId: recording.id,
+          recordingUrl: recording.url,
+          duration: recording.duration,
+          isRecording: false,
+        });
+      }
 
       // Emit event
       await this.eventService.emitEnterprise('video.recording.stopped', {

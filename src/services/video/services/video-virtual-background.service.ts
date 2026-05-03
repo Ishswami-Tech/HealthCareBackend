@@ -16,19 +16,7 @@ import { SocketService } from '@communication/channels/socket/socket.service';
 import { EventService } from '@infrastructure/events/event.service';
 import { StaticAssetService, AssetType } from '@infrastructure/storage';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
-
-import type { VirtualBackgroundSettingsDto } from '@dtos/video.dto';
-
-export type VirtualBackgroundSettings = VirtualBackgroundSettingsDto;
-
-export interface BackgroundPreset {
-  id: string;
-  name: string;
-  type: 'blur' | 'image';
-  imageUrl?: string;
-  blurIntensity?: number;
-  isDefault: boolean;
-}
+import type { VirtualBackgroundSettings, BackgroundPreset } from '@core/types/video.types';
 
 @Injectable()
 export class VideoVirtualBackgroundService {
@@ -77,11 +65,9 @@ export class VideoVirtualBackgroundService {
     settings: VirtualBackgroundSettings
   ): Promise<VirtualBackgroundSettings> {
     try {
-      // Store settings in cache (client-side processing, no database needed)
       const cacheKey = `virtual_background:${settings.consultationId}:${settings.userId}`;
       await this.cacheService.set(cacheKey, settings, this.BACKGROUND_CACHE_TTL);
 
-      // Emit real-time update via Socket.IO
       const socketData: Record<string, string | number | boolean | null> = {
         userId: settings.userId,
         consultationId: settings.consultationId,
@@ -108,7 +94,6 @@ export class VideoVirtualBackgroundService {
         socketData
       );
 
-      // Emit event
       await this.eventService.emitEnterprise('video.virtual_background.updated', {
         eventId: `virtual-background-${settings.consultationId}-${Date.now()}`,
         eventType: 'video.virtual_background.updated',
@@ -200,10 +185,8 @@ export class VideoVirtualBackgroundService {
       const backgroundId = `bg-${consultationId}-${userId}-${Date.now()}`;
       let imageUrl: string;
 
-      // Use StaticAssetService if available, otherwise fallback to placeholder
       if (this.staticAssetService) {
         try {
-          // Determine content type from file extension
           const extension = fileName.split('.').pop()?.toLowerCase() || 'jpg';
           const contentTypeMap: Record<string, string> = {
             jpg: 'image/jpeg',
@@ -216,19 +199,17 @@ export class VideoVirtualBackgroundService {
           };
           const contentType = contentTypeMap[extension] || 'image/jpeg';
 
-          // Upload to storage (S3 or local fallback)
           const uploadResult = await this.staticAssetService.uploadFile(
             imageData,
             `${backgroundId}-${fileName}`,
             AssetType.IMAGE,
             contentType,
-            true // Public access for backgrounds
+            true
           );
 
           if (uploadResult.success && uploadResult.url) {
             imageUrl = uploadResult.url;
           } else {
-            // Fallback to placeholder if upload fails
             imageUrl = `https://storage.example.com/backgrounds/${backgroundId}/${fileName}`;
             void this.loggingService.log(
               LogType.SYSTEM,
@@ -239,7 +220,6 @@ export class VideoVirtualBackgroundService {
             );
           }
         } catch (uploadError) {
-          // Fallback to placeholder on upload error
           imageUrl = `https://storage.example.com/backgrounds/${backgroundId}/${fileName}`;
           void this.loggingService.log(
             LogType.SYSTEM,
@@ -250,7 +230,6 @@ export class VideoVirtualBackgroundService {
           );
         }
       } else {
-        // StaticAssetService not available, use placeholder
         imageUrl = `https://storage.example.com/backgrounds/${backgroundId}/${fileName}`;
         void this.loggingService.log(
           LogType.SYSTEM,

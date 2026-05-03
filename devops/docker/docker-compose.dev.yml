@@ -444,7 +444,7 @@ services:
 
   # OpenVidu Services
   openvidu-server:
-    image: openvidu/openvidu-server-kms:latest
+    image: openvidu/openvidu-server-kms:2.32.2
     container_name: healthcare-openvidu-server
     # Load environment variables from .env files (priority: .env.local > .env.development > .env)
     env_file:

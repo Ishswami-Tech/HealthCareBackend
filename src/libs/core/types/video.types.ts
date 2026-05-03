@@ -33,6 +33,32 @@ export interface VideoConsultationSession {
 }
 
 /**
+ * Virtual background settings
+ */
+export interface VirtualBackgroundSettings {
+  consultationId: string;
+  userId: string;
+  enabled: boolean;
+  type: 'blur' | 'image' | 'video' | 'none';
+  blurIntensity?: number;
+  imageUrl?: string;
+  videoUrl?: string;
+  customBackgroundId?: string;
+}
+
+/**
+ * Available background preset
+ */
+export interface BackgroundPreset {
+  id: string;
+  name: string;
+  type: 'blur' | 'image';
+  imageUrl?: string;
+  blurIntensity?: number;
+  isDefault: boolean;
+}
+
+/**
  * Video provider token response
  */
 export interface VideoTokenResponse {
@@ -58,6 +84,7 @@ export interface VideoProviderConfig {
     secret: string;
     domain: string;
     enabled: boolean;
+    recordingEnabled?: boolean;
     webhookEnabled?: boolean;
     webhookEndpoint?: string;
     webhookEvents?: string;
