@@ -128,7 +128,7 @@ services:
 
   openvidu-server:
     profiles: ["infrastructure"]
-    image: openvidu/openvidu-server-kms:latest
+    image: openvidu/openvidu-server-kms:2.32.2
     container_name: local-prod-openvidu-server
     hostname: openvidu-server
     ports:

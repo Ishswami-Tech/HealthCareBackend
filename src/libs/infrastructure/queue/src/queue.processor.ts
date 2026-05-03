@@ -6,6 +6,7 @@ import { AppointmentQueueService } from './services/appointment-queue.service';
 
 // Internal imports - Infrastructure
 import { LoggingService } from '@infrastructure/logging';
+import { S3StorageService } from '@infrastructure/storage';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
 
@@ -18,6 +19,7 @@ import {
   type JobMetadata,
 } from '@core/types/queue.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
+import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
 
 // Import InvoicePDFService type (using forwardRef to avoid circular dependency)
@@ -57,6 +59,8 @@ export class QueueProcessor {
     private readonly prisma: DatabaseService,
     @Inject('LOGGING_SERVICE')
     private readonly loggingService: LoggingService,
+    @Inject(S3StorageService)
+    private readonly s3StorageService: S3StorageService,
     @Optional()
     @Inject('InvoicePDFService')
     private readonly invoicePDFService?: InvoicePDFServiceType,
@@ -1408,6 +1412,53 @@ export class QueueProcessor {
       const recordingUrlString = recordingUrl as string;
       const transcodedUrl = recordingUrlString.replace(/\.(mp4|webm)$/, '_transcoded.mp4');
 
+      let storageUrl = recordingUrlString;
+      let storageProvider = 'local';
+      let filePath = recordingUrlString;
+      let fileSize = recordingUrlString.length;
+
+      if (this.s3StorageService.isS3Enabled()) {
+        try {
+          const downloadResponse = await fetch(recordingUrlString);
+          if (!downloadResponse.ok) {
+            throw new Error(
+              `Failed to fetch recording: ${downloadResponse.status} ${downloadResponse.statusText}`
+            );
+          }
+
+          const contentType = downloadResponse.headers.get('content-type') || 'video/mp4';
+          const buffer = Buffer.from(await downloadResponse.arrayBuffer());
+          const fileName = `${recordingId as string}.mp4`;
+          const uploadResult = await this.s3StorageService.uploadFile(
+            buffer,
+            fileName,
+            `video-recordings/${appointmentId as string}`,
+            contentType,
+            false
+          );
+
+          if (uploadResult.success) {
+            storageUrl = uploadResult.url || storageUrl;
+            filePath = uploadResult.key || filePath;
+            fileSize = buffer.byteLength;
+            storageProvider = this.s3StorageService.getStorageProvider();
+          }
+        } catch (storageError) {
+          void this.loggingService.log(
+            LogType.QUEUE,
+            LogLevel.WARN,
+            `Failed to upload video recording to S3, falling back to the source URL`,
+            'QueueProcessor.processVideoRecording',
+            {
+              appointmentId,
+              recordingId,
+              error:
+                storageError instanceof Error ? storageError.message : safeStringify(storageError),
+            }
+          );
+        }
+      }
+
       // 3. Update recording with processed data
       await this.prisma.executeHealthcareWrite(
         async client => {
@@ -1419,6 +1470,10 @@ export class QueueProcessor {
                   processedAt: Date;
                   transcodedUrl?: string;
                   metadata?: Record<string, unknown>;
+                  storageProvider?: string;
+                  storageUrl?: string;
+                  filePath?: string;
+                  fileSize?: bigint;
                 };
               }) => Promise<unknown>;
             };
@@ -1428,6 +1483,10 @@ export class QueueProcessor {
             data: {
               processedAt: new Date(),
               ...(transcodedUrl && { transcodedUrl }),
+              storageProvider,
+              storageUrl,
+              filePath,
+              fileSize: BigInt(fileSize),
               metadata: videoMetadata,
             },
           });
@@ -1446,6 +1505,42 @@ export class QueueProcessor {
         }
       );
 
+      await this.prisma.executeHealthcareWrite(
+        async client => {
+          const consultationDelegate = getVideoConsultationDelegate(client);
+          const consultation = await consultationDelegate.findFirst({
+            where: {
+              appointmentId: appointmentId as string,
+            },
+          });
+
+          if (!consultation) {
+            return null;
+          }
+
+          return await consultationDelegate.update({
+            where: { id: consultation.id },
+            data: {
+              recordingUrl: storageUrl,
+              recordingId: recordingId as string,
+              isRecording: false,
+            },
+          });
+        },
+        {
+          userId: 'system',
+          userRole: 'system',
+          clinicId:
+            (metadataTyped && 'clinicId' in metadataTyped
+              ? safeStringify(metadataTyped['clinicId'])
+              : '') || '',
+          operation: 'UPDATE_VIDEO_CONSULTATION',
+          resourceType: 'VIDEO_CONSULTATION',
+          resourceId: appointmentId as string,
+          timestamp: new Date(),
+        }
+      );
+
       void this.loggingService.log(
         LogType.QUEUE,
         LogLevel.INFO,
@@ -1455,6 +1550,8 @@ export class QueueProcessor {
           appointmentId: appointmentId as string,
           recordingId: recordingId as string,
           transcodedUrl,
+          storageUrl,
+          storageProvider,
           metadata: videoMetadata,
         }
       );

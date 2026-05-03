@@ -27,7 +27,7 @@ spec:
         fsGroup: 1000
       containers:
       - name: openvidu-server
-        image: openvidu/openvidu-server-kms:latest
+        image: openvidu/openvidu-server-kms:2.32.2
         imagePullPolicy: IfNotPresent
         securityContext:
           allowPrivilegeEscalation: false

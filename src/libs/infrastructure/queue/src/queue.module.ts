@@ -24,6 +24,7 @@ import { Queue, Worker, Job } from 'bullmq';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { DatabaseModule } from '@infrastructure/database/database.module';
 import { DatabaseService } from '@infrastructure/database/database.service';
+import { StorageModule } from '@infrastructure/storage';
 import type { JobData, CanonicalJobEnvelope } from '@core/types/queue.types';
 import { AppointmentQueueService } from './services/appointment-queue.service';
 import { QueueController } from './controllers/queue.controller';
@@ -44,6 +45,7 @@ export class QueueModule {
           forwardRef(() => DatabaseModule),
           ConfigModule,
           LoggingModule,
+          StorageModule,
           forwardRef(() => ResilienceModule),
           QueueMonitoringModule,
         ],
@@ -83,6 +85,7 @@ export class QueueModule {
         forwardRef(() => DatabaseModule),
         forwardRef(() => ConfigModule), // Use forwardRef to handle circular dependency with DatabaseModule
         LoggingModule, // Explicitly import LoggingModule to ensure LoggingService is available
+        StorageModule,
         forwardRef(() => ResilienceModule), // Provides CircuitBreakerService for QueueHealthMonitorService
         QueueMonitoringModule,
         // Note: BillingModule NOT imported here to avoid circular dependency
