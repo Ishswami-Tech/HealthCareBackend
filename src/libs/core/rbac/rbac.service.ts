@@ -477,22 +477,31 @@ export class RbacService {
       // Remove duplicates
       const uniquePermissions: string[] = Array.from(new Set(permissions));
 
-      // Cache the result
-      await this.cacheService.set(cacheKey, uniquePermissions, this.CACHE_TTL);
+      if (uniquePermissions.length > 0) {
+        // Cache the result
+        await this.cacheService.set(cacheKey, uniquePermissions, this.CACHE_TTL);
+        return uniquePermissions;
+      }
 
-      return uniquePermissions;
+      const fallbackPermissions = await this.getFallbackRolePermissions(roleIds);
+      if (fallbackPermissions.length > 0) {
+        await this.cacheService.set(cacheKey, fallbackPermissions, this.CACHE_TTL);
+        return fallbackPermissions;
+      }
+
+      return [];
     } catch (_error) {
       void this.loggingService.log(
         LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to get role permissions',
+        LogLevel.WARN,
+        'Failed to get role permissions, falling back to role defaults',
         'RbacService',
         {
           error: _error instanceof Error ? _error.message : String(_error),
           stack: _error instanceof Error ? _error.stack : undefined,
         }
       );
-      return [];
+      return await this.getFallbackRolePermissions(roleIds);
     }
   }
 
@@ -1054,6 +1063,44 @@ export class RbacService {
       );
       return false;
     }
+  }
+
+  /**
+   * Get role-based permissions
+   */
+  private async getFallbackRolePermissions(roleIds: string[]): Promise<string[]> {
+    if (roleIds.length === 0) {
+      return [];
+    }
+
+    const fallbackPermissions = new Set<string>();
+
+    for (const roleId of roleIds) {
+      try {
+        const roleRecord = await this.roleService.getRoleById(roleId);
+        const roleName = roleRecord?.name?.trim();
+        if (!roleName) {
+          continue;
+        }
+
+        const rolePermissions = this.getRoleBasedPermissions(roleName);
+        rolePermissions.forEach(permission => fallbackPermissions.add(permission));
+      } catch (error) {
+        void this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.WARN,
+          `Fallback role permission lookup failed for role ${roleId}`,
+          'RbacService',
+          {
+            roleId,
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          }
+        );
+      }
+    }
+
+    return Array.from(fallbackPermissions);
   }
 
   /**
