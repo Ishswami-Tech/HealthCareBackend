@@ -13,6 +13,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -105,6 +106,7 @@ import {
   AdmitPatientDto,
   WaitingRoomEntryResponseDto,
   CreateMedicalNoteDto,
+  UpdateMedicalNoteDto,
   MedicalNoteResponseDto,
   SaveNoteToEHRDto,
   CreateAnnotationDto,
@@ -1831,6 +1833,48 @@ export class VideoController {
     }
   }
 
+  @Patch('notes/:noteId')
+  @HttpCode(HttpStatus.OK)
+  @RequireResourcePermission('video', 'update')
+  @ApiOperation({
+    summary: 'Update medical note',
+    description: 'Update a medical note during video consultation',
+  })
+  @ApiResponse({ status: 200, type: MedicalNoteResponseDto })
+  async updateMedicalNote(
+    @Param('noteId', ParseUUIDPipe) noteId: string,
+    @Body() dto: Omit<UpdateMedicalNoteDto, 'noteId'>
+  ): Promise<MedicalNoteResponseDto> {
+    try {
+      const note = await this.medicalNotesService.updateNote({
+        ...dto,
+        noteId,
+      } as UpdateMedicalNoteDto);
+      return {
+        id: note.id,
+        consultationId: note.consultationId,
+        userId: note.userId,
+        noteType: note.noteType as VideoNoteType,
+        ...(note.title && { title: note.title }),
+        content: note.content,
+        ...(note.prescription && { prescription: note.prescription }),
+        ...(note.symptoms && { symptoms: note.symptoms }),
+        ...(note.treatmentPlan && { treatmentPlan: note.treatmentPlan }),
+        isAutoSaved: note.isAutoSaved,
+        savedToEHR: note.savedToEHR,
+        ...(note.ehrRecordId && { ehrRecordId: note.ehrRecordId }),
+        createdAt: note.createdAt,
+        updatedAt: note.updatedAt,
+      };
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.updateMedicalNote');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.updateMedicalNote');
+    }
+  }
+
   @Get('notes/:consultationId')
   @RequireResourcePermission('video', 'read')
   @ApiOperation({
@@ -2109,6 +2153,32 @@ export class VideoController {
         throw error;
       }
       throw this.errors.internalServerError('VideoController.updateVirtualBackground');
+    }
+  }
+
+  @Get('virtual-background/:consultationId')
+  @RequireResourcePermission('video', 'read')
+  @ApiOperation({
+    summary: 'Get virtual background settings',
+    description: 'Get the current virtual background settings for the authenticated user',
+  })
+  @ApiResponse({ status: 200, type: VirtualBackgroundSettingsDto })
+  async getVirtualBackground(
+    @Param('consultationId', ParseUUIDPipe) consultationId: string,
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<VirtualBackgroundSettingsDto | null> {
+    try {
+      const authenticatedUser = this.getAuthenticatedVideoUser(req);
+      return await this.virtualBackgroundService.getBackgroundSettings(
+        consultationId,
+        authenticatedUser.userId
+      );
+    } catch (error) {
+      if (error instanceof HealthcareError) {
+        this.errors.handleError(error, 'VideoController.getVirtualBackground');
+        throw error;
+      }
+      throw this.errors.internalServerError('VideoController.getVirtualBackground');
     }
   }
 
