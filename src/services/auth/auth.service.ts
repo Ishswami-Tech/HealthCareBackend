@@ -39,27 +39,6 @@ import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
 // import { ProfileCompletionService } from '@services/profile-completion/profile-completion.service';
 
-/**
- * Staff operational roles that are pre-validated by clinic admin.
- * These roles get isProfileComplete=true at creation since profile
- * completion is a PATIENT onboarding concern, not staff.
- */
-const STAFF_ROLES: ReadonlySet<string> = new Set([
-  Role.RECEPTIONIST,
-  Role.DOCTOR,
-  Role.ASSISTANT_DOCTOR,
-  Role.NURSE,
-  Role.PHARMACIST,
-  Role.THERAPIST,
-  Role.COUNSELOR,
-  Role.LAB_TECHNICIAN,
-  Role.FINANCE_BILLING,
-  Role.SUPPORT_STAFF,
-  Role.CLINIC_ADMIN,
-  Role.CLINIC_LOCATION_HEAD,
-  Role.SUPER_ADMIN,
-]);
-
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
@@ -220,8 +199,8 @@ export class AuthService {
    * User registration
    */
   /**
-   * Single registration endpoint for all users (primarily PATIENT)
-   * Simplified for production - handles clinic validation, user creation, and patient record
+   * Public registration endpoint for patients.
+   * Staff and admin users are created through the privileged /user flow.
    */
   async register(
     registerDto: RegisterDto,
@@ -322,7 +301,16 @@ export class AuthService {
           })()
         : 12; // Safe default - will be updated during profile completion with actual DOB
 
-      const effectiveRole = (registerDto.role || 'PATIENT') as Role;
+      const requestedRole = registerDto.role ?? 'PATIENT';
+      if (requestedRole !== 'PATIENT') {
+        throw this.errors.validationError(
+          'role',
+          'Public registration is limited to patient accounts',
+          'AuthService.register'
+        );
+      }
+
+      const effectiveRole = Role.PATIENT;
       const user = await this.databaseService.createUserSafe({
         email: registerDto.email,
         password: hashedPassword,
@@ -339,8 +327,7 @@ export class AuthService {
         primaryClinicId: clinicUUID,
         ...(registerDto.googleId && { googleId: registerDto.googleId }),
         isVerified: !!registerDto.otp || !!registerDto.googleId,
-        // Staff roles are pre-validated by clinic admin — mark profile as complete
-        ...(STAFF_ROLES.has(effectiveRole) && { isProfileComplete: true }),
+        // Public patient registrations remain incomplete until profile completion is finished.
       });
 
       // 6. Create Patient record if role is PATIENT
@@ -1595,12 +1582,12 @@ export class AuthService {
   private getRequiredProfileFieldsForRole(role: Role): string[] {
     switch (role) {
       case Role.PATIENT:
-        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
+        return ['firstName', 'lastName', 'phone', 'address'];
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
-        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
+        return ['firstName', 'lastName', 'phone', 'address'];
       default:
-        return ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'];
+        return ['firstName', 'lastName', 'phone', 'address'];
     }
   }
 

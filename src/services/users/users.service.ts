@@ -14,6 +14,7 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { CreateUserDto, UserResponseDto, UpdateUserDto, MedicalDocumentDto } from '@dtos/user.dto';
 import { HealthcareErrorsService } from '@core/errors';
 // Removed ProfileCompletionService import as logic is moved here
+import { PatientsService } from '@services/patients/patients.service';
 import type {
   PrismaTransactionClientWithDelegates,
   PrismaDelegateArgs,
@@ -54,51 +55,51 @@ export class UsersService {
    */
   private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
     PATIENT: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     ASSISTANT_DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     RECEPTIONIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     PHARMACIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     THERAPIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     LAB_TECHNICIAN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     FINANCE_BILLING: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     SUPPORT_STAFF: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     NURSE: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     COUNSELOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     CLINIC_LOCATION_HEAD: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     CLINIC_ADMIN: {
@@ -106,8 +107,6 @@ export class UsersService {
         'firstName',
         'lastName',
         'phone',
-        'dateOfBirth',
-        'gender',
         'address',
         // Note: clinicName and clinicAddress are NOT required here
         // Clinic is already configured in the Clinic table and associated with the user via clinicId
@@ -116,7 +115,7 @@ export class UsersService {
       conditionalFields: {},
     },
     SUPER_ADMIN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
   };
@@ -127,6 +126,8 @@ export class UsersService {
     private readonly loggingService: LoggingService,
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
+    @Inject(forwardRef(() => PatientsService))
+    private readonly patientsService: PatientsService,
     private readonly rbacService: RbacService,
     @Inject('AUTH_SERVICE')
     authService: unknown,
@@ -370,7 +371,8 @@ export class UsersService {
   async createUser(
     data: CreateUserDto,
     userId?: string,
-    clinicId?: string
+    clinicId?: string,
+    callerRole?: Role
   ): Promise<UserResponseDto> {
     // RBAC: Check permission to create users
     if (userId && clinicId) {
@@ -392,14 +394,51 @@ export class UsersService {
       if (!userClinicId) {
         throw new Error('Clinic ID is required for user registration');
       }
+
+      const targetRole = data.role || Role.PATIENT;
+      const staffAssignableRoles: ReadonlySet<Role> = new Set([
+        Role.DOCTOR,
+        Role.ASSISTANT_DOCTOR,
+        Role.RECEPTIONIST,
+        Role.PHARMACIST,
+        Role.NURSE,
+        Role.THERAPIST,
+        Role.LAB_TECHNICIAN,
+        Role.COUNSELOR,
+        Role.SUPPORT_STAFF,
+        Role.FINANCE_BILLING,
+        Role.CLINIC_LOCATION_HEAD,
+      ]);
+
+      if (callerRole === Role.RECEPTIONIST && targetRole !== Role.PATIENT) {
+        throw this.errors.insufficientPermissions('UsersService.createUser');
+      }
+
+      if (callerRole === Role.CLINIC_ADMIN && !staffAssignableRoles.has(targetRole)) {
+        throw this.errors.insufficientPermissions('UsersService.createUser');
+      }
+
+      if (
+        callerRole &&
+        callerRole !== Role.SUPER_ADMIN &&
+        callerRole !== Role.CLINIC_ADMIN &&
+        callerRole !== Role.RECEPTIONIST
+      ) {
+        throw this.errors.insufficientPermissions('UsersService.createUser');
+      }
+
       await this.authService.register({
         email: data.email,
         password: data.password,
         firstName: data.firstName,
         lastName: data.lastName,
-        role: data.role || 'PATIENT',
+        role: targetRole,
         clinicId: userClinicId,
         phone: data.phone,
+        ...(data.gender && { gender: data.gender }),
+        ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
+        ...(data.address && { address: data.address }),
+        ...(data.emergencyContact && { emergencyContact: data.emergencyContact }),
       });
 
       // Get the created user from database using findUserByEmailSafe
@@ -432,6 +471,96 @@ export class UsersService {
 
       if (!user) {
         throw this.errors.userNotFound(undefined, 'UsersService.createUser');
+      }
+
+      const userProfileUpdates: Record<string, unknown> = {};
+      if (data.city) userProfileUpdates['city'] = data.city;
+      if (data.state) userProfileUpdates['state'] = data.state;
+      if (data.country) userProfileUpdates['country'] = data.country;
+      if (data.zipCode) userProfileUpdates['zipCode'] = data.zipCode;
+      const medicalConditionSummaryParts: string[] = [];
+      if (data.medicalConditions?.length) {
+        medicalConditionSummaryParts.push(`Conditions: ${data.medicalConditions.join(', ')}`);
+      }
+      if (data.allergies?.length) {
+        medicalConditionSummaryParts.push(`Allergies: ${data.allergies.join(', ')}`);
+      }
+      if (data.medicalHistory?.length) {
+        medicalConditionSummaryParts.push(`Medical history: ${data.medicalHistory.join(', ')}`);
+      }
+      if (medicalConditionSummaryParts.length > 0) {
+        userProfileUpdates['medicalConditions'] = medicalConditionSummaryParts.join(' | ');
+      }
+
+      if (Object.keys(userProfileUpdates).length > 0) {
+        await this.databaseService.updateUserSafe(user.id, userProfileUpdates as UserUpdateInput);
+      }
+
+      if (targetRole === Role.PATIENT) {
+        try {
+          const primaryInsurance = Array.isArray(data.insurance) ? data.insurance[0] : undefined;
+          const coverageStartDate = new Date().toISOString().slice(0, 10);
+          const mappedInsurance:
+            | {
+                provider: string;
+                policyNumber: string;
+                primaryHolder: string;
+                coverageType: string;
+                coverageStartDate: string;
+                groupNumber?: string;
+                coverageEndDate?: string;
+              }
+            | undefined = primaryInsurance
+            ? {
+                provider: primaryInsurance.provider,
+                policyNumber: primaryInsurance.policyNumber,
+                primaryHolder:
+                  primaryInsurance.policyHolder?.trim() ||
+                  `${data.firstName} ${data.lastName}`.trim(),
+                coverageType:
+                  primaryInsurance.coverageDetails || primaryInsurance.status || 'Medical',
+                coverageStartDate,
+                ...(primaryInsurance.groupNumber
+                  ? { groupNumber: primaryInsurance.groupNumber }
+                  : {}),
+                ...(primaryInsurance.expiryDate
+                  ? { coverageEndDate: primaryInsurance.expiryDate }
+                  : {}),
+              }
+            : undefined;
+
+          await this.patientsService.createOrUpdatePatient({
+            userId: user.id,
+            clinicId: userClinicId,
+            ...(data.dateOfBirth && { dateOfBirth: data.dateOfBirth }),
+            ...(data.gender && { gender: data.gender as 'MALE' | 'FEMALE' | 'OTHER' }),
+            ...(data.allergies && { allergies: data.allergies }),
+            ...(data.medicalHistory && { medicalHistory: data.medicalHistory }),
+            ...(data.emergencyContact && {
+              emergencyContact: {
+                name: data.emergencyContact.name,
+                relationship: data.emergencyContact.relationship,
+                phone: data.emergencyContact.phone,
+              },
+            }),
+            ...(mappedInsurance && { insurance: mappedInsurance }),
+          });
+        } catch (patientProfileError) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            'Patient profile creation during user creation failed',
+            'UsersService',
+            {
+              userId: user.id,
+              email: data.email,
+              error:
+                patientProfileError instanceof Error
+                  ? patientProfileError.message
+                  : String(patientProfileError),
+            }
+          );
+        }
       }
 
       await this.loggingService.log(

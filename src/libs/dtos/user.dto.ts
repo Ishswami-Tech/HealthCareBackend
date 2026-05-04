@@ -501,6 +501,26 @@ export class CreateUserDto extends SimpleCreateUserDto {
   emergencyContact?: EmergencyContactDto;
 
   @ApiPropertyOptional({
+    example: ['Peanuts', 'Penicillin'],
+    description: 'Patient allergies',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray({ message: 'Allergies must be an array' })
+  @IsString({ each: true, message: 'Each allergy must be a string' })
+  allergies?: string[];
+
+  @ApiPropertyOptional({
+    example: ['Diabetes', 'Hypertension'],
+    description: 'Patient medical history',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray({ message: 'Medical history must be an array' })
+  @IsString({ each: true, message: 'Each medical history item must be a string' })
+  medicalHistory?: string[];
+
+  @ApiPropertyOptional({
     example: 'google-oauth-id-123',
     description: 'Google OAuth ID for social login',
   })

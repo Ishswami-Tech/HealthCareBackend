@@ -64,7 +64,8 @@ export class UsersController {
   @RequireResourcePermission('users', 'create')
   @ApiOperation({
     summary: 'Create user',
-    description: 'Create a new user. Only accessible by Super Admin and Clinic Admin.',
+    description:
+      'Create a new user. Accessible by Super Admin, Clinic Admin, and Receptionist with create permission.',
   })
   @ApiBody({ type: CreateUserDto })
   @ApiResponse({
@@ -89,7 +90,12 @@ export class UsersController {
     if (!userId) {
       throw new ForbiddenException('User ID not found in token');
     }
-    return this.usersService.createUser(createUserDto, userId, clinicId);
+    return this.usersService.createUser(
+      createUserDto,
+      userId,
+      clinicId,
+      req.user?.role as Role | undefined
+    );
   }
 
   @Get('all')

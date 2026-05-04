@@ -54,7 +54,7 @@ The environment file includes:
 
 | Method | Endpoint                | Description                      | Auth Required |
 | ------ | ----------------------- | -------------------------------- | ------------- |
-| POST   | `/auth/register`        | User registration                | No            |
+| POST   | `/auth/register`        | Public patient registration      | No            |
 | POST   | `/auth/login`           | User login (password/OTP)        | No            |
 | POST   | `/auth/refresh`         | Refresh JWT token                | No            |
 | POST   | `/auth/logout`          | Logout user                      | Yes           |
@@ -65,18 +65,32 @@ The environment file includes:
 | GET    | `/auth/sessions`        | Get user sessions                | Yes           |
 | POST   | `/auth/revoke-session`  | Revoke specific session          | Yes           |
 
-### User Management (`/users`)
+> Registration is intentionally limited to two flows:
+>
+> - `POST /auth/register` for public patient self-signup only
+> - `POST /user` for authenticated staff/admin user creation
+>
+> Role rules:
+>
+> - Receptionist can create patients only through `POST /user`
+> - Clinic admin can create clinic staff roles only through `POST /user`
+> - Super admin can create any app role through `POST /user`
+>
+> When `POST /user` is used with `role: PATIENT`, the backend also creates the
+> patient profile atomically so the receptionist/staff flow stays single-step.
 
-| Method | Endpoint               | Description              | Auth Required |
-| ------ | ---------------------- | ------------------------ | ------------- |
-| GET    | `/users`               | Get all users (admin)    | Yes           |
-| GET    | `/users/:id`           | Get user by ID           | Yes           |
-| GET    | `/users/profile`       | Get current user profile | Yes           |
-| PUT    | `/users/profile`       | Update user profile      | Yes           |
-| GET    | `/users/patients`      | Get all patients         | Yes           |
-| GET    | `/users/doctors`       | Get all doctors          | Yes           |
-| GET    | `/users/receptionists` | Get all receptionists    | Yes           |
-| GET    | `/users/clinic-admins` | Get all clinic admins    | Yes           |
+### User Management (`/user`)
+
+| Method | Endpoint                   | Description              | Auth Required |
+| ------ | -------------------------- | ------------------------ | ------------- |
+| GET    | `/user/all`                | Get all users (admin)    | Yes           |
+| GET    | `/user/:id`                | Get user by ID           | Yes           |
+| GET    | `/user/profile`            | Get current user profile | Yes           |
+| PUT    | `/user/profile`            | Update user profile      | Yes           |
+| GET    | `/user/role/patient`       | Get all patients         | Yes           |
+| GET    | `/user/role/doctors`       | Get all doctors          | Yes           |
+| GET    | `/user/role/receptionists` | Get all receptionists    | Yes           |
+| GET    | `/user/role/clinic-admins` | Get all clinic admins    | Yes           |
 
 ### Appointment Management (`/appointments`)
 
