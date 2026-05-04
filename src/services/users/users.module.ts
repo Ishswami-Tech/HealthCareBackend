@@ -10,6 +10,7 @@ import { EventsModule } from '@infrastructure/events/events.module';
 import { RbacModule } from '@core/rbac/rbac.module';
 import { AuthModule } from '@services/auth/auth.module';
 import { ClinicModule } from '@services/clinic/clinic.module';
+import { PatientsModule } from '@services/patients/patients.module';
 import { LoggingModule } from '@infrastructure/logging';
 import { ErrorsModule } from '@core/errors/errors.module';
 import { CacheModule } from '@infrastructure/cache/cache.module';
@@ -22,6 +23,7 @@ import { CacheModule } from '@infrastructure/cache/cache.module';
     EventsModule,
     RbacModule,
     forwardRef(() => AuthModule),
+    forwardRef(() => PatientsModule),
     ClinicModule,
     LoggingModule,
     ErrorsModule,

@@ -29,51 +29,51 @@ export class ProfileCompletionService {
    */
   private readonly ROLE_REQUIREMENTS: Record<Role, RoleBasedRequirements> = {
     PATIENT: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     ASSISTANT_DOCTOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     RECEPTIONIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     PHARMACIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     THERAPIST: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     LAB_TECHNICIAN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     FINANCE_BILLING: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     SUPPORT_STAFF: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     NURSE: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     COUNSELOR: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     CLINIC_LOCATION_HEAD: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
     CLINIC_ADMIN: {
@@ -81,8 +81,6 @@ export class ProfileCompletionService {
         'firstName',
         'lastName',
         'phone',
-        'dateOfBirth',
-        'gender',
         'address',
         // Note: clinicName and clinicAddress are NOT required here
         // Clinic is already configured in the Clinic table and associated with the user via clinicId
@@ -91,7 +89,7 @@ export class ProfileCompletionService {
       conditionalFields: {},
     },
     SUPER_ADMIN: {
-      requiredFields: ['firstName', 'lastName', 'phone', 'dateOfBirth', 'gender', 'address'],
+      requiredFields: ['firstName', 'lastName', 'phone', 'address'],
       conditionalFields: {},
     },
   };

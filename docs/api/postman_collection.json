@@ -28,8 +28,8 @@
         "type": "text/javascript",
         "exec": [
           "// Global Pre-request Script",
-          "if (!pm.environment.get('accessToken')) {",
-          "    console.log('No access token found. Please login first.');",
+          "if (!pm.environment.get(\u0027accessToken\u0027)) {",
+          "    console.log(\u0027No access token found. Please login first.\u0027);",
           "}"
         ]
       }
@@ -41,7 +41,7 @@
         "exec": [
           "// Global Test Script",
           "if (pm.response.code === 401) {",
-          "    console.log('Unauthorized. Your access token might be expired.');",
+          "    console.log(\u0027Unauthorized. Your access token might be expired.\u0027);",
           "}"
         ]
       }
@@ -60,14 +60,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status code is 201', function () {",
+                  "pm.test(\u0027Status code is 201\u0027, function () {",
                   "    pm.response.to.have.status(201);",
                   "});",
                   "",
-                  "pm.test('Response has user data', function () {",
+                  "pm.test(\u0027Response has user data\u0027, function () {",
                   "    const responseData = pm.response.json();",
-                  "    pm.expect(responseData).to.have.property('id');",
-                  "    pm.expect(responseData).to.have.property('email');",
+                  "    pm.expect(responseData).to.have.property(\u0027id\u0027);",
+                  "    pm.expect(responseData).to.have.property(\u0027email\u0027);",
                   "});"
                 ]
               }
@@ -86,7 +86,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["auth", "register"]
             },
-            "description": "Create a new user account with role-specific details",
+            "description": "Public patient registration only. Staff and admin users must use the /user endpoint.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"dateOfBirth\": \"1990-01-01\",\n  \"gender\": \"MALE\",\n  \"address\": \"123 Main St\",\n  \"city\": \"New York\",\n  \"state\": \"NY\",\n  \"country\": \"USA\",\n  \"zipCode\": \"10001\"\n}"
@@ -142,28 +142,6 @@
           ]
         },
         {
-          "name": "Register With Clinic",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/auth/register-with-clinic",
-              "host": ["{{baseUrl}}"],
-              "path": ["auth", "register-with-clinic"]
-            },
-            "description": "Create a new user account and associate it with a specific clinic",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"John\",\n  \"lastName\": \"Doe\",\n  \"phone\": \"+1234567890\",\n  \"role\": \"PATIENT\",\n  \"appName\": \"clinic-name\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            }
-          }
-        },
-        {
           "name": "Login",
           "event": [
             {
@@ -171,22 +149,22 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status code is 200', function () {",
+                  "pm.test(\u0027Status code is 200\u0027, function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('Response has tokens', function () {",
+                  "pm.test(\u0027Response has tokens\u0027, function () {",
                   "    const responseData = pm.response.json();",
-                  "    pm.expect(responseData).to.have.property('access_token');",
-                  "    pm.expect(responseData).to.have.property('refresh_token');",
+                  "    pm.expect(responseData).to.have.property(\u0027access_token\u0027);",
+                  "    pm.expect(responseData).to.have.property(\u0027refresh_token\u0027);",
                   "",
                   "    // Save tokens to environment",
-                  "    pm.environment.set('accessToken', responseData.access_token);",
-                  "    pm.environment.set('refreshToken', responseData.refresh_token);",
+                  "    pm.environment.set(\u0027accessToken\u0027, responseData.access_token);",
+                  "    pm.environment.set(\u0027refreshToken\u0027, responseData.refresh_token);",
                   "    ",
                   "    // Save user ID if present",
-                  "    if (responseData.user && responseData.user.id) {",
-                  "        pm.environment.set('userId', responseData.user.id);",
+                  "    if (responseData.user \u0026\u0026 responseData.user.id) {",
+                  "        pm.environment.set(\u0027userId\u0027, responseData.user.id);",
                   "    }",
                   "});"
                 ]
@@ -269,14 +247,14 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status code is 200', function () {",
+                  "pm.test(\u0027Status code is 200\u0027, function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('Response has success message', function () {",
+                  "pm.test(\u0027Response has success message\u0027, function () {",
                   "    const responseData = pm.response.json();",
-                  "    pm.expect(responseData).to.have.property('message');",
-                  "    pm.expect(responseData.message).to.include('logged out');",
+                  "    pm.expect(responseData).to.have.property(\u0027message\u0027);",
+                  "    pm.expect(responseData.message).to.include(\u0027logged out\u0027);",
                   "});"
                 ]
               }
@@ -335,17 +313,17 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('Status code is 200', function () {",
+                  "pm.test(\u0027Status code is 200\u0027, function () {",
                   "    pm.response.to.have.status(200);",
                   "});",
                   "",
-                  "pm.test('Response has new access token', function () {",
+                  "pm.test(\u0027Response has new access token\u0027, function () {",
                   "    const responseData = pm.response.json();",
-                  "    pm.expect(responseData).to.have.property('access_token');",
+                  "    pm.expect(responseData).to.have.property(\u0027access_token\u0027);",
                   "    ",
                   "    // Save new access token",
                   "    if (responseData.access_token) {",
-                  "        pm.environment.set('accessToken', responseData.access_token);",
+                  "        pm.environment.set(\u0027accessToken\u0027, responseData.access_token);",
                   "    }",
                   "});"
                 ]
@@ -690,7 +668,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/api/appointments?userId=user-id&doctorId=doctor-id&status=SCHEDULED&locationId=location-id&date=2024-04-19",
+              "raw": "{{baseUrl}}/api/appointments?userId=user-id\u0026doctorId=doctor-id\u0026status=SCHEDULED\u0026locationId=location-id\u0026date=2024-04-19",
               "host": ["{{baseUrl}}"],
               "path": ["api", "appointments"],
               "query": [
@@ -761,7 +739,7 @@
                 }
               ]
             },
-            "description": "Update an existing appointment's details",
+            "description": "Update an existing appointment\u0027s details",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"date\": \"2024-04-20\",\n  \"time\": \"15:30\",\n  \"duration\": 45,\n  \"status\": \"CONFIRMED\",\n  \"notes\": \"Updated appointment notes\"\n}",
@@ -817,7 +795,7 @@
                 }
               ]
             },
-            "description": "Check a doctor's availability for a specific date"
+            "description": "Check a doctor\u0027s availability for a specific date"
           }
         },
         {
@@ -850,7 +828,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["appointments", "my-appointments"]
             },
-            "description": "Get current user's appointments"
+            "description": "Get current user\u0027s appointments"
           }
         },
         {
@@ -1746,7 +1724,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["queue", "{{queueId}}", "position"]
             },
-            "description": "Manually change a patient's position in the queue",
+            "description": "Manually change a patient\u0027s position in the queue",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"position\": 1,\n  \"doctorId\": \"{{doctorId}}\"\n}",
@@ -5992,7 +5970,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["notification-preferences", "me"]
             },
-            "description": "Get current user's notification preferences"
+            "description": "Get current user\u0027s notification preferences"
           }
         },
         {
@@ -6047,7 +6025,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["notification-preferences", "me"]
             },
-            "description": "Update current user's notification preferences",
+            "description": "Update current user\u0027s notification preferences",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"emailEnabled\": false,\n  \"pushEnabled\": true\n}",
@@ -6098,7 +6076,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["notification-preferences", "me"]
             },
-            "description": "Delete current user's notification preferences"
+            "description": "Delete current user\u0027s notification preferences"
           }
         },
         {
@@ -7757,7 +7735,7 @@
           ]
         },
         {
-          "name": "Audit & Stats",
+          "name": "Audit \u0026 Stats",
           "item": [
             {
               "name": "Get Batch Audit",
@@ -8533,50 +8511,6 @@
           ]
         },
         {
-          "name": "Quick Register Patient",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "X-Clinic-ID",
-                "value": "{{clinicId}}"
-              },
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"email\": \"newpatient@example.com\",\n  \"password\": \"Password123!\",\n  \"firstName\": \"Alice\",\n  \"lastName\": \"Smith\",\n  \"phone\": \"+1999888777\",\n  \"dateOfBirth\": \"1995-05-05\",\n  \"gender\": \"FEMALE\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{baseUrl}}/patients/quick-register",
-              "host": ["{{baseUrl}}"],
-              "path": ["patients", "quick-register"]
-            },
-            "description": "Quick register patient and create profile atomically"
-          },
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "exec": [
-                  "pm.test(\"Status code is 200 or 201\", function () {",
-                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201, 204]);",
-                  "});"
-                ],
-                "type": "text/javascript"
-              }
-            }
-          ]
-        },
-        {
           "name": "Upload Patient Document",
           "request": {
             "method": "POST",
@@ -9110,7 +9044,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["user"]
             },
-            "description": "Create a new user"
+            "description": "Create a clinic-scoped user. Receptionist can create patients only; clinic admin can create clinic staff; super admin can create any role."
           },
           "event": [
             {
@@ -9154,7 +9088,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["user"]
             },
-            "description": "Create a new user"
+            "description": "Create a clinic-scoped user. Receptionist can create patients only; clinic admin can create clinic staff; super admin can create any role."
           },
           "event": [
             {
@@ -9198,7 +9132,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["user"]
             },
-            "description": "Create a new user"
+            "description": "Create a clinic-scoped user. Receptionist can create patients only; clinic admin can create clinic staff; super admin can create any role."
           },
           "event": [
             {
@@ -9399,7 +9333,7 @@
                 }
               ]
             },
-            "description": "Update a user's role"
+            "description": "Update a user\u0027s role"
           },
           "event": [
             {
@@ -9729,7 +9663,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["profile", "completion", "required-fields"]
             },
-            "description": "Get required profile fields for user's role",
+            "description": "Get required profile fields for user\u0027s role",
             "header": [
               {
                 "key": "X-Clinic-ID",
