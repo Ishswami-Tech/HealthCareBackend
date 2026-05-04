@@ -794,6 +794,13 @@ export class ClinicController {
     status: HttpStatus.NOT_FOUND,
     description: 'Clinic not found.',
   })
+  @Cache({
+    keyTemplate: 'clinic:{id}:doctors',
+    ttl: 300, // 5 minutes
+    tags: ['clinics', 'clinic:{id}', 'doctors'],
+    enableSWR: true,
+    containsPHI: true,
+  })
   async getClinicDoctors(
     @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
@@ -831,6 +838,13 @@ export class ClinicController {
   })
   @ApiParam({ name: 'id', description: 'Clinic ID', type: 'string' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Returns an array of staff members.' })
+  @Cache({
+    keyTemplate: 'clinic:{id}:staff',
+    ttl: 300, // 5 minutes
+    tags: ['clinics', 'clinic:{id}', 'staff'],
+    enableSWR: true,
+    containsPHI: true,
+  })
   async getClinicStaff(
     @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
@@ -864,7 +878,7 @@ export class ClinicController {
   )
   @RequireResourcePermission('clinics', 'read', { requireOwnership: true })
   @Cache({
-    keyTemplate: 'clinic:{id}:patients',
+    keyTemplate: 'clinic:{id}:patients:{page}:{limit}:{search}',
     ttl: 1800, // 30 minutes
     tags: ['clinics', 'clinic:{id}', 'patients'],
     enableSWR: true,
@@ -881,9 +895,12 @@ export class ClinicController {
     type: 'string',
     format: 'uuid',
   })
+  @ApiQuery({ name: 'page', required: false, type: Number, description: 'Page number' })
+  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Page size' })
+  @ApiQuery({ name: 'search', required: false, type: String, description: 'Search term' })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Returns an array of patients.',
+    description: 'Returns clinic patients as an array or paginated result when requested.',
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -895,7 +912,10 @@ export class ClinicController {
   })
   async getClinicPatients(
     @Param('id', ClinicIdPipe) id: string,
-    @Req() req: ClinicAuthenticatedRequest
+    @Req() req: ClinicAuthenticatedRequest,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string
   ) {
     try {
       const userId = req.user?.sub;
@@ -906,10 +926,17 @@ export class ClinicController {
 
       this.logger.log(`Getting patients for clinic ${id} by user ${userId}`);
 
-      const result = await this.clinicService.getClinicPatients(id, userId);
+      const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
+      const result = hasPagination
+        ? await this.clinicService.getClinicPatientsPaginated(id, {
+            page: page ? Number.parseInt(page, 10) : 1,
+            limit: limit ? Number.parseInt(limit, 10) : 50,
+            ...(search?.trim() ? { searchTerm: search.trim() } : {}),
+          })
+        : await this.clinicService.getClinicPatients(id, userId);
 
       this.logger.log(
-        `Retrieved ${Array.isArray(result) ? result.length : 0} patients for clinic ${id}`
+        `Retrieved ${Array.isArray(result) ? result.length : result.patients.length} patients for clinic ${id}`
       );
       return result;
     } catch (_error) {
