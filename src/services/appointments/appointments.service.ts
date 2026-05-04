@@ -1632,7 +1632,7 @@ export class AppointmentsService {
   }
 
   /**
-   * Propose video appointment with 3-4 time slots (patient flow).
+   * Propose video appointment with exactly 3 time slots (patient flow).
    * Doctor will select one slot to confirm.
    */
   async proposeVideoAppointment(
@@ -1696,10 +1696,10 @@ export class AppointmentsService {
     // const now = Date.now();
     const uniqueDates = new Set<string>();
 
-    if (dto.proposedSlots.length < 3) {
+    if (dto.proposedSlots.length !== 3) {
       throw this.errors.validationError(
         'proposedSlots',
-        'At least 3 time slots must be proposed',
+        'Exactly 3 time slots must be proposed',
         'AppointmentsService.proposeVideoAppointment'
       );
     }
