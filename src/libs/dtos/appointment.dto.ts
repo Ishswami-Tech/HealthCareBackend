@@ -914,7 +914,7 @@ export class RescheduleAppointmentDto {
 
 /**
  * Data Transfer Object for proposing video appointment slots
- * Patient proposes 3-4 time slots; doctor selects one to confirm
+ * Patient proposes exactly 3 time slots; doctor selects one to confirm
  */
 export class ProposedSlotItemDto {
   @ApiProperty({ example: '2025-02-15', description: 'Date in YYYY-MM-DD format' })
@@ -928,7 +928,7 @@ export class ProposedSlotItemDto {
 }
 
 /**
- * DTO for patient to propose video appointment with 3-4 time slots
+ * DTO for patient to propose video appointment with exactly 3 time slots
  */
 export class ProposeVideoSlotsDto {
   @ApiProperty()
@@ -973,7 +973,7 @@ export class ProposeVideoSlotsDto {
   @ApiProperty({
     type: () => [ProposedSlotItemDto],
     minItems: 3,
-    maxItems: 4,
+    maxItems: 3,
     example: [
       { date: '2025-02-15', time: '10:00' },
       { date: '2025-02-15', time: '14:00' },
@@ -982,7 +982,7 @@ export class ProposeVideoSlotsDto {
   })
   @IsArray()
   @ArrayMinSize(3, { message: 'Must propose at least 3 time slots' })
-  @ArrayMaxSize(4, { message: 'Must propose at most 4 time slots' })
+  @ArrayMaxSize(3, { message: 'Must propose exactly 3 time slots' })
   @ValidateNested({ each: true })
   @Type(() => ProposedSlotItemDto)
   proposedSlots!: ProposedSlotItemDto[];
