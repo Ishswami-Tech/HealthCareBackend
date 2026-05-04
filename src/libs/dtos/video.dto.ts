@@ -577,12 +577,12 @@ export class VideoConsultationSessionDto {
   @ApiProperty({
     example: 'ACTIVE',
     description: 'Session status',
-    enum: ['SCHEDULED', 'ACTIVE', 'ENDED', 'CANCELLED'],
+    enum: ['SCHEDULED', 'ACTIVE', 'ENDED', 'COMPLETED', 'CANCELLED'],
   })
-  @IsEnum(['SCHEDULED', 'ACTIVE', 'ENDED', 'CANCELLED'], {
+  @IsEnum(['SCHEDULED', 'ACTIVE', 'ENDED', 'COMPLETED', 'CANCELLED'], {
     message: 'Status must be a valid session status',
   })
-  status!: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED';
+  status!: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED';
 
   @ApiPropertyOptional({
     example: '2024-01-15T10:00:00.000Z',

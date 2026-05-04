@@ -691,7 +691,7 @@ export class OpenViduVideoProvider implements IVideoProvider, OnModuleInit {
           return await delegate.update({
             where: { id: consultation.id },
             data: {
-              status: 'ENDED',
+              status: 'COMPLETED',
               endTime: new Date(),
             },
           });

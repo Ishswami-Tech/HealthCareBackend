@@ -13,6 +13,7 @@ import {
   Controller,
   Post,
   Body,
+  Req,
   Headers,
   HttpCode,
   HttpStatus,
@@ -22,7 +23,9 @@ import { ApiTags, ApiOperation, ApiResponse, ApiExcludeEndpoint } from '@nestjs/
 import { ConfigService } from '@config/config.service';
 import { OpenViduWebhookService } from './openvidu-webhook.service';
 import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache';
 import { LogType, LogLevel, type OpenViduWebhookPayload } from '@core/types';
+import type { FastifyRequest } from 'fastify';
 
 @ApiTags('Video Webhooks')
 @Controller('webhooks/openvidu')
@@ -30,7 +33,8 @@ export class OpenViduWebhookController {
   constructor(
     private readonly webhookService: OpenViduWebhookService,
     private readonly configService: ConfigService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly cacheService: CacheService
   ) {}
 
   /**
@@ -55,7 +59,8 @@ export class OpenViduWebhookController {
   })
   async handleWebhook(
     @Body() payload: OpenViduWebhookPayload,
-    @Headers('x-openvidu-signature') signature?: string
+    @Headers('x-openvidu-signature') signature?: string,
+    @Req() request?: FastifyRequest & { rawBody?: string | Buffer }
   ): Promise<{ received: boolean }> {
     try {
       // Validate webhook signature if secret is configured
@@ -63,7 +68,24 @@ export class OpenViduWebhookController {
       const webhookSecret = videoConfig?.openvidu?.secret;
 
       if (webhookSecret && signature) {
-        const rawBody = JSON.stringify(payload);
+        const rawBody =
+          typeof request?.rawBody === 'string'
+            ? request.rawBody
+            : Buffer.isBuffer(request?.rawBody)
+              ? request.rawBody.toString('utf8')
+              : '';
+
+        if (!rawBody) {
+          await this.loggingService.log(
+            LogType.SECURITY,
+            LogLevel.WARN,
+            'OpenVidu webhook raw body unavailable for signature validation',
+            'OpenViduWebhookController',
+            { sessionId: payload.sessionId, event: payload.event }
+          );
+          throw new UnauthorizedException('Webhook raw body required');
+        }
+
         const isValid = await this.webhookService.validateWebhookSignature(
           rawBody,
           signature,
@@ -92,8 +114,25 @@ export class OpenViduWebhookController {
         throw new UnauthorizedException('Webhook signature required');
       }
 
+      const dedupeKey = `webhook:openvidu:processed:${payload.sessionId}:${payload.event}:${payload.timestamp}:${payload.participantId || 'none'}:${payload.connectionId || 'none'}`;
+      const alreadyProcessed = await this.cacheService.get<string>(dedupeKey);
+      if (alreadyProcessed) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `Skipping duplicate OpenVidu webhook event: ${payload.event}`,
+          'OpenViduWebhookController',
+          {
+            event: payload.event,
+            sessionId: payload.sessionId,
+          }
+        );
+        return { received: true };
+      }
+
       // Process webhook event
       await this.webhookService.processWebhookEvent(payload);
+      await this.cacheService.set(dedupeKey, '1', 86400);
 
       await this.loggingService.log(
         LogType.SYSTEM,

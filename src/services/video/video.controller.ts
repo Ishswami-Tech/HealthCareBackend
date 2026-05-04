@@ -382,7 +382,7 @@ export class VideoController {
     roomId: string,
     roomName: string,
     meetingUrl: string,
-    status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED',
+    status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED',
     startTime: Date | null,
     endTime: Date | null,
     participants: Array<{
@@ -401,7 +401,7 @@ export class VideoController {
       roomId: string;
       roomName: string;
       meetingUrl: string;
-      status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED';
+      status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED';
       startTime: Date | null;
       endTime: Date | null;
       participants: Array<{
