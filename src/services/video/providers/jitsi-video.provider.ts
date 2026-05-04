@@ -358,7 +358,7 @@ export class JitsiVideoProvider implements IVideoProvider {
           return await delegate.update({
             where: { id: consultation.id },
             data: {
-              status: 'ENDED',
+              status: 'COMPLETED',
               endTime: new Date(),
             },
           });

@@ -1131,12 +1131,13 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
     // Map to the compact session status format expected by the consultation API
     const statusMap: Record<
-      'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'CANCELLED',
+      'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED',
       'pending' | 'started' | 'ended' | 'cancelled'
     > = {
       SCHEDULED: 'pending',
       ACTIVE: 'started',
       ENDED: 'ended',
+      COMPLETED: 'ended',
       CANCELLED: 'cancelled',
     };
 
