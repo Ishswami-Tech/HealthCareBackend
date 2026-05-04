@@ -28,6 +28,7 @@ import type {
   ClinicLocationResponseDto,
 } from '@core/types/clinic.types';
 import type { PatientWithUser, Doctor, ClinicAdmin, Clinic } from '@core/types';
+import type { ClinicPatientOptions, ClinicPatientResult } from '@core/types/database.types';
 import type { AssignClinicAdminDto, ClinicStatsResponseDto } from '@dtos/clinic.dto';
 import type {
   PrismaTransactionClientWithDelegates,
@@ -1521,6 +1522,13 @@ export class ClinicService {
       );
       throw error;
     }
+  }
+
+  async getClinicPatientsPaginated(
+    id: string,
+    options?: ClinicPatientOptions
+  ): Promise<ClinicPatientResult> {
+    return await this.databaseService.getClinicPatients(id, options);
   }
 
   async getActiveLocations(clinicId: string): Promise<ClinicLocationResponseDto[]> {

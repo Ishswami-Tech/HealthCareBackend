@@ -224,8 +224,16 @@ export class PatientsController {
   )
   @RequireResourcePermission('patients', 'read')
   @ApiOperation({ summary: 'Get all patients for the current clinic' })
+  @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'List of patients retrieved successfully' })
-  async findAll(@Request() req: ClinicAuthenticatedRequest) {
+  async findAll(
+    @Request() req: ClinicAuthenticatedRequest,
+    @Query('search') search: string | undefined,
+    @Query('page') page: string | undefined,
+    @Query('limit') limit: string | undefined
+  ) {
     const clinicId = req.clinicContext?.clinicId;
     if (!clinicId) {
       throw new BadRequestException('Clinic ID not found in context');
@@ -234,6 +242,18 @@ export class PatientsController {
       req.user?.role === Role.DOCTOR || req.user?.role === Role.ASSISTANT_DOCTOR
         ? (req.user?.id ?? req.user?.sub)
         : undefined;
+    const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
+    if (hasPagination) {
+      return this.patientsService.getClinicPatientsPaginated(
+        clinicId,
+        {
+          page: page ? Number.parseInt(page, 10) : 1,
+          limit: limit ? Number.parseInt(limit, 10) : 50,
+          ...(search?.trim() ? { searchTerm: search.trim() } : {}),
+        },
+        doctorUserId
+      );
+    }
     return this.patientsService.getClinicPatients(clinicId, undefined, doctorUserId);
   }
 
@@ -242,11 +262,15 @@ export class PatientsController {
   @RequireResourcePermission('patients', 'read')
   @ApiOperation({ summary: 'Get all patients for a clinic' })
   @ApiQuery({ name: 'search', required: false })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Clinic patients retrieved successfully' })
   async getClinicPatients(
     @Param('clinicId') paramClinicId: string,
+    @Request() req: ClinicAuthenticatedRequest,
     @Query('search') search: string | undefined,
-    @Request() req: ClinicAuthenticatedRequest
+    @Query('page') page: string | undefined,
+    @Query('limit') limit: string | undefined
   ) {
     // 🔒 TENANT ISOLATION: Always use validated clinicId from guard context
     const validatedClinicId = req.clinicContext?.clinicId;
@@ -261,6 +285,20 @@ export class PatientsController {
       req.user?.role === Role.DOCTOR || req.user?.role === Role.ASSISTANT_DOCTOR
         ? (req.user?.id ?? req.user?.sub)
         : undefined;
+
+    const hasPagination = page !== undefined || limit !== undefined || search !== undefined;
+    if (hasPagination) {
+      return this.patientsService.getClinicPatientsPaginated(
+        validatedClinicId,
+        {
+          page: page ? Number.parseInt(page, 10) : 1,
+          limit: limit ? Number.parseInt(limit, 10) : 50,
+          ...(search?.trim() ? { searchTerm: search.trim() } : {}),
+        },
+        doctorUserId
+      );
+    }
+
     return this.patientsService.getClinicPatients(validatedClinicId, search, doctorUserId);
   }
 

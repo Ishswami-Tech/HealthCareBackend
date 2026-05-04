@@ -4,7 +4,12 @@ import { LoggingService } from '@infrastructure/logging';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 import { AssetType, StaticAssetService } from '@infrastructure/storage/static-asset.service';
 import { HealthRecordType, Role } from '@core/types/enums.types';
-import { AuditInfo } from '@core/types/database.types';
+import type { PatientWithUser } from '@core/types';
+import {
+  AuditInfo,
+  type ClinicPatientOptions,
+  type ClinicPatientResult,
+} from '@core/types/database.types';
 
 interface MulterFile {
   buffer: Buffer;
@@ -488,10 +493,41 @@ export class PatientsService {
             p.user?.lastName?.toLowerCase().includes(s) ||
             p.user?.email?.toLowerCase().includes(s) ||
             p.user?.phone?.toLowerCase().includes(s)
-        );
+        ) as unknown as PatientWithUser[];
       }
-      return patients;
+      return patients as PatientWithUser[];
     });
+  }
+
+  async getClinicPatientsPaginated(
+    clinicId: string,
+    options?: ClinicPatientOptions,
+    doctorUserId?: string
+  ): Promise<ClinicPatientResult> {
+    const page = Math.max(options?.page || 1, 1);
+    const limit = Math.min(options?.limit || 50, 100);
+
+    if (!doctorUserId) {
+      return await this.databaseService.getClinicPatients(clinicId, {
+        page,
+        limit,
+        ...(options?.searchTerm?.trim() ? { searchTerm: options.searchTerm.trim() } : {}),
+        ...(typeof options?.includeInactive === 'boolean'
+          ? { includeInactive: options.includeInactive }
+          : {}),
+      });
+    }
+
+    const patients = await this.getClinicPatients(clinicId, options?.searchTerm, doctorUserId);
+    const total = patients.length;
+    const skip = (page - 1) * limit;
+
+    return {
+      patients: patients.slice(skip, skip + limit),
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**
