@@ -233,6 +233,11 @@ export class AppointmentMethods extends DatabaseMethodsBase {
       rowLevelSecurity?: boolean;
     }
   ): Promise<AppointmentWithRelations[]> {
+    const clinicId =
+      typeof (where as { clinicId?: unknown }).clinicId === 'string'
+        ? String((where as { clinicId?: unknown }).clinicId)
+        : '';
+
     return await this.executeRead<AppointmentWithRelations[]>(
       async prisma => {
         const appointments = await prisma.appointment.findMany({
@@ -244,15 +249,23 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         });
         return appointments.map(appointment => enrichAppointmentPaymentState(appointment));
       },
-      this.queryOptionsBuilder
-        .where(where)
-        .include(appointmentListIncludeValidator)
-        .useCache(true)
-        .cacheStrategy('short')
-        .priority('normal')
-        .hipaaCompliant(true)
-        .rowLevelSecurity(options?.rowLevelSecurity !== undefined ? options.rowLevelSecurity : true)
-        .build()
+      (() => {
+        let builder = this.queryOptionsBuilder
+          .where(where)
+          .include(appointmentListIncludeValidator);
+        if (clinicId) {
+          builder = builder.clinicId(clinicId);
+        }
+        return builder
+          .useCache(true)
+          .cacheStrategy('short')
+          .priority('normal')
+          .hipaaCompliant(true)
+          .rowLevelSecurity(
+            options?.rowLevelSecurity !== undefined ? options.rowLevelSecurity : true
+          )
+          .build();
+      })()
     );
   }
 
@@ -260,9 +273,29 @@ export class AppointmentMethods extends DatabaseMethodsBase {
    * Count appointments with filtering
    */
   async countAppointmentsSafe(where: AppointmentWhereInput): Promise<number> {
-    return await this.executeRead<number>(async prisma => {
-      return await prisma.appointment.count({ where });
-    }, this.queryOptionsBuilder.where(where).useCache(true).cacheStrategy('short').priority('normal').hipaaCompliant(true).rowLevelSecurity(true).build());
+    const clinicId =
+      typeof (where as { clinicId?: unknown }).clinicId === 'string'
+        ? String((where as { clinicId?: unknown }).clinicId)
+        : '';
+
+    return await this.executeRead<number>(
+      async prisma => {
+        return await prisma.appointment.count({ where });
+      },
+      (() => {
+        let builder = this.queryOptionsBuilder.where(where);
+        if (clinicId) {
+          builder = builder.clinicId(clinicId);
+        }
+        return builder
+          .useCache(true)
+          .cacheStrategy('short')
+          .priority('normal')
+          .hipaaCompliant(true)
+          .rowLevelSecurity(true)
+          .build();
+      })()
+    );
   }
 
   /**
@@ -352,10 +385,13 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     );
 
     if (result?.id) {
+      const resolvedClinicId = clinicId || result.clinic?.id || '';
       await this.invalidateCache([
         this.queryKeyFactory.appointment(result.id),
         'appointments',
-        ...(clinicId ? [this.queryKeyFactory.clinic(clinicId, 'appointments')] : []),
+        ...(resolvedClinicId
+          ? [this.queryKeyFactory.clinic(resolvedClinicId, 'appointments')]
+          : []),
       ]);
     }
 
@@ -415,10 +451,11 @@ export class AppointmentMethods extends DatabaseMethodsBase {
     );
 
     const clinicId = (data as { clinicId?: string }).clinicId;
+    const resolvedClinicId = clinicId || result.clinic?.id || '';
     await this.invalidateCache([
       this.queryKeyFactory.appointment(id),
       'appointments',
-      ...(clinicId ? [this.queryKeyFactory.clinic(clinicId, 'appointments')] : []),
+      ...(resolvedClinicId ? [this.queryKeyFactory.clinic(resolvedClinicId, 'appointments')] : []),
     ]);
 
     return result;
