@@ -262,6 +262,9 @@ export class BillingService {
           args.clinicId
         ),
         args.userId
+          ? this.cacheService.invalidateMyAppointmentsCache(args.userId)
+          : Promise.resolve(0),
+        args.userId
           ? this.cacheService.invalidateUpcomingAppointmentsCache(args.userId)
           : Promise.resolve(0),
       ]);
@@ -293,6 +296,9 @@ export class BillingService {
         appointment.doctorId || undefined,
         resolvedClinicId
       ),
+      resolvedUserId
+        ? this.cacheService.invalidateMyAppointmentsCache(resolvedUserId)
+        : Promise.resolve(0),
       appointment.patientId
         ? this.cacheService.invalidatePatientCache(appointment.patientId, resolvedClinicId)
         : Promise.resolve(0),
