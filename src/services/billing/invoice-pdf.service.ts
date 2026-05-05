@@ -239,7 +239,7 @@ export class InvoicePDFService {
       .font('Times-Bold')
       .fontSize(22)
       .fillColor(this.palette.ink)
-      .text(data.clinicName, 54, headerY + 42, { width: 310 });
+      .text(data.clinicName, 54, headerY + 42, { width: 260 });
 
     const tagline = this.buildClinicTagline(data.clinicName);
     doc
@@ -259,47 +259,55 @@ export class InvoicePDFService {
 
     doc
       .font('Helvetica')
-      .fontSize(11)
+      .fontSize(10)
       .fillColor(this.palette.muted)
       .text(contactLines.join('\n'), 54, headerY + 94, {
-        width: 330,
+        width: 240,
         lineGap: 4,
       });
 
-    const rightX = 408;
+    // Anchor all right-column elements to the right margin edge (A4 = 595pt, margin = 32)
+    const rightEdge = doc.page.width - 32; // ~563
+    const pillWidth = 145;
+    const pillX = rightEdge - pillWidth; // ~418 — date pills stay within page
+    const badgeWidth = 112;
+    const badgeX = rightEdge - badgeWidth; // ~451 — status badge stays within page
+    const invoiceLabelX = rightEdge - 70; // right-align "INVOICE" chip
+
     doc
-      .roundedRect(rightX, headerY + 2, 70, 22, 11)
+      .roundedRect(invoiceLabelX, headerY + 2, 70, 22, 11)
       .fillAndStroke(this.palette.green1, this.palette.green1);
     doc
       .font('Helvetica-Bold')
       .fontSize(8.5)
       .fillColor(this.palette.white)
-      .text('INVOICE', rightX, headerY + 7, { width: 70, align: 'center' });
+      .text('INVOICE', invoiceLabelX, headerY + 7, { width: 70, align: 'center' });
 
+    // Invoice number — constrained to the right column, right-aligned
     doc
       .font('Times-Bold')
-      .fontSize(22)
+      .fontSize(20)
       .fillColor(this.palette.ink)
-      .text(data.invoiceNumber, rightX, headerY + 28, {
-        width: 300,
+      .text(data.invoiceNumber, pillX, headerY + 28, {
+        width: rightEdge - pillX,
         align: 'right',
       });
 
-    this.drawDatePill(doc, rightX + 125, headerY + 74, 'Issue', this.formatDate(data.invoiceDate));
-    this.drawDatePill(doc, rightX + 125, headerY + 100, 'Due', this.formatDate(data.dueDate));
+    this.drawDatePill(doc, pillX, headerY + 72, 'Issue', this.formatDate(data.invoiceDate));
+    this.drawDatePill(doc, pillX, headerY + 98, 'Due', this.formatDate(data.dueDate));
 
     const badgeText = isPaid ? 'PAID' : status;
     const badgeColor = this.getStatusColors(status);
     doc
-      .roundedRect(rightX + 128, headerY + 132, 112, 26, 13)
+      .roundedRect(badgeX, headerY + 130, badgeWidth, 26, 13)
       .fillAndStroke(badgeColor.bg, badgeColor.border);
-    doc.circle(rightX + 144, headerY + 145, 4).fill(badgeColor.dot);
+    doc.circle(badgeX + 14, headerY + 143, 4).fill(badgeColor.dot);
     doc
       .font('Helvetica-Bold')
       .fontSize(10)
       .fillColor(badgeColor.text)
-      .text(badgeText, rightX + 154, headerY + 138, {
-        width: 74,
+      .text(badgeText, badgeX + 24, headerY + 136, {
+        width: badgeWidth - 30,
         align: 'left',
         characterSpacing: 1.1,
       });
