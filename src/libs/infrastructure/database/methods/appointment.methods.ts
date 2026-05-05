@@ -86,6 +86,82 @@ const appointmentListIncludeValidator = {
   },
 } as const;
 
+const COMPLETED_PAYMENT_STATUSES = new Set(['COMPLETED', 'SUCCESS', 'PAID', 'CAPTURED']);
+
+type AppointmentPaymentRelation = {
+  id?: string;
+  amount?: number;
+  status?: string;
+  method?: string | null;
+  transactionId?: string | null;
+  invoiceId?: string | null;
+  updatedAt?: Date;
+  invoice?: {
+    id?: string;
+    amount?: number;
+    status?: string;
+    dueDate?: Date | null;
+    paidAt?: Date | null;
+    invoiceNumber?: string | null;
+  } | null;
+} | null;
+
+type AppointmentWithPaymentRelation = AppointmentWithRelations & {
+  payment?: AppointmentPaymentRelation;
+  paymentStatus?: string | undefined;
+  paymentCompleted?: boolean | undefined;
+  paymentPending?: boolean | undefined;
+  paymentAmount?: number | null | undefined;
+  paymentTransactionId?: string | null | undefined;
+  invoiceStatus?: string | null | undefined;
+  invoicePaidAt?: Date | null | undefined;
+};
+
+function normalizePaymentStatus(value: unknown): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+    return '';
+  }
+
+  return String(value)
+    .trim()
+    .replace(/[\s-]+/g, '_')
+    .toUpperCase();
+}
+
+function isPaymentCompleted(value: unknown): boolean {
+  const normalized = normalizePaymentStatus(value);
+  return Boolean(normalized) && COMPLETED_PAYMENT_STATUSES.has(normalized);
+}
+
+function enrichAppointmentPaymentState(
+  appointment: AppointmentWithRelations
+): AppointmentWithPaymentRelation {
+  const payment = (appointment as AppointmentWithPaymentRelation).payment ?? null;
+  const invoice = payment?.invoice ?? null;
+  const paymentStatus = normalizePaymentStatus(
+    payment?.status ||
+      invoice?.status ||
+      (appointment as AppointmentWithPaymentRelation).paymentStatus ||
+      ''
+  );
+  const paymentCompleted =
+    isPaymentCompleted(paymentStatus) ||
+    Boolean((appointment as AppointmentWithPaymentRelation).paymentCompleted) ||
+    Boolean((appointment as AppointmentWithPaymentRelation).paymentPending === false);
+
+  return {
+    ...appointment,
+    payment,
+    paymentStatus: paymentStatus || undefined,
+    paymentCompleted,
+    paymentPending: !paymentCompleted,
+    paymentAmount: payment?.amount ?? invoice?.amount ?? null,
+    paymentTransactionId: payment?.transactionId ?? null,
+    invoiceStatus: invoice?.status ?? null,
+    invoicePaidAt: invoice?.paidAt ?? null,
+  };
+}
+
 /**
  * Appointment methods implementation
  * All methods use executeRead/Write for full optimization layers
@@ -97,7 +173,7 @@ export class AppointmentMethods extends DatabaseMethodsBase {
   async findAppointmentByIdSafe(id: string): Promise<AppointmentWithRelations | null> {
     return await this.executeRead<AppointmentWithRelations | null>(
       async prisma => {
-        return await prisma.appointment.findUnique({
+        const appointment = await prisma.appointment.findUnique({
           where: { id },
           include: {
             patient: {
@@ -111,9 +187,14 @@ export class AppointmentMethods extends DatabaseMethodsBase {
               },
             },
             clinic: true,
-            payment: true,
+            payment: {
+              include: {
+                invoice: true,
+              },
+            },
           },
         });
+        return appointment ? enrichAppointmentPaymentState(appointment) : null;
       },
       this.queryOptionsBuilder
         .where({ id })
@@ -121,7 +202,11 @@ export class AppointmentMethods extends DatabaseMethodsBase {
           patient: { include: { user: true } },
           doctor: { include: { user: true } },
           clinic: true,
-          payment: true,
+          payment: {
+            include: {
+              invoice: true,
+            },
+          },
         })
         .useCache(true)
         .cacheStrategy('short')
@@ -150,13 +235,14 @@ export class AppointmentMethods extends DatabaseMethodsBase {
   ): Promise<AppointmentWithRelations[]> {
     return await this.executeRead<AppointmentWithRelations[]>(
       async prisma => {
-        return await prisma.appointment.findMany({
+        const appointments = await prisma.appointment.findMany({
           where,
           ...(options?.skip !== undefined && { skip: options.skip }),
           ...(options?.take !== undefined && { take: options.take }),
           ...(options?.orderBy && { orderBy: options.orderBy }),
           include: appointmentListIncludeValidator,
         });
+        return appointments.map(appointment => enrichAppointmentPaymentState(appointment));
       },
       this.queryOptionsBuilder
         .where(where)

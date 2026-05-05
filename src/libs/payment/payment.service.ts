@@ -31,6 +31,7 @@ import {
 } from '@core/types';
 import { PaymentProviderFactory } from './adapters/factories/payment-provider.factory';
 import { PaymentConfigService } from '@config/payment-config.service';
+import { formatCurrencyFromMinorUnits } from '../utils/currency.util';
 
 /**
  * Payment Service
@@ -130,6 +131,7 @@ export class PaymentService {
           metadata: {
             paymentId: result.paymentId,
             amount: options.amount,
+            displayAmount: formatCurrencyFromMinorUnits(options.amount, options.currency),
             currency: options.currency,
             appointmentId: options.appointmentId,
             appointmentType: options.appointmentType,
