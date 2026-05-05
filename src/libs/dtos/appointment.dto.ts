@@ -639,6 +639,62 @@ export class AppointmentResponseDto {
   status!: AppointmentStatus;
 
   @ApiPropertyOptional({
+    example: 'COMPLETED',
+    description: 'Normalized payment status for the appointment',
+  })
+  @IsOptional()
+  @IsString({ message: 'Payment status must be a string' })
+  paymentStatus?: string;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the appointment payment has been completed',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Payment completed must be a boolean' })
+  paymentCompleted?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether the appointment payment is still pending',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Payment pending must be a boolean' })
+  paymentPending?: boolean;
+
+  @ApiPropertyOptional({
+    example: 500,
+    description: 'Appointment payment amount in base currency units',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Payment amount must be a number' })
+  paymentAmount?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'cf_1234567890',
+    description: 'Payment transaction identifier',
+  })
+  @IsOptional()
+  @IsString({ message: 'Payment transaction ID must be a string' })
+  paymentTransactionId?: string | null;
+
+  @ApiPropertyOptional({
+    example: 'PAID',
+    description: 'Normalized invoice status when the appointment is linked to an invoice',
+  })
+  @IsOptional()
+  @IsString({ message: 'Invoice status must be a string' })
+  invoiceStatus?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-05T06:25:59.000Z',
+    description: 'Timestamp when the linked invoice was marked paid',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Invoice paid at must be a valid date string' })
+  invoicePaidAt?: string | null;
+
+  @ApiPropertyOptional({
     example: 'GENERAL_CONSULTATION',
     description: 'Clinical intent of the appointment',
     enum: TreatmentType,

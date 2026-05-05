@@ -53,6 +53,7 @@ import type {
 } from '@core/types/payment.types';
 import { PaymentProvider } from '@core/types/payment.types';
 import { formatDateInIST, nowIso } from '../../libs/utils/date-time.util';
+import { formatCurrencyFromMinorUnits } from '../../libs/utils/currency.util';
 
 // Import centralized types
 import type {
@@ -353,6 +354,10 @@ export class BillingService {
     return String(raw).toLowerCase() === 'true';
   }
 
+  private formatDisplayAmount(amount: number, currency = 'INR'): string {
+    return formatCurrencyFromMinorUnits(amount, currency);
+  }
+
   private async emitPaymentLifecycleEvents(args: {
     clinicId: string;
     paymentId: string;
@@ -385,6 +390,7 @@ export class BillingService {
       metadata: {
         paymentId: args.paymentId,
         amount: args.amount,
+        displayAmount: this.formatDisplayAmount(args.amount),
         status: normalizedStatus,
         ...(args.clinicId ? { clinicId: args.clinicId } : {}),
         ...(args.appointmentId && { appointmentId: args.appointmentId }),
@@ -393,6 +399,7 @@ export class BillingService {
       payload: {
         paymentId: args.paymentId,
         amount: args.amount,
+        displayAmount: this.formatDisplayAmount(args.amount),
         status: normalizedStatus,
         clinicId: args.clinicId,
         ...(args.userId ? { userId: args.userId } : {}),
