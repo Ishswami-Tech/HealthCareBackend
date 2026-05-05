@@ -1256,6 +1256,7 @@ export interface JitsiRoomConfig {
 export interface VideoConsultationSession {
   appointmentId: string;
   roomName: string;
+  confirmedSlotIndex?: number | null;
   status: 'pending' | 'started' | 'ended' | 'cancelled';
   startTime?: Date | undefined;
   endTime?: Date | undefined;

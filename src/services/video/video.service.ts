@@ -1166,6 +1166,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     return {
       appointmentId: session.appointmentId,
       roomName: session.roomName,
+      confirmedSlotIndex: session.confirmedSlotIndex ?? null,
       status: mappedStatus,
       startTime: session.startTime ?? undefined,
       endTime: session.endTime ?? undefined,
