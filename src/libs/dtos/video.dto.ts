@@ -560,6 +560,15 @@ export class VideoConsultationSessionDto {
   @IsString({ message: 'Room ID must be a string' })
   roomId!: string;
 
+  @ApiPropertyOptional({
+    example: 2,
+    description:
+      '0-based index of the confirmed proposed slot, if the appointment has been confirmed',
+  })
+  @IsOptional()
+  @IsNumber({}, { message: 'Confirmed slot index must be a number' })
+  confirmedSlotIndex?: number | null;
+
   @ApiProperty({
     example: 'appointment-123-abc',
     description: 'Room name',

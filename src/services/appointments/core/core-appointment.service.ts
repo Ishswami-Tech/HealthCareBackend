@@ -419,12 +419,9 @@ export class CoreAppointmentService {
         this.databaseService.findAppointmentsSafe(where, {
           skip: offset,
           take: limit,
-          // Stable ordering prevents freshly-booked appointments from being buried
-          // when many rows share the same appointment date.
-          orderBy:
-            context.role === 'PATIENT'
-              ? [{ date: 'desc' }, { createdAt: 'desc' }]
-              : [{ date: 'asc' }, { createdAt: 'asc' }],
+          // Recent-first ordering keeps the newest relevant appointments visible
+          // across all roles while remaining stable for pagination.
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
         }),
         this.databaseService.countAppointmentsSafe(where),
       ]);

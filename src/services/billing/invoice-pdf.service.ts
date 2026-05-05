@@ -241,11 +241,12 @@ export class InvoicePDFService {
       .fillColor(this.palette.ink)
       .text(data.clinicName, 54, headerY + 42, { width: 310 });
 
+    const tagline = this.buildClinicTagline(data.clinicName);
     doc
       .font('Helvetica-Bold')
       .fontSize(10)
       .fillColor(this.palette.teal)
-      .text('Ancient Wisdom  Modern Care', 54, headerY + 72, {
+      .text(tagline, 54, headerY + 72, {
         characterSpacing: 1.4,
         width: 250,
       });
@@ -566,7 +567,7 @@ export class InvoicePDFService {
       .roundedRect(leftX, y, tableWidth, rowHeight, 0)
       .fillAndStroke(fillColor, this.palette.border);
 
-    const descriptionText = item.description || 'Service';
+    const descriptionText = this.cleanLineItemDescription(item.description) || 'Service';
     const quantityText = String(item.quantity ?? 1);
     const unitText = item.unitPrice !== undefined ? this.formatMoney(item.unitPrice) : '-';
     const amountText = this.formatMoney(item.amount);
@@ -580,18 +581,16 @@ export class InvoicePDFService {
         height: rowHeight - 18,
       });
 
-    const tag =
-      item.description.includes('video') || item.description.includes('call')
-        ? 'VIDEO_CALL'
-        : 'SERVICE';
+    const { tag, tagColor } = this.detectLineItemTag(item.description);
+    const tagWidth = tag.length > 10 ? 110 : 78;
     doc
-      .roundedRect(leftX + 14, y + rowHeight - 20, 78, 14, 7)
+      .roundedRect(leftX + 14, y + rowHeight - 20, tagWidth, 14, 7)
       .fillAndStroke('#e4f8f0', this.palette.border);
     doc
       .font('Helvetica-Bold')
       .fontSize(7.7)
-      .fillColor(this.palette.teal)
-      .text(tag, leftX + 14, y + rowHeight - 16, { width: 78, align: 'center' });
+      .fillColor(tagColor)
+      .text(tag, leftX + 14, y + rowHeight - 16, { width: tagWidth, align: 'center' });
 
     doc
       .font('Helvetica-Bold')
@@ -638,43 +637,74 @@ export class InvoicePDFService {
       .roundedRect(totalsX, y, totalsWidth, 124, 14)
       .fillAndStroke(this.palette.white, this.palette.border);
 
+    let totalsRowY = y + 12;
     this.drawTotalsRow(
       doc,
       totalsX,
-      y + 12,
+      totalsRowY,
       totalsWidth,
       'Subtotal',
       this.formatMoney(data.subtotal)
     );
-    this.drawTotalsRow(doc, totalsX, y + 36, totalsWidth, 'Tax / GST', this.formatMoney(data.tax));
-    this.drawTotalsRow(
-      doc,
-      totalsX,
-      y + 60,
-      totalsWidth,
-      'Discount',
-      data.discount > 0 ? `-${this.formatMoney(data.discount)}` : this.formatMoney(0)
-    );
+    totalsRowY += 24;
 
-    doc.roundedRect(totalsX, y + 84, totalsWidth, 34, 0).fillAndStroke('#4caf82', '#4caf82');
+    if (data.tax > 0) {
+      this.drawTotalsRow(
+        doc,
+        totalsX,
+        totalsRowY,
+        totalsWidth,
+        'Tax / GST',
+        this.formatMoney(data.tax)
+      );
+      totalsRowY += 24;
+    }
+
+    if (data.discount > 0) {
+      this.drawTotalsRow(
+        doc,
+        totalsX,
+        totalsRowY,
+        totalsWidth,
+        'Discount',
+        `-${this.formatMoney(data.discount)}`
+      );
+      totalsRowY += 24;
+    }
+
+    if (data.paymentMethod) {
+      this.drawTotalsRow(
+        doc,
+        totalsX,
+        totalsRowY,
+        totalsWidth,
+        'Payment Via',
+        this.formatPaymentMethod(data.paymentMethod)
+      );
+      totalsRowY += 24;
+    }
+
+    const totalBarY = totalsRowY + 8;
+    doc.roundedRect(totalsX, totalBarY, totalsWidth, 34, 0).fillAndStroke('#4caf82', '#4caf82');
     doc
       .font('Helvetica-Bold')
       .fontSize(9.5)
       .fillColor(this.palette.white)
-      .text('TOTAL AMOUNT', totalsX + 14, y + 97, { characterSpacing: 1.2 });
+      .text('TOTAL AMOUNT', totalsX + 14, totalBarY + 13, { characterSpacing: 1.2 });
     doc
       .font('Times-Bold')
       .fontSize(20)
       .fillColor(this.palette.white)
-      .text(this.formatMoney(data.total), totalsX + 150, y + 93, {
+      .text(this.formatMoney(data.total), totalsX + 150, totalBarY + 9, {
         width: 132,
         align: 'right',
       });
 
     const paymentX = 32;
     const paymentWidth = 272;
+    const paymentBoxHeight = Math.max(124, totalBarY - y + 34);
     doc
-      .roundedRect(paymentX, y, paymentWidth, 124, 14)
+      .roundedRect(paymentX, y, paymentWidth, paymentBoxHeight, 14)
       .fillAndStroke('#eafaf3', this.palette.border);
     doc
       .font('Helvetica-Bold')
@@ -819,11 +849,12 @@ export class InvoicePDFService {
     doc
       .roundedRect(doc.page.width - 196, footerY + 10, 128, 22, 11)
       .fillAndStroke(this.palette.white, this.palette.border);
+    const footerCity = this.extractCityFromAddress(data.clinicAddress);
     doc
       .font('Helvetica-Bold')
       .fontSize(9)
       .fillColor(this.palette.teal)
-      .text('Pune, Maharashtra', doc.page.width - 196, footerY + 17, {
+      .text(footerCity, doc.page.width - 196, footerY + 17, {
         width: 128,
         align: 'center',
       });
@@ -951,7 +982,84 @@ export class InvoicePDFService {
   }
 
   private formatMoney(amount: number): string {
-    return Number(amount || 0).toFixed(2);
+    return `\u20B9${Number(amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  private formatPaymentMethod(method: string): string {
+    const map: Record<string, string> = {
+      CARD: 'Credit / Debit Card',
+      UPI: 'UPI',
+      NETBANKING: 'Net Banking',
+      CASH: 'Cash',
+      WALLET: 'Wallet',
+      EMI: 'EMI',
+      BANK_TRANSFER: 'Bank Transfer',
+    };
+    return map[method.toUpperCase()] ?? method;
+  }
+
+  private buildClinicTagline(clinicName: string): string {
+    const name = clinicName.toLowerCase();
+    if (name.includes('ayurved') || name.includes('holistic') || name.includes('wellness')) {
+      return 'Ancient Wisdom  \u2022  Modern Care';
+    }
+    if (name.includes('dental') || name.includes('teeth')) {
+      return 'Expert Dental  \u2022  Compassionate Care';
+    }
+    if (name.includes('eye') || name.includes('vision') || name.includes('optic')) {
+      return 'Clear Vision  \u2022  Advanced Eye Care';
+    }
+    if (name.includes('child') || name.includes('paediat') || name.includes('pediatr')) {
+      return 'Caring for Little Ones  \u2022  Expert Paediatrics';
+    }
+    return 'Quality Healthcare  \u2022  Compassionate Service';
+  }
+
+  private extractCityFromAddress(address?: string): string {
+    if (!address) return 'Healthcare Facility';
+    // Try to extract city: addresses often follow "Street, City, State PIN" format
+    const parts = address
+      .split(',')
+      .map(p => p.trim())
+      .filter(Boolean);
+    // Return the second-to-last segment (likely the city) or the last one
+    if (parts.length >= 2) {
+      return parts[parts.length - 2] ?? parts[0] ?? address;
+    }
+    return parts[0] ?? address;
+  }
+
+  private cleanLineItemDescription(description: string): string {
+    if (!description) return 'Service';
+    // Convert enum-style descriptions to readable labels
+    return description
+      .replace(/VIDEO_CALL/gi, 'Video Consultation')
+      .replace(/IN_PERSON/gi, 'In-Person Consultation')
+      .replace(/TELECONSULTATION/gi, 'Tele-Consultation')
+      .replace(/AUDIO_CALL/gi, 'Audio Consultation')
+      .replace(/CHAT/gi, 'Chat Consultation')
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, c => c.toUpperCase());
+  }
+
+  private detectLineItemTag(description: string): { tag: string; tagColor: string } {
+    const desc = (description || '').toUpperCase();
+    if (desc.includes('VIDEO') || desc.includes('VIDEO_CALL')) {
+      return { tag: 'VIDEO CALL', tagColor: this.palette.blue };
+    }
+    if (desc.includes('TELECONSULT') || desc.includes('AUDIO')) {
+      return { tag: 'TELE-CONSULT', tagColor: this.palette.teal };
+    }
+    if (desc.includes('IN_PERSON') || desc.includes('IN-PERSON') || desc.includes('CLINIC VISIT')) {
+      return { tag: 'IN-PERSON', tagColor: this.palette.green1 };
+    }
+    if (desc.includes('SUBSCRIPTION') || desc.includes('PLAN')) {
+      return { tag: 'SUBSCRIPTION', tagColor: this.palette.purple };
+    }
+    if (desc.includes('PHARMACY') || desc.includes('MEDICINE')) {
+      return { tag: 'PHARMACY', tagColor: this.palette.peach };
+    }
+    return { tag: 'SERVICE', tagColor: this.palette.teal };
   }
 
   private formatDate(date: Date): string {
