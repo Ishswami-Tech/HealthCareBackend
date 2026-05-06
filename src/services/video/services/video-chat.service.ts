@@ -21,6 +21,7 @@ import {
   getVideoConsultationDelegate,
 } from '@core/types/video-database.types';
 import type { PrismaTransactionClient } from '@core/types/database.types';
+import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 
 export interface ChatMessage {
   id: string;
@@ -102,8 +103,8 @@ export class VideoChatService {
    */
   async sendMessage(dto: SendMessageDto): Promise<ChatMessage> {
     try {
-      // Validate consultation exists and user is participant
-      await this.validateParticipant(dto.consultationId, dto.userId);
+      const consultation = await this.resolveConsultation(dto.consultationId, dto.userId);
+      const resolvedConsultationId = consultation.id;
 
       // Create message in database
       const messageResult = await this.databaseService.executeHealthcareWrite(
@@ -111,7 +112,7 @@ export class VideoChatService {
           const delegate = getVideoChatMessageDelegate(client);
           const result = (await delegate.create({
             data: {
-              consultationId: dto.consultationId,
+              consultationId: resolvedConsultationId,
               userId: dto.userId,
               message: dto.message,
               messageType: dto.messageType || 'TEXT',
@@ -140,7 +141,7 @@ export class VideoChatService {
           clinicId: '',
           operation: 'CREATE_CHAT_MESSAGE',
           resourceType: 'VIDEO_CHAT_MESSAGE',
-          resourceId: dto.consultationId,
+          resourceId: resolvedConsultationId,
           timestamp: new Date(),
         }
       );
@@ -188,7 +189,7 @@ export class VideoChatService {
       }
 
       this.socketService.sendToRoom(
-        `consultation_${dto.consultationId}`,
+        `consultation_${resolvedConsultationId}`,
         'chat_message',
         socketData
       );
@@ -204,7 +205,7 @@ export class VideoChatService {
         version: '1.0.0',
         payload: {
           messageId: messageResult.id,
-          consultationId: dto.consultationId,
+          consultationId: resolvedConsultationId,
           userId: dto.userId,
           messageType: messageResult.messageType,
         },
@@ -217,7 +218,7 @@ export class VideoChatService {
         'VideoChatService',
         {
           messageId: messageResult.id,
-          consultationId: dto.consultationId,
+          consultationId: resolvedConsultationId,
           userId: dto.userId,
           messageType: messageResult.messageType,
         }
@@ -249,7 +250,9 @@ export class VideoChatService {
     before?: string
   ): Promise<ChatMessage[]> {
     try {
-      const cacheKey = `chat:history:${consultationId}:${limit}:${before || 'latest'}`;
+      const consultation = await this.resolveConsultation(consultationId);
+      const resolvedConsultationId = consultation.id;
+      const cacheKey = `chat:history:${resolvedConsultationId}:${limit}:${before || 'latest'}`;
       const cached = await this.cacheService.get<ChatMessage[]>(cacheKey);
       if (cached) {
         return cached;
@@ -260,7 +263,7 @@ export class VideoChatService {
           const delegate = getVideoChatMessageDelegate(client);
           const result = (await delegate.findMany({
             where: {
-              consultationId,
+              consultationId: resolvedConsultationId,
               isDeleted: false,
               ...(before && { createdAt: { lt: new Date(before) } }),
             } as unknown,
@@ -309,8 +312,9 @@ export class VideoChatService {
    */
   updateTypingIndicator(consultationId: string, userId: string, isTyping: boolean): void {
     try {
+      const resolvedConsultationId = normalizeAppointmentId(consultationId);
       // Clear existing timeout
-      const timeoutKey = `${consultationId}:${userId}`;
+      const timeoutKey = `${resolvedConsultationId}:${userId}`;
       const existingTimeout = this.typingUsers.get(timeoutKey);
       if (existingTimeout) {
         clearTimeout(existingTimeout);
@@ -320,12 +324,16 @@ export class VideoChatService {
         // Set timeout to auto-clear typing indicator
         const timeout = setTimeout(() => {
           this.typingUsers.delete(timeoutKey);
-          this.socketService.sendToRoom(`consultation_${consultationId}`, 'typing_indicator', {
-            consultationId,
-            userId,
-            isTyping: false,
-            timestamp: nowIso(),
-          });
+          this.socketService.sendToRoom(
+            `consultation_${resolvedConsultationId}`,
+            'typing_indicator',
+            {
+              consultationId: resolvedConsultationId,
+              userId,
+              isTyping: false,
+              timestamp: nowIso(),
+            }
+          );
         }, this.TYPING_TIMEOUT);
 
         this.typingUsers.set(timeoutKey, timeout);
@@ -334,8 +342,8 @@ export class VideoChatService {
       }
 
       // Emit typing indicator via Socket.IO
-      this.socketService.sendToRoom(`consultation_${consultationId}`, 'typing_indicator', {
-        consultationId,
+      this.socketService.sendToRoom(`consultation_${resolvedConsultationId}`, 'typing_indicator', {
+        consultationId: resolvedConsultationId,
         userId,
         isTyping,
         timestamp: nowIso(),
@@ -348,7 +356,7 @@ export class VideoChatService {
         'VideoChatService',
         {
           error: error instanceof Error ? error.message : String(error),
-          consultationId,
+          consultationId: consultationId,
           userId,
         }
       );
@@ -503,13 +511,26 @@ export class VideoChatService {
   /**
    * Validate user is a participant in the consultation
    */
-  private async validateParticipant(consultationId: string, userId: string): Promise<void> {
+  private async resolveConsultation(
+    consultationId: string,
+    userId?: string
+  ): Promise<{
+    id: string;
+    appointmentId: string;
+    patientId: string;
+    doctorId: string;
+    participants: Array<{ userId: string }>;
+  }> {
+    const cleanedConsultationId = consultationId.startsWith('video-session-')
+      ? consultationId.replace(/^video-session-/, '')
+      : consultationId;
+    const normalizedConsultationId = normalizeAppointmentId(cleanedConsultationId);
     const consultation = await this.databaseService.executeHealthcareRead(
       async (client: PrismaTransactionClient) => {
         const delegate = getVideoConsultationDelegate(client);
         const result = await delegate.findFirst({
           where: {
-            id: consultationId,
+            OR: [{ id: normalizedConsultationId }, { appointmentId: normalizedConsultationId }],
           },
           include: {
             participants: true,
@@ -523,20 +544,37 @@ export class VideoChatService {
       throw new NotFoundException(`Consultation ${consultationId} not found`);
     }
 
-    const isParticipant =
-      consultation.patientId === userId ||
-      consultation.doctorId === userId ||
-      (consultation.participants && consultation.participants.some(p => p.userId === userId));
+    if (userId) {
+      const isParticipant =
+        consultation.patientId === userId ||
+        consultation.doctorId === userId ||
+        (consultation.participants && consultation.participants.some(p => p.userId === userId));
 
-    if (!isParticipant) {
-      throw new HealthcareError(
-        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-        'User is not a participant in this consultation',
-        undefined,
-        { consultationId, userId },
-        'VideoChatService.validateParticipant'
-      );
+      if (!isParticipant) {
+        throw new HealthcareError(
+          ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+          'User is not a participant in this consultation',
+          undefined,
+          { consultationId, userId },
+          'VideoChatService.validateParticipant'
+        );
+      }
     }
+
+    return consultation as {
+      id: string;
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      participants: Array<{ userId: string }>;
+    };
+  }
+
+  /**
+   * Validate user is a participant in the consultation
+   */
+  private async validateParticipant(consultationId: string, userId: string): Promise<void> {
+    await this.resolveConsultation(consultationId, userId);
   }
 
   /**

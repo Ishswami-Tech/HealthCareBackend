@@ -22,6 +22,7 @@ import {
   getVideoConsultationDelegate,
 } from '@core/types/video-database.types';
 import type { PrismaTransactionClient } from '@core/types/database.types';
+import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 
 export interface MedicalNote {
   id: string;
@@ -106,7 +107,8 @@ export class VideoMedicalNotesService {
   async createNote(dto: CreateNoteDto): Promise<MedicalNote> {
     try {
       // Validate consultation exists and user is participant
-      await this.validateParticipant(dto.consultationId, dto.userId);
+      const consultation = await this.resolveConsultation(dto.consultationId, dto.userId);
+      const resolvedConsultationId = consultation.id;
 
       // Create note in database
       const noteResult = await this.databaseService.executeHealthcareWrite(
@@ -114,7 +116,7 @@ export class VideoMedicalNotesService {
           const delegate = getVideoConsultationNoteDelegate(client);
           const result = (await delegate.create({
             data: {
-              consultationId: dto.consultationId,
+              consultationId: resolvedConsultationId,
               userId: dto.userId,
               noteType: dto.noteType,
               title: dto.title,
@@ -134,13 +136,13 @@ export class VideoMedicalNotesService {
           clinicId: '',
           operation: 'CREATE_MEDICAL_NOTE',
           resourceType: 'VIDEO_CONSULTATION_NOTE',
-          resourceId: dto.consultationId,
+          resourceId: resolvedConsultationId,
           timestamp: new Date(),
         }
       );
 
       // Schedule auto-save
-      this.scheduleAutoSave(noteResult.id, dto.consultationId, dto.userId);
+      this.scheduleAutoSave(noteResult.id, resolvedConsultationId, dto.userId);
 
       // Emit real-time update via Socket.IO
       const mappedNote = this.mapToMedicalNote(noteResult);
@@ -159,7 +161,7 @@ export class VideoMedicalNotesService {
         } as Record<string, string | boolean | null>,
       };
       this.socketService.sendToRoom(
-        `consultation_${dto.consultationId}`,
+        `consultation_${resolvedConsultationId}`,
         'note_created',
         socketPayload
       );
@@ -175,7 +177,7 @@ export class VideoMedicalNotesService {
         version: '1.0.0',
         payload: {
           noteId: noteResult.id,
-          consultationId: dto.consultationId,
+          consultationId: resolvedConsultationId,
           userId: dto.userId,
           noteType: dto.noteType,
         },
@@ -188,7 +190,7 @@ export class VideoMedicalNotesService {
         'VideoMedicalNotesService',
         {
           noteId: noteResult.id,
-          consultationId: dto.consultationId,
+          consultationId: resolvedConsultationId,
           userId: dto.userId,
           noteType: dto.noteType,
         }
@@ -319,7 +321,9 @@ export class VideoMedicalNotesService {
    */
   async getNotes(consultationId: string): Promise<MedicalNote[]> {
     try {
-      const cacheKey = `medical_notes:${consultationId}`;
+      const consultation = await this.resolveConsultation(consultationId);
+      const resolvedConsultationId = consultation.id;
+      const cacheKey = `medical_notes:${resolvedConsultationId}`;
       const cached = await this.cacheService.get<MedicalNote[]>(cacheKey);
       if (cached) {
         return cached;
@@ -330,7 +334,7 @@ export class VideoMedicalNotesService {
           const delegate = getVideoConsultationNoteDelegate(client);
           const result = (await delegate.findMany({
             where: {
-              consultationId,
+              consultationId: resolvedConsultationId,
             },
             orderBy: {
               createdAt: 'desc',
@@ -388,9 +392,13 @@ export class VideoMedicalNotesService {
       const consultationResult = await this.databaseService.executeHealthcareRead(
         async (client: PrismaTransactionClient) => {
           const delegate = getVideoConsultationDelegate(client);
-          // Use findUnique with id
-          const result = await delegate.findUnique({
-            where: { id: noteResult.consultationId },
+          const result = await delegate.findFirst({
+            where: {
+              OR: [
+                { id: normalizeAppointmentId(noteResult.consultationId) },
+                { appointmentId: normalizeAppointmentId(noteResult.consultationId) },
+              ],
+            },
           });
           return result;
         }
@@ -590,13 +598,29 @@ export class VideoMedicalNotesService {
    * Validate user is a participant
    */
   private async validateParticipant(consultationId: string, userId: string): Promise<void> {
+    await this.resolveConsultation(consultationId, userId);
+  }
+
+  private async resolveConsultation(
+    consultationId: string,
+    userId?: string
+  ): Promise<{
+    id: string;
+    appointmentId: string;
+    patientId: string;
+    doctorId: string;
+    participants: Array<{ userId: string }>;
+  }> {
+    const cleanedConsultationId = consultationId.startsWith('video-session-')
+      ? consultationId.replace(/^video-session-/, '')
+      : consultationId;
+    const normalizedConsultationId = normalizeAppointmentId(cleanedConsultationId);
     const consultation = await this.databaseService.executeHealthcareRead(
       async (client: PrismaTransactionClient) => {
         const delegate = getVideoConsultationDelegate(client);
-        // Use findFirst with id and include participants
         const result = await delegate.findFirst({
           where: {
-            id: consultationId,
+            OR: [{ id: normalizedConsultationId }, { appointmentId: normalizedConsultationId }],
           },
           include: {
             participants: true,
@@ -610,20 +634,30 @@ export class VideoMedicalNotesService {
       throw new NotFoundException(`Consultation ${consultationId} not found`);
     }
 
-    const isParticipant =
-      consultation.patientId === userId ||
-      consultation.doctorId === userId ||
-      (consultation.participants && consultation.participants.some(p => p.userId === userId));
+    if (userId) {
+      const isParticipant =
+        consultation.patientId === userId ||
+        consultation.doctorId === userId ||
+        (consultation.participants && consultation.participants.some(p => p.userId === userId));
 
-    if (!isParticipant) {
-      throw new HealthcareError(
-        ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
-        'User is not a participant in this consultation',
-        undefined,
-        { consultationId, userId },
-        'VideoMedicalNotesService.validateParticipant'
-      );
+      if (!isParticipant) {
+        throw new HealthcareError(
+          ErrorCode.AUTH_INSUFFICIENT_PERMISSIONS,
+          'User is not a participant in this consultation',
+          undefined,
+          { consultationId, userId },
+          'VideoMedicalNotesService.validateParticipant'
+        );
+      }
     }
+
+    return consultation as {
+      id: string;
+      appointmentId: string;
+      patientId: string;
+      doctorId: string;
+      participants: Array<{ userId: string }>;
+    };
   }
 
   /**
