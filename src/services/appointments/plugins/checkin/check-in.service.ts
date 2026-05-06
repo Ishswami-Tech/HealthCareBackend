@@ -122,6 +122,36 @@ export class CheckInService {
     }
   }
 
+  private async resolveCheckInLocationId(
+    locationId: string,
+    clinicId?: string | null
+  ): Promise<string> {
+    const resolvedLocation = await this.databaseService.executeHealthcareRead(async client => {
+      return await (
+        client as unknown as {
+          checkInLocation: {
+            findFirst: <T>(args: T) => Promise<{ id: string; isActive: boolean } | null>;
+          };
+        }
+      ).checkInLocation.findFirst({
+        where: {
+          OR: [{ id: locationId }, { locationId }],
+          ...(clinicId ? { clinicId } : {}),
+        },
+      } as never);
+    });
+
+    if (!resolvedLocation) {
+      throw new NotFoundException(`No check-in location is configured for location ${locationId}`);
+    }
+
+    if (!resolvedLocation.isActive) {
+      throw new BadRequestException('Check-in location is not active');
+    }
+
+    return resolvedLocation.id;
+  }
+
   /**
    * Public API: Check-in for appointments
    * Validates appointment type and routes to type-specific handler
@@ -184,6 +214,11 @@ export class CheckInService {
 
       await this.ensureActiveInPersonCoverage(appointment);
 
+      const resolvedCheckInLocationId = await this.resolveCheckInLocationId(
+        appointment.locationId,
+        clinicId
+      );
+
       if (this.BLOCKED_CHECK_IN_STATUSES.has(currentStatus)) {
         throw new BadRequestException('This appointment can no longer be checked in');
       }
@@ -234,7 +269,7 @@ export class CheckInService {
           return await typedClient.checkIn.create({
             data: {
               appointmentId: appointment.id,
-              locationId: appointment.locationId,
+              locationId: resolvedCheckInLocationId,
               patientId: appointment.patientId,
               clinicId,
               checkedInAt: now,
@@ -436,6 +471,11 @@ export class CheckInService {
         throw new BadRequestException('This appointment can no longer be checked in');
       }
 
+      const resolvedCheckInLocationId = await this.resolveCheckInLocationId(
+        appointment.locationId,
+        clinicId
+      );
+
       // 1. Confirm the appointment and record clinic arrival
       await this.databaseService.executeHealthcareWrite(
         async client => {
@@ -482,7 +522,7 @@ export class CheckInService {
           return await typedClient.checkIn.create({
             data: {
               appointmentId: appointment.id,
-              locationId: appointment.locationId,
+              locationId: resolvedCheckInLocationId,
               patientId: appointment.patientId,
               clinicId,
               checkedInAt: now,
@@ -551,7 +591,7 @@ export class CheckInService {
         {
           appointmentId: appointment.id,
           clinicId,
-          locationId: appointment.locationId,
+          locationId: resolvedCheckInLocationId,
           queuePosition: result.queuePosition,
         }
       );
