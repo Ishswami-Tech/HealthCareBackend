@@ -3201,18 +3201,56 @@ export class AppointmentsService {
           { appointmentId: checkInDto.appointmentId, userId, clinicId }
         );
 
+        const appointmentId = checkInDto.appointmentId;
+        if (!appointmentId) {
+          throw this.errors.validationError(
+            'appointmentId',
+            'appointmentId is required for check-in event emission',
+            'AppointmentsService.processCheckIn'
+          );
+        }
+
         // Emit event for real-time broadcasting
-        await this.eventService.emit('appointment.checked_in', {
-          appointmentId: checkInDto.appointmentId,
+        const appointment = (await this.getAppointmentById(
+          appointmentId,
+          clinicId
+        )) as AppointmentWithRelations | null;
+        const patientId = appointment?.patientId || userId;
+        const doctorId = appointment?.doctorId;
+        const checkInMethod = checkInDto.checkInMethod || 'manual';
+        const locationId = checkInDto.locationId || appointment?.locationId;
+        const checkedInAt = nowIso();
+        const checkInEventPayload = {
+          appointmentId,
           clinicId,
+          userId: patientId,
+          patientId,
+          doctorId,
+          locationId,
           checkedInBy: userId,
+          checkInMethod,
+          checkedInAt,
           checkInData: checkInDto,
+          metadata: {
+            appointmentId,
+            clinicId,
+            patientId,
+            doctorId,
+            locationId,
+            checkedInBy: userId,
+            checkInMethod,
+            checkedInAt,
+            notes: checkInDto.notes,
+            source: 'AppointmentsService.processCheckIn',
+          },
+        };
+
+        await this.eventService.emit('appointment.checked_in', {
+          ...checkInEventPayload,
         });
         await this.eventService.emit('appointment.confirmed', {
-          appointmentId: checkInDto.appointmentId,
-          clinicId,
+          ...checkInEventPayload,
           confirmedBy: userId,
-          checkInData: checkInDto,
         });
       }
       return result;

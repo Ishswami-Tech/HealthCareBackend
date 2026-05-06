@@ -1061,6 +1061,11 @@ export class CheckInService {
           findMany: (args: {
             where: { clinicId: string };
             include: {
+              location: {
+                select: {
+                  locationName: boolean;
+                };
+              };
               appointment: {
                 include: {
                   patient: {
@@ -1071,6 +1076,11 @@ export class CheckInService {
                   doctor: {
                     include: {
                       user: { select: { name: boolean } };
+                    };
+                  };
+                  payment: {
+                    select: {
+                      status: boolean;
                     };
                   };
                 };
@@ -1088,13 +1098,17 @@ export class CheckInService {
               isVerified: boolean;
               verifiedBy: string | null;
               notes: string | null;
+              location?: { locationName?: string | null } | null;
               appointment: {
                 id: string;
                 doctorId: string;
                 patientId: string;
                 locationId: string;
+                date: Date;
+                time: string;
                 type: string;
                 status: string;
+                payment?: { status?: string | null } | null;
                 patient: { user?: { name: string | null } | null };
                 doctor: { user?: { name: string | null } | null };
               };
@@ -1106,6 +1120,11 @@ export class CheckInService {
       return await typedClient.checkIn.findMany({
         where: { clinicId },
         include: {
+          location: {
+            select: {
+              locationName: true,
+            },
+          },
           appointment: {
             include: {
               patient: {
@@ -1116,6 +1135,11 @@ export class CheckInService {
               doctor: {
                 include: {
                   user: { select: { name: true } },
+                },
+              },
+              payment: {
+                select: {
+                  status: true,
                 },
               },
             },
@@ -1130,12 +1154,18 @@ export class CheckInService {
       patientId: checkIn.patientId,
       doctorId: checkIn.appointment.doctorId,
       locationId: checkIn.appointment.locationId,
+      appointmentDate: checkIn.appointment.date.toISOString(),
+      appointmentTime: checkIn.appointment.time,
       type: checkIn.appointment.type,
       status: checkIn.appointment.status,
       domain: 'clinic',
       checkedInAt: checkIn.checkedInAt.toISOString(),
+      locationName: checkIn.location?.locationName || 'Unknown location',
       patientName: checkIn.appointment.patient?.user?.name || 'Unknown',
       doctorName: checkIn.appointment.doctor?.user?.name || 'Unknown',
+      checkInMethod: /qr check-in/i.test(checkIn.notes || '') ? 'QR' : 'MANUAL',
+      paymentStatus: checkIn.appointment.payment?.status || 'N_A',
+      notes: checkIn.notes,
     }));
   }
 

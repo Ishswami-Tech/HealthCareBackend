@@ -631,6 +631,15 @@ export interface CheckInAppointment {
   locationId: string;
   type: string; // AppointmentType enum
   status: string; // AppointmentStatus enum
+  appointmentDate?: string;
+  appointmentTime?: string;
+  checkedInAt?: string;
+  locationName?: string;
+  patientName?: string;
+  doctorName?: string;
+  checkInMethod?: 'MANUAL' | 'QR';
+  paymentStatus?: string;
+  notes?: string | null;
   domain?: string;
 }
 
