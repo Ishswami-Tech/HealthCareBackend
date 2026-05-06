@@ -3247,13 +3247,13 @@ export class AppointmentsService {
   ): Promise<unknown> {
     try {
       // Get appointment to extract doctorId and validate clinic isolation
-      const appointment = (await this.getAppointmentById(
+      const appointmentRecord = (await this.getAppointmentById(
         appointmentId,
         clinicId
       )) as AppointmentWithRelations;
 
       // Use appointment's doctorId, fallback to userId if not available
-      const doctorId = appointment.doctorId || userId;
+      const doctorId = appointmentRecord.doctorId || userId;
 
       // Hot path: Direct plugin injection for performance
       // Use doctorId from DTO if provided, otherwise use appointment's doctorId
@@ -3269,7 +3269,7 @@ export class AppointmentsService {
           appointmentId,
           doctorId: finalDoctorId,
           clinicId,
-          userId: appointment.userId,
+          userId: appointmentRecord.userId,
           ...restDto,
         });
       } catch (error) {
@@ -3298,6 +3298,21 @@ export class AppointmentsService {
       const result = { success: true, data: completionData };
 
       if (result.success) {
+        const completedAt = new Date();
+        const completedAtIso = completedAt.toISOString();
+        const existingMetadata =
+          appointmentRecord.metadata &&
+          typeof appointmentRecord.metadata === 'object' &&
+          !Array.isArray(appointmentRecord.metadata)
+            ? (appointmentRecord.metadata as Record<string, unknown>)
+            : {};
+        const completionMetadata =
+          completeDto.metadata &&
+          typeof completeDto.metadata === 'object' &&
+          !Array.isArray(completeDto.metadata)
+            ? completeDto.metadata
+            : {};
+
         await this.databaseService.executeHealthcareWrite(
           async client => {
             return await (
@@ -3310,7 +3325,15 @@ export class AppointmentsService {
               where: { id: appointmentId },
               data: {
                 status: AppointmentStatus.COMPLETED,
-                updatedAt: new Date(),
+                completedAt,
+                updatedAt: completedAt,
+                metadata: {
+                  ...existingMetadata,
+                  ...completionMetadata,
+                  consultationOutcome: 'completed',
+                  consultationCompletedAt: completedAtIso,
+                  consultationCompletedBy: finalDoctorId,
+                },
               },
             });
           },
@@ -3321,8 +3344,12 @@ export class AppointmentsService {
             operation: 'UPDATE_APPOINTMENT',
             resourceType: 'APPOINTMENT',
             resourceId: appointmentId,
-            timestamp: new Date(),
-            details: { status: AppointmentStatus.COMPLETED },
+            timestamp: completedAt,
+            details: {
+              status: AppointmentStatus.COMPLETED,
+              completedAt: completedAtIso,
+              metadata: completionMetadata,
+            },
           }
         );
 

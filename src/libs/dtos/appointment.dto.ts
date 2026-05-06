@@ -760,6 +760,30 @@ export class AppointmentResponseDto {
   updatedAt!: string;
 
   @ApiPropertyOptional({
+    example: '2026-05-05T06:25:59.000Z',
+    description: 'Timestamp when consultation started',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Started at must be a valid date string' })
+  startedAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-05T06:12:59.000Z',
+    description: 'Timestamp when patient arrived and was checked in',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Checked in at must be a valid date string' })
+  checkedInAt?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2026-05-05T06:40:59.000Z',
+    description: 'Timestamp when consultation was completed',
+  })
+  @IsOptional()
+  @IsDateString({}, { message: 'Completed at must be a valid date string' })
+  completedAt?: string | null;
+
+  @ApiPropertyOptional({
     example: 'clinic-uuid-123',
     description: 'Studio ID for clinic domain appointments',
   })
@@ -1356,6 +1380,19 @@ export class CompleteAppointmentDto {
   @IsOptional()
   @IsString({ message: 'Notes must be a string' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    description: 'Structured completion metadata for consult state and audit trail',
+    example: {
+      medicineSkipped: true,
+      prescriptionIssued: false,
+      consultationStartedAt: '2026-05-05T06:25:59.000Z',
+      consultationCompletedAt: '2026-05-05T06:40:59.000Z',
+    },
+  })
+  @IsOptional()
+  @IsObject({ message: 'Metadata must be an object' })
+  metadata?: Record<string, unknown>;
 
   // --- Check-in Specific Fields ---
   @ApiPropertyOptional({ description: 'QR Code for check-in verification' })

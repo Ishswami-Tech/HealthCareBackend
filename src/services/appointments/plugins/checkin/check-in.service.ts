@@ -633,6 +633,7 @@ export class CheckInService {
 
   async startConsultation(appointmentId: string, clinicId: string): Promise<unknown> {
     const startTime = Date.now();
+    const now = new Date();
 
     try {
       const appointment = await this.validateAppointmentForClinic(appointmentId, clinicId);
@@ -660,6 +661,7 @@ export class CheckInService {
             where: { id: appointmentId },
             data: {
               status: 'IN_PROGRESS',
+              startedAt: now,
               updatedAt: new Date(),
             },
           });
