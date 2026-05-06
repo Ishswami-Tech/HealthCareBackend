@@ -2261,6 +2261,10 @@ export class AppointmentsController {
         throw error;
       }
 
+      if (error instanceof HttpException) {
+        throw error;
+      }
+
       throw this.errors.internalServerError(context);
     }
   }
@@ -2349,6 +2353,10 @@ export class AppointmentsController {
       );
 
       if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      if (error instanceof HttpException) {
         throw error;
       }
 
@@ -2517,7 +2525,7 @@ export class AppointmentsController {
           locationId,
           overrideReason: forceCheckInDto.reason,
           appointmentTime: appointment.date
-            ? `${appointment.date.toISOString()} ${appointment.time}`
+            ? `${appointment.date instanceof Date ? appointment.date.toISOString() : String(appointment.date)} ${appointment.time || ''}`.trim()
             : 'N/A',
           currentTime: nowIso(),
         }
@@ -2583,6 +2591,10 @@ export class AppointmentsController {
       );
 
       if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      if (error instanceof HttpException) {
         throw error;
       }
 

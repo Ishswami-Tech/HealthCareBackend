@@ -731,6 +731,7 @@ export class CheckInLocationService {
       // ──────────────────────────────────────────────────────────
       let resolvedClinicId: string | null = null;
       let isManualReceptionCheckIn = false;
+      let resolvedCheckInLocationId: string | null = null;
 
       if (qrLocation) {
         // QR flow: validate isActive
@@ -782,6 +783,7 @@ export class CheckInLocationService {
         }
 
         resolvedClinicId = qrLocation.clinicId;
+        resolvedCheckInLocationId = qrLocation.id;
       } else {
         // Manual reception flow: resolve locationId as a ClinicLocation
         let clinicLocation: ClinicLocationResponseDto | null = null;
@@ -808,14 +810,48 @@ export class CheckInLocationService {
           throw new NotFoundException(`Location with ID ${data.locationId} not found`);
         }
 
+        const linkedCheckInLocation = await this.databaseService.executeHealthcareRead(
+          async client => {
+            return await (
+              client as unknown as {
+                checkInLocation: {
+                  findFirst: <T>(args: T) => Promise<CheckInLocation | null>;
+                };
+              }
+            ).checkInLocation.findFirst({
+              where: {
+                OR: [{ id: data.locationId }, { locationId: data.locationId }],
+                ...(clinicId ? { clinicId } : {}),
+              },
+            } as never);
+          }
+        );
+
+        if (!linkedCheckInLocation) {
+          throw new NotFoundException(
+            `No check-in location is configured for clinic location ${data.locationId}`
+          );
+        }
+
+        if (!linkedCheckInLocation.isActive) {
+          throw new BadRequestException('Check-in location is not active');
+        }
+
         resolvedClinicId =
           clinicLocation.clinicId || (appointmentData as { clinicId?: string }).clinicId || null;
+        resolvedCheckInLocationId = linkedCheckInLocation.id;
         isManualReceptionCheckIn = true;
       }
 
       // Derive the clinicId to use for audit/queue — fall back to appointment's clinicId
       const effectiveClinicId =
         resolvedClinicId || (appointmentData as { clinicId?: string }).clinicId || '';
+
+      if (!resolvedCheckInLocationId) {
+        throw new NotFoundException(
+          `Unable to resolve a check-in location for appointment ${data.appointmentId}`
+        );
+      }
 
       // Create check-in record
       const checkIn = await this.databaseService.executeHealthcareWrite(
@@ -829,7 +865,7 @@ export class CheckInLocationService {
           ).checkIn.create({
             data: {
               appointmentId: data.appointmentId,
-              locationId: data.locationId,
+              locationId: resolvedCheckInLocationId,
               patientId: data.patientId,
               clinicId: effectiveClinicId,
               coordinates: data.coordinates as never,
@@ -868,7 +904,7 @@ export class CheckInLocationService {
           userRole: isManualReceptionCheckIn ? 'receptionist' : 'patient',
           details: {
             appointmentId: data.appointmentId,
-            locationId: data.locationId,
+            locationId: resolvedCheckInLocationId,
             isManualReceptionCheckIn,
           },
         }
@@ -934,7 +970,7 @@ export class CheckInLocationService {
         {
           checkInId: checkIn.id,
           appointmentId: data.appointmentId,
-          locationId: data.locationId,
+          locationId: resolvedCheckInLocationId,
           isManualReceptionCheckIn,
           responseTime: Date.now() - startTime,
         }

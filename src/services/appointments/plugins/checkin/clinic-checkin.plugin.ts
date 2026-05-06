@@ -64,13 +64,8 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
     // Delegate to existing check-in service - no functionality change
     switch (pluginData.operation) {
       case 'checkIn':
-        if (!pluginData.appointmentId || !pluginData.userId) {
-          throw new Error('Missing required fields for checkIn');
-        }
-        return await this.checkInService.checkIn(
-          pluginData.appointmentId,
-          pluginData.userId,
-          pluginData.priority
+        throw new BadRequestException(
+          'Legacy checkIn operation is disabled. Use processCheckIn for arrival confirmation.'
         );
 
       case 'getCheckedInAppointments':
@@ -84,24 +79,15 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
           throw new Error('Missing required fields for processCheckIn');
         }
         if (
-          typeof (this.checkInService as unknown as { processCheckIn?: unknown }).processCheckIn ===
+          typeof (this.checkInService as unknown as { processCheckIn?: unknown }).processCheckIn !==
           'function'
         ) {
-          return await this.checkInService.processCheckIn(
-            pluginData.appointmentId,
-            pluginData.clinicId
-          );
+          throw new Error('CheckInService does not expose processCheckIn');
         }
 
-        if (!pluginData.userId) {
-          throw new Error('Missing required field userId for processCheckIn fallback');
-        }
-
-        // Runtime-safe fallback for older CheckInService builds that expose only `checkIn`.
-        return await this.checkInService.checkIn(
+        return await this.checkInService.processCheckIn(
           pluginData.appointmentId,
-          pluginData.userId,
-          pluginData.priority
+          pluginData.clinicId
         );
 
       case 'getPatientQueuePosition':

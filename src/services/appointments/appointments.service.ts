@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, HttpException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@config/config.service';
 
@@ -10,6 +10,7 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LogType, LogLevel, EventCategory, EventPriority } from '@core/types';
 import type { EnterpriseEventPayload } from '@core/types/event.types';
 import { HealthcareErrorsService } from '@core/errors';
+import { HealthcareError } from '@core/errors';
 import { RbacService } from '@core/rbac/rbac.service';
 import {
   parseIstDateTime,
@@ -3223,6 +3224,9 @@ export class AppointmentsService {
         'AppointmentsService.processCheckIn',
         { error: _error instanceof Error ? _error.message : String(_error) }
       );
+      if (_error instanceof HealthcareError || _error instanceof HttpException) {
+        throw _error;
+      }
       if (_error instanceof Error && _error.message.includes('not found')) {
         throw this.errors.appointmentNotFound(
           checkInDto.appointmentId,
