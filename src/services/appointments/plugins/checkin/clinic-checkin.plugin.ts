@@ -25,6 +25,7 @@ export class ClinicCheckInPlugin extends BaseAppointmentPlugin {
   private readonly unsupportedOperations = new Set(['processAyurvedicCheckIn', 'getTherapyQueue']);
 
   constructor(
+    @Inject(forwardRef(() => CheckInService))
     private readonly checkInService: CheckInService,
     @Optional()
     @Inject(forwardRef(() => LoggingService))
