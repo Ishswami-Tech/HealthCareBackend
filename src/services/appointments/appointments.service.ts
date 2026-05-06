@@ -40,6 +40,7 @@ import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirma
 import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
 import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin';
 import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
+import { CheckInService } from './plugins/checkin/check-in.service';
 
 // DTOs and Types
 import { Prisma, $Enums } from '@infrastructure/database/prisma/generated/client';
@@ -398,6 +399,7 @@ export class AppointmentsService {
     // Type Safety: Full TypeScript support with IDE autocomplete
     // Scale: Critical for 10M+ concurrent users - these plugins handle 80% of traffic
     private readonly clinicCheckInPlugin: ClinicCheckInPlugin, // Hot path: Check-in operations (very frequent)
+    private readonly checkInService: CheckInService,
     private readonly clinicNotificationPlugin: ClinicNotificationPlugin, // Hot path: Notifications (every appointment action)
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
@@ -3681,12 +3683,20 @@ export class AppointmentsService {
       await this.getAppointmentById(appointmentId, clinicId);
 
       // Hot path: Direct plugin injection for performance
-      const consultationData = await this.clinicCheckInPlugin.process({
+      const consultationPayload = {
         operation: 'startConsultation',
         appointmentId,
         clinicId,
         ...startDto,
-      });
+      };
+      const consultationProcessor =
+        this.clinicCheckInPlugin &&
+        typeof this.clinicCheckInPlugin.process === 'function' &&
+        this.clinicCheckInPlugin.process.bind(this.clinicCheckInPlugin);
+
+      const consultationData = consultationProcessor
+        ? await consultationProcessor(consultationPayload)
+        : await this.checkInService.startConsultation(appointmentId, clinicId);
 
       const result = { success: true, data: consultationData };
 
@@ -3710,6 +3720,31 @@ export class AppointmentsService {
       }
       return result;
     } catch (_error) {
+      if (
+        _error instanceof Error &&
+        _error.message.includes('startConsultation') &&
+        typeof this.checkInService?.startConsultation === 'function'
+      ) {
+        const consultationData = await this.checkInService.startConsultation(
+          appointmentId,
+          clinicId
+        );
+        const result = { success: true, data: consultationData };
+        await this.loggingService.log(
+          LogType.BUSINESS,
+          LogLevel.INFO,
+          'Consultation started successfully via direct check-in service fallback',
+          'AppointmentsService',
+          { appointmentId, userId, clinicId }
+        );
+        await this.eventService.emit('appointment.consultation_started', {
+          appointmentId,
+          clinicId,
+          startedBy: userId,
+          consultationData: startDto,
+        });
+        return result;
+      }
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
