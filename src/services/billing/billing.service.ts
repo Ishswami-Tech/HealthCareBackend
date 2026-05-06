@@ -123,9 +123,14 @@ export class BillingService {
     clinicId: string;
     appointmentId?: string;
     status?: string;
+    payment?: PaymentWithRelations;
   }): Promise<void> {
     await this.eventService.emit('billing.payment.updated', {
       paymentId: params.paymentId,
+      clinicId: params.clinicId,
+      ...(params.appointmentId ? { appointmentId: params.appointmentId } : {}),
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.payment ? { payment: params.payment } : {}),
     });
     await this.eventService.emit('payment.pending', {
       paymentId: params.paymentId,
@@ -139,8 +144,16 @@ export class BillingService {
     });
   }
 
-  private async emitBillingPaymentUpdatedEvent(paymentId: string): Promise<void> {
-    await this.eventService.emit('billing.payment.updated', { paymentId });
+  private async emitBillingPaymentUpdatedEvent(
+    paymentId: string,
+    payment?: PaymentWithRelations
+  ): Promise<void> {
+    await this.eventService.emit('billing.payment.updated', {
+      paymentId,
+      ...(payment
+        ? { payment, clinicId: payment.clinicId, appointmentId: payment.appointmentId }
+        : {}),
+    });
   }
 
   private assertBillingEntityAccess(
@@ -342,6 +355,7 @@ export class BillingService {
           paymentStatus: normalizedPaymentStatus,
           amount: args.amount,
           status: appointment.status,
+          appointment,
           source: 'BillingService',
         },
       };
@@ -569,7 +583,11 @@ export class BillingService {
         { planId: plan.id, name: plan.name }
       );
 
-      await this.eventService.emit('billing.plan.created', { planId: plan.id });
+      await this.eventService.emit('billing.plan.created', {
+        planId: plan.id,
+        clinicId: plan.clinicId,
+        plan,
+      });
       await this.cacheService.invalidateCacheByTag('billing_plans');
 
       return plan;
@@ -718,13 +736,19 @@ export class BillingService {
       { planId: id }
     );
 
-    await this.eventService.emit('billing.plan.updated', { planId: id });
+    await this.eventService.emit('billing.plan.updated', {
+      planId: id,
+      clinicId: plan.clinicId,
+      plan,
+    });
     await this.cacheService.invalidateCacheByTag('billing_plans');
 
     return plan;
   }
 
   async deleteBillingPlan(id: string) {
+    const plan = await this.databaseService.findBillingPlanByIdSafe(id);
+
     // Check if plan has active subscriptions
     const activeSubscriptions = await this.databaseService.findSubscriptionsSafe({
       planId: id,
@@ -747,7 +771,11 @@ export class BillingService {
       { planId: id }
     );
 
-    await this.eventService.emit('billing.plan.deleted', { planId: id });
+    await this.eventService.emit('billing.plan.deleted', {
+      planId: id,
+      clinicId: plan?.clinicId,
+      plan,
+    });
     await this.cacheService.invalidateCacheByTag('billing_plans');
   }
 
@@ -903,6 +931,7 @@ export class BillingService {
       await this.eventService.emit('billing.subscription.created', {
         subscriptionId: subscription.id,
         userId: data.userId,
+        subscription,
       });
 
       await this.invalidateUserSubscriptionCaches(data.userId);
@@ -1034,6 +1063,7 @@ export class BillingService {
 
     await this.eventService.emit('billing.subscription.updated', {
       subscriptionId: id,
+      subscription,
     });
     await this.invalidateUserSubscriptionCaches(existingSubscription.userId);
 
@@ -1076,6 +1106,7 @@ export class BillingService {
     await this.eventService.emit('billing.subscription.cancelled', {
       subscriptionId: id,
       immediate,
+      subscription: updated,
     });
 
     await this.invalidateUserSubscriptionCaches(subscription.userId);
@@ -1182,6 +1213,7 @@ export class BillingService {
 
     await this.eventService.emit('billing.subscription.renewed', {
       subscriptionId: id,
+      subscription: updated,
     });
     await this.invalidateUserSubscriptionCaches(subscription.userId);
 
@@ -1209,6 +1241,7 @@ export class BillingService {
 
         await this.eventService.emit('billing.invoice.created', {
           invoiceId: invoice.id,
+          invoice,
         });
         await this.invalidateUserInvoiceCaches(data.userId);
 
@@ -1530,7 +1563,7 @@ export class BillingService {
       { invoiceId: id }
     );
 
-    await this.eventService.emit('billing.invoice.updated', { invoiceId: id });
+    await this.eventService.emit('billing.invoice.updated', { invoiceId: id, invoice });
     await this.invalidateUserInvoiceCaches(invoice.userId);
 
     return invoice;
@@ -1551,7 +1584,7 @@ export class BillingService {
       { invoiceId: id }
     );
 
-    await this.eventService.emit('billing.invoice.paid', { invoiceId: id });
+    await this.eventService.emit('billing.invoice.paid', { invoiceId: id, invoice });
     await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
     return invoice;
@@ -1600,7 +1633,11 @@ export class BillingService {
             paymentId: updatedPayment.id,
             clinicId: updatedPayment.clinicId,
             ...(updatedPayment.appointmentId
-              ? { appointmentId: updatedPayment.appointmentId, status: 'pending' }
+              ? {
+                  appointmentId: updatedPayment.appointmentId,
+                  status: 'pending',
+                  payment: updatedPayment,
+                }
               : {}),
           });
 
@@ -1636,10 +1673,15 @@ export class BillingService {
 
       await this.eventService.emit('billing.payment.created', {
         paymentId: payment.id,
+        clinicId: payment.clinicId,
+        ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
+        payment,
       });
       await this.eventService.emit('payment.pending', {
         paymentId: payment.id,
         clinicId: payment.clinicId,
+        ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
+        payment,
       });
 
       if (data.userId) {
@@ -1686,7 +1728,11 @@ export class BillingService {
             paymentId: updatedPayment.id,
             clinicId: updatedPayment.clinicId,
             ...(updatedPayment.appointmentId
-              ? { appointmentId: updatedPayment.appointmentId, status: 'pending' }
+              ? {
+                  appointmentId: updatedPayment.appointmentId,
+                  status: 'pending',
+                  payment: updatedPayment,
+                }
               : {}),
           });
 
@@ -1727,7 +1773,7 @@ export class BillingService {
       { paymentId: id }
     );
 
-    await this.emitBillingPaymentUpdatedEvent(id);
+    await this.emitBillingPaymentUpdatedEvent(id, payment);
 
     const paymentMetadata =
       payment.metadata && typeof payment.metadata === 'object' && !Array.isArray(payment.metadata)
@@ -3700,6 +3746,7 @@ export class BillingService {
 
     await this.eventService.emit('billing.subscription.quota_reset', {
       subscriptionId,
+      subscription,
     });
     await this.invalidateUserSubscriptionCaches(subscription.userId);
   }

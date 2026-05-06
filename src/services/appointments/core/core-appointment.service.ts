@@ -330,6 +330,7 @@ export class CoreAppointmentService {
         patientId: appointment.patientId,
         scheduledDate: appointment.date,
         scheduledTime: appointment.time,
+        appointment,
         context,
       });
 
@@ -642,6 +643,7 @@ export class CoreAppointmentService {
         doctorId: updatedAppointment.doctorId,
         patientId: updatedAppointment.patientId,
         status: updatedAppointment.status,
+        appointment: updatedAppointment,
         changes: updateDto,
         context,
       });
@@ -752,6 +754,7 @@ export class CoreAppointmentService {
         doctorId: cancelledAppointment.doctorId,
         patientId: cancelledAppointment.patientId,
         reason: reason,
+        appointment: cancelledAppointment,
         context,
       });
 

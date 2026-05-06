@@ -600,6 +600,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         reason: rejectionReason,
         cancelledBy: userId,
         status: AppointmentStatus.CANCELLED,
+        appointment: updatedAppointment,
       },
     });
 
