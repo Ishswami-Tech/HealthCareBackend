@@ -52,6 +52,7 @@ import { HealthcareErrorsService, HealthcareError } from '@core/errors';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { CacheService } from '@infrastructure/cache/cache.service';
+import { EventService } from '@infrastructure/events/event.service';
 import {
   Cache,
   PatientCache,
@@ -110,6 +111,7 @@ import type {
   AppointmentFilters,
   ServiceResponse,
   CheckInLocation,
+  CheckedInAppointmentsResponse,
 } from '@core/types/appointment.types';
 import type { AppointmentWithRelations } from '@core/types/database.types';
 
@@ -166,6 +168,8 @@ export class AppointmentsController {
     private readonly appointmentQueueService: AppointmentQueueService,
     @Inject(forwardRef(() => CheckInLocationService))
     private readonly checkInLocationService: CheckInLocationService,
+    @Inject(forwardRef(() => EventService))
+    private readonly eventService: EventService,
     @Inject(forwardRef(() => QrService))
     private readonly qrService: QrService,
     @Inject(forwardRef(() => LocationQrService))
@@ -190,6 +194,50 @@ export class AppointmentsController {
     if (statuses.length === 0) return {};
     if (statuses.length === 1) return { status: statuses[0] as AppointmentStatus };
     return { statusList: statuses };
+  }
+
+  private async emitCheckInEvents(params: {
+    appointmentId: string;
+    clinicId: string;
+    patientId?: string;
+    doctorId?: string;
+    locationId?: string;
+    checkedInBy: string;
+    checkInMethod: string;
+    source: string;
+    notes?: string;
+    overrideReason?: string;
+  }): Promise<void> {
+    const checkedInAt = nowIso();
+    const payload = {
+      appointmentId: params.appointmentId,
+      clinicId: params.clinicId,
+      userId: params.patientId || params.checkedInBy,
+      patientId: params.patientId,
+      doctorId: params.doctorId,
+      locationId: params.locationId,
+      checkedInBy: params.checkedInBy,
+      confirmedBy: params.checkedInBy,
+      checkInMethod: params.checkInMethod,
+      checkedInAt,
+      metadata: {
+        appointmentId: params.appointmentId,
+        clinicId: params.clinicId,
+        patientId: params.patientId,
+        doctorId: params.doctorId,
+        locationId: params.locationId,
+        checkedInBy: params.checkedInBy,
+        confirmedBy: params.checkedInBy,
+        checkInMethod: params.checkInMethod,
+        checkedInAt,
+        notes: params.notes,
+        overrideReason: params.overrideReason,
+        source: params.source,
+      },
+    };
+
+    await this.eventService.emit('appointment.checked_in', payload);
+    await this.eventService.emit('appointment.confirmed', payload);
   }
 
   /**
@@ -2552,6 +2600,37 @@ export class AppointmentsController {
 
       const checkIn = await this.checkInLocationService.processCheckIn(checkInData, clinicId);
 
+      const checkInEventParams: {
+        appointmentId: string;
+        clinicId: string;
+        patientId?: string;
+        doctorId?: string;
+        locationId?: string;
+        checkedInBy: string;
+        checkInMethod: string;
+        source: string;
+        notes?: string;
+        overrideReason?: string;
+      } = {
+        appointmentId,
+        clinicId,
+        patientId: appointment.patientId || userId,
+        checkedInBy: userId,
+        checkInMethod: 'manual',
+        source: 'AppointmentsController.forceCheckInAppointment',
+        notes: forceCheckInDto.reason,
+        overrideReason: forceCheckInDto.reason,
+        ...(locationId ? { locationId } : {}),
+      };
+      const resolvedDoctorId =
+        (appointment as { doctorId?: string; doctor?: { id: string } }).doctorId ||
+        appointment.doctor?.id;
+      if (resolvedDoctorId) {
+        checkInEventParams.doctorId = resolvedDoctorId;
+      }
+
+      await this.emitCheckInEvents(checkInEventParams);
+
       // Log successful forced check-in
       await this.loggingService.log(
         LogType.BUSINESS,
@@ -3198,6 +3277,19 @@ export class AppointmentsController {
         appointment.doctor?.id ||
         '';
 
+      const checkInEventParams = {
+        appointmentId: appointment.id,
+        clinicId,
+        patientId: appointment.patientId || userId,
+        checkedInBy: userId,
+        checkInMethod: 'qr',
+        source: 'AppointmentsController.scanLocationQRAndCheckIn',
+        ...(location.id ? { locationId: location.id } : {}),
+        ...(doctorId ? { doctorId } : {}),
+      };
+
+      await this.emitCheckInEvents(checkInEventParams);
+
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
@@ -3332,6 +3424,78 @@ export class AppointmentsController {
         LogType.ERROR,
         LogLevel.ERROR,
         `Failed to get check-in locations: ${error instanceof Error ? error.message : String(error)}`,
+        context,
+        {
+          clinicId: req.clinicContext?.clinicId,
+          error: error instanceof Error ? error.stack : undefined,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      if (error instanceof HealthcareError) {
+        throw error;
+      }
+
+      throw this.errors.internalServerError(context);
+    }
+  }
+
+  @Get('check-in/history')
+  @RateLimitAPI()
+  @HttpCode(HttpStatus.OK)
+  @Roles(
+    Role.CLINIC_ADMIN,
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.NURSE,
+    Role.RECEPTIONIST,
+    Role.SUPER_ADMIN
+  )
+  @ClinicRoute()
+  @RequireResourcePermission('appointments', 'read')
+  @ApiOperation({
+    summary: 'Get clinic check-in history',
+    description: 'Returns clinic-wide checked-in appointments with timestamp and source.',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Check-in history retrieved successfully',
+  })
+  async getCheckInHistory(
+    @Request() req: ClinicAuthenticatedRequest
+  ): Promise<ServiceResponse<CheckedInAppointmentsResponse>> {
+    const context = 'AppointmentsController.getCheckInHistory';
+    const startTime = Date.now();
+
+    try {
+      const clinicId = req.clinicContext?.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError('clinicId', 'Clinic context is required', context);
+      }
+
+      const history = await this.checkInService.getCheckedInAppointments(clinicId);
+
+      await this.loggingService.log(
+        LogType.REQUEST,
+        LogLevel.INFO,
+        'Retrieved check-in history',
+        context,
+        {
+          clinicId,
+          count: history.total,
+          responseTime: Date.now() - startTime,
+        }
+      );
+
+      return {
+        success: true,
+        data: history,
+      };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to get check-in history: ${error instanceof Error ? error.message : String(error)}`,
         context,
         {
           clinicId: req.clinicContext?.clinicId,
