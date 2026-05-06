@@ -220,6 +220,16 @@ export class AppointmentsController {
       confirmedBy: params.checkedInBy,
       checkInMethod: params.checkInMethod,
       checkedInAt,
+      appointment: {
+        appointmentId: params.appointmentId,
+        id: params.appointmentId,
+        clinicId: params.clinicId,
+        patientId: params.patientId,
+        doctorId: params.doctorId,
+        locationId: params.locationId,
+        checkedInAt,
+        status: AppointmentStatus.CONFIRMED,
+      },
       metadata: {
         appointmentId: params.appointmentId,
         clinicId: params.clinicId,

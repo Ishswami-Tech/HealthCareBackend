@@ -108,8 +108,16 @@ export class BillingEventsListener {
    * Auto-send invoice via WhatsApp when payment is completed
    */
   @OnEvent('billing.payment.updated')
-  async handlePaymentUpdated(payload: { paymentId?: string; payload?: { paymentId?: string } }) {
+  async handlePaymentUpdated(payload: {
+    paymentId?: string;
+    payment?: { id?: string; status?: string; invoiceId?: string | null };
+    payload?: {
+      paymentId?: string;
+      payment?: { id?: string; status?: string; invoiceId?: string | null };
+    };
+  }) {
     const paymentId = payload?.paymentId ?? payload?.payload?.paymentId;
+    const paymentSnapshot = payload?.payment ?? payload?.payload?.payment;
 
     if (!paymentId) {
       await this.loggingService.log(
@@ -130,8 +138,8 @@ export class BillingEventsListener {
     );
 
     try {
-      // Get payment details to check if it's completed and has an invoice
-      const payment = await this.billingService.getPayment(paymentId);
+      // Prefer the websocket snapshot when available; fall back to DB lookup.
+      const payment = paymentSnapshot || (await this.billingService.getPayment(paymentId));
 
       // Type-safe check for payment status and invoiceId
       if (
@@ -172,8 +180,13 @@ export class BillingEventsListener {
    * Auto-send invoice via WhatsApp when invoice is marked as paid
    */
   @OnEvent('billing.invoice.paid')
-  async handleInvoicePaid(payload: { invoiceId?: string; payload?: { invoiceId?: string } }) {
+  async handleInvoicePaid(payload: {
+    invoiceId?: string;
+    invoice?: { id?: string };
+    payload?: { invoiceId?: string; invoice?: { id?: string } };
+  }) {
     const invoiceId = payload?.invoiceId ?? payload?.payload?.invoiceId;
+    const invoiceSnapshot = payload?.invoice ?? payload?.payload?.invoice;
 
     if (!invoiceId) {
       await this.loggingService.log(
@@ -195,7 +208,9 @@ export class BillingEventsListener {
 
     try {
       // Send invoice via WhatsApp
-      const sent = await this.billingService.sendInvoiceViaWhatsApp(invoiceId);
+      const sent = await this.billingService.sendInvoiceViaWhatsApp(
+        invoiceSnapshot?.id || invoiceId
+      );
 
       await this.loggingService.log(
         LogType.PAYMENT,

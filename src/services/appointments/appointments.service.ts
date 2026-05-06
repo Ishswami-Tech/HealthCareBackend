@@ -453,7 +453,8 @@ export class AppointmentsService {
       | 'appointment.reassigned'
       | 'appointment.cancelled'
       | 'appointment.completed'
-      | 'appointment.noshow',
+      | 'appointment.noshow'
+      | 'appointment.consultation_started',
     params: {
       eventId: string;
       clinicId: string;
@@ -734,6 +735,7 @@ export class AppointmentsService {
               doctorId: appointment.doctorId,
               date: appointment.date,
               reason: 'No-show',
+              appointment,
             },
           });
         }
@@ -1627,6 +1629,7 @@ export class AppointmentsService {
           status: (result.data as Record<string, unknown>)?.['status'] as string,
           appointmentType: createDto.type,
           createdBy: userId,
+          appointment: result.data,
         },
       });
     }
@@ -1797,6 +1800,7 @@ export class AppointmentsService {
       doctorId,
       patientId,
       status: AppointmentStatus.SCHEDULED,
+      appointment,
       context: { userId },
     });
 
@@ -2255,6 +2259,7 @@ export class AppointmentsService {
       patientId: appointment.patientId,
       confirmedSlotIndex: confirmedSlotValue,
       finalSlot: { date: finalDate, time: finalTime },
+      appointment: updated,
       source: hasConfirmedIndex ? 'proposed' : 'custom',
       context: { userId },
     });
@@ -2394,6 +2399,7 @@ export class AppointmentsService {
       oldTime: appointment.time,
       newDate,
       newTime,
+      appointment: updated,
       context: { userId },
     });
 
@@ -2602,6 +2608,7 @@ export class AppointmentsService {
           updatedBy: userId,
           status:
             updateDto.status || ((result.data as Record<string, unknown>)?.['status'] as string),
+          appointment: result.data,
         },
       });
     }
@@ -3078,6 +3085,7 @@ export class AppointmentsService {
           reason,
           cancelledBy: userId,
           status: 'CANCELLED',
+          appointment: result.data,
         },
       });
     }
@@ -3249,10 +3257,12 @@ export class AppointmentsService {
 
         await this.eventService.emit('appointment.checked_in', {
           ...checkInEventPayload,
+          appointment: result.data,
         });
         await this.eventService.emit('appointment.confirmed', {
           ...checkInEventPayload,
           confirmedBy: userId,
+          appointment: result.data,
         });
       }
       return result;
@@ -3633,6 +3643,7 @@ export class AppointmentsService {
             status: 'COMPLETED',
             patientId: appointment?.patientId,
             doctorId: appointment?.doctorId,
+            appointment,
           },
         });
 
@@ -3642,6 +3653,7 @@ export class AppointmentsService {
           status: 'COMPLETED',
           patientId: appointment?.patientId,
           doctorId: appointment?.doctorId,
+          appointment,
         });
       }
       return result;
@@ -3701,6 +3713,20 @@ export class AppointmentsService {
       const result = { success: true, data: consultationData };
 
       if (result.success) {
+        const startedAt = nowIso();
+        const appointmentSnapshot = {
+          id: appointmentId,
+          appointmentId,
+          clinicId,
+          doctorId: startDto.doctorId,
+          status: 'IN_PROGRESS',
+          startedAt,
+          updatedAt: startedAt,
+          consultationType: startDto.consultationType,
+          notes: startDto.notes,
+          consultationData,
+        };
+
         // Log the consultation start event
         await this.loggingService.log(
           LogType.BUSINESS,
@@ -3711,11 +3737,19 @@ export class AppointmentsService {
         );
 
         // Emit event for real-time broadcasting
-        await this.eventService.emit('appointment.consultation_started', {
-          appointmentId,
+        await this.emitAppointmentEnterpriseEvent('appointment.consultation_started', {
+          eventId: `appointment-consultation-started-${appointmentId}-${Date.now()}`,
           clinicId,
-          startedBy: userId,
-          consultationData: startDto,
+          userId,
+          payload: appointmentSnapshot,
+          metadata: {
+            appointmentId,
+            doctorId: startDto.doctorId,
+            startedAt,
+            source: 'AppointmentsService.startConsultation',
+          },
+          source: 'AppointmentsService',
+          priority: EventPriority.HIGH,
         });
       }
       return result;
@@ -3737,11 +3771,26 @@ export class AppointmentsService {
           'AppointmentsService',
           { appointmentId, userId, clinicId }
         );
-        await this.eventService.emit('appointment.consultation_started', {
-          appointmentId,
+        await this.emitAppointmentEnterpriseEvent('appointment.consultation_started', {
+          eventId: `appointment-consultation-started-${appointmentId}-${Date.now()}`,
           clinicId,
-          startedBy: userId,
-          consultationData: startDto,
+          userId,
+          payload: {
+            id: appointmentId,
+            appointmentId,
+            clinicId,
+            doctorId: startDto.doctorId,
+            status: 'IN_PROGRESS',
+            startedAt: nowIso(),
+            consultationData: consultationData as Record<string, unknown>,
+          },
+          metadata: {
+            appointmentId,
+            doctorId: startDto.doctorId,
+            source: 'AppointmentsService.startConsultation.fallback',
+          },
+          source: 'AppointmentsService',
+          priority: EventPriority.HIGH,
         });
         return result;
       }
@@ -4328,6 +4377,7 @@ export class AppointmentsService {
         clinicId,
         followUpType,
         daysAfter,
+        followUpPlan: result,
       });
 
       return result;
@@ -4533,6 +4583,7 @@ export class AppointmentsService {
         appointmentId: (appointmentResult.data as Record<string, unknown>)?.['id'] as string,
         userId,
         clinicId,
+        appointment: appointmentResult.data,
       });
 
       return appointmentResult;
@@ -4843,6 +4894,7 @@ export class AppointmentsService {
         userId,
         clinicId,
         updates: updateDto,
+        followUpPlan: result,
       });
 
       return result;
@@ -4911,6 +4963,8 @@ export class AppointmentsService {
         followUpPlanId,
         userId,
         clinicId,
+        status: 'cancelled',
+        followUpPlan: result,
       });
 
       return result;
@@ -4997,6 +5051,7 @@ export class AppointmentsService {
         clinicId,
         startDate,
         endDate,
+        series: result,
       });
 
       return result;
@@ -5186,6 +5241,14 @@ export class AppointmentsService {
         userId,
         clinicId,
         updates: updateDto,
+        series: {
+          id: seriesId,
+          seriesId,
+          clinicId,
+          userId,
+          status: updateDto.status ?? 'active',
+          updates: updateDto,
+        },
       });
 
       return {

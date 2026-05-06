@@ -28,7 +28,8 @@ interface EventPayload {
   paymentId?: string | undefined;
   ehrRecordId?: string | undefined;
   roles?: string[] | undefined;
-  [key: string]: string | number | boolean | null | undefined | string[];
+  payload?: unknown;
+  [key: string]: unknown;
 }
 
 @Injectable()
@@ -248,6 +249,10 @@ export class EventSocketBroadcaster implements OnModuleInit {
             (eventPayload as Record<string, unknown>)[key] = value;
           }
         }
+      }
+
+      if (enterprisePayload.payload !== undefined) {
+        eventPayload.payload = enterprisePayload.payload;
       }
 
       return eventPayload;
