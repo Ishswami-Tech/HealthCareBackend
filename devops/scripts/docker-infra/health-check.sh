@@ -14,6 +14,13 @@ container_running() {
     docker ps --format '{{.Names}}' | grep -Fxq "$container"
 }
 
+container_host_port() {
+    local container="$1"
+    local container_port="$2"
+
+    docker port "$container" "$container_port" 2>/dev/null | head -n 1 | sed -E 's#.*:([0-9]+)$#\1#'
+}
+
 declare -A SERVICE_STATUS
 declare -A SERVICE_DETAILS
 
@@ -85,6 +92,8 @@ check_dragonfly() {
 
 check_portainer() {
     local container="portainer"
+    local container_port="9000/tcp"
+    local host_port
 
     if ! validate_container_name "$container"; then
         set_service_status "portainer" "invalid" '{"status":"invalid","error":"Invalid container name"}'
@@ -109,18 +118,24 @@ check_portainer() {
         return 1
     fi
 
+    host_port="$(container_host_port "$container" "$container_port")"
+    if [[ -z "$host_port" ]]; then
+        set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Port mapping unavailable"}'
+        return 1
+    fi
+
     local attempt=0
     local max_attempts=6
     while [[ $attempt -lt $max_attempts ]]; do
         attempt=$((attempt + 1))
 
         if command -v curl >/dev/null 2>&1; then
-            if curl -fsS --max-time 3 http://127.0.0.1:9000/api/status >/dev/null 2>&1; then
+            if curl -fsS --max-time 3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
                 set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
                 return 0
             fi
         elif command -v wget >/dev/null 2>&1; then
-            if wget -q --spider --timeout=3 http://127.0.0.1:9000/api/status >/dev/null 2>&1; then
+            if wget -q --spider --timeout=3 "http://127.0.0.1:${host_port}/api/status" >/dev/null 2>&1; then
                 set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
                 return 0
             fi
