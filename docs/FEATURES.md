@@ -24,7 +24,8 @@
 
 **Primary Email Provider:** âœ… **ZeptoMail** (Configured)
 
-The communication system supports multi-tenant, multi-provider architecture with automatic fallback.
+The communication system supports multi-tenant, multi-provider architecture with
+automatic fallback.
 
 ### Features
 
@@ -62,8 +63,11 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 ```
 
 **Documentation:**
-- [Communication System Complete Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) - Complete guide (merged all documentation)
-- [Email Integration Guide](../guides/EMAIL_INTEGRATION_GUIDE.md) - Email system details
+
+- [Communication System Complete Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) -
+  Complete guide (merged all documentation)
+- [Email Integration Guide](../guides/EMAIL_INTEGRATION_GUIDE.md) - Email system
+  details
 
 ---
 
@@ -71,7 +75,8 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 
 ### Overview
 
-Complete appointment management system with follow-ups, subscriptions, and multi-tenant support.
+Complete appointment management system with follow-ups, subscriptions, and
+multi-tenant support.
 
 ### Features
 
@@ -112,8 +117,6 @@ Video consultation service with dual-provider support and automatic fallback.
 
 ### Features
 
-- âœ… **OpenVidu** - Primary provider (AI-ready, custom domain)
-- âœ… **Jitsi** - Fallback provider
 - âœ… Automatic failover
 - âœ… Session recording
 - âœ… HIPAA compliant
@@ -124,10 +127,8 @@ Video consultation service with dual-provider support and automatic fallback.
 
 ```bash
 # Environment variables
-VIDEO_PROVIDER=openvidu  # or jitsi
-OPENVIDU_URL=https://openvidu.example.com
-OPENVIDU_SECRET=your-secret
-JITSI_URL=https://meet.jit.si
+VIDEO_PROVIDER=cloudflare
+VIDEO_ENABLED=true
 ```
 
 ### Key Endpoints
@@ -191,7 +192,8 @@ async createAppointment() { ... }
 
 ### Overview
 
-Complete payment processing system with multiple providers and subscription management.
+Complete payment processing system with multiple providers and subscription
+management.
 
 ### Payment Providers
 
@@ -238,7 +240,8 @@ GET /api/v1/billing/subscriptions/{id}
 
 ### Overview
 
-Centralized event-driven architecture using EventService as single source of truth.
+Centralized event-driven architecture using EventService as single source of
+truth.
 
 ### Architecture
 
@@ -353,16 +356,16 @@ clinic.settings.communicationSettings = {
 
 ## ðŸ“Š System Status Summary
 
-| Feature | Status | Documentation |
-|---------|--------|---------------|
+| Feature           | Status    | Documentation                                                           |
+| ----------------- | --------- | ----------------------------------------------------------------------- |
 | **Communication** | âœ… Ready | [Communication Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) |
-| **Appointments** | âœ… Ready | This document |
-| **Video** | âœ… Ready | This document |
-| **RBAC** | âœ… Ready | This document |
-| **Payments** | âœ… Ready | This document |
-| **Events** | âœ… Ready | This document |
-| **Queue** | âœ… Ready | This document |
-| **Multi-Tenant** | âœ… Ready | This document |
+| **Appointments**  | âœ… Ready | This document                                                           |
+| **Video**         | âœ… Ready | This document                                                           |
+| **RBAC**          | âœ… Ready | This document                                                           |
+| **Payments**      | âœ… Ready | This document                                                           |
+| **Events**        | âœ… Ready | This document                                                           |
+| **Queue**         | âœ… Ready | This document                                                           |
+| **Multi-Tenant**  | âœ… Ready | This document                                                           |
 
 ---
 
@@ -386,8 +389,7 @@ PUT /api/v1/clinics/{clinicId}/communication/config
 
 ```bash
 # Set environment variables
-VIDEO_PROVIDER=openvidu
-OPENVIDU_URL=...
+VIDEO_PROVIDER=cloudflare
 ```
 
 ### 4. Payment Setup
@@ -401,7 +403,8 @@ PUT /api/v1/billing/config
 
 ## ðŸ“š Related Documentation
 
-- [Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) - Complete communication docs
+- [Communication System Guide](../guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md) -
+  Complete communication docs
 - [API Documentation](./API_DOCUMENTATION.md) - API reference
 - [Environment Variables](./ENVIRONMENT_VARIABLES.md) - Configuration
 - [Developer Guide](./DEVELOPER_GUIDE.md) - Development setup
@@ -410,7 +413,3 @@ PUT /api/v1/billing/config
 
 **Last Updated:** January 2025  
 **Status:** âœ… **All Features Production Ready**
-
-
-
-

@@ -6,6 +6,7 @@ import {
   IsNumber,
   IsDateString,
   IsEnum,
+  IsIn,
   IsObject,
   ValidateNested,
 } from 'class-validator';
@@ -75,17 +76,17 @@ export class CompleteProfileRequestDto {
     example: '1990-01-01',
   })
   @IsDateString()
-  @IsNotEmpty()
-  dateOfBirth!: string;
+  @IsOptional()
+  dateOfBirth?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     description: 'Gender',
     enum: ['MALE', 'FEMALE', 'OTHER'],
     example: 'MALE',
   })
-  @IsEnum(['MALE', 'FEMALE', 'OTHER'])
-  @IsNotEmpty()
-  gender!: string;
+  @IsIn(['MALE', 'FEMALE', 'OTHER'])
+  @IsOptional()
+  gender?: string;
 
   @ApiProperty({
     description: 'Address',

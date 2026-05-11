@@ -991,13 +991,24 @@ async function bootstrap() {
         logger.log('Creating Swagger document factory...');
         // Configure Swagger to handle circular dependencies
         // Disable deepScanRoutes to avoid scanning all types which can cause circular dependency issues
-        const documentFactory = () =>
-          SwaggerModule.createDocument(appInstance, swaggerConfig, {
-            extraModels: [],
-            operationIdFactory: (_controllerKey: string, methodKey: string) => methodKey,
-            deepScanRoutes: false,
-            ignoreGlobalPrefix: false,
-          });
+        const documentFactory = () => {
+          try {
+            return SwaggerModule.createDocument(appInstance, swaggerConfig, {
+              extraModels: [],
+              operationIdFactory: (_controllerKey: string, methodKey: string) => methodKey,
+              deepScanRoutes: false,
+              ignoreGlobalPrefix: false,
+            });
+          } catch (swaggerError) {
+            const swaggerErrorMessage =
+              swaggerError instanceof Error ? swaggerError.message : 'Unknown error';
+            const swaggerErrorStack =
+              swaggerError instanceof Error ? swaggerError.stack : 'No stack trace';
+            logger.error(`Swagger document generation failed: ${swaggerErrorMessage}`);
+            logger.error(`Swagger document generation stack: ${swaggerErrorStack}`);
+            throw swaggerError;
+          }
+        };
         logger.log('Swagger document factory created successfully');
 
         // Note: Helmet security headers are already configured in SecurityConfigService.configureProductionSecurity()

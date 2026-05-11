@@ -216,41 +216,15 @@ export class HttpService {
         // Also check if this is a logger endpoint check (should use localhost, not external URL)
         const isHealthCheck = url.includes('/health') || url.includes('/api/health');
         const isLoggerCheck = url.includes('/logger') && !url.includes('localhost');
-        const isOpenViduCheck =
-          url.includes('openvidu') || url.includes('backend-service-v1-video');
-        const errorStatus = axiosError.response?.status;
-        // 403/401 from OpenVidu are expected (server is responding, just blocking access)
-        // These should be treated as healthy, not logged as errors
-        const isExpectedOpenVidu403 =
-          isOpenViduCheck && (errorStatus === 403 || errorStatus === 401);
-
-        // 404 from OpenVidu sessions endpoint is expected when checking if a session exists
-        const isExpectedOpenVidu404 =
-          isOpenViduCheck && errorStatus === 404 && url.includes('/api/sessions/');
-
         const isConnectionError =
           errorCode === 'ECONNREFUSED' ||
           errorCode === 'ENOTFOUND' ||
           errorCode === 'ETIMEDOUT' ||
           errorCode === 'EHOSTUNREACH' ||
           errorCode === 'ENETUNREACH';
-        const isExpectedFailure =
-          isHealthCheck ||
-          isConnectionError ||
-          isLoggerCheck ||
-          isExpectedOpenVidu403 ||
-          isExpectedOpenVidu404;
-        // Don't log at all for expected OpenVidu 403/401/404 (they're treated as expected behavior)
-        const shouldSkipLogging = isExpectedOpenVidu403 || isExpectedOpenVidu404;
+        const isExpectedFailure = isHealthCheck || isConnectionError || isLoggerCheck;
         const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
         const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
-
-        // Skip logging for expected OpenVidu responses (they're treated as healthy/expected)
-        // The validateStatus function will handle these as valid responses or they'll be caught downstream
-        if (shouldSkipLogging) {
-          // Still throw the error so validateStatus can handle it, but don't log
-          return throwError(() => error);
-        }
 
         if (!options?.suppressErrorLogging && this.loggingService) {
           void this.loggingService.log(
@@ -425,25 +399,12 @@ export class HttpService {
         errorCode === 'EHOSTUNREACH' ||
         errorCode === 'ENETUNREACH';
 
-      const isOpenViduCheck = url.includes('openvidu') || url.includes('backend-service-v1-video');
-      const errorStatus = axiosError.response?.status;
-      const isExpectedOpenVidu403 = isOpenViduCheck && (errorStatus === 403 || errorStatus === 401);
-      const isExpectedOpenVidu404 =
-        isOpenViduCheck && errorStatus === 404 && url.includes('/api/sessions/');
-      const shouldSkipLogging = isExpectedOpenVidu403 || isExpectedOpenVidu404;
-
-      const isExpectedFailure = isHealthCheck || isConnectionError || shouldSkipLogging;
+      const isExpectedFailure = isHealthCheck || isConnectionError;
       const logLevel = isExpectedFailure ? LogLevel.WARN : LogLevel.ERROR;
       const logType = isExpectedFailure ? LogType.SYSTEM : LogType.ERROR;
 
       // Log detailed error for debugging (especially for connection errors)
-      // Skip logging entirely if it's an expected OpenVidu failure
-      if (
-        !shouldSkipLogging &&
-        !options?.suppressErrorLogging &&
-        !errorAlreadyLogged &&
-        this.loggingService
-      ) {
+      if (!options?.suppressErrorLogging && !errorAlreadyLogged && this.loggingService) {
         void this.loggingService.log(
           logType,
           logLevel,

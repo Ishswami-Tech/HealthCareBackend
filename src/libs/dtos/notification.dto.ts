@@ -684,7 +684,7 @@ export class NotificationPreferenceResponseDto {
 
   @ApiPropertyOptional({
     description: 'Category-specific channel preferences',
-    type: CategoryPreferencesDto,
+    type: () => CategoryPreferencesDto,
   })
   categoryPreferences?: CategoryPreferencesDto;
 

@@ -2309,3 +2309,12 @@ model CommunicationTemplate {
   @@index([type])
   @@index([category])
 }
+
+model SystemSetting {
+  settingKey   String   @id
+  settingValue String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("system_settings")
+}

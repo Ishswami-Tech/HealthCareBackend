@@ -364,12 +364,11 @@ jobs:
               else
                 echo "infra-status=unhealthy" >> $GITHUB_OUTPUT
               fi
-              # Extract unhealthy service names from health-status.json; map openvidu -> openvidu-server for compose
+              # Extract unhealthy service names from health-status.json
               if [[ -f /tmp/health-status.json ]]; then
                 UNHEALTHY=$(jq -r '.services | to_entries | map(select(.value.status != "healthy")) | .[].key' /tmp/health-status.json 2>/dev/null || true)
                 COMPOSE_SERVICES=""
                 for s in $UNHEALTHY; do
-                  [[ "$s" == "openvidu" ]] && s="openvidu-server"
                   [[ -n "$COMPOSE_SERVICES" ]] && COMPOSE_SERVICES="${COMPOSE_SERVICES},"
                   COMPOSE_SERVICES="${COMPOSE_SERVICES}${s}"
                 done
@@ -708,13 +707,12 @@ jobs:
               done
             else
               echo "🧹 Clean then recreate: ALL required infrastructure (fallback)"
-              echo "📋 Required services (from docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, openvidu-server, coturn, portainer"
+              echo "📋 Required services (from docker-compose.prod.yml --profile infrastructure): postgres (PostgreSQL 18), dragonfly, portainer"
               VOLUMES=("postgres_data" "dragonfly_data")
               VOLUME_PATHS=("/opt/healthcare-backend/data/postgres" "/opt/healthcare-backend/data/dragonfly")
               for i in "\${!VOLUMES[@]}"; do
                 [[ ! -d "\${VOLUME_PATHS[\$i]}" ]] && mkdir -p "\${VOLUME_PATHS[\$i]}" || true
               done
-              [[ ! -d "/opt/healthcare-backend/data/openvidu_recordings" ]] && mkdir -p /opt/healthcare-backend/data/openvidu_recordings || true
               echo "🧹 Cleaning: stopping and removing all infrastructure containers (volumes kept)..."
               docker compose -f docker-compose.prod.yml --profile infrastructure down --remove-orphans || true
               sleep 3
@@ -725,7 +723,7 @@ jobs:
               fi
               echo "📥 Pulling infrastructure images (including postgres:18)..."
               docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
-              echo "🚀 Recreating all infrastructure services (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
+              echo "🚀 Recreating all infrastructure services (postgres:18, dragonfly, portainer)..."
               docker compose -f docker-compose.prod.yml --profile infrastructure up -d --force-recreate || {
                 echo "❌ Infrastructure recreation failed"
                 exit 1
@@ -1138,14 +1136,26 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL }}
 
           VIDEO_ENABLED=${{ vars.VIDEO_ENABLED }}
-          VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}
-          OPENVIDU_URL=${{ vars.OPENVIDU_URL }}
-          OPENVIDU_SECRET=${{ secrets.OPENVIDU_SECRET }}
-          COTURN_SHARED_SECRET_KEY=${{ secrets.OPENVIDU_SECRET }}
-          OPENVIDU_DOMAIN=${{ vars.OPENVIDU_DOMAIN }}
-          OPENVIDU_WEBHOOK_ENABLED=${{ vars.OPENVIDU_WEBHOOK_ENABLED }}
-          OPENVIDU_WEBHOOK_ENDPOINT=${{ vars.OPENVIDU_WEBHOOK_ENDPOINT }}
-          OPENVIDU_WEBHOOK_EVENTS=${{ vars.OPENVIDU_WEBHOOK_EVENTS }}
+          CLOUDFLARE_ACCOUNT_ID=${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_APP_ID=${{ vars.CLOUDFLARE_APP_ID }}
+          CLOUDFLARE_API_TOKEN=${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_BASE_URL=${{ vars.CLOUDFLARE_API_BASE_URL }}
+          CLOUDFLARE_WEBHOOK_ENABLED=${{ vars.CLOUDFLARE_WEBHOOK_ENABLED }}
+          CLOUDFLARE_HOST_PRESET_NAME=${{ vars.CLOUDFLARE_HOST_PRESET_NAME }}
+          CLOUDFLARE_PARTICIPANT_PRESET_NAME=${{ vars.CLOUDFLARE_PARTICIPANT_PRESET_NAME }}
+          DAILY_API_BASE_URL=${{ vars.DAILY_API_BASE_URL }}
+          DAILY_API_KEY=${{ secrets.DAILY_API_KEY }}
+          DAILY_DOMAIN=${{ vars.DAILY_DOMAIN }}
+          DAILY_WEBHOOK_ENABLED=${{ vars.DAILY_WEBHOOK_ENABLED }}
+          DAILY_PRIVACY=${{ vars.DAILY_PRIVACY }}
+          DAILY_ROOM_DURATION_MINUTES=${{ vars.DAILY_ROOM_DURATION_MINUTES }}
+          GOOGLE_MEET_ENABLED=${{ vars.GOOGLE_MEET_ENABLED }}
+          GOOGLE_MEET_API_BASE_URL=${{ vars.GOOGLE_MEET_API_BASE_URL }}
+          GOOGLE_MEET_REFRESH_TOKEN=${{ secrets.GOOGLE_MEET_REFRESH_TOKEN }}
+          GOOGLE_MEET_OAUTH_SCOPE=${{ vars.GOOGLE_MEET_OAUTH_SCOPE }}
+          GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
 
           # Payment - Cashfree (Primary Provider)
           # =======================================
@@ -1164,12 +1174,6 @@ jobs:
           PAYMENT_DEFAULT_CURRENCY=${{ vars.PAYMENT_DEFAULT_CURRENCY }}
 
           # Coturn Configuration (for infrastructure services)
-          # These are used by docker-compose.prod.yml for coturn container
-          COTURN_PASSWORD=${{ secrets.COTURN_PASSWORD }}
-          COTURN_DOMAIN=${{ vars.COTURN_DOMAIN }}
-          GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
           SESSION_SECRET=${{ secrets.SESSION_SECRET }}
           SESSION_TIMEOUT=${{ secrets.SESSION_TIMEOUT }}
           SESSION_SECURE_COOKIES=${{ vars.SESSION_SECURE_COOKIES }}
@@ -1204,14 +1208,6 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_KEY }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET=${{ secrets.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_API_SECRET }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_SMS_FROM_NUMBER }}
-
-          # Clinic-Specific OpenVidu Configuration (Multi-Tenant)
-          # ====================================================
-          # Each clinic can have separate OpenVidu video server configuration
-          # To add more clinics, duplicate the pattern below with the clinic's sanitized name
-          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_URL }}
-          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_SECRET }}
-          # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_OPENVIDU_DOMAIN }}
 
           # Clinic-Specific S3 Storage Configuration (Multi-Tenant)
           # =======================================================
@@ -1251,17 +1247,6 @@ jobs:
 
           # Optional Service URLs
           REDIS_COMMANDER_URL=${{ vars.REDIS_COMMANDER_URL }}
-
-          # Jitsi Configuration (Fallback Video Provider - Optional)
-          JITSI_DOMAIN=${{ vars.JITSI_DOMAIN }}
-          JITSI_BASE_DOMAIN=${{ vars.JITSI_BASE_DOMAIN }}
-          JITSI_SUBDOMAIN=${{ vars.JITSI_SUBDOMAIN }}
-          JITSI_APP_ID=${{ vars.JITSI_APP_ID }}
-          JITSI_APP_SECRET=${{ secrets.JITSI_APP_SECRET }}
-          JITSI_BASE_URL=${{ vars.JITSI_BASE_URL }}
-          JITSI_WS_URL=${{ vars.JITSI_WS_URL }}
-          JITSI_ENABLE_RECORDING=${{ vars.JITSI_ENABLE_RECORDING }}
-          JITSI_ENABLE_WAITING_ROOM=${{ vars.JITSI_ENABLE_WAITING_ROOM }}
 
           # Social Auth Redirect URIs
           FACEBOOK_REDIRECT_URI=${{ vars.FACEBOOK_REDIRECT_URI }}
@@ -1329,7 +1314,7 @@ jobs:
             else
               echo "Setup script not found, creating directories manually..."
               mkdir -p "${SERVER_DEPLOY_PATH}/backups/{postgres,dragonfly,metadata}"
-              mkdir -p "${SERVER_DEPLOY_PATH}/data/{postgres,dragonfly,openvidu_recordings}"
+              mkdir -p "${SERVER_DEPLOY_PATH}/data/{postgres,dragonfly}"
               # /var/log/deployments requires sudo if not running as root
               if [[ "$EUID" -eq 0 ]]; then
                 mkdir -p /var/log/deployments
@@ -1446,24 +1431,6 @@ jobs:
             # Make scripts executable
             chmod +x ${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/docker-infra/*.sh
             chmod +x ${{ secrets.SERVER_DEPLOY_PATH }}/devops/scripts/shared/*.sh
-            
-            # OPENVIDU_SECRET: OpenVidu allows only [a-zA-Z0-9_-]. Sanitize to avoid container exit (e.g. base64 "=" padding).
-            RAW_OPENVIDU=$(grep -E '^OPENVIDU_SECRET=' "${SERVER_DEPLOY_PATH}/.env.production" 2>/dev/null | cut -d= -f2- || true)
-            RAW_OPENVIDU="${RAW_OPENVIDU:-$OPENVIDU_SECRET}"
-            OPENVIDU_SANITIZED=$(echo "${RAW_OPENVIDU}" | tr -dc 'a-zA-Z0-9_-')
-            if [[ "${RAW_OPENVIDU}" != "${OPENVIDU_SANITIZED}" ]]; then
-              echo "⚠️ OPENVIDU_SECRET contained invalid characters (e.g. =); sanitized for OpenVidu (allowed: a-zA-Z0-9_-)."
-              sed -i "s|^OPENVIDU_SECRET=.*|OPENVIDU_SECRET=${OPENVIDU_SANITIZED}|" "${SERVER_DEPLOY_PATH}/.env.production"
-              if grep -q '^COTURN_SHARED_SECRET_KEY=' "${SERVER_DEPLOY_PATH}/.env.production" 2>/dev/null; then
-                sed -i "s|^COTURN_SHARED_SECRET_KEY=.*|COTURN_SHARED_SECRET_KEY=${OPENVIDU_SANITIZED}|" "${SERVER_DEPLOY_PATH}/.env.production"
-              fi
-            fi
-            export OPENVIDU_SECRET="${OPENVIDU_SANITIZED}"
-            export COTURN_SHARED_SECRET_KEY="${OPENVIDU_SANITIZED}"
-            if [[ -z "${OPENVIDU_SECRET}" ]]; then
-              echo "❌ ERROR: OPENVIDU_SECRET is empty after sanitization. Set OPENVIDU_SECRET in GitHub Secrets (only a-zA-Z0-9_-)."
-              exit 1
-            fi
             
             # Set deployment variables for deploy.sh
             # BACKUP_ID only set on unhealthy path (backup-infrastructure not in deploy needs to avoid skipping deploy when healthy)

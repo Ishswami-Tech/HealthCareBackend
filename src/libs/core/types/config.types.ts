@@ -299,55 +299,39 @@ export interface VideoProviderConfig {
   /** Whether video no-show enforcement is enabled */
   readonly noShowEnabled: boolean;
   /** Video provider type */
-  readonly provider: 'openvidu' | 'jitsi';
-  /** OpenVidu configuration */
-  readonly openvidu?: {
-    readonly url: string;
-    readonly secret: string;
+  readonly provider: 'cloudflare' | 'daily' | 'google-meet';
+  /** Cloudflare Realtime configuration */
+  readonly cloudflare?: {
+    readonly accountId: string;
+    readonly appId: string;
+    readonly apiToken: string;
+    readonly apiBaseUrl: string;
+    readonly enabled: boolean;
+    readonly webhookEnabled?: boolean;
+    readonly hostPresetName?: string;
+    readonly participantPresetName?: string;
+  };
+  /** Daily configuration */
+  readonly daily?: {
+    readonly apiBaseUrl: string;
+    readonly apiKey: string;
     readonly domain: string;
     readonly enabled: boolean;
     readonly webhookEnabled?: boolean;
-    readonly webhookEndpoint?: string;
-    readonly webhookEvents?: string;
+    readonly statusUrl?: string;
+    readonly privacy: 'public' | 'private';
+    readonly roomDurationMinutes: number;
   };
-  /** Jitsi configuration (for fallback) */
-  readonly jitsi?: {
-    readonly domain: string;
-    readonly baseUrl: string;
-    readonly wsUrl: string;
-    readonly appId: string;
-    readonly appSecret: string;
+  /** Google Meet configuration */
+  readonly googleMeet?: {
     readonly enabled: boolean;
-    readonly enableRecording: boolean;
-    readonly enableWaitingRoom: boolean;
+    readonly apiBaseUrl: string;
+    readonly clientId: string;
+    readonly clientSecret: string;
+    readonly redirectUri: string;
+    readonly refreshToken: string;
+    readonly oauthScope: string;
   };
-}
-
-/**
- * Jitsi Meet configuration interface
- * @interface JitsiConfig
- */
-export interface JitsiConfig {
-  /** Jitsi domain (e.g., meet.ishswami.in or localhost:8443) */
-  readonly domain: string;
-  /** Base domain (e.g., ishswami.in) */
-  readonly baseDomain: string;
-  /** Subdomain for Jitsi (e.g., meet) */
-  readonly subdomain: string;
-  /** Jitsi application ID for JWT authentication */
-  readonly appId: string;
-  /** Jitsi application secret for JWT token generation */
-  readonly appSecret: string;
-  /** Base URL for Jitsi web interface */
-  readonly baseUrl: string;
-  /** WebSocket URL for XMPP communication */
-  readonly wsUrl: string;
-  /** Whether video consultations are enabled */
-  readonly enabled: boolean;
-  /** Whether recording is enabled */
-  readonly enableRecording: boolean;
-  /** Whether waiting room is enabled */
-  readonly enableWaitingRoom: boolean;
 }
 
 /**
@@ -379,8 +363,6 @@ export interface Config {
   readonly security: SecurityConfig;
   /** WhatsApp configuration */
   readonly whatsapp: WhatsappConfig;
-  /** Jitsi Meet configuration */
-  readonly jitsi: JitsiConfig;
   /** Video provider configuration */
   readonly video: VideoProviderConfig;
 }

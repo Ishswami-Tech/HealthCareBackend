@@ -89,7 +89,7 @@ export class HealthController {
               type: 'object',
               properties: {
                 status: { type: 'string', example: 'healthy' },
-                primaryProvider: { type: 'string', example: 'openvidu' },
+                primaryProvider: { type: 'string', example: 'cloudflare' },
               },
             },
           },

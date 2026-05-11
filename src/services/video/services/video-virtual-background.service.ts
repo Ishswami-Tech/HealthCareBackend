@@ -4,7 +4,7 @@ import { nowIso } from '@utils/date-time.util';
  * @class VideoVirtualBackgroundService
  * @description Virtual background management for video consultations
  * Supports blur background, custom backgrounds, privacy protection, and professional appearance
- * Note: Actual background processing is done client-side via OpenVidu SDK
+ * Note: Actual background processing is done client-side via the video SDK
  * This service manages background settings and preferences
  */
 

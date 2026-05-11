@@ -33,7 +33,7 @@ export interface VideoPluginData {
  *
  * This plugin provides comprehensive video consultation functionality including:
  * - Backward-compatible video consultation operations
- * - Unified video consultations (OpenVidu primary, Jitsi fallback)
+ * - Unified video consultations through the backend video service
  * - Real-time tracking and analytics
  * - HIPAA-compliant recording and data handling
  */
@@ -47,8 +47,6 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
     'recording',
     'screen-sharing',
     'medical-imaging',
-    'openvidu-consultation', // Primary provider
-    'jitsi-consultation', // Fallback provider
     'real-time-tracking',
     'hipaa-compliance',
   ];
@@ -56,7 +54,7 @@ export class ClinicVideoPlugin extends BaseAppointmentPlugin {
   /**
    * Creates an instance of ClinicVideoPlugin
    *
-   * @param videoService - Single consolidated video service (OpenVidu primary, Jitsi fallback)
+   * @param videoService - Single consolidated video service with provider fallback
    * @param consultationTracker - Service for tracking consultation metrics
    */
   constructor(

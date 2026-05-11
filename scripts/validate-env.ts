@@ -32,8 +32,61 @@ const STAGING_REQUIRED = [
 // Required environment variables for all environments (optional, can have defaults)
 const RECOMMENDED = ['DATABASE_URL', 'JWT_SECRET', 'REDIS_HOST'];
 
+const VIDEO_PROVIDERS = ['cloudflare', 'daily', 'google-meet'] as const;
+
 function isTruthy(value: string | undefined): boolean {
   return ['true', '1', 'yes', 'on'].includes((value || '').trim().toLowerCase());
+}
+
+function isMissing(value: string | undefined): boolean {
+  return !value || !value.trim();
+}
+
+function pushMissingIfUnset(target: string[], varName: string): void {
+  if (isMissing(process.env[varName])) {
+    target.push(varName);
+  }
+}
+
+function validateVideoEnvironment(missing: string[], warnings: string[]): void {
+  if (!isTruthy(process.env['VIDEO_ENABLED'])) {
+    return;
+  }
+
+  const provider = (process.env['VIDEO_PROVIDER'] || 'cloudflare').trim().toLowerCase();
+  if (!VIDEO_PROVIDERS.includes(provider as (typeof VIDEO_PROVIDERS)[number])) {
+    warnings.push(`VIDEO_PROVIDER (${provider || 'unset'})`);
+    return;
+  }
+
+  if (provider === 'cloudflare') {
+    pushMissingIfUnset(missing, 'CLOUDFLARE_ACCOUNT_ID');
+    pushMissingIfUnset(missing, 'CLOUDFLARE_APP_ID');
+    pushMissingIfUnset(missing, 'CLOUDFLARE_API_TOKEN');
+  } else if (provider === 'daily') {
+    pushMissingIfUnset(missing, 'DAILY_API_KEY');
+    pushMissingIfUnset(missing, 'DAILY_DOMAIN');
+  } else if (provider === 'google-meet') {
+    pushMissingIfUnset(missing, 'GOOGLE_CLIENT_ID');
+    pushMissingIfUnset(missing, 'GOOGLE_CLIENT_SECRET');
+    pushMissingIfUnset(missing, 'GOOGLE_MEET_REFRESH_TOKEN');
+    pushMissingIfUnset(missing, 'GOOGLE_REDIRECT_URI');
+  }
+
+  // Google Meet is currently configured as a fallback in both production-like envs.
+  // If it is enabled but the refresh token is missing, surface it as a warning so the
+  // deployment does not silently lose the fallback provider.
+  if (isTruthy(process.env['GOOGLE_MEET_ENABLED'])) {
+    if (isMissing(process.env['GOOGLE_MEET_REFRESH_TOKEN'])) {
+      warnings.push('GOOGLE_MEET_REFRESH_TOKEN');
+    }
+    if (isMissing(process.env['GOOGLE_CLIENT_ID'])) {
+      warnings.push('GOOGLE_CLIENT_ID');
+    }
+    if (isMissing(process.env['GOOGLE_CLIENT_SECRET'])) {
+      warnings.push('GOOGLE_CLIENT_SECRET');
+    }
+  }
 }
 
 function validateEnvironment(): void {
@@ -73,6 +126,8 @@ function validateEnvironment(): void {
       warnings.push(varName);
     }
   }
+
+  validateVideoEnvironment(missing, warnings);
 
   // Report results
   if (missing.length > 0) {

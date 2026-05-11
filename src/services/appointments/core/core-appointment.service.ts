@@ -278,6 +278,37 @@ export class CoreAppointmentService {
       const appointmentDateTime = this.resolveAppointmentDateTime(createDto);
       const { date: dateStr, time: timeStr } = this.getISTDateAndTime(appointmentDateTime);
 
+      if (isVideoCallAppointmentType(createDto.type)) {
+        const clinicSettings = await this.databaseService.executeHealthcareRead(async client => {
+          const typedClient = client as unknown as {
+            clinic: {
+              findUnique: (args: unknown) => Promise<{ settings?: unknown } | null>;
+            };
+          };
+
+          return typedClient.clinic.findUnique({
+            where: { id: context.clinicId },
+            select: { settings: true },
+          });
+        });
+
+        const appointmentSettings = this.extractAppointmentSettings(clinicSettings?.settings);
+        const videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
+        if (
+          videoCallWindow &&
+          !this.isSlotWithinWindow(timeStr, Number(createDto.duration), videoCallWindow)
+        ) {
+          return {
+            success: false,
+            error: 'VALIDATION_ERROR',
+            message: 'Video appointment must be scheduled within the clinic video call window',
+            metadata: {
+              processingTime: Date.now() - startTime,
+            },
+          };
+        }
+      }
+
       const appointmentData: Record<string, unknown> = {
         ...createDto,
         patientId: resolvedIds.patientId,
@@ -320,10 +351,10 @@ export class CoreAppointmentService {
       this.workflowEngine.initializeWorkflow(appointment.id, 'APPOINTMENT_CREATED');
 
       // 7. Queue background operations
-      await this.queueBackgroundOperations(appointment, context);
+      void this.queueBackgroundOperations(appointment, context);
 
       // 8. Emit events
-      await this.eventService.emit('appointment.created', {
+      void this.eventService.emit('appointment.created', {
         appointmentId: appointment.id,
         clinicId: appointment.clinicId,
         doctorId: appointment.doctorId,
@@ -335,14 +366,14 @@ export class CoreAppointmentService {
       });
 
       // 7. HIPAA audit log
-      await this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
+      void this.hipaaAuditLog('CREATE_APPOINTMENT', context, {
         appointmentId: appointment.id,
         patientId: appointment.patientId,
         outcome: 'SUCCESS',
       });
 
       // 8. Invalidate cache
-      await this.invalidateAppointmentCache(context.clinicId);
+      void this.invalidateAppointmentCache(context.clinicId);
 
       const processingTime = Date.now() - startTime;
       void this.loggingService.log(
@@ -1353,6 +1384,7 @@ export class CoreAppointmentService {
       let generalConsultationEnabled = true;
       let videoConsultationEnabled = true;
       let pauseReason = '';
+      let videoCallWindow: { start: string; end: string } | null = null;
       const dayName = new Intl.DateTimeFormat('en-US', {
         timeZone: 'Asia/Kolkata',
         weekday: 'long',
@@ -1407,6 +1439,7 @@ export class CoreAppointmentService {
           const appointmentSettings = isRecord(clinicSettings['appointmentSettings'])
             ? clinicSettings['appointmentSettings']
             : {};
+          videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
           const clinicOpdControls = isRecord(appointmentSettings['opdControls'])
             ? appointmentSettings['opdControls']
             : isRecord(appointmentSettings['opdControl'])
@@ -1613,11 +1646,7 @@ export class CoreAppointmentService {
           const [endHour, endMinute] = window.end.split(':').map(Number);
           const startMinutes = (startHour || 0) * 60 + (startMinute || 0);
           const endMinutes = (endHour || 0) * 60 + (endMinute || 0);
-          if (
-            !Number.isFinite(startMinutes) ||
-            !Number.isFinite(endMinutes) ||
-            endMinutes <= startMinutes
-          ) {
+          if (!Number.isFinite(startMinutes) || !Number.isFinite(endMinutes)) {
             return null;
           }
           return { ...window, startMinutes, endMinutes };
@@ -1645,13 +1674,19 @@ export class CoreAppointmentService {
       for (const window of validSessions) {
         for (
           let currentMinutes = window.startMinutes;
-          currentMinutes < window.endMinutes;
+          currentMinutes + slotDuration <= window.endMinutes;
           currentMinutes += slotDuration
         ) {
           const hour = Math.floor(currentMinutes / 60);
           const minute = currentMinutes % 60;
 
           const time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+
+          if (_context?.appointmentType === 'VIDEO_CALL' && videoCallWindow) {
+            if (!this.isSlotWithinWindow(time, slotDuration, videoCallWindow)) {
+              continue;
+            }
+          }
 
           // Check if slot is booked - account for appointment duration (default 30 min)
           // A slot is unavailable if it falls within any existing appointment's time range
@@ -1785,6 +1820,88 @@ export class CoreAppointmentService {
   /**
    * Map AppointmentPriority enum to conflict resolution priority values
    */
+  private extractAppointmentSettings(settings: unknown): Record<string, unknown> {
+    if (typeof settings !== 'object' || settings === null || Array.isArray(settings)) {
+      return {};
+    }
+
+    const record = settings as Record<string, unknown>;
+    return typeof record['appointmentSettings'] === 'object' &&
+      record['appointmentSettings'] !== null &&
+      !Array.isArray(record['appointmentSettings'])
+      ? (record['appointmentSettings'] as Record<string, unknown>)
+      : record;
+  }
+
+  private normalizeTimeValue(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const match = /^(\d{1,2}):(\d{2})$/.exec(value.trim());
+    if (!match) {
+      return null;
+    }
+
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (
+      !Number.isFinite(hour) ||
+      !Number.isFinite(minute) ||
+      hour < 0 ||
+      hour > 23 ||
+      minute < 0 ||
+      minute > 59
+    ) {
+      return null;
+    }
+
+    return `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+  }
+
+  private extractVideoCallWindow(
+    settings: Record<string, unknown>
+  ): { start: string; end: string } | null {
+    const rawWindow = settings['videoCallWindow'];
+    if (typeof rawWindow !== 'object' || rawWindow === null || Array.isArray(rawWindow)) {
+      return null;
+    }
+
+    const windowRecord = rawWindow as Record<string, unknown>;
+    const start = this.normalizeTimeValue(windowRecord['start']);
+    const end = this.normalizeTimeValue(windowRecord['end']);
+    if (!start || !end) {
+      return null;
+    }
+
+    const startMinutes = this.timeToMinutes(start);
+    const endMinutes = this.timeToMinutes(end);
+    if (endMinutes <= startMinutes) {
+      return null;
+    }
+
+    return { start, end };
+  }
+
+  private timeToMinutes(value: string): number {
+    const [hourRaw, minuteRaw] = value.split(':');
+    const hour = Number(hourRaw);
+    const minute = Number(minuteRaw);
+    return (Number.isFinite(hour) ? hour : 0) * 60 + (Number.isFinite(minute) ? minute : 0);
+  }
+
+  private isSlotWithinWindow(
+    slotTime: string,
+    durationMinutes: number,
+    window: { start: string; end: string }
+  ): boolean {
+    const slotStart = this.timeToMinutes(this.normalizeTimeValue(slotTime) ?? slotTime);
+    const slotEnd = slotStart + Math.max(1, Number(durationMinutes) || 0);
+    const windowStart = this.timeToMinutes(window.start);
+    const windowEnd = this.timeToMinutes(window.end);
+    return slotStart >= windowStart && slotEnd <= windowEnd;
+  }
+
   private mapPriority(priority: AppointmentPriority): 'emergency' | 'vip' | 'regular' | 'followup' {
     switch (priority) {
       case AppointmentPriority.EMERGENCY:

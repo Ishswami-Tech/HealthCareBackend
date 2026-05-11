@@ -772,8 +772,8 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
       const cachedCacheHealth = useCachedStatus('cache', 15000);
       const cachedQueueHealth = useCachedStatus('queue', 15000);
       const cachedLoggerHealth = useCachedStatus('logging', 15000);
-      // Video health checks use longer cache TTL (30s) since video service state doesn't change frequently
-      // This reduces HTTP requests to OpenVidu server
+      // Video health checks use longer cache TTL (30s) since video provider state doesn't change frequently
+      // This reduces redundant provider checks
       const cachedVideoHealth = useCachedStatus('video', 30000);
 
       // Run health checks directly (no Terminus dependency - uses only LoggingService)
@@ -1804,10 +1804,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
         }
       }
       if (!isOptionalServiceError) {
-        isOptionalServiceError =
-          errorMessage.includes('video') ||
-          errorMessage.includes('Video') ||
-          errorMessage.includes('OpenVidu');
+        isOptionalServiceError = errorMessage.includes('video') || errorMessage.includes('Video');
         if (isOptionalServiceError) {
           videoStatus = 'unhealthy';
         }
@@ -2362,7 +2359,7 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                   errorDetails = videoResult['message'];
                 } else {
                   errorDetails =
-                    'Video service unavailable - OpenVidu may be down or not accessible';
+                    'Video service unavailable - current provider may be down or not accessible';
                 }
               }
 
@@ -2413,15 +2410,15 @@ export class HealthService implements OnModuleInit, OnModuleDestroy {
                 videoErrorCode === 'ECONNREFUSED' ||
                 videoErrorCode === 'ENOTFOUND';
 
-              let errorDetails = `Video service unavailable: ${videoErrorMessage}. OpenVidu may be down.`;
+              let errorDetails = `Video service unavailable: ${videoErrorMessage}. Current video provider may be down.`;
               if (isTimeout) {
                 // Get timeout from config or use default 5 seconds
                 const timeout =
                   this.config?.getEnvNumber('VIDEO_HEALTH_CHECK_TIMEOUT', 5000) || 5000;
                 const timeoutSeconds = timeout / 1000;
-                errorDetails = `Video health check timeout (${timeoutSeconds}s) - OpenVidu may be slow, starting up, or unavailable`;
+                errorDetails = `Video health check timeout (${timeoutSeconds}s) - current video provider may be slow, starting up, or unavailable`;
               } else if (isConnectionError) {
-                errorDetails = `Video connection refused - OpenVidu container may not be running or network issue`;
+                errorDetails = `Video connection refused - current video provider may not be running or there may be a network issue`;
               }
 
               services['video'] = {

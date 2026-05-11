@@ -722,12 +722,6 @@ export class AppointmentsController {
       'Get appointments for the currently authenticated patient. Only returns appointments for the authenticated user.',
   })
   @ApiQuery({
-    name: 'status',
-    required: false,
-    description: 'Filter by appointment status',
-    enum: ['PENDING', 'SCHEDULED', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'NO_SHOW'],
-  })
-  @ApiQuery({
     name: 'date',
     required: false,
     description: 'Filter by appointment date (YYYY-MM-DD)',
@@ -856,12 +850,6 @@ export class AppointmentsController {
     name: 'doctorId',
     required: false,
     description: 'Filter by doctor ID',
-  })
-  @ApiQuery({
-    name: 'status',
-    required: false,
-    description: 'Filter by appointment status',
-    enum: ['PENDING', 'SCHEDULED', 'CONFIRMED', 'CANCELLED', 'COMPLETED', 'NO_SHOW'],
   })
   @ApiQuery({
     name: 'date',
@@ -1106,7 +1094,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return current user upcoming appointments',
-    type: [AppointmentResponseDto],
+    type: () => [AppointmentResponseDto],
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -1409,7 +1397,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return user upcoming appointments',
-    type: [AppointmentResponseDto],
+    type: () => [AppointmentResponseDto],
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -1525,7 +1513,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Return the appointment',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -1645,7 +1633,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment updated successfully',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -1791,7 +1779,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment cancelled successfully',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
@@ -2262,7 +2250,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment completed successfully',
-    type: AppointmentResponseDto,
+    type: () => AppointmentResponseDto,
   })
   @InvalidateAppointmentCache()
   async completeAppointment(
@@ -3865,6 +3853,7 @@ export class AppointmentsController {
     name: 'format',
     description: 'QR code format',
     enum: ['png', 'svg', 'base64'],
+    enumName: 'QrCodeFormat',
     required: false,
   })
   @ApiQuery({
@@ -4203,7 +4192,7 @@ export class AppointmentsController {
   @ApiResponse({
     status: HttpStatus.OK,
     description: 'Appointment chain retrieved successfully',
-    type: AppointmentChainResponseDto,
+    type: () => AppointmentChainResponseDto,
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -4300,6 +4289,7 @@ export class AppointmentsController {
     required: false,
     description: 'Filter by follow-up plan status',
     enum: ['scheduled', 'completed', 'cancelled', 'overdue'],
+    enumName: 'FollowUpPlanStatus',
   })
   @ApiResponse({
     status: HttpStatus.OK,

@@ -38,10 +38,12 @@ export class MyService {
 
 ## Key Features
 
-- âœ… **Type-Safe Configuration** - Full TypeScript type safety with autocomplete
+- âœ… **Type-Safe Configuration** - Full TypeScript type safety with
+  autocomplete
 - âœ… **Environment File Priority** - .env.local > .env.{NODE_ENV} > .env
 - âœ… **Environment Validation** - Required variables validated on boot
-- âœ… **Multi-Provider Support** - Redis/Dragonfly caching, OpenVidu/Jitsi video
+- âœ… **Multi-Provider Support** - Redis/Dragonfly caching,
+  Cloudflare/Daily/Google Meet video
 - âœ… **Global Module** - Available everywhere via @Global decorator
 - âœ… **Zero Runtime Overhead** - Singleton pattern, loaded once at startup
 - âœ… **PaymentConfigService** - Multi-tenant payment configuration
@@ -200,15 +202,15 @@ const redisPort = this.config.getRedisPort();
 ```typescript
 // Check video status
 if (this.config.isVideoEnabled()) {
-  const provider = this.config.getVideoProvider(); // 'openvidu' | 'jitsi'
+  const provider = this.config.getVideoProvider(); // 'cloudflare' | 'daily' | 'google-meet'
   console.log(`Video provider: ${provider}`);
 }
 
 // Get video configuration
 const videoConfig = this.config.getVideoConfig();
-console.log(videoConfig.provider); // 'openvidu' | 'jitsi'
-console.log(videoConfig.openvidu?.url);
-console.log(videoConfig.jitsi?.url);
+console.log(videoConfig.provider); // 'cloudflare' | 'daily' | 'google-meet'
+console.log(videoConfig.cloudflare?.apiBaseUrl);
+console.log(videoConfig.daily?.apiBaseUrl);
 ```
 
 ### Rate Limit Config
@@ -449,11 +451,12 @@ DRAGONFLY_PORT=6379
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# Video (OpenVidu/Jitsi)
-VIDEO_PROVIDER=openvidu       # openvidu | jitsi
-OPENVIDU_URL=https://openvidu.example.com
-OPENVIDU_SECRET=secret
-JITSI_URL=https://meet.jit.si
+# Video (Cloudflare Realtime / Daily / Google Meet)
+VIDEO_PROVIDER=cloudflare     # cloudflare | daily | google-meet
+CLOUDFLARE_ACCOUNT_ID=...
+GOOGLE_CLIENT_ID=secret
+GOOGLE_CLIENT_SECRET=secret
+GOOGLE_MEET_REFRESH_TOKEN=secret
 
 # JWT
 JWT_SECRET=your-secret-here
@@ -629,4 +632,3 @@ ConfigModule (@Global)
 ## Contributing
 
 See main [README.md](../README.md) for contribution guidelines.
-

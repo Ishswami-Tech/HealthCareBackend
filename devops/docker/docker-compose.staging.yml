@@ -126,118 +126,6 @@ services:
       - "app.environment=local-prod"
       - "app.healthcheck=enabled"
 
-  openvidu-server:
-    profiles: ["infrastructure"]
-    image: openvidu/openvidu-server-kms:2.32.2
-    container_name: local-prod-openvidu-server
-    hostname: openvidu-server
-    ports:
-      - "4443:4443"
-      - "50000-50050:50000-50050/udp"
-      - "50000-50050:50000-50050/tcp"
-    environment:
-      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-http://localhost:4443}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-localhost}
-      - OPENVIDU_EDITION=ce
-      - OPENVIDU_CDR=false
-      - SERVER_PORT=4443
-      - SERVER_SSL_ENABLED=false
-      - HTTPS_PORT=4443
-      - HTTP_PORT=5443
-      - server.port=4443
-      - server.address=0.0.0.0
-      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
-      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
-      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
-      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
-      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
-      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
-      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
-      - OPENVIDU_RECORDING=false
-      - COTURN_IP=coturn
-      - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-localhost}
-      - TZ=UTC
-    volumes:
-      - openvidu_recordings:/opt/openvidu/recordings
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      coturn:
-        condition: service_healthy
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.7
-        aliases:
-          - openvidu-server
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 120s
-    deploy:
-      resources:
-        # Local-Prod: Reduced limits for local testing
-        limits:
-          cpus: "1.5"      # Production: 2.0
-          memory: 2G       # Production: 4GB
-        reservations:
-          cpus: "0.5"      # Production: 1.0
-          memory: 1G       # Production: 2GB
-    labels:
-      - "app.environment=local-prod"
-
-  coturn:
-    profiles: ["infrastructure"]
-    image: coturn/coturn:latest
-    container_name: local-prod-coturn
-    hostname: coturn
-    ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
-      - "49160-49200:49160-49200/udp"
-      - "49160-49200:49160-49200/tcp"
-    environment:
-      - TZ=UTC
-      # Domain configuration: Use same domain as API (set in .env files)
-      - COTURN_DOMAIN=${COTURN_DOMAIN:-turn.ishswami.in}
-      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
-    command:
-      - -n
-      - --log-file=stdout
-      - --listening-ip=0.0.0.0
-      - --listening-port=3478
-      - --min-port=49160
-      - --max-port=49200
-      - --fingerprint
-      - --lt-cred-mech
-      - --user=openvidu:${COTURN_PASSWORD}
-      # Use dedicated subdomain for TURN server
-      - --realm=${COTURN_DOMAIN:-turn.ishswami.in}
-      - --server-name=${COTURN_DOMAIN:-turn.ishswami.in}
-      - --no-cli
-      - --no-tls
-      - --no-dtls
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.8
-        aliases:
-          - coturn
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "turnutils_stunclient", "-p", "3478", "localhost"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    labels:
-      - "app.environment=local-prod"
-
   # Application Services (Profile: app)
   api:
     profiles: ["app"]
@@ -265,7 +153,7 @@ services:
       # Local-Prod: Use HTTP for local testing
       ENABLE_HTTP2: "false"
       # Local-Prod: Local URLs
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:8088,http://localhost:8082,https://localhost:4443}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000,http://localhost:8088,http://localhost:8082}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -322,12 +210,7 @@ services:
       HEALTH_RATE_LIMIT: 1000
       # Video Configuration
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
-      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
-      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      # OPENVIDU_URL must be set in .env.staging or environment variables
       # Do NOT hardcode - use environment variable to allow proper configuration
-      OPENVIDU_URL: ${OPENVIDU_URL}
-      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
     expose:
       - "${PORT:-8088}"
     networks:
@@ -339,14 +222,11 @@ services:
       - "api:172.18.0.5"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
-      - "openvidu-server:172.18.0.7"
-      - "coturn:172.18.0.8"
     depends_on:
       postgres:
         condition: service_healthy
       dragonfly:
         condition: service_healthy
-      coturn:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -427,8 +307,6 @@ services:
       - "worker:172.18.0.6"
       - "postgres:172.18.0.2"
       - "dragonfly:172.18.0.4"
-      - "openvidu-server:172.18.0.7"
-      - "coturn:172.18.0.8"
     depends_on:
       postgres:
         condition: service_healthy
@@ -473,8 +351,6 @@ volumes:
       type: none
       o: bind
       device: ./data/dragonfly
-  openvidu_recordings:
-    name: local-prod_openvidu_recordings
 
 networks:
   app-network:

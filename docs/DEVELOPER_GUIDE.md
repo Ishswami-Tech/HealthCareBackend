@@ -1,11 +1,11 @@
-# Developer Guide - Healthcare Backend
+﻿# Developer Guide - Healthcare Backend
 
 **Date**: December 2024  
-**Status**: ✅ **COMPLETE**
+**Status**: âœ… **COMPLETE**
 
 ---
 
-## 📋 Table of Contents
+## ðŸ“‹ Table of Contents
 
 1. [Quick Start](#quick-start)
 2. [Architecture Overview](#architecture-overview)
@@ -16,7 +16,7 @@
 
 ---
 
-## 🚀 Quick Start
+## ðŸš€ Quick Start
 
 ### Prerequisites
 
@@ -71,28 +71,28 @@ Rules:
 
 ---
 
-## 🏗️ Architecture Overview
+## ðŸ—ï¸ Architecture Overview
 
 ### System Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Frontend      │    │   API Gateway   │    │   Load Balancer │
-│   (Next.js)     │◄──►│   (NestJS)      │◄──►│   (Nginx)       │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │   Application   │
-                       │   Layer         │
-                       └─────────────────┘
-                                │
-                ┌───────────────┼───────────────┐
-                ▼               ▼               ▼
-        ┌─────────────┐ ┌─────────────┐ ┌─────────────┐
-        │ PostgreSQL  │ │    Redis    │ │   BullMQ    │
-        │ (Primary)   │ │   (Cache)   │ │  (Queues)   │
-        └─────────────┘ └─────────────┘ └─────────────┘
+â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”    â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+â”‚   Frontend      â”‚    â”‚   API Gateway   â”‚    â”‚   Load Balancer â”‚
+â”‚   (Next.js)     â”‚â—„â”€â”€â–ºâ”‚   (NestJS)      â”‚â—„â”€â”€â–ºâ”‚   (Nginx)       â”‚
+â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜    â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                                â”‚
+                                â–¼
+                       â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                       â”‚   Application   â”‚
+                       â”‚   Layer         â”‚
+                       â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
+                                â”‚
+                â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+                â–¼               â–¼               â–¼
+        â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â” â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
+        â”‚ PostgreSQL  â”‚ â”‚    Redis    â”‚ â”‚   BullMQ    â”‚
+        â”‚ (Primary)   â”‚ â”‚   (Cache)   â”‚ â”‚  (Queues)   â”‚
+        â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜ â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
 ```
 
 ### Core Principles
@@ -105,7 +105,7 @@ Rules:
 
 ---
 
-## ⚙️ Configuration Management
+## âš™ï¸ Configuration Management
 
 ### Central Configuration Service
 
@@ -141,7 +141,7 @@ Environment variables loaded in order (later overrides earlier):
 
 ---
 
-## 🔧 Environment Variables
+## ðŸ”§ Environment Variables
 
 ### Quick Reference
 
@@ -174,16 +174,15 @@ DRAGONFLY_PORT=6379
 
 ```env
 VIDEO_ENABLED=true
-VIDEO_PROVIDER=openvidu
-OPENVIDU_URL=https://video.yourdomain.com
-OPENVIDU_SECRET=your-secret
+VIDEO_PROVIDER=cloudflare
+VIDEO_ENABLED=true
 ```
 
 **Complete List**: See `docs/ENVIRONMENT_VARIABLES.md` for all variables.
 
 ---
 
-## 🔄 Common Issues & Solutions
+## ðŸ”„ Common Issues & Solutions
 
 ### Circular Dependencies
 
@@ -276,52 +275,51 @@ const isHealthy = await videoService.isHealthy();
 const provider = videoService.getCurrentProvider();
 
 // Force fallback
-process.env.VIDEO_PROVIDER = 'jitsi';
 ```
 
 ---
 
-## 💡 Development Best Practices
+## ðŸ’¡ Development Best Practices
 
 ### Path Aliases (MANDATORY)
 
 **Always use path aliases**, never relative imports:
 
 ```typescript
-// ✅ GOOD
+// âœ… GOOD
 import { DatabaseService } from '@database';
 import { CacheService } from '@cache';
 import { LoggingService } from '@logging';
 
-// ❌ BAD
+// âŒ BAD
 import { DatabaseService } from '../../../libs/infrastructure/database/database.service';
 ```
 
 **Available Aliases**:
 
-- `@services/*` → `src/services/*`
-- `@infrastructure/*` → `src/libs/infrastructure/*`
-- `@dtos/*` → `src/libs/dtos/*`
-- `@core/*` → `src/libs/core/*`
-- `@config` → `src/config`
-- `@logging` → `src/libs/infrastructure/logging`
-- `@cache` → `src/libs/infrastructure/cache`
-- `@database` → `src/libs/infrastructure/database`
+- `@services/*` â†’ `src/services/*`
+- `@infrastructure/*` â†’ `src/libs/infrastructure/*`
+- `@dtos/*` â†’ `src/libs/dtos/*`
+- `@core/*` â†’ `src/libs/core/*`
+- `@config` â†’ `src/config`
+- `@logging` â†’ `src/libs/infrastructure/logging`
+- `@cache` â†’ `src/libs/infrastructure/cache`
+- `@database` â†’ `src/libs/infrastructure/database`
 
 ### TypeScript Standards
 
 **Zero Tolerance Rules**:
 
-- ❌ No `any` types
-- ❌ No relative imports
-- ❌ No `console.log` (use `LoggingService`)
-- ❌ No missing error handling
-- ❌ No missing input validation
+- âŒ No `any` types
+- âŒ No relative imports
+- âŒ No `console.log` (use `LoggingService`)
+- âŒ No missing error handling
+- âŒ No missing input validation
 
 **Example**:
 
 ```typescript
-// ✅ GOOD
+// âœ… GOOD
 async findUser(id: string): Promise<User | null> {
   if (!id) {
     throw new BadRequestException('User ID is required');
@@ -329,7 +327,7 @@ async findUser(id: string): Promise<User | null> {
   return await this.databaseService.findUserByIdSafe(id);
 }
 
-// ❌ BAD
+// âŒ BAD
 async findUser(id: any): Promise<any> {
   console.log('Finding user', id);
   return await this.databaseService.findUserByIdSafe(id);
@@ -375,13 +373,13 @@ await this.loggingService.log(
 **Always use safe methods**:
 
 ```typescript
-// ✅ GOOD - Uses safe method with pagination
+// âœ… GOOD - Uses safe method with pagination
 const users = await this.databaseService.findUsersSafe(
   { role: 'PATIENT' },
   { take: 100, skip: 0 }
 );
 
-// ❌ BAD - Direct Prisma access
+// âŒ BAD - Direct Prisma access
 const users = await prisma.user.findMany({ where: { role: 'PATIENT' } });
 ```
 
@@ -400,7 +398,7 @@ async getAppointment(@Param('id') id: string) {
 
 ---
 
-## 📚 Additional Resources
+## ðŸ“š Additional Resources
 
 - **API Documentation**: `docs/API_DOCUMENTATION.md`
 - **System Architecture**: `docs/architecture/SYSTEM_ARCHITECTURE.md`
@@ -411,4 +409,4 @@ async getAppointment(@Param('id') id: string) {
 ---
 
 **Last Updated**: December 2024  
-**Status**: ✅ **COMPLETE**
+**Status**: âœ… **COMPLETE**

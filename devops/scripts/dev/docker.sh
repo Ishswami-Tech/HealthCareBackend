@@ -168,8 +168,7 @@ show_access_points() {
     echo "   - Prisma Studio:    http://localhost:5555"
     echo "   - PgAdmin:          http://localhost:5050 (admin@admin.com / admin)"
     echo "   - Redis Commander:  http://localhost:8082 (admin / admin)"
-    echo "   - OpenVidu:         https://localhost:4443"
-    echo "   - Jitsi:            https://localhost:8443"
+    echo "   - Video service:    https://localhost:8088"
     echo ""
 }
 
@@ -192,7 +191,7 @@ show_help() {
     echo "  shell [service]    Open shell in container (default: api)"
     echo "  help               Show this help message"
     echo ""
-    echo "Services: api, worker, postgres, dragonfly, openvidu-server, jitsi-web, etc."
+    echo "Services: api, worker, postgres, dragonfly, portainer, video providers, etc."
     echo ""
     echo "Examples:"
     echo "  $0 start                    # Start all services"
@@ -247,4 +246,3 @@ main() {
 }
 
 main "$@"
-

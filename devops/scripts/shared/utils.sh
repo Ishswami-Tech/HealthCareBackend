@@ -90,11 +90,6 @@ ensure_directories() {
         log_info "Created directory: ${BASE_DIR}/data/dragonfly"
     fi
     
-    if [[ ! -d "${BASE_DIR}/data/openvidu_recordings" ]]; then
-        mkdir -p "${BASE_DIR}/data/openvidu_recordings"
-        log_info "Created directory: ${BASE_DIR}/data/openvidu_recordings"
-    fi
-    
     # Set permissions (safe to run multiple times)
     chmod 700 "${BACKUP_DIR}" 2>/dev/null || true
     if [[ "${LOG_DIR}" == /var/log* ]] && ! $is_root; then
@@ -297,24 +292,6 @@ load_env() {
         done < "${ENV_FILE}"
         set +a
 
-        # Derive OpenVidu public values from the existing OpenVidu URL if the env file
-        # only provides the backend REST endpoint. This avoids hardcoding deployment URLs.
-        if [[ -z "${OPENVIDU_PUBLICURL:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-            export OPENVIDU_PUBLICURL="${OPENVIDU_URL}"
-        fi
-
-        if [[ -z "${OPENVIDU_DOMAIN:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-            local openvidu_domain_guess="${OPENVIDU_URL#*://}"
-            openvidu_domain_guess="${openvidu_domain_guess%%/*}"
-            openvidu_domain_guess="${openvidu_domain_guess%%:*}"
-            if [[ -n "${openvidu_domain_guess}" ]]; then
-                export OPENVIDU_DOMAIN="${openvidu_domain_guess}"
-            fi
-        fi
-
-        if [[ -z "${COTURN_DOMAIN:-}" && -n "${OPENVIDU_DOMAIN:-}" ]]; then
-            export COTURN_DOMAIN="${OPENVIDU_DOMAIN}"
-        fi
     else
         log_warning "Environment file not found: ${ENV_FILE}"
     fi

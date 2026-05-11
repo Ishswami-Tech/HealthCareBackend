@@ -53,7 +53,7 @@ docker compose -f docker-compose.prod.yml --profile infrastructure --profile app
 
 # Step 3: Remove all containers (force)
 log_info "Step 3: Removing all containers..."
-docker ps -a --format '{{.Names}}' | grep -E "^(postgres|dragonfly|coturn|portainer|openvidu-server|latest-api|latest-worker)$" | while read -r container; do
+docker ps -a --format '{{.Names}}' | grep -E "^(postgres|dragonfly|portainer|latest-api|latest-worker)$" | while read -r container; do
     log_info "Removing container: $container"
     docker rm -f "$container" 2>/dev/null || true
 done
@@ -119,4 +119,3 @@ log_info "Next steps:"
 log_info "1. Rebuild and push Docker images to GHCR"
 log_info "2. Run deployment script to start application containers"
 log_info "3. Verify deployment with: ./verify.sh deployment"
-

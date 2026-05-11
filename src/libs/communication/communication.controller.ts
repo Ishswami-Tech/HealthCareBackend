@@ -717,6 +717,7 @@ export class CommunicationController {
     required: false,
     description: 'Time period (1h, 24h, 7d, 30d)',
     enum: ['1h', '24h', '7d', '30d'],
+    enumName: 'CommunicationAnalyticsPeriod',
   })
   @ApiResponse({
     status: HttpStatus.OK,
@@ -926,6 +927,7 @@ export class CommunicationController {
     name: 'status',
     required: false,
     enum: ['PENDING', 'SENT', 'DELIVERED', 'FAILED', 'BOUNCED', 'REJECTED'],
+    enumName: 'DeliveryStatusQuery',
   })
   @ApiQuery({ name: 'userId', required: false })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -1222,6 +1224,7 @@ export class CommunicationController {
     required: false,
     description: 'Filter by channel',
     enum: ['email', 'whatsapp', 'push', 'socket', 'sms'],
+    enumName: 'CommunicationChannelFilter',
   })
   @ApiResponse({
     status: HttpStatus.OK,

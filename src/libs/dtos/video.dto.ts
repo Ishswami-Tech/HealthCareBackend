@@ -648,7 +648,7 @@ export class VideoConsultationSessionDto {
 }
 
 /**
- * Data Transfer Object for starting OpenVidu recording
+ * Data Transfer Object for starting video recording
  * @class StartRecordingDto
  */
 export class StartRecordingDto {
@@ -699,7 +699,7 @@ export class StartRecordingDto {
 }
 
 /**
- * Data Transfer Object for stopping OpenVidu recording
+ * Data Transfer Object for stopping video recording
  * @class StopRecordingDto
  */
 export class StopRecordingDto {
@@ -735,7 +735,7 @@ export class ManageParticipantDto {
 
   @ApiProperty({
     example: 'connection-id-123',
-    description: 'OpenVidu connection ID of the participant',
+    description: 'Connection ID of the participant',
   })
   @IsString({ message: 'Connection ID must be a string' })
   @IsNotEmpty({ message: 'Connection ID is required' })
@@ -768,7 +768,7 @@ export class GetSessionAnalyticsDto {
 }
 
 /**
- * Response DTO for OpenVidu recording
+ * Response DTO for video recording
  * @class RecordingResponseDto
  */
 export class RecordingResponseDto {
@@ -811,7 +811,7 @@ export class RecordingResponseDto {
 }
 
 /**
- * Response DTO for OpenVidu session analytics
+ * Response DTO for video session analytics
  * @class SessionAnalyticsResponseDto
  */
 export class SessionAnalyticsResponseDto {
@@ -883,7 +883,7 @@ export class SessionAnalyticsResponseDto {
 }
 
 /**
- * Response DTO for OpenVidu participant list
+ * Response DTO for video participant list
  * @class ParticipantListResponseDto
  */
 export class ParticipantListResponseDto {
@@ -926,7 +926,7 @@ export class ParticipantListResponseDto {
 }
 
 /**
- * Response DTO for OpenVidu recording list
+ * Response DTO for video recording list
  * @class RecordingListResponseDto
  */
 export class RecordingListResponseDto {
@@ -1230,7 +1230,7 @@ export class MedicationDto {
 }
 
 export class PrescriptionDto {
-  @ApiProperty({ type: [MedicationDto] })
+  @ApiProperty({ type: () => [MedicationDto] })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => MedicationDto)
@@ -1387,13 +1387,13 @@ export class MedicalNoteResponseDto {
   @ApiProperty()
   content!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: () => PrescriptionDto })
   prescription?: PrescriptionDto;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: () => [SymptomDto] })
   symptoms?: SymptomDto[];
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: () => TreatmentPlanDto })
   treatmentPlan?: TreatmentPlanDto;
 
   @ApiProperty()
@@ -1509,7 +1509,7 @@ export class AnnotationResponseDto {
   @ApiProperty()
   data!: Record<string, unknown>;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ type: () => AnnotationPositionDto })
   position?: AnnotationPositionDto;
 
   @ApiPropertyOptional()

@@ -29,11 +29,9 @@ import { VideoService } from './video.service';
 import { VideoConsultationTracker } from './video-consultation-tracker.service';
 // Video providers
 import { VideoProviderFactory } from './providers/video-provider.factory';
-import { OpenViduVideoProvider } from './providers/openvidu-video.provider';
-import { JitsiVideoProvider } from './providers/jitsi-video.provider';
-// Webhook handlers (optimized architecture)
-import { OpenViduWebhookController } from './webhooks/openvidu-webhook.controller';
-import { OpenViduWebhookService } from './webhooks/openvidu-webhook.service';
+import { CloudflareRealtimeProvider } from './providers/cloudflare-realtime.provider';
+import { DailyVideoProvider } from './providers/daily-video.provider';
+import { GoogleMeetProvider } from './providers/google-meet.provider';
 // New feature services
 import { VideoChatService } from './services/video-chat.service';
 import { VideoWaitingRoomService } from './services/video-waiting-room.service';
@@ -42,10 +40,12 @@ import { VideoAnnotationService } from './services/video-annotation.service';
 import { VideoTranscriptionService } from './services/video-transcription.service';
 import { VideoQualityService } from './services/video-quality.service';
 import { VideoVirtualBackgroundService } from './services/video-virtual-background.service';
+import { DailyHealthSignalService } from './services/daily-health-signal.service';
+import { DailyWebhookController } from './webhooks/daily-webhook.controller';
 @Module({
   imports: [
     ConfigModule,
-    HttpModule, // Centralized HTTP service for OpenVidu API calls
+    HttpModule, // Centralized HTTP service for provider API calls
     // TerminusModule removed - using only LoggingService (per .ai-rules/ coding standards)
     EventEmitterModule, // Required for @OnEvent decorators
     forwardRef(() => EventsModule), // Central event system
@@ -63,22 +63,18 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     forwardRef(() => EHRModule), // EHR integration for medical notes and transcriptions
     forwardRef(() => BillingModule),
   ],
-  controllers: [
-    VideoController,
-    OpenViduWebhookController, // Webhook handler for OpenVidu events (optimized architecture)
-  ],
+  controllers: [VideoController, DailyWebhookController],
   providers: [
     // Providers must be listed BEFORE VideoProviderFactory (which depends on them)
-    OpenViduVideoProvider,
-    JitsiVideoProvider,
-    // Provider factory (current runtime: OpenVidu primary, Jitsi fallback)
+    CloudflareRealtimeProvider,
+    DailyVideoProvider,
+    GoogleMeetProvider,
+    // Provider factory (current runtime: Cloudflare primary, Daily/Google Meet fallback)
     VideoProviderFactory,
     // Single consolidated video service
     VideoService,
     // Other services
     VideoConsultationTracker,
-    // Webhook service (processes OpenVidu webhooks and forwards to Socket.IO)
-    OpenViduWebhookService,
     // New feature services
     VideoChatService,
     VideoWaitingRoomService,
@@ -87,6 +83,7 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     VideoTranscriptionService,
     VideoQualityService,
     VideoVirtualBackgroundService,
+    DailyHealthSignalService,
   ],
   exports: [
     VideoService,
@@ -98,6 +95,7 @@ import { VideoVirtualBackgroundService } from './services/video-virtual-backgrou
     VideoTranscriptionService,
     VideoQualityService,
     VideoVirtualBackgroundService,
+    DailyHealthSignalService,
   ],
 })
 export class VideoModule {}

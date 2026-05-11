@@ -4,7 +4,6 @@ import { BillingService } from './billing.service';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
-import { isVideoSlotAwaitingConfirmation } from '@services/appointments/core/appointment-state-contract';
 
 /**
  * Billing event listeners for automatic invoice generation and delivery
@@ -207,6 +206,9 @@ export class BillingEventsListener {
     );
 
     try {
+      // Make the invoice artifact available first so billing updates are deterministic.
+      await this.billingService.generateInvoicePDF(invoiceId);
+
       // Send invoice via WhatsApp
       const sent = await this.billingService.sendInvoiceViaWhatsApp(
         invoiceSnapshot?.id || invoiceId
@@ -285,51 +287,76 @@ export class BillingEventsListener {
         );
 
         if (appointment) {
-          const isAwaitingSlot = isVideoSlotAwaitingConfirmation({
-            type: appointment.type,
-            status: appointment.status,
-            proposedSlots: (appointment as { proposedSlots?: unknown }).proposedSlots,
-            confirmedSlotIndex: (appointment as { confirmedSlotIndex?: number | null })
-              .confirmedSlotIndex,
-          });
-
-          // VIDEO_CALL awaiting slot confirmation: keep status unchanged - payment recorded,
-          // doctor must confirm slot (appointments.service.confirmVideoSlot)
-          if (isAwaitingSlot) {
-            await this.billingService.syncAppointmentAfterPayment({
-              appointmentId,
-              clinicId: payload.clinicId,
-              paymentId: payload.paymentId,
-              paymentStatus: payload.status,
-              appointment,
-              emitAppointmentUpdated: true,
-            });
-
-            await this.loggingService.log(
-              LogType.APPOINTMENT,
-              LogLevel.INFO,
-              'Video appointment payment completed; awaiting doctor slot confirmation',
-              'BillingEventsListener',
-              {
-                appointmentId,
-                paymentId: payload.paymentId,
-                clinicId: payload.clinicId,
-              }
-            );
-            return;
-          }
-        }
-
-        if (!appointment) {
           await this.loggingService.log(
             LogType.APPOINTMENT,
-            LogLevel.WARN,
-            'Payment completed event received but appointment was not found for status transition',
+            LogLevel.INFO,
+            'Updating appointment status after payment completion',
             'BillingEventsListener',
             {
               appointmentId,
               paymentId: payload.paymentId,
               clinicId: payload.clinicId,
+              previousStatus: String(appointment.status),
+              nextStatus: String(AppointmentStatus.CONFIRMED),
+              appointmentType: String(appointment.type),
+            }
+          );
+
+          await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const appointmentClient = client as unknown as {
+                appointment: {
+                  update: (args: {
+                    where: { id: string };
+                    data: { status: string };
+                  }) => Promise<unknown>;
+                };
+              };
+              return await appointmentClient.appointment.update({
+                where: { id: appointmentId },
+                data: {
+                  status: AppointmentStatus.CONFIRMED,
+                },
+              });
+            },
+            {
+              userId: 'system',
+              clinicId: payload.clinicId,
+              resourceType: 'APPOINTMENT',
+              operation: 'UPDATE',
+              resourceId: appointmentId,
+              userRole: 'system',
+              details: {
+                reason: 'Payment completed',
+                paymentId: payload.paymentId,
+              },
+            }
+          );
+
+          const refreshedAppointment =
+            await this.databaseService.findAppointmentByIdSafe(appointmentId);
+
+          await this.billingService.syncAppointmentAfterPayment({
+            appointmentId,
+            clinicId: payload.clinicId,
+            paymentId: payload.paymentId,
+            paymentStatus: payload.status,
+            appointment: refreshedAppointment ?? appointment,
+            emitAppointmentUpdated: true,
+          });
+
+          await this.loggingService.log(
+            LogType.APPOINTMENT,
+            LogLevel.INFO,
+            'Appointment confirmed after payment completion',
+            'BillingEventsListener',
+            {
+              appointmentId: payload.appointmentId,
+              paymentId: payload.paymentId,
+              clinicId: payload.clinicId,
+              previousStatus: String(appointment.status),
+              nextStatus: String(AppointmentStatus.CONFIRMED),
+              appointmentType: String(appointment.type),
             }
           );
           return;
@@ -337,75 +364,13 @@ export class BillingEventsListener {
 
         await this.loggingService.log(
           LogType.APPOINTMENT,
-          LogLevel.INFO,
-          'Updating appointment status after payment completion',
+          LogLevel.WARN,
+          'Payment completed event received but appointment was not found for status transition',
           'BillingEventsListener',
           {
             appointmentId,
             paymentId: payload.paymentId,
             clinicId: payload.clinicId,
-            previousStatus: String(appointment.status),
-            nextStatus: String(AppointmentStatus.CONFIRMED),
-            appointmentType: String(appointment.type),
-          }
-        );
-
-        // For non-video or non-awaiting-slot: update appointment status to CONFIRMED
-        await this.databaseService.executeHealthcareWrite(
-          async client => {
-            const appointmentClient = client as unknown as {
-              appointment: {
-                update: (args: {
-                  where: { id: string };
-                  data: { status: string };
-                }) => Promise<unknown>;
-              };
-            };
-            return await appointmentClient.appointment.update({
-              where: { id: appointmentId },
-              data: {
-                status: AppointmentStatus.CONFIRMED,
-              },
-            });
-          },
-          {
-            userId: 'system',
-            clinicId: payload.clinicId,
-            resourceType: 'APPOINTMENT',
-            operation: 'UPDATE',
-            resourceId: appointmentId,
-            userRole: 'system',
-            details: {
-              reason: 'Payment completed',
-              paymentId: payload.paymentId,
-            },
-          }
-        );
-
-        const refreshedAppointment =
-          await this.databaseService.findAppointmentByIdSafe(appointmentId);
-
-        await this.billingService.syncAppointmentAfterPayment({
-          appointmentId,
-          clinicId: payload.clinicId,
-          paymentId: payload.paymentId,
-          paymentStatus: payload.status,
-          appointment: refreshedAppointment ?? appointment,
-          emitAppointmentUpdated: true,
-        });
-
-        await this.loggingService.log(
-          LogType.APPOINTMENT,
-          LogLevel.INFO,
-          'Appointment confirmed after payment completion',
-          'BillingEventsListener',
-          {
-            appointmentId: payload.appointmentId,
-            paymentId: payload.paymentId,
-            clinicId: payload.clinicId,
-            previousStatus: String(appointment.status),
-            nextStatus: String(AppointmentStatus.CONFIRMED),
-            appointmentType: String(appointment.type),
           }
         );
       }

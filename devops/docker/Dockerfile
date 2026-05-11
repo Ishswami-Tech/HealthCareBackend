@@ -127,6 +127,8 @@ RUN mkdir -p /app/node_modules_real/@prisma && \
 # Prisma Client is already generated above (line 34) - no need to regenerate
 # Use yarn build to run all optimizations, linting, and formatting ONCE in Docker
 # CI skips linting for production, so this is the only place it runs (no duplication)
+ARG SKIP_SECURITY_AUDIT=false
+ENV SKIP_SECURITY_AUDIT=${SKIP_SECURITY_AUDIT}
 RUN yarn build
 
 # Ensure Prisma schema is available in dist

@@ -1,4 +1,4 @@
-import { nowIso } from '@utils/date-time.util';
+﻿import { nowIso } from '@utils/date-time.util';
 /**
  * Video Controller
  * @class VideoController
@@ -24,6 +24,7 @@ import {
   HttpStatus,
   Request,
   ParseUUIDPipe,
+  Put,
   ValidationPipe,
   HttpException,
   NotFoundException,
@@ -55,10 +56,15 @@ import { RequiresProfileCompletion } from '@core/decorators/profile-completion.d
 
 import { Cache } from '@core/decorators';
 import { HealthcareErrorsService, HealthcareError } from '@core/errors';
-import { EventCategory, EventPriority } from '@core/types';
+import { EventCategory, EventPriority, LogLevel, LogType } from '@core/types';
 import { Role } from '@core/types/enums.types';
 import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
-import type { VideoTokenResponse, VideoConsultationSession } from '@core/types/video.types';
+import type {
+  VideoTokenResponse,
+  VideoConsultationSession,
+  VideoProviderType,
+  VideoProviderSettingResponse,
+} from '@core/types/video.types';
 
 // 4. Internal imports - Configuration
 import { ValidationPipeConfig } from '@config/validation-pipe.config';
@@ -864,7 +870,14 @@ export class VideoController {
         );
       }
       if (!this.isVideoConsultationSession(sessionResult)) {
-        throw this.errors.internalServerError('VideoController.getConsultationStatus');
+        throw this.errors.externalServiceInvalidResponse(
+          'Video consultation session returned an invalid response. Please refresh and try again.',
+          'VideoController.getConsultationStatus',
+          {
+            appointmentId,
+            phase: 'validate-session',
+          }
+        );
       }
       const session: VideoConsultationSession = sessionResult;
       const sessionId: string = session.id;
@@ -903,7 +916,14 @@ export class VideoController {
         !('id' in sessionDtoResult) ||
         typeof (sessionDtoResult as { id: unknown }).id !== 'string'
       ) {
-        throw this.errors.internalServerError('VideoController.getConsultationStatus');
+        throw this.errors.externalServiceInvalidResponse(
+          'Video consultation session could not be formatted correctly. Please refresh and try again.',
+          'VideoController.getConsultationStatus',
+          {
+            appointmentId,
+            phase: 'build-dto',
+          }
+        );
       }
       const sessionDto: VideoConsultationSessionDto =
         sessionDtoResult as VideoConsultationSessionDto;
@@ -916,12 +936,51 @@ export class VideoController {
         throw error;
       }
       // NotFoundException originates from ensureAppointmentJoinable (via the appointment
-      // fallback path) — re-throw it directly so the HTTP filter maps it to 404,
+      // fallback path) â€” re-throw it directly so the HTTP filter maps it to 404,
       // preserving the differentiated message the frontend decoder relies on.
       if (error instanceof NotFoundException) {
         throw error;
       }
-      const healthcareError = this.errors.internalServerError(context);
+      const actualErrorMessage =
+        error instanceof Error
+          ? error.message
+          : 'Video consultation status could not be retrieved. Please try again later.';
+      const healthcareError = this.errors.externalServiceInvalidResponse(
+        'Video consultation status could not be retrieved. Please try again later.',
+        context,
+        {
+          appointmentId,
+          phase: 'catch-all',
+          originalError: actualErrorMessage,
+          originalErrorName: error instanceof Error ? error.name : typeof error,
+        }
+      );
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `[ERROR] ${context} failed: ${actualErrorMessage}`,
+        context,
+        {
+          appointmentId,
+          error: actualErrorMessage,
+          originalErrorName: error instanceof Error ? error.name : typeof error,
+        }
+      );
+      await this.eventService.emitEnterprise('video.consultation.status.failed', {
+        eventId: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+        eventType: 'video.consultation.status.failed',
+        category: EventCategory.SYSTEM,
+        priority: EventPriority.HIGH,
+        timestamp: new Date().toISOString(),
+        source: context,
+        version: '1.0.0',
+        metadata: {
+          appointmentId,
+          phase: 'catch-all',
+          originalError: actualErrorMessage,
+          originalErrorName: error instanceof Error ? error.name : typeof error,
+        },
+      });
       this.errors.handleError(healthcareError, context);
       throw healthcareError;
     }
@@ -1249,7 +1308,6 @@ export class VideoController {
   // Use GET /health to check video service health along with all other services
 
   // ============================================================================
-  // OPENVIDU PRO FEATURES - RECORDING
   // ============================================================================
 
   @Post('recording/start')
@@ -1413,7 +1471,6 @@ export class VideoController {
   }
 
   // ============================================================================
-  // OPENVIDU PRO FEATURES - PARTICIPANT MANAGEMENT
   // ============================================================================
 
   @Post('participant/manage')
@@ -1515,7 +1572,6 @@ export class VideoController {
   }
 
   // ============================================================================
-  // OPENVIDU PRO FEATURES - ANALYTICS
   // ============================================================================
 
   @Get('analytics/:appointmentId')
@@ -2242,6 +2298,40 @@ export class VideoController {
       return new SuccessResponseDto('Session terminated successfully');
     } catch (_error) {
       throw this.errors.internalServerError('VideoController.terminateSession');
+    }
+  }
+
+  @Get('admin/provider-settings')
+  @Roles(Role.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Get global video provider setting',
+    description: 'Get the system-wide default video provider used when clinics do not override it.',
+  })
+  @ApiResponse({ status: 200 })
+  async getGlobalVideoProviderSetting(): Promise<VideoProviderSettingResponse> {
+    try {
+      return await this.videoService.getGlobalVideoProviderSetting();
+    } catch (_error) {
+      throw this.errors.internalServerError('VideoController.getGlobalVideoProviderSetting');
+    }
+  }
+
+  @Put('admin/provider-settings')
+  @Roles(Role.SUPER_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Update global video provider setting',
+    description:
+      'Update the system-wide default video provider used for clinics without overrides.',
+  })
+  @ApiResponse({ status: 200 })
+  async updateGlobalVideoProviderSetting(
+    @Body('provider') provider: VideoProviderType
+  ): Promise<VideoProviderSettingResponse> {
+    try {
+      return await this.videoService.updateGlobalVideoProviderSetting(provider);
+    } catch (_error) {
+      throw this.errors.internalServerError('VideoController.updateGlobalVideoProviderSetting');
     }
   }
 }

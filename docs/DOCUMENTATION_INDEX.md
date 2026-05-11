@@ -132,10 +132,8 @@ section below for implementation gaps
    setup and configuration
 7. **[SUPERADMIN_CLINIC_MANAGEMENT.md](./guides/SUPERADMIN_CLINIC_MANAGEMENT.md)** -
    Super admin clinic management
-8. **[MASTER_COTURN_GUIDE.md](./MASTER_COTURN_GUIDE.md)** â­ - Complete
-   consolidated guide for Coturn (TURN/STUN), OpenVidu, Nginx video domain
-   setup, DNS configuration, firewall, security, and troubleshooting (all Coturn
-   docs merged here)
+8. **Video deployment docs** - Current backend video service and deployment
+   guidance
 
 **Note:** Enhanced monitoring and migration information is in
 [Communication System Complete Guide](./guides/COMMUNICATION_SYSTEM_COMPLETE_GUIDE.md#health-monitoring--metrics).
@@ -205,7 +203,6 @@ section below for implementation gaps
 
 - âœ… Appointments (follow-ups, recurring, video, check-in, subscription-based
   booking)
-- âœ… Video Consultations (OpenVidu + Jitsi dual-provider)
 - âœ… Subscription Appointments (quota management)
 - âœ… Invoice PDF & WhatsApp (PDF generation, WhatsApp delivery)
 - âœ… Payment & Billing (Cashfree, payment flows, webhook lifecycle)
@@ -347,16 +344,16 @@ details
 
 ### ðŸ“‹ Implementation Priority Matrix
 
-| Item                       | Priority | Effort | Impact   | Status                           |
-| -------------------------- | -------- | ------ | -------- | -------------------------------- |
-| Feature Documentation      | âœ… DONE  | -      | -        | âœ… Consolidated into FEATURES.md |
-| Postman Collection Updates | âœ… DONE  | -      | -        | âœ… Complete (235+ endpoints)     |
-| Bounce/Complaint Webhooks  | CRITICAL | Medium | Critical | âŒ Missing                       |
-| Suppression List Service   | CRITICAL | Medium | Critical | âŒ Missing                       |
-| Unsubscribe Links          | CRITICAL | Low    | Critical | âš ï¸ Partial                       |
-| API Documentation Details  | HIGH     | High   | Medium   | âš ï¸ Basic                         |
-| Configuration Sets         | MEDIUM   | Low    | Low      | âŒ Missing                       |
-| Enhanced Monitoring        | MEDIUM   | Medium | Medium   | âŒ Missing                       |
+| Item                       | Priority | Effort | Impact   | Status                            |
+| -------------------------- | -------- | ------ | -------- | --------------------------------- |
+| Feature Documentation      | âœ… DONE | -      | -        | âœ… Consolidated into FEATURES.md |
+| Postman Collection Updates | âœ… DONE | -      | -        | âœ… Complete (235+ endpoints)     |
+| Bounce/Complaint Webhooks  | CRITICAL | Medium | Critical | âŒ Missing                        |
+| Suppression List Service   | CRITICAL | Medium | Critical | âŒ Missing                        |
+| Unsubscribe Links          | CRITICAL | Low    | Critical | âš ï¸ Partial                     |
+| API Documentation Details  | HIGH     | High   | Medium   | âš ï¸ Basic                       |
+| Configuration Sets         | MEDIUM   | Low    | Low      | âŒ Missing                        |
+| Enhanced Monitoring        | MEDIUM   | Medium | Medium   | âŒ Missing                        |
 
 ---
 
@@ -403,8 +400,7 @@ details
 **Total Documentation Files**: **13 files** (reduced from 34 - redundant files
 consolidated)
 
-- Root: 11 files (consolidated - includes MASTER_COTURN_GUIDE.md,
-  UBUNTU_24_SERVER_SETUP.md)
+- Root: 11 files (consolidated - current deployment and architecture docs)
 - Guides: 7 files (consolidated)
 - Architecture: 6 files
 - Features: 1 file (others consolidated into FEATURES.md)
@@ -412,8 +408,7 @@ consolidated)
 
 **Note**:
 
-- All Coturn documentation (7 files) consolidated into `MASTER_COTURN_GUIDE.md`
-- All Nginx video domain docs (2 files) merged into `UBUNTU_24_SERVER_SETUP.md`
+- Legacy Nginx video domain docs were replaced with current backend video docs
 - Domain migration summary merged into `DOMAIN_MIGRATION_GUIDE.md`
 - Required environment variables merged into `ENVIRONMENT_VARIABLES.md`
 
@@ -435,8 +430,8 @@ to 13 files (-62%)
 
 ### Consolidation Summary
 
-**Phase 1**: Feature documentation consolidated into `FEATURES.md` (9 files â†’ 1
-file)
+**Phase 1**: Feature documentation consolidated into `FEATURES.md` (9 files â†’
+1 file)
 
 **Phase 2**: Removed 12 redundant status/analysis files:
 
@@ -458,43 +453,27 @@ file)
 
 - PRISMA_GENERATED_FILES.md + devops/docker/PRISMA_CONFIGURATION.md â†’
   PRISMA_COMPLETE_GUIDE.md
-- test-scripts/API_COVERAGE_SUMMARY.md â†’ test-scripts/FINAL_API_VERIFICATION.md
-  (merged content)
+- test-scripts/API_COVERAGE_SUMMARY.md â†’
+  test-scripts/FINAL_API_VERIFICATION.md (merged content)
 - Removed outdated status reports: endpoint-status-report.md,
   TEST_RESULTS_SUMMARY.md
 - Added cross-references between related documentation files
 
-**Phase 5**: Coturn and Nginx documentation consolidation (January 2025):
-
-- All 7 Coturn files â†’ MASTER_COTURN_GUIDE.md:
-  - COTURN_DNS_SETUP.md
-  - COTURN_DOMAIN_SECURITY.md
-  - COTURN_FIREWALL_SETUP.md
-  - COTURN_SECURITY_GUIDE.md
-  - COTURN_SECURITY_IMPLEMENTATION.md
-  - COTURN_SECURITY_SUMMARY.md
-  - COTURN_SUBDOMAIN_INTEGRATION.md
-- Nginx video domain files â†’ UBUNTU_24_SERVER_SETUP.md:
-  - NGINX_VIDEO_DOMAIN_SETUP.md
-  - NGINX_OPENVIDU_ANALYSIS.md
 - Updated all references to point to consolidated files
 
 **Phase 6**: Domain and environment documentation consolidation (January 2025):
 
 - DOMAIN_UPDATE_SUMMARY.md â†’ DOMAIN_MIGRATION_GUIDE.md (merged quick reference
   section)
-- ENVIRONMENT_VARIABLES_REQUIRED.md â†’ ENVIRONMENT_VARIABLES.md (merged required
-  variables section)
+- ENVIRONMENT_VARIABLES_REQUIRED.md â†’ ENVIRONMENT_VARIABLES.md (merged
+  required variables section)
 - Updated all references
 
 **Result**: Clean, minimal documentation structure with no redundant files. All
 related documentation is cross-referenced. Outdated status reports removed.
-Single comprehensive guides for Coturn, server setup, domain migration, and
 environment variables.
 
 ---
 
 **Last Updated**: January 2025  
 **Verification**: âœ… All referenced files exist, no broken links, no duplicates
-
-

@@ -139,23 +139,9 @@ WHATSAPP_PRESCRIPTION_TEMPLATE_ID=prescription_notification
 META_WHATSAPP_WEBHOOK_VERIFY_TOKEN=CHANGE_THIS_VERIFY_TOKEN_FOR_META_WEBHOOK
 META_WHATSAPP_APP_SECRET=
 
-# Video Configuration (OpenVidu)
-# OPENVIDU_SECRET: only a-zA-Z0-9, hyphens (-), underscores (_). No = or other special chars (e.g. no base64 padding).
+# Video Configuration
 VIDEO_ENABLED=true
-VIDEO_PROVIDER=openvidu
-OPENVIDU_URL=https://your-video-domain.com
-OPENVIDU_SECRET=CHANGE_THIS_TO_A_SECURE_SECRET_IN_PRODUCTION
-OPENVIDU_DOMAIN=your-video-domain.com
-OPENVIDU_WEBHOOK_ENABLED=false
-OPENVIDU_WEBHOOK_ENDPOINT=https://your-api-domain.com/api/v1/webhooks/openvidu
-OPENVIDU_WEBHOOK_EVENTS=sessionCreated,sessionDestroyed,participantJoined,participantLeft
-
-# Coturn (TURN/STUN) Security Configuration
-# ⚠️ SECURITY: Coturn is exposed on port 3478 - use strong password!
-# See docs/MASTER_COTURN_GUIDE.md for complete Coturn security setup
-# ✅ PRODUCTION: Using dedicated subdomain for better security isolation
-COTURN_DOMAIN=turn.ishswami.in
-COTURN_PASSWORD=CHANGE_THIS_TO_A_STRONG_PASSWORD_MIN_32_CHARS
+VIDEO_PROVIDER=cloudflare
 
 # Google OAuth Configuration
 # Get credentials from: https://console.cloud.google.com/apis/credentials

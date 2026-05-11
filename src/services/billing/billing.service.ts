@@ -6,6 +6,7 @@ import {
   Inject,
   forwardRef,
   Optional,
+  OnModuleInit,
 } from '@nestjs/common';
 import { ModuleRef } from '@nestjs/core';
 import { Cron, CronExpression } from '@nestjs/schedule';
@@ -40,6 +41,7 @@ import {
 import {
   AppointmentServiceMetadataDto,
   AppointmentType,
+  AppointmentStatus,
   TreatmentType,
 } from '@dtos/appointment.dto';
 import { InvoicePDFService } from './invoice-pdf.service';
@@ -79,7 +81,7 @@ type BillingAccessContext = {
 };
 
 @Injectable()
-export class BillingService {
+export class BillingService implements OnModuleInit {
   private appointmentsServiceRef: AppointmentsServiceLike | null = null;
 
   constructor(
@@ -96,6 +98,22 @@ export class BillingService {
     @Inject(forwardRef(() => QueueService))
     private readonly queueService?: QueueService
   ) {}
+
+  onModuleInit(): void {
+    void this.reconcileLegacyPaidAppointments().catch(async error => {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to start appointment payment reconciliation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        {
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+    });
+  }
 
   private async invalidateUserInvoiceCaches(userId: string): Promise<void> {
     await Promise.all([
@@ -453,7 +471,9 @@ export class BillingService {
     clinicId: string,
     orderId: string,
     provider?: PaymentProvider,
-    appointmentId?: string
+    appointmentId?: string,
+    paymentId?: string,
+    appointmentType?: 'VIDEO_CALL' | 'IN_PERSON' | 'HOME_VISIT'
   ): string {
     // Priority 1: Provider-specific environment override (e.g., for local development)
     if (provider === PaymentProvider.CASHFREE) {
@@ -464,8 +484,14 @@ export class BillingService {
           url.searchParams.set('clinicId', clinicId);
           url.searchParams.set('orderId', orderId);
           url.searchParams.set('provider', 'cashfree');
+          if (paymentId) {
+            url.searchParams.set('paymentId', paymentId);
+          }
           if (appointmentId) {
             url.searchParams.set('appointmentId', appointmentId);
+          }
+          if (appointmentType) {
+            url.searchParams.set('appointmentType', appointmentType);
           }
           return url.toString();
         } catch {
@@ -487,10 +513,29 @@ export class BillingService {
     if (provider) {
       callbackUrl.searchParams.set('provider', String(provider));
     }
+    if (paymentId) {
+      callbackUrl.searchParams.set('paymentId', paymentId);
+    }
     if (appointmentId) {
       callbackUrl.searchParams.set('appointmentId', appointmentId);
     }
+    if (appointmentType) {
+      callbackUrl.searchParams.set('appointmentType', appointmentType);
+    }
     return callbackUrl.toString();
+  }
+
+  private buildGatewayOrderId(baseOrderId: string, uniqueKey: string): string {
+    const normalizedBase = String(baseOrderId || '').replace(/[^A-Za-z0-9_-]/g, '-');
+    const normalizedUnique = String(uniqueKey || '')
+      .replace(/[^A-Za-z0-9]/g, '')
+      .slice(0, 8);
+
+    if (!normalizedBase) {
+      return normalizedUnique || `order-${Date.now()}`;
+    }
+
+    return normalizedUnique ? `${normalizedBase}-${normalizedUnique}` : normalizedBase;
   }
 
   private roundToTwo(value: number): number {
@@ -2406,7 +2451,7 @@ export class BillingService {
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: subscription.plan.amount * 100, // Convert to paise
       currency: subscription.plan.currency || 'INR',
-      orderId: invoice.invoiceNumber,
+      orderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
       customerId: subscription.userId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
@@ -2440,23 +2485,24 @@ export class BillingService {
       paymentIntentOptions,
       provider
     );
+    // Extract payment intent details with proper type checking
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl = this.buildPaymentCallbackUrl(
+      subscription.clinicId,
+      orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      provider,
+      undefined,
+      paymentId || undefined
+    );
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: subscription.clinicId,
       invoiceId: invoice.id,
       subscriptionId: subscription.id,
+      redirectUrl,
     };
-
-    // Extract payment intent details with proper type checking
-    const paymentId = paymentIntentResult.paymentId || '';
-    const orderId = paymentIntentResult.orderId || '';
-    const providerName = paymentIntentResult.provider || '';
-    const redirectUrl =
-      paymentIntentResult.metadata &&
-      typeof paymentIntentResult.metadata === 'object' &&
-      !Array.isArray(paymentIntentResult.metadata)
-        ? paymentIntentResult.metadata['redirectUrl']
-        : undefined;
 
     // Create payment record
     const payment = await this.createPayment({
@@ -2473,7 +2519,7 @@ export class BillingService {
         provider: providerName,
         revenueModel: 'SUBSCRIPTION',
         serviceType: 'SUBSCRIPTION_PLAN',
-        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+        redirectUrl,
       },
     });
 
@@ -2549,6 +2595,22 @@ export class BillingService {
       throw new BadRequestException('Payment is already completed for this appointment');
     }
 
+    const existingPaymentMetadata = existingPayment
+      ? this.asRecord(existingPayment.metadata)
+      : null;
+    const existingGatewayOrderId =
+      this.asSafeString(existingPaymentMetadata?.['orderId']) ||
+      this.asSafeString(existingPaymentMetadata?.['paymentIntentId']) ||
+      this.asSafeString(existingPaymentMetadata?.['paymentSessionId']);
+    const existingInvoice = existingPayment?.invoiceId
+      ? await this.databaseService.findInvoiceByIdSafe(existingPayment.invoiceId)
+      : null;
+    const existingInvoiceStatus = existingInvoice ? String(existingInvoice.status) : '';
+    const canReuseExistingInvoice =
+      Boolean(existingInvoice) &&
+      existingInvoiceStatus !== String(InvoiceStatus.PAID) &&
+      existingInvoiceStatus !== String(InvoiceStatus.VOID);
+
     const createAppointmentInvoice = async () =>
       this.createInvoice({
         userId: billingUserId || appointment.patientId,
@@ -2577,25 +2639,21 @@ export class BillingService {
       });
 
     let supersededInvoiceId: string | null = null;
-    if (existingPayment?.invoiceId) {
-      const existingInvoice = await this.databaseService.findInvoiceByIdSafe(
-        existingPayment.invoiceId
-      );
-      if (existingInvoice) {
-        const existingInvoiceStatus = String(existingInvoice.status);
-        if (existingInvoiceStatus === String(InvoiceStatus.PAID)) {
-          throw new BadRequestException('Invoice is already paid for this appointment');
-        }
-        if (existingInvoiceStatus !== String(InvoiceStatus.VOID)) {
-          supersededInvoiceId = existingInvoice.id;
-        }
+    if (existingPayment?.invoiceId && existingInvoice) {
+      if (existingInvoiceStatus === String(InvoiceStatus.PAID)) {
+        throw new BadRequestException('Invoice is already paid for this appointment');
+      }
+      if (existingInvoiceStatus !== String(InvoiceStatus.VOID) && !canReuseExistingInvoice) {
+        supersededInvoiceId = existingInvoice.id;
       }
     }
 
-    // Always issue a fresh invoice when retrying an appointment payment so the
-    // payment provider receives a fresh order identifier and the payment record
-    // stays one-to-one with the appointment.
-    const invoice = await createAppointmentInvoice();
+    const invoice =
+      canReuseExistingInvoice && existingInvoice
+        ? existingInvoice
+        : await createAppointmentInvoice();
+    const gatewayOrderId =
+      existingGatewayOrderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id);
 
     // Create payment intent via payment service
     // SECURITY: Use ConfigService instead of hardcoded URL
@@ -2610,7 +2668,7 @@ export class BillingService {
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: amount * 100, // Convert to paise
       currency: 'INR',
-      orderId: invoice.invoiceNumber,
+      orderId: gatewayOrderId,
       customerId: billingUserId || appointment.patientId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
@@ -2627,9 +2685,11 @@ export class BillingService {
         baseUrl,
         redirectUrl: this.buildPaymentCallbackUrl(
           appointment.clinicId,
-          invoice.invoiceNumber,
+          gatewayOrderId,
           provider,
-          appointment.id
+          appointment.id,
+          undefined,
+          appointmentType
         ),
       },
     };
@@ -2639,24 +2699,26 @@ export class BillingService {
       paymentIntentOptions,
       provider
     );
+    // Extract payment intent details with proper type checking
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl = this.buildPaymentCallbackUrl(
+      appointment.clinicId,
+      orderId || gatewayOrderId,
+      provider,
+      appointment.id,
+      paymentId || undefined,
+      appointmentType
+    );
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: appointment.clinicId,
       invoiceId: invoice.id,
       appointmentId: appointment.id,
       appointmentType,
+      redirectUrl,
     };
-
-    // Extract payment intent details with proper type checking
-    const paymentId = paymentIntentResult.paymentId || '';
-    const orderId = paymentIntentResult.orderId || '';
-    const providerName = paymentIntentResult.provider || '';
-    const redirectUrl =
-      paymentIntentResult.metadata &&
-      typeof paymentIntentResult.metadata === 'object' &&
-      !Array.isArray(paymentIntentResult.metadata)
-        ? paymentIntentResult.metadata['redirectUrl']
-        : undefined;
 
     const paymentMetadata = {
       paymentIntentId: paymentId,
@@ -2665,7 +2727,7 @@ export class BillingService {
       appointmentType,
       revenueModel: 'APPOINTMENT',
       serviceType: appointmentType,
-      ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+      redirectUrl,
     };
 
     let payment: PaymentWithRelations;
@@ -2678,7 +2740,7 @@ export class BillingService {
         metadata: paymentMetadata,
       });
 
-      if (supersededInvoiceId && supersededInvoiceId !== invoice.id) {
+      if (!canReuseExistingInvoice && supersededInvoiceId && supersededInvoiceId !== invoice.id) {
         await this.updateInvoice(supersededInvoiceId, {
           status: InvoiceStatus.VOID,
           metadata: {
@@ -2779,7 +2841,7 @@ export class BillingService {
     const paymentIntentOptions: PaymentIntentOptions = {
       amount: invoiceAmount * 100,
       currency,
-      orderId: invoice.invoiceNumber,
+      orderId: this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
       customerId: invoice.userId,
       ...(user?.email && { customerEmail: user.email }),
       ...(user?.phone && { customerPhone: user.phone }),
@@ -2792,7 +2854,7 @@ export class BillingService {
         baseUrl,
         redirectUrl: this.buildPaymentCallbackUrl(
           invoice.clinicId,
-          invoice.invoiceNumber,
+          this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
           provider
         ),
       },
@@ -2803,21 +2865,22 @@ export class BillingService {
       paymentIntentOptions,
       provider
     );
+    const paymentId = paymentIntentResult.paymentId || '';
+    const orderId = paymentIntentResult.orderId || '';
+    const providerName = paymentIntentResult.provider || '';
+    const redirectUrl = this.buildPaymentCallbackUrl(
+      invoice.clinicId,
+      orderId || this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id),
+      provider,
+      undefined,
+      paymentId || undefined
+    );
     paymentIntentResult.metadata = {
       ...(this.asRecord(paymentIntentResult.metadata) || {}),
       clinicId: invoice.clinicId,
       invoiceId: invoice.id,
+      redirectUrl,
     };
-
-    const paymentId = paymentIntentResult.paymentId || '';
-    const orderId = paymentIntentResult.orderId || '';
-    const providerName = paymentIntentResult.provider || '';
-    const redirectUrl =
-      paymentIntentResult.metadata &&
-      typeof paymentIntentResult.metadata === 'object' &&
-      !Array.isArray(paymentIntentResult.metadata)
-        ? paymentIntentResult.metadata['redirectUrl']
-        : undefined;
 
     await this.createPayment({
       amount: invoiceAmount,
@@ -2832,7 +2895,7 @@ export class BillingService {
         provider: providerName,
         revenueModel: 'OTHER',
         serviceType: 'INVOICE',
-        ...(typeof redirectUrl === 'string' ? { redirectUrl } : {}),
+        redirectUrl,
       },
     });
 
@@ -3623,6 +3686,113 @@ export class BillingService {
         }
       );
       throw error;
+    }
+  }
+
+  /**
+   * Reconcile legacy paid appointments that are still stuck in SCHEDULED state.
+   * This keeps the database aligned with completed payment records.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async reconcileLegacyPaidAppointments(): Promise<{ reconciled: number }> {
+    try {
+      const completedPayments = await this.databaseService.findPaymentsSafe({
+        status: PaymentStatus.COMPLETED,
+      });
+
+      const latestPaymentByAppointment = new Map<string, (typeof completedPayments)[number]>();
+      const sortedPayments = [...completedPayments].sort(
+        (left, right) => right.createdAt.getTime() - left.createdAt.getTime()
+      );
+
+      for (const payment of sortedPayments) {
+        if (!payment.appointmentId || latestPaymentByAppointment.has(payment.appointmentId)) {
+          continue;
+        }
+
+        const appointment = await this.databaseService.findAppointmentByIdSafe(
+          payment.appointmentId
+        );
+        if (!appointment) {
+          continue;
+        }
+
+        const normalizedStatus = String(appointment.status || '')
+          .trim()
+          .toUpperCase();
+        if (
+          normalizedStatus !== String(AppointmentStatus.SCHEDULED) &&
+          normalizedStatus !== 'PENDING_PAYMENT' &&
+          normalizedStatus !== 'AWAITING_PAYMENT'
+        ) {
+          continue;
+        }
+
+        latestPaymentByAppointment.set(payment.appointmentId, payment);
+      }
+
+      let reconciled = 0;
+      for (const [appointmentId, payment] of latestPaymentByAppointment.entries()) {
+        const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+        if (!appointment) {
+          continue;
+        }
+
+        const currentStatus = String(appointment.status || '')
+          .trim()
+          .toUpperCase();
+        if (currentStatus === String(AppointmentStatus.CONFIRMED)) {
+          continue;
+        }
+
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.INFO,
+          'Reconciling legacy paid appointment to CONFIRMED',
+          'BillingService',
+          {
+            appointmentId,
+            paymentId: payment.id,
+            clinicId: payment.clinicId,
+            previousStatus: currentStatus,
+            nextStatus: String(AppointmentStatus.CONFIRMED),
+          }
+        );
+
+        await this.eventService.emit('payment.completed', {
+          appointmentId,
+          paymentId: payment.id,
+          status: 'completed',
+          clinicId: payment.clinicId,
+        });
+
+        reconciled++;
+      }
+
+      if (reconciled > 0) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.INFO,
+          `Reconciled ${reconciled} legacy paid appointment(s) to CONFIRMED`,
+          'BillingService',
+          { reconciled }
+        );
+      }
+
+      return { reconciled };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to reconcile legacy paid appointments: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        'BillingService',
+        {
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { reconciled: 0 };
     }
   }
 

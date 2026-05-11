@@ -1923,6 +1923,19 @@ export class UsersService {
         }
       );
 
+      if (userRole === Role.PATIENT) {
+        await this.patientsService.createOrUpdatePatient({
+          userId,
+          ...(user.primaryClinicId ? { clinicId: user.primaryClinicId } : {}),
+          ...(typeof profileData['dateOfBirth'] === 'string'
+            ? { dateOfBirth: profileData['dateOfBirth'] }
+            : {}),
+          ...(typeof profileData['gender'] === 'string'
+            ? { gender: profileData['gender'] as 'MALE' | 'FEMALE' | 'OTHER' }
+            : {}),
+        });
+      }
+
       // Emit profile completion event
       if (isEventService(this.eventService)) {
         await this.eventService.emit('profile.completed', {
@@ -1990,8 +2003,20 @@ export class UsersService {
         throw new BadRequestException('User not found');
       }
 
-      const isComplete = user.isProfileComplete || false;
+      const dbIsComplete = user.isProfileComplete === true;
+      const calculatedIsComplete = this.isProfileComplete(
+        user as unknown as Record<string, unknown>,
+        user.role as Role
+      );
+      const isComplete = dbIsComplete || calculatedIsComplete;
       const profileCompletedAt = user.profileCompletedAt || null;
+
+      if (!dbIsComplete && calculatedIsComplete) {
+        await this.databaseService.updateUserSafe(userId, {
+          isProfileComplete: true,
+          profileCompletedAt: new Date(),
+        } as never);
+      }
 
       // Calculate completion percentage using local method
       const completionPercentage = this.getCompletionPercentage(

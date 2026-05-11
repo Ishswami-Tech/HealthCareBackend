@@ -5,7 +5,7 @@
  * This is the ONLY place where VIDEO_PROVIDER should be checked
  * All video services must use this configuration
  *
- * Supports multiple providers: OpenVidu (primary), Jitsi (fallback)
+ * Supports multiple providers: Cloudflare Realtime, Daily, Google Meet
  * Similar to cache.config.ts pattern (Redis/Dragonfly)
  */
 
@@ -30,19 +30,19 @@ export function isVideoNoShowEnabled(): boolean {
 
 /**
  * Get video provider type
- * @returns 'openvidu' | 'jitsi'
+ * @returns 'cloudflare' | 'daily' | 'google-meet'
  */
-export function getVideoProvider(): 'openvidu' | 'jitsi' {
+export function getVideoProvider(): 'cloudflare' | 'daily' | 'google-meet' {
   if (!isVideoEnabled()) {
-    return 'jitsi'; // Default fallback
+    return 'cloudflare'; // Default fallback
   }
 
-  const provider = getEnvWithDefault('VIDEO_PROVIDER', 'openvidu').toLowerCase();
-  if (provider === 'openvidu' || provider === 'jitsi') {
+  const provider = getEnvWithDefault('VIDEO_PROVIDER', 'cloudflare').toLowerCase();
+  if (provider === 'cloudflare' || provider === 'daily' || provider === 'google-meet') {
     return provider;
   }
 
-  return 'openvidu'; // Default to OpenVidu (primary)
+  return 'cloudflare'; // Default to Cloudflare Realtime (primary)
 }
 
 /**
@@ -54,41 +54,66 @@ export const videoConfig = (): VideoProviderConfig => {
   const noShowEnabled = isVideoNoShowEnabled();
   const provider = getVideoProvider();
 
-  const openviduConfig: VideoProviderConfig['openvidu'] = {
-    url: getEnv('OPENVIDU_URL') || '',
-    secret: getEnv('OPENVIDU_SECRET') || '',
-    domain: getEnv('OPENVIDU_DOMAIN') || '',
-    enabled: provider === 'openvidu' && enabled,
-    recordingEnabled: getEnvBoolean('VIDEO_RECORDING_ENABLED', false),
-    webhookEnabled: getEnvBoolean('OPENVIDU_WEBHOOK_ENABLED', false),
+  const cloudflareConfig: VideoProviderConfig['cloudflare'] = {
+    accountId: getEnv('CLOUDFLARE_ACCOUNT_ID') || '',
+    appId: getEnv('CLOUDFLARE_APP_ID') || '',
+    apiToken: getEnv('CLOUDFLARE_API_TOKEN') || '',
+    apiBaseUrl: getEnvWithDefault(
+      'CLOUDFLARE_API_BASE_URL',
+      'https://api.cloudflare.com/client/v4'
+    ),
+    enabled:
+      enabled &&
+      Boolean(getEnv('CLOUDFLARE_ACCOUNT_ID')) &&
+      Boolean(getEnv('CLOUDFLARE_APP_ID')) &&
+      Boolean(getEnv('CLOUDFLARE_API_TOKEN')),
+    webhookEnabled: getEnvBoolean('CLOUDFLARE_WEBHOOK_ENABLED', false),
+    hostPresetName: getEnvWithDefault('CLOUDFLARE_HOST_PRESET_NAME', 'group-call-host'),
+    participantPresetName: getEnvWithDefault(
+      'CLOUDFLARE_PARTICIPANT_PRESET_NAME',
+      'group-call-participant'
+    ),
   };
 
-  const webhookEndpoint = getEnv('OPENVIDU_WEBHOOK_ENDPOINT');
-  if (webhookEndpoint !== undefined && webhookEndpoint !== null && webhookEndpoint !== '') {
-    openviduConfig.webhookEndpoint = webhookEndpoint;
-  }
+  const dailyConfig: VideoProviderConfig['daily'] = {
+    apiBaseUrl: getEnvWithDefault('DAILY_API_BASE_URL', 'https://api.daily.co/v1'),
+    apiKey: getEnv('DAILY_API_KEY') || '',
+    domain: getEnv('DAILY_DOMAIN') || '',
+    enabled: enabled && Boolean(getEnv('DAILY_API_KEY')) && Boolean(getEnv('DAILY_DOMAIN')),
+    webhookEnabled: getEnvBoolean('DAILY_WEBHOOK_ENABLED', false),
+    statusUrl: getEnvWithDefault('DAILY_STATUS_URL', 'https://status.daily.co/'),
+    privacy: getEnvWithDefault('DAILY_PRIVACY', 'public') === 'private' ? 'private' : 'public',
+    roomDurationMinutes: Math.max(
+      15,
+      parseInt(getEnvWithDefault('DAILY_ROOM_DURATION_MINUTES', '120'), 10) || 120
+    ),
+  };
 
-  const webhookEvents = getEnv('OPENVIDU_WEBHOOK_EVENTS');
-  if (webhookEvents !== undefined && webhookEvents !== null && webhookEvents !== '') {
-    openviduConfig.webhookEvents = webhookEvents;
-  }
+  const googleMeetConfig: VideoProviderConfig['googleMeet'] = {
+    enabled:
+      enabled &&
+      getEnvBoolean('GOOGLE_MEET_ENABLED', true) &&
+      Boolean(getEnv('GOOGLE_CLIENT_ID')) &&
+      Boolean(getEnv('GOOGLE_CLIENT_SECRET')) &&
+      Boolean(getEnv('GOOGLE_MEET_REFRESH_TOKEN')),
+    apiBaseUrl: getEnvWithDefault('GOOGLE_MEET_API_BASE_URL', 'https://meet.googleapis.com/v2'),
+    clientId: getEnv('GOOGLE_CLIENT_ID') || '',
+    clientSecret: getEnv('GOOGLE_CLIENT_SECRET') || '',
+    redirectUri: getEnv('GOOGLE_REDIRECT_URI') || '',
+    refreshToken: getEnv('GOOGLE_MEET_REFRESH_TOKEN') || '',
+    oauthScope: getEnvWithDefault(
+      'GOOGLE_MEET_OAUTH_SCOPE',
+      'https://www.googleapis.com/auth/meetings.space.created'
+    ),
+  };
 
   return {
     enabled,
     noShowEnabled,
     provider,
-    openvidu: openviduConfig,
-    // Jitsi configuration (for fallback)
-    jitsi: {
-      domain: getEnv('JITSI_DOMAIN') || '',
-      baseUrl: getEnv('JITSI_BASE_URL') || '',
-      wsUrl: getEnv('JITSI_WS_URL') || '',
-      appId: getEnvWithDefault('JITSI_APP_ID', 'healthcare-jitsi-app'),
-      appSecret: getEnv('JITSI_APP_SECRET') || '',
-      enabled: true, // Always enabled as fallback (similar to Redis in cache pattern)
-      enableRecording: getEnvBoolean('JITSI_ENABLE_RECORDING', true),
-      enableWaitingRoom: getEnvBoolean('JITSI_ENABLE_WAITING_ROOM', true),
-    },
+    cloudflare: cloudflareConfig,
+    daily: dailyConfig,
+    googleMeet: googleMeetConfig,
   };
 };
 

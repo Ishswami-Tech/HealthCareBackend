@@ -1,7 +1,6 @@
 import type { Config } from '@core/types/config.types';
 import { ENV_VARS, DEFAULT_CONFIG } from '@config/constants';
 import { parseInteger, getEnvWithDefault, getEnvBoolean, getEnv } from './utils';
-import createJitsiConfig from '@config/jitsi.config';
 import { videoConfig } from '@config/video.config';
 
 /**
@@ -144,7 +143,6 @@ export default function createTestConfig(): Config {
         'prescription_notification'
       ),
     },
-    jitsi: createJitsiConfig(),
     video: videoConfig(),
   };
 }

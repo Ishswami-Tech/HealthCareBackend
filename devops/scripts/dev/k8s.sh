@@ -94,7 +94,7 @@ setup_secrets() {
 
 # Generate secrets
 generate_secrets() {
-    local provider="${1:-openvidu}"
+    local provider="${1:-video}"
     local script="$SCRIPTS_DIR/generate-${provider}-secrets.sh"
     
     if [ ! -f "$script" ]; then
@@ -108,7 +108,7 @@ generate_secrets() {
 
 # Configure domain
 configure_domain() {
-    local provider="${1:-openvidu}"
+    local provider="${1:-video}"
     local domain="${2:-}"
     local script="$SCRIPTS_DIR/configure-${provider}-domain.sh"
     
@@ -245,8 +245,8 @@ show_help() {
     echo "Commands:"
     echo "  deploy <env>              Deploy to environment (local/staging/production)"
     echo "  setup-secrets <env>       Setup secrets for environment"
-    echo "  generate-secrets <type>   Generate secrets (openvidu/jitsi)"
-    echo "  configure-domain <type> [domain]  Configure domain (openvidu/jitsi)"
+    echo "  generate-secrets <type>   Generate secrets (video providers)"
+    echo "  configure-domain <type> [domain]  Configure domain (video providers)"
     echo "  status                    Show cluster status"
     echo "  logs <resource>           Show logs (e.g., deployment/healthcare-api)"
     echo "  port-forward [svc] [port] Port forward service (default: healthcare-api:8088)"
@@ -261,8 +261,8 @@ show_help() {
     echo "Examples:"
     echo "  $0 deploy local                    # Deploy to local"
     echo "  $0 setup-secrets production        # Setup production secrets"
-    echo "  $0 generate-secrets openvidu       # Generate OpenVidu secrets"
-    echo "  $0 configure-domain openvidu video.example.com"
+    echo "  $0 generate-secrets video          # Generate video provider secrets"
+    echo "  $0 configure-domain video video.example.com"
     echo "  $0 logs deployment/healthcare-api  # Show API logs"
     echo "  $0 port-forward healthcare-api 8088"
     echo "  $0 shell                           # Open shell in API pod"
@@ -281,10 +281,10 @@ main() {
             setup_secrets "${2:-local}"
             ;;
         generate-secrets)
-            generate_secrets "${2:-openvidu}"
+            generate_secrets "${2:-video}"
             ;;
         configure-domain)
-            configure_domain "${2:-openvidu}" "${3:-}"
+            configure_domain "${2:-video}" "${3:-}"
             ;;
         status)
             show_status
@@ -326,4 +326,3 @@ main() {
 }
 
 main "$@"
-

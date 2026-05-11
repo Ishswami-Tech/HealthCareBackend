@@ -1,4 +1,4 @@
-# Deployment Status Check
+﻿# Deployment Status Check
 
 ## Current Situation
 
@@ -12,9 +12,9 @@
 
 The GitHub Actions workflow will:
 
-1. ✅ **Security Scan** - Already running/completed
-2. 🔄 **Docker Build** - Building new image with latest code
-3. ⏳ **Deploy** - Will run after build completes
+1. âœ… **Security Scan** - Already running/completed
+2. ðŸ”„ **Docker Build** - Building new image with latest code
+3. â³ **Deploy** - Will run after build completes
    - Pulls new image from registry
    - Uses enhanced deploy.sh script
    - Verifies image digest
@@ -42,7 +42,6 @@ cd /opt/healthcare-backend
 export DOCKER_IMAGE="ghcr.io/ishswami-tech/healthcarebackend/healthcare-api:latest"
 export GITHUB_TOKEN="your-token"
 export GITHUB_USERNAME="your-username"
-export OPENVIDU_URL="your-openvidu-url"
 
 # Run deployment
 ./devops/scripts/docker-infra/deploy.sh deploy
@@ -74,6 +73,5 @@ After deployment completes, check:
 ### If deploy script fails:
 
 - Check `GITHUB_TOKEN` and `GITHUB_USERNAME` are set
-- Verify `OPENVIDU_URL` is correct
 - Check server disk space
 - Review deploy.sh logs for specific errors
