@@ -1,6 +1,7 @@
 # Nginx Configuration for Healthcare Backend
 
-Complete guide for Nginx configuration, SSL certificates, and Cloudflare setup for the Healthcare Backend API, Frontend, and OpenVidu video service.
+Complete guide for Nginx configuration, SSL certificates, and Cloudflare setup
+for the Healthcare Backend API, Frontend, and video service.
 
 ## 📁 Directory Structure
 
@@ -8,7 +9,7 @@ Complete guide for Nginx configuration, SSL certificates, and Cloudflare setup f
 devops/nginx/
 ├── sites-available/          # Nginx site configurations (server-specific)
 │   ├── api.ishswami.in       # API server configuration
-│   └── video.ishswami.in     # OpenVidu video server configuration
+│   └── video.ishswami.in     # Video service configuration
 └── README.md                 # This file
 ```
 
@@ -21,8 +22,8 @@ devops/nginx/
    - SSL: Let's Encrypt certificate
    - Location: `/etc/nginx/sites-available/api.ishswami.in`
 
-2. **video.ishswami.in** - OpenVidu Video Service
-   - Proxies to: `http://127.0.0.1:4443` (OpenVidu Docker container)
+2. **video.ishswami.in** - Video Service
+   - Proxies to: `http://127.0.0.1:8088` (backend video API)
    - SSL: Let's Encrypt certificate
    - Location: `/etc/nginx/sites-available/video.ishswami.in`
 
@@ -38,7 +39,7 @@ devops/nginx/
 # Copy API configuration
 sudo cp devops/nginx/sites-available/api.ishswami.in /etc/nginx/sites-available/api.ishswami.in
 
-# Copy OpenVidu configuration
+# Copy video configuration
 sudo cp devops/nginx/sites-available/video.ishswami.in /etc/nginx/sites-available/video.ishswami.in
 ```
 
@@ -48,7 +49,7 @@ sudo cp devops/nginx/sites-available/video.ishswami.in /etc/nginx/sites-availabl
 # Enable API site
 sudo ln -s /etc/nginx/sites-available/api.ishswami.in /etc/nginx/sites-enabled/api.ishswami.in
 
-# Enable OpenVidu site
+# Enable video site
 sudo ln -s /etc/nginx/sites-available/video.ishswami.in /etc/nginx/sites-enabled/video.ishswami.in
 ```
 
@@ -58,7 +59,7 @@ sudo ln -s /etc/nginx/sites-available/video.ishswami.in /etc/nginx/sites-enabled
 # Get certificate for API
 sudo certbot certonly --nginx -d api.ishswami.in
 
-# Get certificate for OpenVidu
+# Get certificate for video service
 sudo certbot certonly --nginx -d video.ishswami.in
 ```
 
@@ -84,10 +85,10 @@ sudo systemctl reload nginx
   - Security headers
   - Health check endpoint
 
-### OpenVidu Server (video.ishswami.in)
+### Video Service (video.ishswami.in)
 
 - **Port**: 443 (HTTPS), 80 (HTTP redirect)
-- **Backend**: OpenVidu Docker container on `127.0.0.1:4443`
+- **Backend**: Backend video API on `127.0.0.1:8088`
 - **Features**:
   - SSL termination
   - WebSocket support (video streaming)
@@ -100,13 +101,14 @@ sudo systemctl reload nginx
 
 Add the following A records in Cloudflare:
 
-| Domain | Type | Target | Proxy Status |
-|--------|------|--------|--------------|
-| api.ishswami.in | A | 31.220.79.219 | Proxied (Orange Cloud) |
-| video.ishswami.in | A | 31.220.79.219 | Proxied (Orange Cloud) |
-| ishswami.in | A | 31.220.79.219 | Proxied (Orange Cloud) |
+| Domain            | Type | Target        | Proxy Status           |
+| ----------------- | ---- | ------------- | ---------------------- |
+| api.ishswami.in   | A    | 31.220.79.219 | Proxied (Orange Cloud) |
+| video.ishswami.in | A    | 31.220.79.219 | Proxied (Orange Cloud) |
+| ishswami.in       | A    | 31.220.79.219 | Proxied (Orange Cloud) |
 
-**Important**: Set Cloudflare SSL/TLS mode to **Full (Strict)** for end-to-end encryption.
+**Important**: Set Cloudflare SSL/TLS mode to **Full (Strict)** for end-to-end
+encryption.
 
 ### 2. SSL/TLS Configuration
 
@@ -132,29 +134,32 @@ Create these page rules:
    - Settings: SSL = Full Strict, Disable Security (to allow WebSockets)
 
 3. **URL pattern**: `*video.ishswami.in/*`
-   - Settings: SSL = Full Strict, Cache Level = Bypass (for OpenVidu video streaming)
+   - Settings: SSL = Full Strict, Cache Level = Bypass (for video streaming)
 
 ### 5. Firewall Settings
 
 1. Go to the Firewall section
-2. Allow traffic to API ports (8088, 4443 for OpenVidu) if required
-3. Note: Ports 50000-50050 (UDP/TCP) are used by OpenVidu for media streaming
+2. Allow traffic to API ports (8088) if required
+3. Allow any provider-specific media ports required by your video backend
 
 ### 6. Testing
 
 1. Clear your browser cache or use incognito mode
 2. Visit https://api.ishswami.in - Should show API health status
-3. Visit https://video.ishswami.in - Should show OpenVidu dashboard or connection page
+3. Visit https://video.ishswami.in - Should show the video service page or
+   connection page
 4. Confirm SSL is valid for both domains (green lock icon)
-5. Test WebSocket connections for both API and OpenVidu
+5. Test WebSocket connections for both API and video service
 
 ## 🔐 SSL Certificate Management
 
 ### Certificate Setup
 
-The system uses Let's Encrypt certificates for securing HTTPS connections. The certificates are:
+The system uses Let's Encrypt certificates for securing HTTPS connections. The
+certificates are:
+
 - **API**: `/etc/letsencrypt/live/api.ishswami.in/`
-- **Video (OpenVidu)**: `/etc/letsencrypt/live/video.ishswami.in/`
+- **Video**: `/etc/letsencrypt/live/video.ishswami.in/`
 - Managed by Certbot
 - Valid for 90 days
 - Automatically renewed
@@ -163,7 +168,9 @@ The system uses Let's Encrypt certificates for securing HTTPS connections. The c
 
 Certificates are automatically renewed through:
 
-1. **Daily Cron Job**: A cron job runs every day at 3:00 AM to check and renew certificates approaching expiration:
+1. **Daily Cron Job**: A cron job runs every day at 3:00 AM to check and renew
+   certificates approaching expiration:
+
    ```
    0 3 * * * certbot renew --quiet --post-hook 'systemctl reload nginx'
    ```
@@ -181,14 +188,18 @@ Certificates are automatically renewed through:
 
 ### Fallback Mechanism
 
-If Let's Encrypt certificate generation fails, the system creates self-signed certificates as a fallback:
-- Located at `/etc/ssl/certs/nginx/nginx-selfsigned.crt` and `/etc/ssl/certs/nginx/nginx-selfsigned.key`
+If Let's Encrypt certificate generation fails, the system creates self-signed
+certificates as a fallback:
+
+- Located at `/etc/ssl/certs/nginx/nginx-selfsigned.crt` and
+  `/etc/ssl/certs/nginx/nginx-selfsigned.key`
 - Valid for 365 days
 - Nginx configuration is automatically updated to use these certificates
 
 ### Manual Renewal
 
 To manually renew certificates:
+
 ```bash
 sudo certbot renew
 sudo systemctl reload nginx
@@ -197,6 +208,7 @@ sudo systemctl reload nginx
 ### Certificate Status Check
 
 To check certificate status:
+
 ```bash
 sudo certbot certificates
 ```
@@ -204,11 +216,13 @@ sudo certbot certificates
 ### Getting New Certificates
 
 To get a certificate for a new domain:
+
 ```bash
 sudo certbot certonly --nginx -d domain.ishswami.in
 ```
 
 Example for video.ishswami.in:
+
 ```bash
 sudo certbot certonly --nginx -d video.ishswami.in
 ```
@@ -234,7 +248,7 @@ sudo nginx -t
 sudo tail -f /var/log/nginx/api.ishswami.in.error.log
 sudo tail -f /var/log/nginx/api.ishswami.in.access.log
 
-# OpenVidu logs
+# Video service logs
 sudo tail -f /var/log/nginx/video.ishswami.in.error.log
 sudo tail -f /var/log/nginx/video.ishswami.in.access.log
 ```
@@ -251,14 +265,14 @@ sudo certbot certificates
 # Check API container
 docker ps | grep api
 
-# Check OpenVidu container
-docker ps | grep openvidu
+# Check video service container
+docker ps | grep api
 
 # Test API directly
 curl http://localhost:8088/health
 
-# Test OpenVidu directly
-curl http://127.0.0.1:4443
+# Test video service directly
+curl http://127.0.0.1:8088
 ```
 
 ### Check Ports
@@ -266,7 +280,7 @@ curl http://127.0.0.1:4443
 ```bash
 # Check if ports are listening
 sudo netstat -tlnp | grep 8088  # API
-sudo netstat -tlnp | grep 4443  # OpenVidu
+sudo netstat -tlnp | grep 8088  # Video service
 ```
 
 ### Cloudflare Troubleshooting
@@ -275,20 +289,23 @@ sudo netstat -tlnp | grep 4443  # OpenVidu
 2. Check Nginx configuration: `sudo nginx -t`
 3. Review Nginx logs:
    - API: `sudo tail -f /var/log/nginx/api.ishswami.in.error.log`
-   - OpenVidu: `sudo tail -f /var/log/nginx/video.ishswami.in.error.log`
+   - Video service: `sudo tail -f /var/log/nginx/video.ishswami.in.error.log`
 4. Check Docker container logs:
    - API: `docker logs latest-api`
-   - OpenVidu: `docker logs latest-openvidu-server`
+   - Video service: `docker logs latest-api`
 5. Verify DNS propagation: `dig api.ishswami.in` and `dig video.ishswami.in`
 
 ## 📝 Important Notes
 
 - **Server IP**: 31.220.79.219 (Contabo VPS)
-- **Nginx Config Location**: `/etc/nginx/sites-available/` and `/etc/nginx/sites-enabled/`
+- **Nginx Config Location**: `/etc/nginx/sites-available/` and
+  `/etc/nginx/sites-enabled/`
 - **SSL Certificates**: Managed by Certbot, stored in `/etc/letsencrypt/live/`
 - **Auto-renewal**: Certbot cron job runs daily at 3:00 AM
-- **Cloudflare**: All domains should be proxied (orange cloud) for DDoS protection
-- **DNS**: Ensure DNS for `api.ishswami.in`, `ishswami.in`, and `video.ishswami.in` points to your server IP (31.220.79.219)
+- **Cloudflare**: All domains should be proxied (orange cloud) for DDoS
+  protection
+- **DNS**: Ensure DNS for `api.ishswami.in`, `ishswami.in`, and
+  `video.ishswami.in` points to your server IP (31.220.79.219)
 - **SSL Mode**: Use Cloudflare in Full (Strict) mode for end-to-end TLS
 
 ## 🔄 Updating Configuration

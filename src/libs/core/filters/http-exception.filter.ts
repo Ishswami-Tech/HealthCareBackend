@@ -12,6 +12,7 @@ import { FastifyReply } from 'fastify';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel } from '@core/types';
 import { HealthcareError } from '@core/errors';
+import { ErrorCode } from '@core/errors/error-codes.enum';
 import type {
   RequestHeaders,
   ErrorLog,
@@ -221,6 +222,8 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : typeof exception === 'string'
           ? exception
           : 'Internal server error';
+    const preserveMessageForOperationalHealthcareError =
+      exception instanceof HealthcareError && exception.code !== ErrorCode.INTERNAL_SERVER_ERROR;
 
     // Extract stack trace safely
     const stackTrace = exception instanceof Error ? exception.stack : undefined;
@@ -308,7 +311,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       errorResponse['suggestion'] = 'An internal server error occurred. Please try again later';
       // Don't expose internal error details in production
       // Use ConfigService (which uses dotenv) for environment variable access
-      if (this.configService?.isProduction()) {
+      if (this.configService?.isProduction() && !preserveMessageForOperationalHealthcareError) {
         errorResponse['message'] = 'Internal server error';
         // Remove stack trace if present
         if ('stack' in errorResponse) {

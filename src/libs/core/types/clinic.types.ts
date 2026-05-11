@@ -383,6 +383,10 @@ export interface ClinicSettings {
     maxAdvanceBooking: number; // days
     allowOnlineBooking: boolean;
     requireApproval: boolean;
+    videoCallWindow?: {
+      start: string;
+      end: string;
+    };
   };
   notificationSettings: {
     emailEnabled: boolean;
@@ -409,6 +413,9 @@ export interface ClinicSettings {
     enabledIntegrations: string[];
     webhookUrl?: string;
     apiKeys: Record<string, string>;
+  };
+  videoSettings?: {
+    provider: 'cloudflare' | 'daily' | 'google-meet';
   };
 }
 

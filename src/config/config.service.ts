@@ -13,7 +13,6 @@ import type {
   CorsConfig,
   SecurityConfig,
   WhatsappConfig,
-  JitsiConfig,
   EnhancedRateLimitConfig,
   CacheConfig,
   VideoProviderConfig,
@@ -95,10 +94,6 @@ export class ConfigService {
     return this.get<WhatsappConfig>('whatsapp');
   }
 
-  getJitsiConfig(): JitsiConfig {
-    return this.get<JitsiConfig>('jitsi');
-  }
-
   getVideoConfig(): VideoProviderConfig {
     return this.get<VideoProviderConfig>('video');
   }
@@ -127,7 +122,7 @@ export class ConfigService {
     return this.getVideoConfig().noShowEnabled ?? false;
   }
 
-  getVideoProvider(): 'openvidu' | 'jitsi' {
+  getVideoProvider(): 'cloudflare' | 'daily' | 'google-meet' {
     return getVideoProviderType();
   }
 
@@ -206,7 +201,6 @@ export class ConfigService {
       cors: this.getCorsConfig(),
       security: this.getSecurityConfig(),
       whatsapp: this.getWhatsappConfig(),
-      jitsi: this.getJitsiConfig(),
       video: this.getVideoConfig(),
     };
   }

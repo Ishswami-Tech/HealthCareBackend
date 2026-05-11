@@ -32,8 +32,6 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
 DRAGONFLY_CONTAINER="dragonfly"
-OPENVIDU_CONTAINER="openvidu-server"
-COTURN_CONTAINER="coturn"
 
 # Parse environment variables with defaults
 # These are set by CI/CD workflow, but we provide safe defaults for manual execution
@@ -63,150 +61,6 @@ normalize_bool() {
             echo "false"
             ;;
     esac
-}
-
-extract_url_origin() {
-    local value="${1:-}"
-    if [[ -z "${value}" ]]; then
-        echo ""
-        return 0
-    fi
-
-    local normalized="${value}"
-    normalized="${normalized#"${normalized%%[![:space:]]*}"}"
-    normalized="${normalized%"${normalized##*[![:space:]]}"}"
-    if [[ ! "${normalized}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*:// ]]; then
-        normalized="https://${normalized}"
-    fi
-
-    normalized="${normalized%/}"
-
-    if [[ "${normalized}" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://([^/]+) ]]; then
-        local scheme="${BASH_REMATCH[1]}"
-        local authority="${BASH_REMATCH[2]}"
-        authority="${authority%%/*}"
-        authority="${authority#*@}"
-        if [[ "${scheme}" == "https" && "${authority}" =~ :443$ ]]; then
-            authority="${authority%:443}"
-        elif [[ "${scheme}" == "http" && "${authority}" =~ :80$ ]]; then
-            authority="${authority%:80}"
-        fi
-        echo "${scheme}://${authority}"
-    else
-        echo ""
-    fi
-}
-
-extract_url_host() {
-    local origin
-    origin="$(extract_url_origin "${1:-}")"
-    if [[ -z "${origin}" ]]; then
-        echo ""
-        return 0
-    fi
-
-    if [[ "${origin}" =~ ^[a-zA-Z][a-zA-Z0-9+.-]*://([^/:]+)(:([0-9]+))?$ ]]; then
-        echo "${BASH_REMATCH[1],,}"
-    else
-        echo ""
-    fi
-}
-
-validate_openvidu_configuration() {
-    local openvidu_url="${OPENVIDU_URL:-}"
-    local openvidu_domain="${OPENVIDU_DOMAIN:-}"
-    local openvidu_publicurl="${OPENVIDU_PUBLICURL:-${OPENVIDU_URL:-}}"
-
-    if [[ -z "${openvidu_url}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL environment variable is not set!"
-        log_error "This will cause OpenVidu health checks to fail with hardcoded URL errors"
-        log_error "Please ensure OPENVIDU_URL is set in GitHub Actions environment variables"
-        log_error "Current OPENVIDU_URL value: '${OPENVIDU_URL:-EMPTY}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    local openvidu_url_origin
-    local openvidu_public_origin
-    openvidu_url_origin="$(extract_url_origin "${openvidu_url}")"
-    openvidu_public_origin="$(extract_url_origin "${openvidu_publicurl}")"
-
-    if [[ -z "${openvidu_url_origin}" ]]; then
-        log_error "CRITICAL: OPENVIDU_URL is not a valid URL: '${openvidu_url}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ -z "${openvidu_public_origin}" ]]; then
-        log_error "CRITICAL: OPENVIDU_PUBLICURL is not a valid URL: '${openvidu_publicurl}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_url_origin}" != https://* ]]; then
-        log_error "CRITICAL: OPENVIDU_URL must use HTTPS in production: '${openvidu_url}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_public_origin}" != https://* ]]; then
-        log_error "CRITICAL: OPENVIDU_PUBLICURL must use HTTPS in production: '${openvidu_publicurl}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    local openvidu_url_host
-    local openvidu_domain_host
-    local openvidu_public_host
-    openvidu_url_host="$(extract_url_host "${openvidu_url}")"
-    if [[ -z "${openvidu_domain}" && -n "${openvidu_url_host}" ]]; then
-        openvidu_domain="${openvidu_url_host}"
-    fi
-    openvidu_domain_host="$(extract_url_host "${openvidu_domain}")"
-    openvidu_public_host="$(extract_url_host "${openvidu_publicurl}")"
-
-    if [[ -z "${openvidu_url_host}" || -z "${openvidu_domain_host}" || -z "${openvidu_public_host}" ]]; then
-        log_error "CRITICAL: Failed to parse OpenVidu host values"
-        log_error "OPENVIDU_URL='${openvidu_url}'"
-        log_error "OPENVIDU_DOMAIN='${openvidu_domain}'"
-        log_error "OPENVIDU_PUBLICURL='${openvidu_publicurl}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_url_host}" == localhost || "${openvidu_url_host}" == 127.0.0.1 || "${openvidu_url_host}" == "::1" || "${openvidu_url_host}" == "[::1]" || "${openvidu_url_host}" == openvidu-server ]]; then
-        log_error "CRITICAL: OPENVIDU_URL points to a non-public host: '${openvidu_url}'"
-        log_error "Use the public video host that browsers can reach through Cloudflare or your reverse proxy"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_domain_host}" == localhost || "${openvidu_domain_host}" == 127.0.0.1 || "${openvidu_domain_host}" == "::1" || "${openvidu_domain_host}" == "[::1]" || "${openvidu_domain_host}" == openvidu-server ]]; then
-        log_error "CRITICAL: OPENVIDU_DOMAIN points to a non-public host: '${openvidu_domain}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_public_host}" == localhost || "${openvidu_public_host}" == 127.0.0.1 || "${openvidu_public_host}" == "::1" || "${openvidu_public_host}" == "[::1]" || "${openvidu_public_host}" == openvidu-server ]]; then
-        log_error "CRITICAL: OPENVIDU_PUBLICURL points to a non-public host: '${openvidu_publicurl}'"
-        return "${EXIT_CRITICAL}"
-    fi
-
-    if [[ "${openvidu_url_host}" != "${openvidu_domain_host}" ]]; then
-        log_warning "OPENVIDU_DOMAIN host '${openvidu_domain_host}' differs from OPENVIDU_URL host '${openvidu_url_host}'"
-        log_warning "Normalizing OPENVIDU_DOMAIN to the public OpenVidu host derived from OPENVIDU_URL"
-        openvidu_domain_host="${openvidu_url_host}"
-    fi
-
-    if [[ "${openvidu_url_host}" != "${openvidu_public_host}" ]]; then
-        log_warning "OPENVIDU_PUBLICURL host '${openvidu_public_host}' differs from OPENVIDU_URL host '${openvidu_url_host}'"
-        log_warning "Normalizing OPENVIDU_PUBLICURL to the public OpenVidu origin derived from OPENVIDU_URL"
-        openvidu_public_host="${openvidu_url_host}"
-        openvidu_public_origin="${openvidu_url_origin}"
-    fi
-
-    if [[ "${openvidu_url_origin}" != "${openvidu_public_origin}" ]]; then
-        log_warning "OPENVIDU_PUBLICURL origin '${openvidu_public_origin}' differs from OPENVIDU_URL origin '${openvidu_url_origin}'"
-        log_warning "Normalizing OPENVIDU_PUBLICURL to the public OpenVidu origin derived from OPENVIDU_URL"
-        openvidu_public_origin="${openvidu_url_origin}"
-    fi
-
-    log_success "OpenVidu configuration validated: ${openvidu_public_origin} (${openvidu_domain_host})"
-    export OPENVIDU_PUBLICURL="${openvidu_public_origin}"
-    export OPENVIDU_DOMAIN="${openvidu_domain_host}"
-    return 0
 }
 
 INFRA_CHANGED=$(normalize_bool "$INFRA_CHANGED")
@@ -375,7 +229,7 @@ deploy_infrastructure() {
     }
     
     # Pull infrastructure images (e.g. postgres:18) so server uses versions from docker-compose.prod.yml, not cached old images
-    log_info "Pulling infrastructure images (postgres:18, dragonfly, openvidu-server, coturn, portainer)..."
+    log_info "Pulling infrastructure images (postgres:18, dragonfly, portainer)..."
     docker compose -f docker-compose.prod.yml --profile infrastructure pull --quiet || true
     
     # Recreate infrastructure (volumes are preserved by docker compose)
@@ -461,28 +315,6 @@ deploy_application() {
         return 1
     fi
 
-    # Ensure compose interpolation always has a public OpenVidu URL/domain.
-    # This is a safe fallback for deployments where the source env file is incomplete.
-    if [[ -z "${OPENVIDU_PUBLICURL:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-        export OPENVIDU_PUBLICURL="${OPENVIDU_URL}"
-        log_warning "OPENVIDU_PUBLICURL was missing; derived it from OPENVIDU_URL"
-    fi
-
-    if [[ -z "${OPENVIDU_DOMAIN:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-        local openvidu_domain_guess="${OPENVIDU_URL#*://}"
-        openvidu_domain_guess="${openvidu_domain_guess%%/*}"
-        openvidu_domain_guess="${openvidu_domain_guess%%:*}"
-        if [[ -n "${openvidu_domain_guess}" ]]; then
-            export OPENVIDU_DOMAIN="${openvidu_domain_guess}"
-            log_warning "OPENVIDU_DOMAIN was missing; derived it from OPENVIDU_URL"
-        fi
-    fi
-
-    if [[ -z "${COTURN_DOMAIN:-}" && -n "${OPENVIDU_DOMAIN:-}" ]]; then
-        export COTURN_DOMAIN="${OPENVIDU_DOMAIN}"
-        log_warning "COTURN_DOMAIN was missing; derived it from OPENVIDU_DOMAIN"
-    fi
-    
     # Authenticate with GitHub Container Registry if credentials are available
     if [[ -n "${GITHUB_TOKEN:-}" ]] && [[ -n "${GITHUB_USERNAME:-}" ]]; then
         log_info "Authenticating with GitHub Container Registry..."
@@ -557,7 +389,7 @@ deploy_application() {
     fi
     
     # Pull latest images with --pull always to force update
-    # Note: We need to include infrastructure profile to resolve dependencies (coturn)
+    # Note: We need to include infrastructure profile to resolve dependencies (postgres, dragonfly)
     # but we only pull the app service images
     log_info "Pulling latest images for api and worker (forcing pull to get latest version)..."
     
@@ -837,35 +669,8 @@ deploy_application() {
     # Start new containers with --force-recreate to ensure new image is used
     # CRITICAL: --force-recreate ensures containers are recreated even if already running
     # This guarantees new code is deployed when image changes
-    # Note: We include infrastructure profile to resolve dependencies (coturn, postgres, dragonfly)
-    
-    # CRITICAL: Validate OpenVidu deployment configuration before starting containers
-    # This prevents containers from starting with internal-only or mismatched public URLs
-    if ! validate_openvidu_configuration; then
-        exit $EXIT_CRITICAL
-    fi
+    # Note: We include infrastructure profile to resolve dependencies (postgres, dragonfly)
 
-    # Log the URL being used (masked for security)
-    local masked_url="${OPENVIDU_URL}"
-    if [[ "${masked_url}" =~ ^https?://([^/:]+) ]]; then
-        masked_url="${BASH_REMATCH[1]}"
-    fi
-    log_info "Using OPENVIDU_URL: ${masked_url} (from environment variable)"
-
-    # Explicitly export OpenVidu variables to ensure docker-compose can access them
-    if [[ -z "${OPENVIDU_PUBLICURL:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-        export OPENVIDU_PUBLICURL="${OPENVIDU_URL}"
-    fi
-
-    if [[ -z "${OPENVIDU_DOMAIN:-}" && -n "${OPENVIDU_URL:-}" ]]; then
-        export OPENVIDU_DOMAIN="$(extract_url_host "${OPENVIDU_URL}")"
-    fi
-
-    export OPENVIDU_URL="${OPENVIDU_URL}"
-    export OPENVIDU_PUBLICURL="${OPENVIDU_PUBLICURL}"
-    export OPENVIDU_DOMAIN="${OPENVIDU_DOMAIN}"
-    export COTURN_DOMAIN="${COTURN_DOMAIN:-${OPENVIDU_DOMAIN}}"
-    
     log_info "Starting application containers with NEW image (ONLY api and worker, NOT infrastructure containers)..."
     log_info "Using image: ${DOCKER_IMAGE}"
     # CRITICAL: Use --pull always to ensure we get the latest image even if tag exists
@@ -1007,40 +812,6 @@ deploy_application() {
         fi
         if [[ -n "$worker_created" ]]; then
             log_info "Worker container created at: $worker_created"
-        fi
-        
-        # CRITICAL: Verify OPENVIDU_URL is set correctly in the container
-        log_info "Verifying OPENVIDU_URL environment variable in API container..."
-        sleep 2  # Give container time to fully start
-        local container_openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR: Cannot read from container")
-        if [[ "$container_openvidu_url" == *"openvidu-server:4443"* ]] || [[ "$container_openvidu_url" == "NOT SET" ]] || [[ -z "$container_openvidu_url" ]]; then
-            log_error "CRITICAL: API container has incorrect OPENVIDU_URL: '${container_openvidu_url}'"
-            log_error "Expected: ${OPENVIDU_URL}"
-            log_error "Container will fail health checks with hardcoded URL errors"
-            log_error "This indicates the environment variable was not passed correctly to docker-compose"
-            log_warning "Check for .env.production file that might be overriding OPENVIDU_URL"
-            log_warning "Attempting to fix by recreating container with explicit environment variable..."
-            
-            # Try to recreate with explicit env var
-            docker compose -f docker-compose.prod.yml --profile infrastructure --profile app stop api worker 2>&1 || true
-            docker compose -f docker-compose.prod.yml --profile infrastructure --profile app rm -f api worker 2>&1 || true
-            OPENVIDU_URL="${OPENVIDU_URL}" docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
-                log_error "Failed to recreate containers with correct OPENVIDU_URL"
-                return 1
-            }
-            
-            # Verify again after recreation
-            sleep 5
-            container_openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR: Cannot read from container")
-            if [[ "$container_openvidu_url" == *"openvidu-server:4443"* ]] || [[ "$container_openvidu_url" == "NOT SET" ]] || [[ -z "$container_openvidu_url" ]]; then
-                log_error "CRITICAL: Still incorrect after recreation. OPENVIDU_URL in container: '${container_openvidu_url}'"
-                log_error "Manual intervention required: Check .env.production file or docker-compose.prod.yml"
-                return 1
-            else
-                log_success "OPENVIDU_URL fixed in container: ${container_openvidu_url}"
-            fi
-        else
-            log_success "OPENVIDU_URL correctly set in container: ${container_openvidu_url}"
         fi
         
         if ! container_running "$worker_container"; then
@@ -1467,15 +1238,6 @@ verify_environment_variables() {
     
     local all_ok=true
     
-    # Check OPENVIDU_URL
-    local openvidu_url=$(docker exec "$api_container" sh -c 'echo "${OPENVIDU_URL:-NOT SET}"' 2>/dev/null || echo "ERROR")
-    if [[ "$openvidu_url" == "NOT SET" ]] || [[ "$openvidu_url" == "ERROR" ]] || [[ "$openvidu_url" == *"openvidu-server:4443"* ]]; then
-        log_error "OPENVIDU_URL is not set correctly: ${openvidu_url}"
-        all_ok=false
-    else
-        log_success "OPENVIDU_URL is set: ${openvidu_url:0:30}..."
-    fi
-    
     # Check DATABASE_URL (partial - just verify it's set)
     local db_url=$(docker exec "$api_container" sh -c 'echo "${DATABASE_URL:-NOT SET}"' 2>/dev/null || echo "ERROR")
     if [[ "$db_url" == "NOT SET" ]] || [[ "$db_url" == "ERROR" ]]; then
@@ -1643,10 +1405,9 @@ fix_environment_variables() {
     
     # Ensure all required environment variables are exported
     export DOCKER_IMAGE="${DOCKER_IMAGE}"
-    export OPENVIDU_URL="${OPENVIDU_URL}"
-    
+
     # Start with explicit environment
-    OPENVIDU_URL="${OPENVIDU_URL}" DOCKER_IMAGE="${DOCKER_IMAGE}" \
+    DOCKER_IMAGE="${DOCKER_IMAGE}" \
         docker compose -f docker-compose.prod.yml --profile infrastructure --profile app up -d --pull always --force-recreate --no-deps api worker 2>&1 || {
         log_error "Failed to start containers with fixed environment"
         return 1
@@ -2038,12 +1799,6 @@ validate_container_dependencies() {
     if ! wait_for_health "dragonfly" 60; then
         log_error "Dragonfly not healthy - cannot start application"
         return 1
-    fi
-    
-    # Check coturn is healthy (for video calls)
-    if ! wait_for_health "coturn" 30; then
-        log_warning "Coturn not healthy - video calls may not work"
-        # Non-critical, continue
     fi
     
     log_success "All dependencies are healthy"
@@ -3514,7 +3269,7 @@ Options:
     INFRA_CHANGED    Set to 'true' if infrastructure changed
     APP_CHANGED      Set to 'true' if application changed
     CONTAINER_PREFIX Container name prefix (default: latest-)
-    OPENVIDU_URL     OpenVidu server URL (required for video features)
+    VIDEO_PROVIDER   Video provider selection (cloudflare|daily|google-meet)
 
 Examples:
   # Full deployment

@@ -628,6 +628,8 @@ export class AuthService {
         { userId: user.id, email: user.email, role: user.role, clinicId }
       );
 
+      const profileStatus = await this.checkProfileCompletionStatus(user.id, user.role as Role);
+
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -639,8 +641,8 @@ export class AuthService {
           role: user.role as Role,
           isVerified: user.isVerified,
           clinicId: clinicUUID || undefined,
-          profileComplete: user.isProfileComplete,
-          requiresProfileCompletion: !user.isProfileComplete,
+          profileComplete: profileStatus.isComplete,
+          requiresProfileCompletion: !profileStatus.isComplete,
         },
       };
     } catch (_error) {
@@ -1345,6 +1347,8 @@ export class AuthService {
         { userId: user.id, email: user.email, role: user.role, clinicId: clinicUUID }
       );
 
+      const profileStatus = await this.checkProfileCompletionStatus(user.id, user.role as Role);
+
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -1356,8 +1360,8 @@ export class AuthService {
           role: user.role as Role,
           isVerified: user.isVerified,
           clinicId: clinicUUID || undefined,
-          profileComplete: user.isProfileComplete,
-          requiresProfileCompletion: !user.isProfileComplete,
+          profileComplete: profileStatus.isComplete,
+          requiresProfileCompletion: !profileStatus.isComplete,
         },
       };
     } catch (_error) {
@@ -2018,7 +2022,42 @@ export class AuthService {
       }
 
       // Determine clinic ID
-      const finalClinicId = clinicId || fullUser.primaryClinicId || undefined;
+      const { resolveClinicUUID } = await import('@utils/clinic.utils');
+      const requestedClinicId = clinicId || fullUser.primaryClinicId || undefined;
+      const finalClinicId = requestedClinicId
+        ? await resolveClinicUUID(this.databaseService, requestedClinicId)
+        : undefined;
+
+      // Persist the clinic association for Google users so subsequent guarded
+      // requests can resolve clinic access from the database, not just the JWT.
+      if (finalClinicId && fullUser.primaryClinicId !== finalClinicId) {
+        try {
+          await this.databaseService.updateUserSafe(fullUser.id, {
+            primaryClinicId: finalClinicId,
+            clinics: {
+              connect: { id: finalClinicId },
+            },
+          } as never);
+          fullUser.primaryClinicId = finalClinicId;
+        } catch (_error) {
+          void this.logging.log(
+            LogType.AUTH,
+            LogLevel.WARN,
+            'Failed to persist primary clinic for Google OAuth user; falling back to runtime clinic context',
+            'AuthService.authenticateWithGoogle',
+            {
+              userId: fullUser.id,
+              email: fullUser.email,
+              clinicId: finalClinicId,
+              error: _error instanceof Error ? _error.message : String(_error),
+            }
+          );
+
+          // Keep the in-memory user context aligned so session/JWT generation
+          // still carries the resolved clinic for this login request.
+          fullUser.primaryClinicId = finalClinicId;
+        }
+      }
 
       // Create session
       const session = await this.sessionService.createSession({
@@ -2040,10 +2079,8 @@ export class AuthService {
           fullUser.email,
         role: fullUser.role,
         ...(fullUser.phone && { phone: fullUser.phone }),
-        // Include clinicId: from OAuth clinicId, or user's primaryClinicId
-        ...(finalClinicId || fullUser.primaryClinicId
-          ? { clinicId: (finalClinicId || fullUser.primaryClinicId) as string }
-          : {}),
+        // Include clinicId as the resolved UUID so guards and DB checks agree.
+        ...(finalClinicId ? { clinicId: finalClinicId } : {}),
         ...(fullUser.primaryClinicId && { primaryClinicId: fullUser.primaryClinicId }),
       };
 
@@ -2078,6 +2115,11 @@ export class AuthService {
         { userId: fullUser.id, email: fullUser.email, role: fullUser.role, clinicId: finalClinicId }
       );
 
+      const profileStatus = await this.checkProfileCompletionStatus(
+        fullUser.id,
+        fullUser.role as Role
+      );
+
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -2090,6 +2132,8 @@ export class AuthService {
           isVerified: fullUser.isVerified,
           clinicId: finalClinicId || undefined,
           profilePicture: fullUser.profilePicture || undefined,
+          profileComplete: profileStatus.isComplete,
+          requiresProfileCompletion: !profileStatus.isComplete,
         },
       };
     } catch (_error) {

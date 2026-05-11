@@ -8,7 +8,6 @@ import {
   getEnvBoolean,
   getEnv,
 } from './utils';
-import createJitsiConfig from '../jitsi.config';
 import { videoConfig } from '../video.config';
 
 /**
@@ -155,7 +154,6 @@ export default function createDevelopmentConfig(): Config {
         'prescription_notification'
       ),
     },
-    jitsi: createJitsiConfig(),
     video: videoConfig(),
   };
 }

@@ -39,11 +39,6 @@ SECRET_CMD="kubectl create secret generic healthcare-secrets \
   --from-literal=session-secret=\"$SESSION_SECRET\" \
   --from-literal=cookie-secret=\"$COOKIE_SECRET\""
 
-# Add optional secrets if provided
-if [ -n "${OPENVIDU_SECRET:-}" ]; then
-  SECRET_CMD="$SECRET_CMD --from-literal=openvidu-secret=\"$OPENVIDU_SECRET\""
-fi
-
 if [ -n "${GOOGLE_CLIENT_ID:-}" ]; then
   SECRET_CMD="$SECRET_CMD --from-literal=google-client-id=\"$GOOGLE_CLIENT_ID\""
 fi
@@ -80,4 +75,3 @@ fi
 eval "$SECRET_CMD" | kubectl apply -f -
 
 echo "[apply-healthcare-secrets] Applied secret 'healthcare-secrets' in namespace '$NAMESPACE'"
-

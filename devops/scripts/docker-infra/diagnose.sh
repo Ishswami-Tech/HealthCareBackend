@@ -26,8 +26,7 @@ CONTAINER_PREFIX="${CONTAINER_PREFIX:-latest-}"
 # Fixed container names for infrastructure (never change)
 POSTGRES_CONTAINER="postgres"
 DRAGONFLY_CONTAINER="dragonfly"
-OPENVIDU_CONTAINER="openvidu-server"
-SERVICES=("postgres" "dragonfly" "openvidu-server")
+SERVICES=("postgres" "dragonfly")
 
 # Collect diagnostics
 collect_diagnostics() {
@@ -47,9 +46,6 @@ collect_diagnostics() {
                 ;;
             dragonfly)
                 local container="${DRAGONFLY_CONTAINER}"
-                ;;
-            openvidu-server)
-                local container="${OPENVIDU_CONTAINER}"
                 ;;
             *)
                 local container="${CONTAINER_PREFIX}${service}"
@@ -110,9 +106,6 @@ auto_fix() {
             dragonfly)
                 local container="${DRAGONFLY_CONTAINER}"
                 ;;
-            openvidu-server)
-                local container="${OPENVIDU_CONTAINER}"
-                ;;
             *)
                 local container="${CONTAINER_PREFIX}${service}"
                 ;;
@@ -161,4 +154,3 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
-

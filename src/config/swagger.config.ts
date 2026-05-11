@@ -83,7 +83,7 @@ ${
   .addTag('notification-preferences', 'User notification preferences')
   .addTag('Clinic Communication', 'Clinic-specific communication configuration')
   .addTag('WhatsApp Webhooks', 'WhatsApp service webhooks')
-  .addTag('Video Webhooks', 'Video service webhooks (OpenVidu)')
+  .addTag('Video Webhooks', 'Video service webhooks')
   .addTag('ehr', 'Electronic Health Records management')
   .addTag('billing', 'Billing and invoice management')
   .addSecurityRequirements('JWT-auth')

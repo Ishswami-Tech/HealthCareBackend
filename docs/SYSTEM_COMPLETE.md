@@ -23,15 +23,19 @@
 **Healthcare Management System** designed for **10M+ users** with:
 
 - âœ… **Multi-tenant clinic isolation** - Complete data separation
-- âœ… **Role-based access control (RBAC)** - 12 roles, 25+ resources, 180+ protected endpoints
-- âœ… **HIPAA-compliant data management** - Audit logging, encryption, PHI protection
-- âœ… **Real-time event-driven architecture** - Central EventService with 14+ event patterns
+- âœ… **Role-based access control (RBAC)** - 12 roles, 25+ resources, 180+
+  protected endpoints
+- âœ… **HIPAA-compliant data management** - Audit logging, encryption, PHI
+  protection
+- âœ… **Real-time event-driven architecture** - Central EventService with 14+
+  event patterns
 - âœ… **Enterprise-grade caching** - Redis/Dragonfly with tag-based invalidation
 - âœ… **Subscription-based billing** - Appointment quotas, hybrid payment model
 - âœ… **Comprehensive EHR system** - Multi-clinic support, clinic-wide analytics
 - âœ… **Multi-tenant communication** - Clinic-specific email/WhatsApp providers
 - âœ… **Ayurvedic healthcare support** - Specialized therapies, queue management
-- âœ… **Advanced appointment system** - Follow-ups, recurring, video consultations
+- âœ… **Advanced appointment system** - Follow-ups, recurring, video
+  consultations
 
 ---
 
@@ -42,9 +46,11 @@
 **Location**: `src/services/billing/`
 
 **Features**:
+
 - âœ… Subscription management with trial periods
 - âœ… Multiple billing intervals (daily, weekly, monthly, quarterly, yearly)
-- âœ… Appointment quotas per subscription (`appointmentsIncluded`, `isUnlimitedAppointments`)
+- âœ… Appointment quotas per subscription (`appointmentsIncluded`,
+  `isUnlimitedAppointments`)
 - âœ… Hybrid payment model (subscription + per-appointment)
 - âœ… Invoice generation with PDF export
 - âœ… WhatsApp invoice delivery
@@ -52,17 +58,25 @@
 - âœ… Revenue analytics and subscription metrics
 
 **Key Models**:
+
 - `BillingPlan` - Plans with appointment quotas and type coverage
-- `Subscription` - User subscriptions with usage tracking (`appointmentsUsed`, `appointmentsRemaining`)
-- `Invoice` - Automated invoicing with PDF support (`pdfFilePath`, `pdfUrl`, `sentViaWhatsApp`)
+- `Subscription` - User subscriptions with usage tracking (`appointmentsUsed`,
+  `appointmentsRemaining`)
+- `Invoice` - Automated invoicing with PDF support (`pdfFilePath`, `pdfUrl`,
+  `sentViaWhatsApp`)
 - `Payment` - Multi-method payment processing
 
 **API Endpoints**: 33 endpoints
+
 - Plans: `GET/POST/PUT/DELETE /billing/plans`
-- Subscriptions: `POST /billing/subscriptions`, `GET /billing/subscriptions/user/:userId/active`
-- Appointment Booking: `POST /billing/subscriptions/:id/book-appointment/:appointmentId`
-- Invoices: `POST /billing/invoices/:id/generate-pdf`, `POST /billing/invoices/:id/send-whatsapp`
-- Analytics: `GET /billing/analytics/revenue`, `GET /billing/analytics/subscriptions`
+- Subscriptions: `POST /billing/subscriptions`,
+  `GET /billing/subscriptions/user/:userId/active`
+- Appointment Booking:
+  `POST /billing/subscriptions/:id/book-appointment/:appointmentId`
+- Invoices: `POST /billing/invoices/:id/generate-pdf`,
+  `POST /billing/invoices/:id/send-whatsapp`
+- Analytics: `GET /billing/analytics/revenue`,
+  `GET /billing/analytics/subscriptions`
 
 ---
 
@@ -71,6 +85,7 @@
 **Location**: `src/services/ehr/`
 
 **Features**:
+
 - âœ… Comprehensive health records for all users
 - âœ… Clinic isolation with multi-tenant support
 - âœ… Role-based data access control
@@ -80,13 +95,17 @@
 - âœ… Patient summary dashboard
 
 **Record Types**:
+
 - Medical History, Lab Reports, Radiology Reports, Surgical Records
 - Mental Health Notes, Vital Signs, Allergies, Medications
 - Immunizations, Family History, Lifestyle Assessment
 
 **API Endpoints**: 35 endpoints
-- Individual Records: `POST/GET/PUT/DELETE /ehr/medical-history`, `/ehr/lab-reports`, etc.
-- Clinic-Wide: `GET /ehr/clinic/:clinicId/analytics`, `GET /ehr/clinic/:clinicId/search`
+
+- Individual Records: `POST/GET/PUT/DELETE /ehr/medical-history`,
+  `/ehr/lab-reports`, etc.
+- Clinic-Wide: `GET /ehr/clinic/:clinicId/analytics`,
+  `GET /ehr/clinic/:clinicId/search`
 - Critical Alerts: `GET /ehr/clinic/:clinicId/alerts/critical`
 
 ---
@@ -96,20 +115,22 @@
 **Location**: `src/services/appointments/`
 
 **Features**:
+
 - âœ… Regular appointments with status lifecycle
 - âœ… Follow-up plans and appointments (`FollowUpPlan` model)
 - âœ… Recurring appointment series (`RecurringAppointmentSeries` model)
 - âœ… Appointment chains (parent-child relationships)
-- âœ… Video consultations (Jitsi integration)
 - âœ… In-person appointments with location-based check-in
 - âœ… QR code check-in system
 - âœ… Subscription-based appointment booking
 
 **API Endpoints**: 30+ endpoints
+
 - Core: `POST/GET/PUT/DELETE /appointments`
 - Follow-ups: `POST /appointments/:id/follow-up`, `GET /appointments/:id/chain`
 - Recurring: `POST /appointments/recurring`, `GET /appointments/series/:id`
-- Video: `POST /appointments/:id/video/create-room`, `POST /appointments/:id/video/join-token`
+- Video: `POST /appointments/:id/video/create-room`,
+  `POST /appointments/:id/video/join-token`
 - Check-in: `POST /appointments/check-in/scan-qr`
 
 ---
@@ -119,6 +140,7 @@
 **Location**: `src/services/appointments/plugins/therapy/`
 
 **Features**:
+
 - âœ… Ayurvedic appointment types (PANCHAKARMA, SHIRODHARA, VIDDHAKARMA, etc.)
 - âœ… Therapy management (`AyurvedicTherapy`, `TherapySession` models)
 - âœ… Therapy queue system (`TherapyQueue`, `QueueEntry` models)
@@ -126,7 +148,9 @@
 - âœ… Multi-session therapy tracking
 
 **Appointment Types**:
-- `PANCHAKARMA`, `SHIRODHARA`, `VIRECHANA`, `ABHYANGA`, `SWEDANA`, `BASTI`, `NASYA`, `RAKTAMOKSHANA`
+
+- `PANCHAKARMA`, `SHIRODHARA`, `VIRECHANA`, `ABHYANGA`, `SWEDANA`, `BASTI`,
+  `NASYA`, `RAKTAMOKSHANA`
 - `VIDDHAKARMA`, `AGNIKARMA`, `NADI_PARIKSHA`, `DOSHA_ANALYSIS`
 
 **API Endpoints**: Therapy-specific endpoints in appointments service
@@ -138,6 +162,7 @@
 **Location**: `src/libs/communication/`
 
 **Features**:
+
 - âœ… Multi-tenant communication (clinic-specific providers)
 - âœ… Multi-channel delivery (Email, Push, WhatsApp, SMS, Socket)
 - âœ… Provider adapters (SMTP, SES, SendGrid, Meta, Twilio)
@@ -146,6 +171,7 @@
 - âœ… Configuration caching (1-hour TTL)
 
 **Channels**:
+
 - **Email**: SMTP, AWS SES, SendGrid
 - **WhatsApp**: Meta Business API, Twilio
 - **Push**: Firebase FCM (primary), AWS SNS (backup)
@@ -159,6 +185,7 @@
 **Location**: `src/libs/infrastructure/events/`
 
 **Features**:
+
 - âœ… Central EventService as single source of truth
 - âœ… Simple API: `emit()`, `emitAsync()`
 - âœ… Enterprise API: `emitEnterprise()` with metadata
@@ -168,11 +195,13 @@
 - âœ… HIPAA compliance with PHI validation
 
 **Integration**:
+
 - âœ… `NotificationEventListener` - Listens to all events via `@OnEvent('**')`
 - âœ… `EventSocketBroadcaster` - Broadcasts events to Socket.IO rooms
 - âœ… `CommunicationService` - Emits `communication.sent` events
 
 **Event Patterns**: 14+ patterns configured
+
 - EHR events (`ehr.*`) â†’ socket, push, email
 - Appointment events (`appointment.*`) â†’ socket, push, email
 - Billing events (`billing.*`) â†’ push, email
@@ -185,6 +214,7 @@
 **Location**: `src/libs/core/rbac/`
 
 **Features**:
+
 - âœ… 12 roles with complete permissions
 - âœ… 25+ resources with actions
 - âœ… RbacGuard with ownership checks
@@ -192,11 +222,13 @@
 - âœ… 180+ protected endpoints
 
 **Roles**:
+
 - `SUPER_ADMIN`, `CLINIC_ADMIN`, `DOCTOR`, `PATIENT`, `RECEPTIONIST`
 - `PHARMACIST`, `THERAPIST`, `LAB_TECHNICIAN`, `FINANCE_BILLING`
 - `SUPPORT_STAFF`, `NURSE`, `COUNSELOR`
 
-**Resources**: `users`, `appointments`, `ehr`, `billing`, `invoices`, `payments`, `queue`, `therapy`, etc.
+**Resources**: `users`, `appointments`, `ehr`, `billing`, `invoices`,
+`payments`, `queue`, `therapy`, etc.
 
 ---
 
@@ -207,7 +239,9 @@
 **Service**: `DatabaseService` (single unified entry point)
 
 **Optimizations** (10M+ users):
-- âœ… **Selective Relation Loading**: `findUserByEmailSafe()` accepts optional `includeRelations` parameter
+
+- âœ… **Selective Relation Loading**: `findUserByEmailSafe()` accepts optional
+  `includeRelations` parameter
   - Default: Only loads `doctor` and `patient` (most common)
   - Reduces query time by 60-80%
 - âœ… **Mandatory Pagination**: `findUsersSafe()` enforces pagination
@@ -219,6 +253,7 @@
 - âœ… **Query Timeout**: 15 seconds default, 30 seconds fallback
 
 **Caching**:
+
 - âœ… User email lookups: 1 hour TTL, 99%+ cache hit rate
 - âœ… User search results: 30 minutes TTL, 70-90% load reduction
 - âœ… System user caching: 1 hour TTL, eliminates millions of queries
@@ -228,6 +263,7 @@
 **Service**: `CacheService` (Redis/Dragonfly abstraction)
 
 **Features**:
+
 - âœ… Tag-based invalidation
 - âœ… TTL management
 - âœ… Compression support
@@ -235,6 +271,7 @@
 - âœ… PHI protection (encryption for health data)
 
 **Cache Patterns**:
+
 - Billing: `billing_plans:{clinicId}`, `user_subscriptions:{userId}`
 - EHR: `ehr:comprehensive:{userId}`, `clinic:ehr_analytics:{clinicId}`
 - Users: `user:{userId}`, `clinic:users:{clinicId}`
@@ -244,6 +281,7 @@
 **Service**: `LoggingService`
 
 **Features**:
+
 - âœ… HIPAA-compliant audit trails
 - âœ… Correlation IDs for distributed tracing
 - âœ… Performance metrics
@@ -255,6 +293,7 @@
 **Service**: `QueueService` (BullMQ)
 
 **Features**:
+
 - âœ… 19 specialized queues
 - âœ… Automatic retry with exponential backoff
 - âœ… Job prioritization
@@ -268,13 +307,16 @@
 ### Subscription-Based Appointments
 
 **Flow**:
+
 1. User subscribes to billing plan with appointment quotas
 2. Check quota: `GET /billing/subscriptions/:id/can-book-appointment`
-3. Book appointment: `POST /billing/subscriptions/:id/book-appointment/:appointmentId`
+3. Book appointment:
+   `POST /billing/subscriptions/:id/book-appointment/:appointmentId`
 4. Quota automatically decremented
 5. Cancel restores quota: `POST /billing/appointments/:id/cancel-subscription`
 
 **Models**:
+
 - `BillingPlan.appointmentsIncluded` - Number of appointments per period
 - `BillingPlan.isUnlimitedAppointments` - Unlimited flag
 - `Subscription.appointmentsUsed` - Counter for used appointments
@@ -285,18 +327,21 @@
 ### Invoice PDF & WhatsApp
 
 **Flow**:
+
 1. Subscription created â†’ Event: `billing.subscription.created`
 2. Auto-generate invoice with PDF
 3. Auto-send via WhatsApp with PDF attachment
 4. Store PDF in `storage/invoices/` directory
 
 **Database Fields**:
+
 - `Invoice.pdfFilePath` - Path to PDF file
 - `Invoice.pdfUrl` - Public URL for download
 - `Invoice.sentViaWhatsApp` - Delivery status
 - `Invoice.whatsappSentAt` - Delivery timestamp
 
 **API Endpoints**:
+
 - `POST /billing/invoices/:id/generate-pdf` - Generate PDF
 - `POST /billing/invoices/:id/send-whatsapp` - Send via WhatsApp
 - `GET /billing/invoices/download/:fileName` - Download PDF
@@ -304,6 +349,7 @@
 ### Multi-Tenant Communication
 
 **Architecture**:
+
 - `CommunicationConfigService` - Manages clinic-specific configurations
 - Provider adapters (SMTP, SES, SendGrid, Meta, Twilio)
 - `ProviderFactory` - Creates adapters with health checks and fallback
@@ -311,18 +357,20 @@
 - Configuration caching (1-hour TTL)
 
 **Usage**:
+
 ```typescript
 await communicationService.send({
   category: CommunicationCategory.APPOINTMENT,
   recipients: [{ email: 'patient@example.com' }],
   channels: ['email', 'whatsapp'],
-  metadata: { clinicId: 'clinic-123' } // â† Critical for multi-tenant routing
+  metadata: { clinicId: 'clinic-123' }, // â† Critical for multi-tenant routing
 });
 ```
 
 ### Event-Driven Architecture
 
 **Flow**:
+
 ```
 Service â†’ EventService.emitEnterprise() â†’ EventEmitter2 â†’ Listeners
                                                               â”‚
@@ -344,12 +392,14 @@ Service â†’ EventService.emitEnterprise() â†’ EventEmitter2 â†’ L
 ### Follow-Up & Recurring Appointments
 
 **Follow-Up System**:
+
 - `FollowUpPlan` model - Stores follow-up recommendations
 - `Appointment.parentAppointmentId` - Links follow-up to original
 - `Appointment.isFollowUp` - Flag for follow-up appointments
 - Appointment chain queries (optimized single query)
 
 **Recurring System**:
+
 - `RecurringAppointmentSeries` model - Manages series
 - `Appointment.seriesId` - Links appointments to series
 - `Appointment.seriesSequence` - Order within series
@@ -363,6 +413,7 @@ Service â†’ EventService.emitEnterprise() â†’ EventEmitter2 â†’ L
 **Endpoints**: `POST /auth/login`, `POST /auth/register`, `POST /auth/refresh`
 
 **Guards**:
+
 - `JwtAuthGuard` - Validates JWT tokens
 - `RolesGuard` - Checks role permissions
 - `RbacGuard` - Checks resource permissions
@@ -371,23 +422,30 @@ Service â†’ EventService.emitEnterprise() â†’ EventEmitter2 â†’ L
 ### Billing & Subscriptions
 
 **Plans**: `GET/POST/PUT/DELETE /billing/plans`  
-**Subscriptions**: `POST /billing/subscriptions`, `GET /billing/subscriptions/user/:userId/active`  
+**Subscriptions**: `POST /billing/subscriptions`,
+`GET /billing/subscriptions/user/:userId/active`  
 **Booking**: `POST /billing/subscriptions/:id/book-appointment/:appointmentId`  
-**Invoices**: `POST /billing/invoices/:id/generate-pdf`, `POST /billing/invoices/:id/send-whatsapp`  
-**Analytics**: `GET /billing/analytics/revenue`, `GET /billing/analytics/subscriptions`
+**Invoices**: `POST /billing/invoices/:id/generate-pdf`,
+`POST /billing/invoices/:id/send-whatsapp`  
+**Analytics**: `GET /billing/analytics/revenue`,
+`GET /billing/analytics/subscriptions`
 
 ### Appointments
 
 **Core**: `POST/GET/PUT/DELETE /appointments`  
-**Follow-ups**: `POST /appointments/:id/follow-up`, `GET /appointments/:id/chain`  
+**Follow-ups**: `POST /appointments/:id/follow-up`,
+`GET /appointments/:id/chain`  
 **Recurring**: `POST /appointments/recurring`, `GET /appointments/series/:id`  
-**Video**: `POST /appointments/:id/video/create-room`, `POST /appointments/:id/video/join-token`  
+**Video**: `POST /appointments/:id/video/create-room`,
+`POST /appointments/:id/video/join-token`  
 **Check-in**: `POST /appointments/check-in/scan-qr`
 
 ### EHR
 
-**Individual**: `POST/GET/PUT/DELETE /ehr/medical-history`, `/ehr/lab-reports`, etc.  
-**Clinic-Wide**: `GET /ehr/clinic/:clinicId/analytics`, `GET /ehr/clinic/:clinicId/search`  
+**Individual**: `POST/GET/PUT/DELETE /ehr/medical-history`, `/ehr/lab-reports`,
+etc.  
+**Clinic-Wide**: `GET /ehr/clinic/:clinicId/analytics`,
+`GET /ehr/clinic/:clinicId/search`  
 **Alerts**: `GET /ehr/clinic/:clinicId/alerts/critical`
 
 ---
@@ -397,6 +455,7 @@ Service â†’ EventService.emitEnterprise() â†’ EventEmitter2 â†’ L
 ### Database Optimizations
 
 **Selective Relation Loading**:
+
 ```typescript
 // Default: Only doctor and patient
 const user = await databaseService.findUserByEmailSafe(email);
@@ -406,6 +465,7 @@ const user = await databaseService.findUserByEmailSafe(email, { doctor: true });
 ```
 
 **Mandatory Pagination**:
+
 ```typescript
 // Default: 100 records, offset 0
 const users = await databaseService.findUsersSafe({ role: 'PATIENT' });
@@ -418,6 +478,7 @@ const users = await databaseService.findUsersSafe(
 ```
 
 **Performance Targets** (10M users):
+
 - Email lookup: < 10ms (with cache), < 50ms (without cache)
 - User search: < 100ms (paginated, with cache)
 - Connection pool utilization: < 80% under normal load
@@ -547,7 +608,8 @@ POST /billing/subscriptions/:id/book-appointment/:appointmentId
 - **Role Permissions**: `docs/ROLE_PERMISSIONS_COMPLETE.md`
 - **Location System**: `docs/architecture/LOCATION_SYSTEM_COMPLETE.md`
 - **Infrastructure**: `docs/INFRASTRUCTURE_DOCUMENTATION.md`
-- **Documentation Analysis**: `docs/DOCUMENTATION_INDEX.md` (includes analysis & missing items checklist)
+- **Documentation Analysis**: `docs/DOCUMENTATION_INDEX.md` (includes analysis &
+  missing items checklist)
 - **API Inventory**: `docs/ACTUAL_API_INVENTORY.md`
 
 ---
@@ -556,23 +618,20 @@ POST /billing/subscriptions/:id/book-appointment/:appointmentId
 
 **All Features**: âœ… **100% VERIFIED & IMPLEMENTED**
 
-| Feature Category | Status | Implementation |
-|-----------------|--------|----------------|
-| **Billing & Subscriptions** | âœ… 100% | Complete with quotas, PDF, WhatsApp |
-| **EHR System** | âœ… 100% | Multi-clinic, analytics, search |
-| **Appointments** | âœ… 100% | Follow-ups, recurring, video, check-in |
-| **Ayurvedic Features** | âœ… 100% | Therapies, queues, check-in |
-| **Event System** | âœ… 100% | Central hub, listeners, broadcasters |
-| **Multi-Tenant Communication** | âœ… 100% | Clinic-specific providers, encryption |
-| **RBAC System** | âœ… 100% | 12 roles, 25+ resources, 180+ endpoints |
-| **Database Optimizations** | âœ… 100% | Selective loading, pagination, indexes |
-| **Caching** | âœ… 100% | Tag-based, TTL, PHI protection |
-| **Logging** | âœ… 100% | HIPAA-compliant, correlation IDs |
+| Feature Category               | Status   | Implementation                          |
+| ------------------------------ | -------- | --------------------------------------- |
+| **Billing & Subscriptions**    | âœ… 100% | Complete with quotas, PDF, WhatsApp     |
+| **EHR System**                 | âœ… 100% | Multi-clinic, analytics, search         |
+| **Appointments**               | âœ… 100% | Follow-ups, recurring, video, check-in  |
+| **Ayurvedic Features**         | âœ… 100% | Therapies, queues, check-in             |
+| **Event System**               | âœ… 100% | Central hub, listeners, broadcasters    |
+| **Multi-Tenant Communication** | âœ… 100% | Clinic-specific providers, encryption   |
+| **RBAC System**                | âœ… 100% | 12 roles, 25+ resources, 180+ endpoints |
+| **Database Optimizations**     | âœ… 100% | Selective loading, pagination, indexes  |
+| **Caching**                    | âœ… 100% | Tag-based, TTL, PHI protection          |
+| **Logging**                    | âœ… 100% | HIPAA-compliant, correlation IDs        |
 
 ---
 
 **Last Updated**: December 2024  
 **Status**: âœ… **PRODUCTION READY** - All features verified and implemented
-
-
-

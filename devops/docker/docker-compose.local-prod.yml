@@ -7,7 +7,7 @@ services:
     container_name: postgres
     hostname: postgres
     # SECURITY: Port 5432 removed from public exposure
-    # PostgreSQL is only accessible from Docker network (172.18.0.0/16)
+    # PostgreSQL is only accessible from Docker network (172.28.0.0/16)
     # This prevents external brute force attacks
     # For local access: docker exec -it postgres psql -U postgres
     # ports:
@@ -24,7 +24,7 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     networks:
       app-network:
-        ipv4_address: 172.18.0.2
+        ipv4_address: 172.28.0.2
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d userdb"]
       interval: 10s
@@ -97,7 +97,7 @@ services:
       - dragonfly_data:/data
     networks:
       app-network:
-        ipv4_address: 172.18.0.4
+        ipv4_address: 172.28.0.4
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -p 6379 ping || exit 1"]
       interval: 10s
@@ -127,150 +127,6 @@ services:
       - "app.component=cache"
       - "app.type=dragonfly"
       - "app.healthcheck=enabled"
-
-  openvidu-server:
-    profiles: ["infrastructure"]
-    image: openvidu/openvidu-server-kms:2.32.2
-    container_name: openvidu-server
-    hostname: openvidu-server
-    ports:
-      - "4443:4443"
-      - "50000-50050:50000-50050/udp"
-      - "50000-50050:50000-50050/tcp"
-    environment:
-      - OPENVIDU_SECRET=${OPENVIDU_SECRET:-MY_SECRET}
-      - COTURN_SHARED_SECRET_KEY=${OPENVIDU_SECRET:-MY_SECRET}
-      - OPENVIDU_PUBLICURL=${OPENVIDU_URL:-https://backend-service-v1-video.ishswami.in}
-      - OPENVIDU_DOMAIN=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
-      - OPENVIDU_EDITION=ce
-      - OPENVIDU_CDR=false
-      - SERVER_PORT=4443
-      - SERVER_SSL_ENABLED=false
-      - HTTPS_PORT=4443
-      - HTTP_PORT=5443
-      - server.port=4443
-      - server.address=0.0.0.0
-      - OPENVIDU_WEBHOOK=${OPENVIDU_WEBHOOK_ENABLED:-false}
-      - OPENVIDU_WEBHOOK_ENDPOINT=${OPENVIDU_WEBHOOK_ENDPOINT:-http://api:8088/api/v1/webhooks/openvidu}
-      - OPENVIDU_WEBHOOK_EVENTS=["sessionCreated","sessionDestroyed","participantJoined","participantLeft"]
-      - OPENVIDU_STREAMS_VIDEO_MAX_RECV_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_RECV_BANDWIDTH=300
-      - OPENVIDU_STREAMS_VIDEO_MAX_SEND_BANDWIDTH=1000
-      - OPENVIDU_STREAMS_VIDEO_MIN_SEND_BANDWIDTH=300
-      - OPENVIDU_STREAMS_FORCED_VIDEO_CODEC=VP8
-      - OPENVIDU_SESSIONS_GARBAGE_INTERVAL=900
-      - OPENVIDU_SESSIONS_GARBAGE_THRESHOLD=3600
-      - OPENVIDU_RECORDING=false
-      - COTURN_IP=172.18.0.8
-      - OPENVIDU_LOGS_LEVEL=WARN
-      - DOMAIN_OR_PUBLIC_IP=${OPENVIDU_DOMAIN:-backend-service-v1-video.ishswami.in}
-      - TZ=UTC
-    volumes:
-      - openvidu_recordings:/opt/openvidu/recordings
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      coturn:
-        condition: service_healthy
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.7
-        aliases:
-          - openvidu-server
-    restart: unless-stopped
-    healthcheck:
-      # Check if OpenVidu supervisor is running (simpler and more reliable than curl/wget)
-      # OpenVidu container doesn't have curl/wget, so we check supervisor status instead
-      # Supervisor manages both OpenVidu server and KMS, so if it's running, services are up
-      # OpenVidu can take 60-120 seconds to fully start, so we give it more time
-      test: ["CMD-SHELL", "supervisorctl status | grep -q RUNNING || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 120s
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 4G
-        reservations:
-          cpus: "1.0"
-          memory: 2G
-
-  coturn:
-    profiles: ["infrastructure"]
-    image: coturn/coturn:latest
-    container_name: coturn
-    hostname: coturn
-    ports:
-      - "3478:3478/udp"
-      - "3478:3478/tcp"
-      - "5349:5349/udp"
-      - "5349:5349/tcp"
-      - "49160-49200:49160-49200/udp"
-      - "49160-49200:49160-49200/tcp"
-    environment:
-      - TZ=UTC
-      # Security: Use environment variable for password (set in .env.local-prod)
-      - COTURN_PASSWORD=${COTURN_PASSWORD:-openvidu}
-      # Domain configuration: Use same domain as Video service (set in .env.local-prod)
-      - COTURN_DOMAIN=${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}
-      # TLS is optional - set to "true" only if Let's Encrypt certificates exist
-      - COTURN_TLS_ENABLED=${COTURN_TLS_ENABLED:-false}
-    volumes:
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    # Use shell entrypoint to conditionally enable TLS based on certificate availability
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        # Check if TLS certificates exist and TLS is enabled
-        CERT_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/fullchain.pem"
-        KEY_PATH="/etc/letsencrypt/live/$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}/privkey.pem"
-        
-        # Base TURN server arguments (always used)
-        TURN_ARGS="-n --log-file=stdout --listening-ip=0.0.0.0 --listening-port=3478"
-        TURN_ARGS="$${TURN_ARGS} --min-port=49160 --max-port=49200"
-        TURN_ARGS="$${TURN_ARGS} --fingerprint --lt-cred-mech"
-        TURN_ARGS="$${TURN_ARGS} --user=openvidu:$${COTURN_PASSWORD:-openvidu}"
-        TURN_ARGS="$${TURN_ARGS} --realm=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
-        TURN_ARGS="$${TURN_ARGS} --server-name=$${COTURN_DOMAIN:-backend-service-v1-video.ishswami.in}"
-        TURN_ARGS="$${TURN_ARGS} --no-cli --max-bps=1000000 --total-quota=1000000"
-        TURN_ARGS="$${TURN_ARGS} --user-quota=1000000 --no-multicast-peers --verbose"
-        
-        # Conditionally add TLS configuration if certificates exist
-        if [ "$${COTURN_TLS_ENABLED}" = "true" ] && [ -f "$${CERT_PATH}" ] && [ -f "$${KEY_PATH}" ]; then
-          echo "[COTURN] TLS enabled - certificates found at $${CERT_PATH}"
-          TURN_ARGS="$${TURN_ARGS} --tls-listening-port=5349"
-          TURN_ARGS="$${TURN_ARGS} --cert=$${CERT_PATH}"
-          TURN_ARGS="$${TURN_ARGS} --pkey=$${KEY_PATH}"
-        else
-          echo "[COTURN] TLS disabled - certificates not found or TLS not enabled"
-          echo "[COTURN] Running in non-TLS mode (STUN/TURN on port 3478 only)"
-        fi
-        
-        echo "[COTURN] Starting turnserver with args: $${TURN_ARGS}"
-        exec turnserver $${TURN_ARGS}
-    networks:
-      app-network:
-        ipv4_address: 172.18.0.8
-        aliases:
-          - coturn
-    restart: unless-stopped
-    healthcheck:
-      # Health check using STUN client test on port 3478 (always available)
-      test: ["CMD-SHELL", "turnutils_stunclient -p 3478 localhost || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    # Security: Resource limits to prevent resource exhaustion attacks
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1G
-        reservations:
-          cpus: "0.5"
-          memory: 512M
 
   # Application Services (Profile: app)
   api:
@@ -346,30 +202,23 @@ services:
       USER_RATE_LIMIT: 500
       HEALTH_RATE_LIMIT: 2000
       VIDEO_ENABLED: ${VIDEO_ENABLED:-true}
-      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-openvidu}
-      OPENVIDU_ENABLED: ${VIDEO_ENABLED:-true}
-      OPENVIDU_URL: ${OPENVIDU_URL}
-      OPENVIDU_SECRET: ${OPENVIDU_SECRET:-MY_SECRET}
+      VIDEO_PROVIDER: ${VIDEO_PROVIDER:-daily}
     expose:
       - "${PORT:-8088}"
     networks:
       app-network:
-        ipv4_address: 172.18.0.5
+        ipv4_address: 172.28.0.5
         aliases:
           - backend-service-v1.ishswami.in
     extra_hosts:
       - "api:172.18.0.5"
-      - "postgres:172.18.0.2"
-      - "dragonfly:172.18.0.4"
-      - "openvidu-server:172.18.0.7"
-      - "coturn:172.18.0.8"
+      - "postgres:172.28.0.2"
+      - "dragonfly:172.28.0.4"
     depends_on:
       postgres:
         condition: service_healthy
       dragonfly:
         condition: service_healthy
-      coturn:
-        condition: service_started
         required: false
     restart: unless-stopped
     healthcheck:
@@ -427,15 +276,13 @@ services:
       - ./logs:/app/logs
     networks:
       app-network:
-        ipv4_address: 172.18.0.6
+        ipv4_address: 172.28.0.6
         aliases:
           - worker.ishswami.in
     extra_hosts:
-      - "worker:172.18.0.6"
-      - "postgres:172.18.0.2"
-      - "dragonfly:172.18.0.4"
-      - "openvidu-server:172.18.0.7"
-      - "coturn:172.18.0.8"
+      - "worker:172.28.0.6"
+      - "postgres:172.28.0.2"
+      - "dragonfly:172.28.0.4"
     depends_on:
       postgres:
         condition: service_healthy
@@ -480,7 +327,7 @@ services:
       - portainer_data:/data
     networks:
       app-network:
-        ipv4_address: 172.18.0.9
+        ipv4_address: 172.28.0.9
     restart: unless-stopped
     # Optimized command: minimal logging, no analytics
     command: >
@@ -509,18 +356,10 @@ services:
 volumes:
   postgres_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data/postgres
+    name: local-prod_postgres_data
   dragonfly_data:
     driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./data/dragonfly
-  openvidu_recordings:
-    name: local-prod_openvidu_recordings
+    name: local-prod_dragonfly_data
   portainer_data:
     name: local-prod_portainer_data
 
@@ -529,5 +368,5 @@ networks:
     name: local-prod_app_network
     ipam:
       config:
-        - subnet: 172.18.0.0/16
+        - subnet: 172.28.0.0/16
 

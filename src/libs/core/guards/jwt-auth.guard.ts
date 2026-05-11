@@ -177,6 +177,16 @@ export class JwtAuthGuard implements CanActivate {
   ];
 
   /**
+   * Paths that must stay available even if a client IP has an auth lockout.
+   * These are required for profile completion and session recovery.
+   */
+  private readonly lockoutBypassPrefixPaths = [
+    '/api/v1/profile-completion',
+    '/api/v1/user/',
+    '/api/v1/users/profile',
+  ];
+
+  /**
    * Creates a new JwtAuthGuard instance
    *
    * @param reflector - NestJS reflector for metadata access
@@ -284,7 +294,11 @@ export class JwtAuthGuard implements CanActivate {
       // Check for time-based lockout (enabled for production security)
       const isProduction =
         !this.configService.isDevelopment() && !this.configService.getEnvBoolean('DEV_MODE', false);
-      if (isProduction && this.rateLimitService) {
+      if (
+        isProduction &&
+        this.rateLimitService &&
+        !this.lockoutBypassPrefixPaths.some(prefix => path.startsWith(prefix))
+      ) {
         const lockoutStatus = await this.checkLockoutStatus(clientIp);
         if (lockoutStatus.isLocked) {
           throw new HttpException(

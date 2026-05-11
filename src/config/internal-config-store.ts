@@ -7,7 +7,6 @@ import stagingConfig from './environment/staging.config';
 import testConfig from './environment/test.config';
 import cacheConfig, { redisConfig } from './cache.config';
 import rateLimitConfig from './rate-limit.config';
-import jitsiConfig from './jitsi.config';
 import videoConfig from './video.config';
 import { healthcareConfig } from '@infrastructure/database/config/healthcare.config';
 import { ENV_VARS } from './constants';
@@ -16,10 +15,9 @@ import {
   getEnvironmentValidationErrorMessage,
 } from './environment/validation';
 
-type ConfigStore = Omit<Config, 'jitsi' | 'rateLimit' | 'redis' | 'video'> & {
+type ConfigStore = Omit<Config, 'rateLimit' | 'redis' | 'video'> & {
   cache: ReturnType<typeof cacheConfig>;
   healthcare: ReturnType<typeof healthcareConfig>;
-  jitsi: ReturnType<typeof jitsiConfig>;
   rateLimit: ReturnType<typeof rateLimitConfig>;
   redis: ReturnType<typeof redisConfig>;
   video: ReturnType<typeof videoConfig>;
@@ -83,7 +81,6 @@ function buildConfigStore(): ConfigStore {
     ...environmentConfig,
     cache: cacheConfig(),
     healthcare: healthcareConfig(),
-    jitsi: jitsiConfig(),
     rateLimit: rateLimitConfig(),
     redis: redisConfig(),
     video: videoConfig(),

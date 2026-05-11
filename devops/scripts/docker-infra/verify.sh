@@ -710,7 +710,7 @@ show_deployment_status() {
     log_info ""
     log_info "Infrastructure Containers:"
     log_info "─────────────────────────────────────"
-    docker ps --filter "name=postgres" --filter "name=dragonfly" --filter "name=openvidu" --filter "name=coturn" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10 || true
+    docker ps --filter "name=postgres" --filter "name=dragonfly" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -10 || true
     
     # Application containers
     log_info ""

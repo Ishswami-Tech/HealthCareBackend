@@ -1,7 +1,8 @@
 # DevOps Scripts - Complete Verification & Implementation Status
 
 > **Status**: ✅ **FULLY VERIFIED AND PRODUCTION-READY**  
-> All Docker infrastructure management features have been successfully implemented, verified, and integrated.
+> All Docker infrastructure management features have been successfully
+> implemented, verified, and integrated.
 
 ## 📋 Table of Contents
 
@@ -75,6 +76,7 @@ devops/scripts/
 ### GitHub Actions Workflow (`.github/workflows/ci.yml`)
 
 All script paths verified:
+
 - ✅ `devops/scripts/docker-infra/health-check.sh`
 - ✅ `devops/scripts/docker-infra/backup.sh`
 - ✅ `devops/scripts/docker-infra/diagnose.sh`
@@ -88,6 +90,7 @@ All script paths verified:
 ### Script Internal References
 
 All scripts correctly reference:
+
 - ✅ `source "${SCRIPT_DIR}/../shared/utils.sh"` in all `docker-infra/` scripts
 - ✅ Scripts reference each other using `"${SCRIPT_DIR}/<script>.sh"`
 - ✅ No hardcoded paths
@@ -96,14 +99,16 @@ All scripts correctly reference:
 ### Documentation References
 
 - ✅ `devops/scripts/README.md` - All paths updated to `docker-infra/`
-- ✅ `devops/scripts/docker-infra/INFRASTRUCTURE_MANAGEMENT_PLAN.md` - Updated with implementation status
-- ✅ `devops/scripts/kubernetes/README.md` - References `docker-infra/` correctly
+- ✅ `devops/scripts/docker-infra/INFRASTRUCTURE_MANAGEMENT_PLAN.md` - Updated
+  with implementation status
+- ✅ `devops/scripts/kubernetes/README.md` - References `docker-infra/`
+  correctly
 - ✅ `devops/README.md` - References consolidated scripts
 
 ### Docker Compose Configuration
 
 - ✅ `devops/docker/docker-compose.prod.yml` - Profiles configured
-  - Infrastructure profile: `postgres`, `dragonfly`, `openvidu-server`, `coturn`
+  - Infrastructure profile: `postgres`, `dragonfly`, `portainer`
   - App profile: `api`, `worker`
   - Bind mount volumes configured
   - Health checks configured
@@ -115,11 +120,13 @@ All scripts correctly reference:
 ### Problem Identified & Fixed
 
 **Issue**: Redundancy between GitHub Actions jobs and `deploy.sh`
+
 - GitHub Actions jobs were doing: backup → recreate → restore → verify
 - Then `deploy.sh` was ALSO trying to do: backup → recreate → restore → verify
 - This caused duplicate operations and potential conflicts
 
 **Solution**: Added `INFRA_ALREADY_HANDLED` flag
+
 - When `INFRA_ALREADY_HANDLED=true`, `deploy.sh` skips infrastructure operations
 - Infrastructure operations are handled by separate GitHub Actions jobs
 - `deploy.sh` only handles application deployment in CI/CD mode
@@ -127,6 +134,7 @@ All scripts correctly reference:
 ### Workflow Integration
 
 **Job Flow**:
+
 ```
 detect-changes
   ↓
@@ -150,12 +158,14 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 ```
 
 **Environment Variables Passed to deploy.sh**:
+
 - `INFRA_CHANGED` - From `detect-changes` job
 - `APP_CHANGED` - From `detect-changes` job
 - `INFRA_HEALTHY` - From `check-infrastructure` job
 - `INFRA_STATUS` - From `check-infrastructure` job
 - `BACKUP_ID` - From `backup-infrastructure` job (if backup was created)
-- `INFRA_ALREADY_HANDLED` - Set by deploy job based on whether infrastructure jobs ran
+- `INFRA_ALREADY_HANDLED` - Set by deploy job based on whether infrastructure
+  jobs ran
 
 ### deploy.sh Decision Logic
 
@@ -189,18 +199,22 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 ## ✅ Implementation Details
 
 ### 1. Change Detection ✅
+
 - Uses `dorny/paths-filter@v2` action
-- Detects infrastructure changes: Dockerfiles, docker-compose.prod.yml, migrations
+- Detects infrastructure changes: Dockerfiles, docker-compose.prod.yml,
+  migrations
 - Detects application changes: src/, package.json, Dockerfile
 - Outputs: `infra-changed`, `app-changed`
 
 ### 2. Health Check ✅
+
 - Runs `health-check.sh` on server
 - Parses JSON output
 - Sets outputs: `infra-healthy`, `infra-status`
 - Exit codes: 0=healthy, 1=minor, 2=critical, 3=missing
 
 ### 3. Backup ✅
+
 - Runs `backup.sh` on server
 - Creates PostgreSQL and Dragonfly backups
 - Uploads to Contabo S3 (dual-backup strategy)
@@ -208,33 +222,39 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 - S3 credentials passed via environment variables
 
 ### 4. Debug ✅
+
 - Runs `diagnose.sh` on server
 - Attempts auto-fix
 - Sets output: `debug-status` (fixed/failed)
 - Only runs if `infra-unhealthy` AND `infra-changed == false`
 
 ### 5. Recreate Infrastructure ✅
+
 - Stops existing containers gracefully
 - Recreates with `docker compose --profile infrastructure up -d`
 - Waits for containers to start
 - Only runs if `infra-changed == true` OR (`infra-unhealthy` AND `debug-failed`)
 
 ### 6. Restore ✅
+
 - Runs `restore.sh` with `BACKUP_ID`
 - Restores from local backup first, falls back to S3
 - Only runs if backup was created (`backup-infrastructure.result == 'success'`)
 
 ### 7. Verify ✅
+
 - Runs `verify.sh` on server
 - Verifies infrastructure health, data integrity, application readiness
 - Only runs after recreate/restore operations
 
 ### 8. Build Application ✅
+
 - Only runs if `app-changed == true`
 - Uses images already built in `docker-build` job
 - No separate build needed (build happens in Docker)
 
 ### 9. Deploy ✅
+
 - Copies all scripts to server
 - Sets up directories
 - Sets environment variables including `INFRA_ALREADY_HANDLED`
@@ -248,6 +268,7 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 ## 🎯 Usage Examples
 
 ### Main Entry Point
+
 ```bash
 # Local development
 ./healthcare.sh dev docker start
@@ -263,6 +284,7 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 ```
 
 ### Direct Script Usage
+
 ```bash
 # Docker infrastructure scripts
 ./docker-infra/deploy.sh
@@ -277,6 +299,7 @@ deploy (always runs, but uses INFRA_ALREADY_HANDLED flag)
 ### Standalone Mode (Manual Deployment)
 
 `deploy.sh` can be run manually without CI/CD:
+
 ```bash
 export INFRA_CHANGED=true
 export APP_CHANGED=true
@@ -286,6 +309,7 @@ export INFRA_ALREADY_HANDLED=false  # or don't set it
 ```
 
 This is useful for:
+
 - Manual deployments
 - Testing
 - Recovery scenarios
@@ -317,15 +341,16 @@ This is useful for:
 ## 📚 Related Documentation
 
 - **[Scripts README](README.md)** - Detailed usage guide for all scripts
-- **[Infrastructure Management Plan](docker-infra/INFRASTRUCTURE_MANAGEMENT_PLAN.md)** - Complete implementation plan and architecture
+- **[Infrastructure Management Plan](docker-infra/INFRASTRUCTURE_MANAGEMENT_PLAN.md)** -
+  Complete implementation plan and architecture
 - **[Main DevOps README](../README.md)** - Overview of all DevOps operations
 
 ---
 
 ## ✅ Status: FULLY VERIFIED AND PRODUCTION-READY
 
-All Docker, CI, DevOps scripts, integration, and documentation have been verified and are correctly implemented. The system is ready for production use.
+All Docker, CI, DevOps scripts, integration, and documentation have been
+verified and are correctly implemented. The system is ready for production use.
 
 **Last Updated**: 2025-01-01  
 **Maintained By**: DevOps Team
-

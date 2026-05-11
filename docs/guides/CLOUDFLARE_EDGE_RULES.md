@@ -1,4 +1,4 @@
-# Cloudflare Edge Rules
+﻿# Cloudflare Edge Rules
 
 This document captures the current Cloudflare custom rules for the backend and
 video hosts.
@@ -8,7 +8,6 @@ Use this as the source of truth when editing edge access policy.
 ## Hosts
 
 - Main API: `backend-service-v1.ishswami.in`
-- Video/OpenVidu: `backend-service-v1-video.ishswami.in`
 
 ## Rule Order
 
@@ -59,7 +58,7 @@ or
   http.host eq "backend-service-v1-video.ishswami.in"
   and (
     http.request.uri.path eq "/"
-    or http.request.uri.path contains "/openvidu"
+    or http.request.uri.path contains "/video"
   )
 )
 ```

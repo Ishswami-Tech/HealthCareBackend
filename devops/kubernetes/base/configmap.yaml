@@ -114,32 +114,20 @@ data:
   AWS_SES_FROM_EMAIL: "noreply@ishswami.in"
   AWS_SES_FROM_NAME: "Healthcare App"
 
-  # Video Consultation (Dual Provider: OpenVidu primary, Jitsi fallback)
-  # NOTE: These values are updated dynamically by configuration scripts
-  # OpenVidu (Primary - like Dragonfly in cache pattern)
-  # Jitsi (Fallback - like Redis in cache pattern)
   VIDEO_ENABLED: "true"
-  VIDEO_PROVIDER: "openvidu"
-  
-  # OpenVidu Configuration (Primary Video Provider)
-  OPENVIDU_ENABLED: "true"
-  OPENVIDU_URL: "https://video.ishswami.in"
-  OPENVIDU_DOMAIN: "video.ishswami.in"
-  # OpenVidu Webhook Configuration (Optimized Architecture: Webhooks → Backend → Socket.IO)
-  # Enable webhooks to reduce Socket.IO load for video events
-  OPENVIDU_WEBHOOK_ENABLED: "false"
-  OPENVIDU_WEBHOOK_ENDPOINT: "https://backend-service-v1.ishswami.in/api/v1/webhooks/openvidu"
-  OPENVIDU_WEBHOOK_EVENTS: "sessionCreated,sessionDestroyed,participantJoined,participantLeft,recordingStarted,recordingStopped"
-  
-  # Jitsi Configuration (Fallback)
-  JITSI_DOMAIN: "meet.ishswami.in"
-  JITSI_BASE_DOMAIN: "ishswami.in"
-  JITSI_SUBDOMAIN: "meet"
-  JITSI_APP_ID: "healthcare-jitsi-app"
-  JITSI_ENABLE_RECORDING: "true"
-  JITSI_ENABLE_WAITING_ROOM: "true"
-  JITSI_BASE_URL: "https://meet.ishswami.in"
-  JITSI_WS_URL: "wss://meet.ishswami.in/xmpp-websocket"
+  VIDEO_PROVIDER: "cloudflare"
+  VIDEO_NO_SHOW_ENABLED: "false"
+  CLOUDFLARE_API_BASE_URL: "https://api.cloudflare.com/client/v4"
+  CLOUDFLARE_WEBHOOK_ENABLED: "false"
+  CLOUDFLARE_HOST_PRESET_NAME: "group-call-host"
+  CLOUDFLARE_PARTICIPANT_PRESET_NAME: "group_call_guest"
+  DAILY_API_BASE_URL: "https://api.daily.co/v1"
+  DAILY_WEBHOOK_ENABLED: "false"
+  DAILY_PRIVACY: "public"
+  DAILY_ROOM_DURATION_MINUTES: "120"
+  GOOGLE_MEET_ENABLED: "true"
+  GOOGLE_MEET_API_BASE_URL: "https://meet.googleapis.com/v2"
+  GOOGLE_MEET_OAUTH_SCOPE: "https://www.googleapis.com/auth/meetings.space.created"
   
   # Google OAuth Configuration
   GOOGLE_CLIENT_ID: ""

@@ -97,10 +97,16 @@ export class VideoConsultationTracker {
 
     // Check if webhooks are enabled (optimized architecture)
     if (this.configService) {
-      const videoConfig = this.configService.get<{ openvidu?: { webhookEnabled?: boolean } }>(
-        'video'
+      const videoConfig = this.configService.get<{
+        cloudflare?: { webhookEnabled?: boolean };
+        daily?: { webhookEnabled?: boolean };
+        googleMeet?: { webhookEnabled?: boolean };
+      }>('video');
+      this.webhookEnabled = Boolean(
+        videoConfig?.cloudflare?.webhookEnabled ||
+        videoConfig?.daily?.webhookEnabled ||
+        videoConfig?.googleMeet?.webhookEnabled
       );
-      this.webhookEnabled = videoConfig?.openvidu?.webhookEnabled === true;
     } else {
       this.webhookEnabled = false;
     }
@@ -463,7 +469,7 @@ export class VideoConsultationTracker {
       await this.saveConsultationMetrics(appointmentId, metrics);
 
       // Emit real-time update via Socket.IO
-      // Note: If webhooks are enabled, OpenVidu webhook events will also trigger updates
+      // Note: If webhooks are enabled, provider webhook events will also trigger updates
       // This provides redundancy and handles cases where webhooks might be delayed
       this.socketService.sendToRoom(`consultation_${appointmentId}`, 'connection_quality_update', {
         userId,
@@ -657,7 +663,7 @@ export class VideoConsultationTracker {
   /**
    * Emit consultation event
    *
-   * Note: If webhooks are enabled, OpenVidu webhook events will also trigger updates.
+   * Note: If webhooks are enabled, provider webhook events will also trigger updates.
    * This method provides redundancy and handles application-level events that webhooks don't cover.
    */
   private async emitConsultationEvent(event: ConsultationEvent): Promise<void> {

@@ -318,6 +318,9 @@ export class PatientsController {
   async getPatient(@Param('id') id: string, @Request() req: ClinicAuthenticatedRequest) {
     const clinicId = req.clinicContext?.clinicId;
     const role = req.user?.role;
+    if (role === Role.PATIENT) {
+      await this.patientsService.ensurePatientProfile(id);
+    }
     if (role !== Role.PATIENT && clinicId) {
       const inClinic = await this.patientsService.isPatientInClinic(id, clinicId);
       if (!inClinic) {

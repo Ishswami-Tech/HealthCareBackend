@@ -575,6 +575,20 @@ export class HealthcareErrorsService {
     );
   }
 
+  externalServiceInvalidResponse(
+    message?: string,
+    context?: string,
+    metadata?: ErrorMetadata
+  ): HealthcareError {
+    return this.createError(
+      ErrorCode.EXTERNAL_SERVICE_INVALID_RESPONSE,
+      HttpStatus.BAD_GATEWAY,
+      context,
+      metadata,
+      message
+    );
+  }
+
   featureNotImplemented(feature?: string, context?: string): HealthcareError {
     return this.createError(
       ErrorCode.FEATURE_NOT_IMPLEMENTED,

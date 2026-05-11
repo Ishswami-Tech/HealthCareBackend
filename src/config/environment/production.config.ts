@@ -8,7 +8,6 @@ import {
   getEnv,
 } from './utils';
 import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './validation';
-import createJitsiConfig from '../jitsi.config';
 import { videoConfig } from '../video.config';
 
 /**
@@ -221,7 +220,6 @@ export default function createProductionConfig(): ProductionConfig {
         'prescription_notification'
       ),
     },
-    jitsi: createJitsiConfig(),
     video: videoConfig(),
     domains: {
       // Extract domain from environment variables (no hardcoded defaults)

@@ -356,7 +356,7 @@ export class ResendVerificationDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 }
@@ -583,7 +583,7 @@ export class PasswordResetRequestDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 }
@@ -613,7 +613,7 @@ export class RequestOtpDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 
@@ -660,7 +660,7 @@ export class VerifyOtpRequestDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 
@@ -868,7 +868,7 @@ export class VerifyOtpRequestDtoWithClinic extends VerifyOtpRequestDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 }
@@ -899,7 +899,7 @@ export class GoogleOAuthDto {
     example: 'clinic-uuid-123',
     required: false,
   })
-  @IsUUID('4', { message: 'Clinic ID must be a valid UUID' })
+  @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
   @IsOptional()
   clinicId?: string;
 

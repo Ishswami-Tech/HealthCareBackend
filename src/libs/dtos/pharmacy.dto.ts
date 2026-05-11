@@ -181,7 +181,7 @@ export class CreatePrescriptionDto {
   @IsString()
   doctorId!: string;
 
-  @ApiProperty({ type: [PrescriptionItemDto], description: 'List of medicines' })
+  @ApiProperty({ type: () => [PrescriptionItemDto], description: 'List of medicines' })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PrescriptionItemDto)
@@ -256,7 +256,7 @@ export class DispensePrescriptionItemDto {
 
 export class DispensePrescriptionDto {
   @ApiPropertyOptional({
-    type: [DispensePrescriptionItemDto],
+    type: () => [DispensePrescriptionItemDto],
     description:
       'Medicines to dispense in this request. Omit the array to dispense all remaining quantities.',
   })
@@ -298,7 +298,7 @@ export class ReversePrescriptionDispenseItemDto {
 
 export class ReversePrescriptionDispenseDto {
   @ApiPropertyOptional({
-    type: [ReversePrescriptionDispenseItemDto],
+    type: () => [ReversePrescriptionDispenseItemDto],
     description:
       'Dispense items to reverse. Omit to reverse the latest dispense event across items.',
   })

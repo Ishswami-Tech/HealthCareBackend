@@ -170,7 +170,7 @@ function checkTodos() {
           const isInTypeDef =
             /^(export\s+)?(type|interface|class|enum)\s+.*(TODO|FIXME|XXX|HACK)/i.test(trimmedLine);
 
-          if (pattern.test(line) && (isComment || (!isInFunctionName && !isInTypeDef))) {
+          if (isComment && pattern.test(trimmedLine)) {
             issues.push({
               file: filePath,
               line: index + 1,

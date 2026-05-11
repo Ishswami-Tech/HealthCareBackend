@@ -8,7 +8,6 @@ import {
   getEnv,
 } from './utils';
 import { validateEnvironmentConfig, getEnvironmentValidationErrorMessage } from './validation';
-import createJitsiConfig from '../jitsi.config';
 import { videoConfig } from '../video.config';
 
 /**
@@ -220,7 +219,6 @@ export default function createStagingConfig(): Config {
         'prescription_notification'
       ),
     },
-    jitsi: createJitsiConfig(),
     video: videoConfig(),
   };
 }

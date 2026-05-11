@@ -34,6 +34,7 @@ import { DatabaseService } from '@infrastructure/database/database.service';
 import { QueueService } from '@queue/src/queue.service';
 import type {
   IVideoProvider,
+  VideoProviderType,
   VideoTokenResponse,
   VideoConsultationSession,
 } from '@core/types/video.types';
@@ -95,9 +96,16 @@ type VideoSessionAccessContext = {
   userRole?: string;
 };
 
+const GLOBAL_VIDEO_PROVIDER_SETTING_KEY = 'global_video_provider';
+const DEFAULT_GLOBAL_VIDEO_PROVIDER: VideoProviderType = 'daily';
+
+type VideoProviderSettingRow = {
+  settingValue: string | null;
+};
+
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
-  private provider!: IVideoProvider;
+  private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
   private readonly MEETING_CACHE_TTL = 3600; // 1 hour
@@ -127,7 +135,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     // Wrapped in try-catch to prevent API crash if video services are unavailable
     try {
       const initializedProvider: IVideoProvider =
-        await this.providerFactory.getProviderWithFallback();
+        await this.providerFactory.getProviderWithFallback(await this.resolveGlobalVideoProvider());
       this.provider = initializedProvider;
 
       await this.loggingService.log(
@@ -156,7 +164,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Try to get provider instance anyway for deferred availability when services start
       try {
-        this.provider = await this.providerFactory.getProviderWithFallback();
+        this.provider = await this.providerFactory.getProviderWithFallback(
+          await this.resolveGlobalVideoProvider()
+        );
         await this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
@@ -192,21 +202,24 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    * Get current provider through the single backend abstraction.
    */
   private async getProvider(): Promise<IVideoProvider> {
+    const preferredProvider = await this.resolveGlobalVideoProvider();
+
     // If provider is already initialized, check its health
     if (this.provider) {
       try {
         const isHealthy = await this.provider.isHealthy();
-        if (isHealthy) {
+        if (isHealthy && this.provider.providerName === preferredProvider) {
           return this.provider;
         }
 
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.WARN,
-          `Current video provider (${this.provider.providerName}) is unhealthy.`,
+          `Current video provider (${this.provider.providerName}) is unhealthy or no longer matches the configured preference (${preferredProvider}).`,
           'VideoService.getProvider',
           {
             currentProvider: this.provider.providerName,
+            preferredProvider,
             healthStatus: 'unhealthy',
           }
         );
@@ -218,6 +231,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           'VideoService.getProvider',
           {
             currentProvider: this.provider.providerName,
+            preferredProvider,
             error: error instanceof Error ? error.message : 'Unknown',
           }
         );
@@ -226,14 +240,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
     // Get provider with health validation
     try {
-      const healthyProvider = await this.providerFactory.getProviderWithFallback();
+      const healthyProvider = await this.providerFactory.getProviderWithFallback(preferredProvider);
 
       // Update current provider if it changed
       if (this.provider?.providerName !== healthyProvider.providerName) {
         void this.loggingService.log(
           LogType.SYSTEM,
           LogLevel.INFO,
-          `Video provider resolved: ${this.provider?.providerName || 'none'} ? ${healthyProvider.providerName}`,
+          `Video provider resolved: ${this.provider?.providerName || 'none'} -> ${healthyProvider.providerName}`,
           'VideoService.getProvider',
           {
             previousProvider: this.provider?.providerName || 'none',
@@ -258,6 +272,202 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         'VideoService.getProvider'
       );
     }
+  }
+
+  private normalizeVideoProvider(value: unknown): VideoProviderType | null {
+    const provider =
+      typeof value === 'string'
+        ? value.trim().toLowerCase()
+        : typeof value === 'number' || typeof value === 'boolean'
+          ? String(value).trim().toLowerCase()
+          : '';
+    if (provider === 'cloudflare' || provider === 'daily' || provider === 'google-meet') {
+      return provider;
+    }
+    return null;
+  }
+
+  private async resolveGlobalVideoProvider(): Promise<VideoProviderType> {
+    try {
+      const rows = await this.databaseService.executeRawQuery<VideoProviderSettingRow[]>(
+        'SELECT "settingValue" FROM "system_settings" WHERE "settingKey" = $1 LIMIT 1',
+        [GLOBAL_VIDEO_PROVIDER_SETTING_KEY]
+      );
+      const provider = this.normalizeVideoProvider(rows?.[0]?.settingValue);
+      if (provider) {
+        return provider;
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to read global video provider setting: ${error instanceof Error ? error.message : 'Unknown error'}. Falling back to environment configuration.`,
+        'VideoService.resolveGlobalVideoProvider',
+        {
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+    }
+
+    return DEFAULT_GLOBAL_VIDEO_PROVIDER;
+  }
+
+  async getGlobalVideoProviderSetting(): Promise<{
+    provider: VideoProviderType;
+    source: 'database' | 'env';
+  }> {
+    try {
+      const rows = await this.databaseService.executeRawQuery<VideoProviderSettingRow[]>(
+        'SELECT "settingValue" FROM "system_settings" WHERE "settingKey" = $1 LIMIT 1',
+        [GLOBAL_VIDEO_PROVIDER_SETTING_KEY]
+      );
+      const provider = this.normalizeVideoProvider(rows?.[0]?.settingValue);
+      if (provider) {
+        return { provider, source: 'database' };
+      }
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Unable to load persisted global video provider setting: ${error instanceof Error ? error.message : 'Unknown error'}.`,
+        'VideoService.getGlobalVideoProviderSetting',
+        {
+          error: error instanceof Error ? error.message : 'Unknown',
+        }
+      );
+    }
+
+    return {
+      provider: DEFAULT_GLOBAL_VIDEO_PROVIDER,
+      source: 'env',
+    };
+  }
+
+  async updateGlobalVideoProviderSetting(provider: VideoProviderType): Promise<{
+    provider: VideoProviderType;
+    source: 'database';
+  }> {
+    const normalizedProvider = this.normalizeVideoProvider(provider);
+    if (!normalizedProvider) {
+      throw new HealthcareError(
+        ErrorCode.VALIDATION_INVALID_FORMAT,
+        'Invalid video provider selected.',
+        undefined,
+        { provider },
+        'VideoService.updateGlobalVideoProviderSetting'
+      );
+    }
+
+    await this.databaseService.executeRawQuery(
+      `
+        INSERT INTO "system_settings" ("settingKey", "settingValue", "createdAt", "updatedAt")
+        VALUES ($1, $2, NOW(), NOW())
+        ON CONFLICT ("settingKey")
+        DO UPDATE SET
+          "settingValue" = EXCLUDED."settingValue",
+          "updatedAt" = NOW()
+      `,
+      [GLOBAL_VIDEO_PROVIDER_SETTING_KEY, normalizedProvider]
+    );
+
+    this.provider = undefined;
+
+    await this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      `Global video provider updated to ${normalizedProvider}`,
+      'VideoService.updateGlobalVideoProviderSetting',
+      { provider: normalizedProvider }
+    );
+
+    return {
+      provider: normalizedProvider,
+      source: 'database',
+    };
+  }
+
+  private resolvePreferredProviderFromAppointment(
+    appointment: AppointmentWithRelations | null | undefined
+  ): VideoProviderType | null {
+    const clinic = appointment?.clinic as
+      | {
+          settings?: Record<string, unknown> | null;
+        }
+      | null
+      | undefined;
+    const settings = clinic?.settings;
+    if (!settings || typeof settings !== 'object') {
+      return null;
+    }
+
+    const rawProvider =
+      (settings['videoSettings'] as { provider?: unknown } | undefined)?.provider ??
+      settings['videoProvider'];
+
+    return this.normalizeVideoProvider(rawProvider);
+  }
+
+  private async resolveEffectivePreferredProvider(
+    appointment?: AppointmentWithRelations | null
+  ): Promise<VideoProviderType> {
+    const clinicProvider = this.resolvePreferredProviderFromAppointment(appointment);
+    if (clinicProvider) {
+      return clinicProvider;
+    }
+
+    return this.resolveGlobalVideoProvider();
+  }
+
+  private async withProviderFallback<T>(
+    operationName: string,
+    executor: (provider: IVideoProvider) => Promise<T>,
+    preferredProvider?: VideoProviderType | null
+  ): Promise<T> {
+    const providers = this.providerFactory.getProvidersInOrder(preferredProvider);
+    if (providers.length === 0) {
+      throw new HealthcareError(
+        ErrorCode.SERVICE_UNAVAILABLE,
+        'Video service is currently unavailable. Please try again later or contact support.',
+        undefined,
+        {
+          note: 'No enabled video providers are available.',
+        },
+        operationName
+      );
+    }
+
+    let lastError: unknown;
+    for (const provider of providers) {
+      try {
+        const result = await executor(provider);
+        this.provider = provider;
+        return result;
+      } catch (error) {
+        lastError = error;
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          `Video provider '${provider.providerName}' failed during ${operationName}: ${error instanceof Error ? error.message : 'Unknown error'}. Trying next provider if available.`,
+          operationName,
+          {
+            provider: provider.providerName,
+            error: error instanceof Error ? error.message : String(error),
+          }
+        );
+      }
+    }
+
+    if (lastError instanceof Error) {
+      throw lastError;
+    }
+
+    throw new HealthcareError(
+      ErrorCode.INTERNAL_SERVER_ERROR,
+      'Video provider failed',
+      undefined,
+      { operation: operationName, originalError: String(lastError) },
+      operationName
+    );
   }
 
   private isRecordingFeatureEnabled(): boolean {
@@ -345,18 +555,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  /**
-   * Get current provider name (for health monitoring)
-   * @returns Current provider name or null if not initialized
-   */
   getCurrentProvider(): string | null {
     return this.provider?.providerName || null;
   }
 
-  /**
-   * Get fallback provider name (for health monitoring)
-   * @returns Fallback provider name (always 'jitsi' if available)
-   */
   getFallbackProvider(): string | null {
     try {
       const fallback = this.providerFactory.getFallbackProvider();
@@ -392,27 +594,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Fallback: If the provided ID is actually a VideoConsultation ID
       if (!appointment) {
-        const videoSession = await this.databaseService.executeRead(async prisma => {
-          // Bypass PrismaService composition wrapper in a strictly typed manner
-          type VideoConsultationDelegate = {
-            findUnique: (args: {
-              where: { id: string };
-              select: { appointmentId: boolean };
-            }) => Promise<{ appointmentId: string } | null>;
-          };
-
-          const service = prisma as unknown as {
-            prismaClient?: { videoConsultation: VideoConsultationDelegate };
-            videoConsultation?: VideoConsultationDelegate;
-          };
-
-          const delegate = service.prismaClient?.videoConsultation || service.videoConsultation;
-
-          if (!delegate) return null;
-
+        const videoSession = await this.databaseService.executeHealthcareRead(async prisma => {
+          const delegate = getVideoConsultationDelegate(prisma);
           return await delegate.findUnique({
             where: { id: resolvedAppointmentId },
-            select: { appointmentId: true },
           });
         });
 
@@ -473,14 +658,14 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      const provider: IVideoProvider = await this.getProvider();
-      const tokenResponse: VideoTokenResponse = await provider.generateMeetingToken(
-        resolvedAppointmentId,
-        userId,
-        userRole,
-        userInfo
+      const preferredProvider = await this.resolveEffectivePreferredProvider(appointment);
+
+      return await this.withProviderFallback(
+        'VideoService.generateMeetingToken',
+        provider =>
+          provider.generateMeetingToken(resolvedAppointmentId, userId, userRole, userInfo),
+        preferredProvider
       );
-      return tokenResponse;
     } catch (error: unknown) {
       const errorMessage: string = error instanceof Error ? error.message : 'Unknown error';
       const currentProvider: IVideoProvider | undefined = this.provider;
@@ -805,27 +990,10 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       // Fallback: If the provided ID is actually a VideoConsultation ID
       if (!appointment) {
-        const videoSession = await this.databaseService.executeRead(async prisma => {
-          // Bypass PrismaService composition wrapper in a strictly typed manner
-          type VideoConsultationDelegate = {
-            findUnique: (args: {
-              where: { id: string };
-              select: { appointmentId: boolean };
-            }) => Promise<{ appointmentId: string } | null>;
-          };
-
-          const service = prisma as unknown as {
-            prismaClient?: { videoConsultation: VideoConsultationDelegate };
-            videoConsultation?: VideoConsultationDelegate;
-          };
-
-          const delegate = service.prismaClient?.videoConsultation || service.videoConsultation;
-
-          if (!delegate) return null;
-
+        const videoSession = await this.databaseService.executeHealthcareRead(async prisma => {
+          const delegate = getVideoConsultationDelegate(prisma);
           return await delegate.findUnique({
             where: { id: resolvedAppointmentId },
-            select: { appointmentId: true },
           });
         });
 
@@ -857,11 +1025,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
       this.ensureAppointmentJoinable(appointment, userRole);
 
-      const provider: IVideoProvider = await this.getProvider();
-      const session: VideoConsultationSession = await provider.startConsultation(
-        resolvedAppointmentId,
-        userId,
-        userRole
+      const session: VideoConsultationSession = await this.withProviderFallback(
+        'VideoService.startConsultation',
+        provider => provider.startConsultation(resolvedAppointmentId, userId, userRole)
       );
 
       if (String(appointment.status) !== String(AppointmentStatus.IN_PROGRESS)) {
@@ -886,7 +1052,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           sessionId: session.id,
           userId,
           userRole,
-          provider: provider.providerName,
+          provider: this.provider?.providerName ?? 'unknown',
         },
       });
 
@@ -956,11 +1122,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      const provider: IVideoProvider = await this.getProvider();
-      const session: VideoConsultationSession = await provider.endConsultation(
-        resolvedAppointmentId,
-        userId,
-        userRole
+      const session: VideoConsultationSession = await this.withProviderFallback(
+        'VideoService.endConsultation',
+        provider => provider.endConsultation(resolvedAppointmentId, userId, userRole)
       );
 
       // Save session notes if provided
@@ -1023,7 +1187,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           appointmentId: resolvedAppointmentId,
           sessionId: session.id,
           duration,
-          provider: provider.providerName,
+          provider: this.provider?.providerName ?? 'unknown',
         },
       });
 
@@ -1066,11 +1230,27 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
 
     try {
-      const provider: IVideoProvider = await this.getProvider();
-      const session: VideoConsultationSession | null =
-        await provider.getConsultationSession(resolvedAppointmentId);
-      if (session) {
-        return session;
+      const providers = this.providerFactory.getProvidersInOrder();
+      for (const provider of providers) {
+        try {
+          const session: VideoConsultationSession | null =
+            await provider.getConsultationSession(resolvedAppointmentId);
+          if (session) {
+            this.provider = provider;
+            return session;
+          }
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Video provider '${provider.providerName}' failed during VideoService.getConsultationSession: ${error instanceof Error ? error.message : 'Unknown error'}. Trying next provider if available.`,
+            'VideoService.getConsultationSession',
+            {
+              provider: provider.providerName,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
       }
     } catch {
       // No fallback provider configured. Continue with appointment-backed fallback below.
@@ -1101,9 +1281,26 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
    */
   async listAllActiveSessions(): Promise<VideoConsultationSession[]> {
     try {
-      const provider = await this.getProvider();
-      if (provider.listActiveSessions) {
-        return await provider.listActiveSessions();
+      const providers = this.providerFactory.getProvidersInOrder();
+      for (const provider of providers) {
+        try {
+          if (provider.listActiveSessions) {
+            const sessions = await provider.listActiveSessions();
+            this.provider = provider;
+            return sessions;
+          }
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Video provider '${provider.providerName}' failed during VideoService.listAllActiveSessions: ${error instanceof Error ? error.message : 'Unknown error'}. Trying next provider if available.`,
+            'VideoService.listAllActiveSessions',
+            {
+              provider: provider.providerName,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
       }
       return [];
     } catch (error) {
@@ -2221,7 +2418,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
         }
       );
 
-      // In a real implementation, this would call Jitsi recording API
+      // In a real implementation, this would call the provider recording API
       // For now, generate a recording ID
       const recordingId = `rec-${consultation.id}-${Date.now()}`;
 
@@ -2515,7 +2712,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
+      if (provider.providerName !== 'cloudflare') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
           'Recording feature is only available with the active video provider',
@@ -2556,7 +2753,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
           recordingId: recording.id,
           fileName: `recording-${recording.id}.mp4`,
           filePath: `/recordings/${recording.id}.mp4`,
-          storageProvider: 'openvidu',
+          storageProvider: provider.providerName,
         });
       } catch (createError) {
         void this.loggingService.log(
@@ -2627,7 +2824,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       }
 
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
+      if (provider.providerName !== 'cloudflare') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
           'Recording feature is only available with the active video provider',
@@ -2754,7 +2951,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
+      if (provider.providerName !== 'cloudflare') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
           'Recording feature is only available with the active video provider',
@@ -2824,7 +3021,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
+      if (provider.providerName !== 'cloudflare') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
           'Participant management is only available with the active video provider',
@@ -2920,14 +3117,15 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
-        throw new HealthcareError(
-          ErrorCode.VALIDATION_INVALID_FORMAT,
-          'Participant management is only available with the active video provider',
-          undefined,
-          { provider: provider.providerName },
-          'VideoService.getSessionParticipants'
+      if (provider.providerName !== 'cloudflare') {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.DEBUG,
+          `Participant management is not exposed for provider '${provider.providerName}'. Returning an empty participant list.`,
+          'VideoService.getSessionParticipants',
+          { provider: provider.providerName }
         );
+        return [];
       }
 
       const consultation = await this.getConsultationSession(resolvedAppointmentId);
@@ -3000,7 +3198,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
     try {
       const provider = await this.getProvider();
-      if (provider.providerName !== 'openvidu') {
+      if (provider.providerName !== 'cloudflare') {
         throw new HealthcareError(
           ErrorCode.VALIDATION_INVALID_FORMAT,
           'Session analytics is only available with the active video provider',

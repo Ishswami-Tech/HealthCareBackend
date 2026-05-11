@@ -241,6 +241,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,
     assistantDoctorEligible: true,
     active: true,
+    videoConsultationFee: 500,
   },
   {
     treatmentType: TreatmentType.SHIRODHARA,
@@ -1558,13 +1559,13 @@ export class AppointmentsService {
       );
 
       // Invalidate related cache entries
-      await this.cacheService.invalidateAppointmentCache(
+      void this.cacheService.invalidateAppointmentCache(
         (result.data as Record<string, unknown>)?.['id'] as string,
         createDto.patientId,
         createDto.doctorId,
         clinicId
       );
-      await Promise.all([
+      void Promise.all([
         this.cacheService.invalidateCacheByTag('appointments'),
         this.cacheService.invalidateCacheByTag('clinic_appointments'),
         this.cacheService.invalidateCacheByTag(`clinic:${clinicId}`),
@@ -1587,7 +1588,7 @@ export class AppointmentsService {
       // Hot path: Trigger notification plugin (direct injection for performance)
       // Notification is sent on every appointment creation - high frequency operation
       try {
-        await this.clinicNotificationPlugin.process({
+        void this.clinicNotificationPlugin.process({
           operation: 'send_appointment_created',
           appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
           patientId: createDto.patientId,
@@ -1616,7 +1617,7 @@ export class AppointmentsService {
       // No explicit pre-creation is needed.
 
       // Emit enterprise event for real-time WebSocket broadcasting
-      await this.emitAppointmentEnterpriseEvent('appointment.created', {
+      void this.emitAppointmentEnterpriseEvent('appointment.created', {
         eventId: `appointment-created-${(result.data as Record<string, unknown>)?.['id'] as string}-${Date.now()}`,
         clinicId,
         userId: createDto.patientId,

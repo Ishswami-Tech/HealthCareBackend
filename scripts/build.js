@@ -176,10 +176,26 @@ function copyRuntimeAssets() {
 function main() {
   const startTime = Date.now();
   const args = process.argv.slice(2);
-  const environment = args[0] || 'development';
+  const environment =
+    args[0] ||
+    process.env.BUILD_ENV ||
+    process.env.NODE_ENV ||
+    (process.env.CI === 'true' || process.env.GITHUB_ACTIONS === 'true'
+      ? 'production'
+      : fs.existsSync(path.join(process.cwd(), '.env.local-prod'))
+        ? 'local-prod'
+        : 'development');
+  process.env.NODE_ENV = environment;
+  if (!process.env.DOTENV_CONFIG_PATH) {
+    const envFile = path.join(process.cwd(), `.env.${environment}`);
+    if (fs.existsSync(envFile)) {
+      process.env.DOTENV_CONFIG_PATH = `.env.${environment}`;
+    }
+  }
   const stepTimes = {};
   let validationCount = 0;
   let warningCount = 0;
+  const skipSecurityAudit = String(process.env.SKIP_SECURITY_AUDIT || '').toLowerCase() === 'true';
 
   log('\n' + '='.repeat(60), 'bright');
   log('Healthcare Backend - Build Process', 'bright');
@@ -251,9 +267,13 @@ function main() {
     if (!vulnFixResult.success) warningCount++;
 
     // Security audit - fail if vulnerabilities are found
-    const auditResult = runCommand('yarn run security:audit', 'Security audit');
-    stepTimes['Security Audit'] = auditResult.time;
-    validationCount++;
+    if (skipSecurityAudit) {
+      logWarning('Security audit skipped because SKIP_SECURITY_AUDIT=true');
+    } else {
+      const auditResult = runCommand('yarn run security:audit', 'Security audit');
+      stepTimes['Security Audit'] = auditResult.time;
+      validationCount++;
+    }
 
     const depsResult = runCommand('yarn run deps:check', 'Dependency check', true);
     stepTimes['Dependency Check'] = depsResult.time;

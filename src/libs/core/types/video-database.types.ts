@@ -63,7 +63,7 @@ export interface VideoRecordingDbModel {
  * Type-safe accessor for videoConsultation delegate
  * Prisma guarantees this delegate exists at runtime
  */
-export function getVideoConsultationDelegate(client: PrismaTransactionClient): {
+export function getVideoConsultationDelegate(client: object): {
   findUnique: (args: {
     where: { appointmentId: string } | { id: string };
   }) => Promise<VideoConsultationDbModel | null>;

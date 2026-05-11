@@ -25,7 +25,6 @@ declare -a DIRECTORIES=(
     "${BACKUP_DIR}/metadata"
     "${DATA_DIR}/postgres"
     "${DATA_DIR}/dragonfly"
-    "${DATA_DIR}/openvidu_recordings"
     "${LOG_DIR}"
 )
 
@@ -216,7 +215,6 @@ main() {
         echo "    └── data/"
         echo "        ├── postgres/"
         echo "        ├── dragonfly/"
-        echo "        └── openvidu_recordings/"
         echo ""
         if [[ -d "${LOG_DIR}" ]]; then
             log_info "Log directory: ${LOG_DIR}"
@@ -235,4 +233,3 @@ main() {
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     main "$@"
 fi
-

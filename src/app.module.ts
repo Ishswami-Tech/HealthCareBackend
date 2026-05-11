@@ -76,7 +76,7 @@ import { AnalyticsModule } from './services/analytics/analytics.module';
     BillingModule,
     EHRModule,
     PharmacyModule,
-    // Video consultation module (OpenVidu/Jitsi integration)
+    // Video consultation module (provider-agnostic video integration)
     VideoModule,
     // Unified Communication Module (includes all channels: socket, push, email, WhatsApp, SMS, listeners)
     CommunicationModule,

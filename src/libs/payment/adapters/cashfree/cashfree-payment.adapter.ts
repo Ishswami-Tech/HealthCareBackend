@@ -72,6 +72,10 @@ interface CashfreeOrderStatusResponse {
   order_payment_status?: string;
   order_expiry_time: string;
   created_at: string;
+  payment_session_id?: string;
+  order_meta?: {
+    payment_link?: string;
+  };
   order_splits?: unknown;
 }
 
@@ -157,6 +161,78 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
     };
   }
 
+  private getHttpStatus(error: unknown): number | undefined {
+    if (!error || typeof error !== 'object') {
+      return undefined;
+    }
+
+    const candidate = error as {
+      response?: {
+        status?: unknown;
+        statusCode?: unknown;
+        data?: {
+          statusCode?: unknown;
+          code?: unknown;
+          status?: unknown;
+        };
+      };
+      status?: unknown;
+      statusCode?: unknown;
+      code?: unknown;
+      cause?: {
+        status?: unknown;
+        statusCode?: unknown;
+      };
+      message?: unknown;
+    };
+
+    const rawStatus =
+      candidate.response?.status ??
+      candidate.response?.statusCode ??
+      candidate.response?.data?.statusCode ??
+      candidate.response?.data?.status ??
+      candidate.status ??
+      candidate.statusCode ??
+      candidate.cause?.status ??
+      candidate.cause?.statusCode;
+
+    if (typeof rawStatus === 'number') {
+      return rawStatus;
+    }
+
+    const message = typeof candidate.message === 'string' ? candidate.message : '';
+    if (message.includes('409') || message.toLowerCase().includes('conflict')) {
+      return 409;
+    }
+
+    const code = typeof candidate.code === 'string' ? candidate.code : '';
+    if (code === '409' || code.toUpperCase() === 'ERR_BAD_REQUEST') {
+      const responseStatus = candidate.response?.status;
+      if (typeof responseStatus === 'number') {
+        return responseStatus;
+      }
+    }
+
+    return undefined;
+  }
+
+  private async fetchOrderById(orderId: string): Promise<CashfreeOrderStatusResponse> {
+    if (!this.httpService) {
+      throw new Error('HTTP service not initialized');
+    }
+
+    const response = await this.httpService.get<CashfreeOrderStatusResponse>(
+      `${this.baseUrl}/orders/${orderId}`,
+      { headers: this.getHeaders() }
+    );
+
+    if (!response.data?.order_id) {
+      throw new Error('Invalid response from Cashfree fetch order');
+    }
+
+    return response.data;
+  }
+
   async verify(): Promise<boolean> {
     if (!this.httpService || !this.appId || !this.secretKey) {
       return false;
@@ -191,6 +267,19 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
       const amountInUnits = options.amount / 100;
       const orderId =
         options.orderId || `order_${Date.now()}_${Math.random().toString(36).substring(7)}`;
+      const idempotencySource = [
+        options.clinicId || '',
+        options.appointmentId || '',
+        options.subscriptionId || '',
+        options.customerId || '',
+        orderId,
+      ].join('|');
+      const idempotencyKey = crypto
+        .createHash('sha256')
+        .update(idempotencySource)
+        .digest('hex')
+        .slice(0, 32)
+        .replace(/^(.{8})(.{4})(.{4})(.{4})(.{12}).*$/, '$1-$2-$3-$4-$5');
 
       // Accept all URL key variants sent by BillingService
       // BillingService uses: redirectUrl, callbackUrl
@@ -226,16 +315,70 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         ...(options.description && { order_note: options.description }),
       };
 
-      const response = await this.executeWithRetry(async () => {
-        if (!this.httpService) throw new Error('HTTP service not initialized');
-        return await this.httpService.post<CashfreeOrderResponse>(`${this.baseUrl}/orders`, body, {
-          headers: this.getHeaders(),
-        });
-      });
+      let data: CashfreeOrderResponse | CashfreeOrderStatusResponse | null = null;
+      let lastError: unknown = null;
 
-      const data = response.data;
+      for (let attempt = 0; attempt < this.maxRetries; attempt += 1) {
+        try {
+          const response = await this.httpService.post<CashfreeOrderResponse>(
+            `${this.baseUrl}/orders`,
+            body,
+            {
+              headers: {
+                ...this.getHeaders(),
+                'x-idempotency-key': idempotencyKey,
+              },
+            }
+          );
+
+          data = response.data;
+          break;
+        } catch (error) {
+          lastError = error;
+          const status = this.getHttpStatus(error);
+
+          if (status === 409) {
+            await this.logger.log(
+              LogType.PAYMENT,
+              LogLevel.WARN,
+              'Cashfree order already exists, fetching existing order instead of retrying create',
+              'CashfreePaymentAdapter',
+              {
+                orderId,
+                appointmentId: options.appointmentId,
+                subscriptionId: options.subscriptionId,
+              }
+            );
+
+            data = await this.fetchOrderById(orderId);
+            break;
+          }
+
+          if (attempt === this.maxRetries - 1) {
+            throw error;
+          }
+
+          const delay = this.retryDelay * Math.pow(2, attempt);
+          await this.delay(delay);
+
+          await this.logger.log(
+            LogType.PAYMENT,
+            LogLevel.WARN,
+            `Payment operation attempt ${attempt + 1} failed, retrying...`,
+            this.getProviderName(),
+            {
+              attempt: attempt + 1,
+              maxRetries: this.maxRetries,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
+      }
+
       if (!data?.order_id) {
-        throw new Error('Invalid response from Cashfree create order');
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('Invalid response from Cashfree create order');
       }
 
       await this.logger.log(
@@ -257,12 +400,11 @@ export class CashfreePaymentAdapter extends BasePaymentAdapter {
         options.currency,
         data.order_id
       );
+      const orderRecord = data as unknown as Record<string, unknown>;
+      const orderMeta = (orderRecord['order_meta'] as Record<string, unknown> | undefined) || {};
       const redirectUrl =
-        (data.order_meta &&
-        typeof data.order_meta === 'object' &&
-        typeof data.order_meta.payment_link === 'string'
-          ? data.order_meta.payment_link
-          : undefined) || (typeof data.payment_link === 'string' ? data.payment_link : undefined);
+        (typeof orderMeta['payment_link'] === 'string' ? orderMeta['payment_link'] : undefined) ||
+        (typeof orderRecord['payment_link'] === 'string' ? orderRecord['payment_link'] : undefined);
       pendingResult.metadata = {
         ...(data.payment_session_id ? { paymentSessionId: data.payment_session_id } : {}),
         ...(redirectUrl ? { redirectUrl } : {}),

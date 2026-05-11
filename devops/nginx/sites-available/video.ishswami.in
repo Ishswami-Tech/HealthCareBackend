@@ -15,7 +15,7 @@ server {
     }
 }
 
-# HTTPS server for OpenVidu Video (video.ishswami.in)
+# HTTPS server for backend video and app APIs (video.ishswami.in)
 server {
     listen 443 ssl http2;
     listen [::]:443 ssl http2;
@@ -46,10 +46,9 @@ server {
     proxy_send_timeout 86400s;
     proxy_read_timeout 86400s;
 
-    # Proxy to OpenVidu Docker container
-    # OpenVidu runs on port 4443 (HTTP internally, SSL handled by Nginx)
+    # Proxy to the backend API container
     location / {
-        proxy_pass http://127.0.0.1:4443;
+        proxy_pass http://127.0.0.1:8088;
         proxy_http_version 1.1;
 
         # Headers
@@ -60,28 +59,13 @@ server {
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Port $server_port;
 
-        # WebSocket support (required for OpenVidu video streaming)
+        # WebSocket support for backend realtime/video features
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
 
         # Disable buffering for real-time video streaming
         proxy_buffering off;
         proxy_request_buffering off;
-    }
-
-    # OpenVidu specific WebSocket endpoint
-    location /openvidu {
-        proxy_pass http://127.0.0.1:4443;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400s;
-        proxy_send_timeout 86400s;
-        proxy_buffering off;
     }
 }
 

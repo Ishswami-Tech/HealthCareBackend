@@ -24,12 +24,37 @@ export class PermissionMethods extends DatabaseMethodsBase {
   }): Promise<PermissionEntity> {
     const result = await this.executeWrite<PermissionEntity>(
       async prisma => {
-        return await prisma.permission.create({
-          data: {
-            ...data,
-            domain: 'healthcare',
-          },
-        });
+        const createData = {
+          ...data,
+          domain: 'healthcare',
+        };
+
+        try {
+          return await prisma.permission.create({
+            data: createData,
+          });
+        } catch (error) {
+          const errorCode = (error as { code?: string } | null | undefined)?.code;
+          if (errorCode !== 'P2002') {
+            throw error;
+          }
+
+          const existing = await prisma.permission.findUnique({
+            where: {
+              resource_action_domain: {
+                resource: data.resource,
+                action: data.action,
+                domain: 'healthcare',
+              },
+            },
+          });
+
+          if (existing) {
+            return existing;
+          }
+
+          throw error;
+        }
       },
       {
         userId: 'system',

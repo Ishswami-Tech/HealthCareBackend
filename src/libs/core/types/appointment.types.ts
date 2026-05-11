@@ -1243,23 +1243,6 @@ export interface AnalyticsResult {
 // ============================================================================
 
 /**
- * Jitsi room configuration
- */
-export interface JitsiRoomConfig {
-  roomName: string;
-  meetingUrl?: string;
-  moderatorPassword?: string;
-  participantPassword?: string;
-  encryptionKey?: string;
-  recordingEnabled: boolean;
-  maxParticipants: number;
-  appointmentId?: string;
-  isSecure?: boolean;
-  enableRecording?: boolean;
-  hipaaCompliant?: boolean;
-}
-
-/**
  * Video consultation session
  */
 export interface VideoConsultationSession {
