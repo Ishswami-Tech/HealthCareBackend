@@ -104,15 +104,32 @@ check_portainer() {
         return 0
     fi
 
-    if docker exec "$container" wget -q --spider http://localhost:9000/api/status >/dev/null 2>&1; then
-        set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
-        return 0
-    fi
-
     if [[ "$docker_health" == "restarting" ]]; then
         set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Container restarting"}'
         return 1
     fi
+
+    local attempt=0
+    local max_attempts=6
+    while [[ $attempt -lt $max_attempts ]]; do
+        attempt=$((attempt + 1))
+
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsS --max-time 3 http://127.0.0.1:9000/api/status >/dev/null 2>&1; then
+                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
+                return 0
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -q --spider --timeout=3 http://127.0.0.1:9000/api/status >/dev/null 2>&1; then
+                set_service_status "portainer" "healthy" '{"status":"healthy","ready":true,"port":9000,"health":"api"}'
+                return 0
+            fi
+        fi
+
+        if [[ $attempt -lt $max_attempts ]]; then
+            sleep 5
+        fi
+    done
 
     set_service_status "portainer" "unhealthy" '{"status":"unhealthy","error":"Health endpoint failed"}'
     return 1
