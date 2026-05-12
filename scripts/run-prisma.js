@@ -12,7 +12,8 @@
  * - run-db-push.js
  */
 
-const { execSync } = require('child_process');
+const { execFileSync, execSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 // Use absolute paths (works in both local and Docker)
@@ -86,20 +87,161 @@ const env = {
   DATABASE_URL: cleanDbUrl,
 };
 
+function runPrismaCli(args, options = {}) {
+  return execFileSync('node', ['--max-old-space-size=8192', 'node_modules/prisma/build/index.js', ...args], {
+    stdio: 'inherit',
+    cwd: path.join(__dirname, '..'),
+    env,
+    ...options,
+  });
+}
+
+function readMigrationSql(migrationName) {
+  const migrationPath = path.join(
+    projectRoot,
+    'src/libs/infrastructure/database/prisma/migrations',
+    migrationName,
+    'migration.sql'
+  );
+
+  if (!fs.existsSync(migrationPath)) {
+    return null;
+  }
+
+  return fs.readFileSync(migrationPath, 'utf8');
+}
+
+function extractMigrationName(output) {
+  const match = output.match(/The `([^`]+)` migration started/i);
+  return match ? match[1] : '';
+}
+
+function extractCreatedObjects(sql) {
+  const tables = new Set();
+  const types = new Set();
+
+  for (const match of sql.matchAll(/CREATE TABLE\s+"([^"]+)"/gi)) {
+    tables.add(match[1]);
+  }
+
+  for (const match of sql.matchAll(/CREATE TYPE\s+"([^"]+)"/gi)) {
+    types.add(match[1]);
+  }
+
+  return { tables: [...tables], types: [...types] };
+}
+
+function queryDatabase(sql) {
+  const psqlUrl = cleanDbUrl.replace(/[?&]schema=[^&]*/g, '').replace(/[?&]$/, '');
+  return execFileSync('psql', ['-d', psqlUrl, '-tAc', sql], {
+    cwd: path.join(__dirname, '..'),
+    env,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trim();
+}
+
+function isSafeToResolveFailedMigration(migrationName) {
+  const migrationSql = readMigrationSql(migrationName);
+  if (!migrationSql) {
+    log(`❌ Migration SQL not found for ${migrationName}`, 'red');
+    return false;
+  }
+
+  const { tables, types } = extractCreatedObjects(migrationSql);
+  if (tables.length === 0 && types.length === 0) {
+    log(`⚠ No CREATE TABLE or CREATE TYPE statements found in ${migrationName}`, 'yellow');
+    return false;
+  }
+
+  try {
+    for (const tableName of tables) {
+      const result = queryDatabase(`SELECT to_regclass('"${tableName}"') IS NOT NULL;`);
+      if (result !== 't') {
+        log(`⚠ Missing table for recovery: ${tableName}`, 'yellow');
+        return false;
+      }
+    }
+
+    for (const typeName of types) {
+      const result = queryDatabase(
+        `SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = '${typeName}');`
+      );
+      if (result !== 't') {
+        log(`⚠ Missing enum/type for recovery: ${typeName}`, 'yellow');
+        return false;
+      }
+    }
+  } catch (error) {
+    log(`❌ Failed while validating migration state: ${error.message}`, 'red');
+    return false;
+  }
+
+  return true;
+}
+
+function attemptP3009Recovery(output) {
+  const failedMigrationName = extractMigrationName(output);
+  if (!failedMigrationName) {
+    log('❌ Could not determine failed migration name from Prisma output', 'red');
+    return false;
+  }
+
+  log(`⚠ Detected failed migration: ${failedMigrationName}`, 'yellow');
+
+  if (!isSafeToResolveFailedMigration(failedMigrationName)) {
+    log('❌ Auto-resolve skipped because the database state is not safe', 'red');
+    return false;
+  }
+
+  log(`ℹ Safe to resolve failed migration as applied: ${failedMigrationName}`, 'cyan');
+  try {
+    runPrismaCli([
+      'migrate',
+      'resolve',
+      '--applied',
+      failedMigrationName,
+      '--schema',
+      schemaPath,
+      '--config',
+      configPath,
+    ]);
+  } catch (error) {
+    log(`❌ Failed to resolve migration as applied: ${failedMigrationName}`, 'red');
+    if (error.stdout) console.error(error.stdout.toString());
+    if (error.stderr) console.error(error.stderr.toString());
+    return false;
+  }
+
+  log(`✅ Resolved failed migration as applied: ${failedMigrationName}`, 'green');
+
+  try {
+    runPrismaCli(['migrate', 'deploy', '--schema', schemaPath, '--config', configPath]);
+    log('✅ Migrations completed successfully after recovery!', 'green');
+    return true;
+  } catch (error) {
+    log('❌ Migration still failed after resolving failed migration', 'red');
+    if (error.stdout) console.error(error.stdout.toString());
+    if (error.stderr) console.error(error.stderr.toString());
+    return false;
+  }
+}
+
 try {
   if (command === 'migrate' || command === 'deploy') {
     log('Running Prisma migrations (migrate deploy)...', 'cyan');
     log(`  Schema: ${schemaPath}`, 'cyan');
     log(`  Config: ${configPath}`, 'cyan');
     log(`  Database: ${cleanDbUrl.replace(/:[^:@]+@/, ':****@')}`, 'cyan');
-    execSync(
-      `node --max-old-space-size=8192 node_modules/prisma/build/index.js migrate deploy --schema="${schemaPath}" --config="${configPath}"`,
-      {
-        stdio: 'inherit',
-        cwd: path.join(__dirname, '..'),
-        env: env,
+    try {
+      runPrismaCli(['migrate', 'deploy', '--schema', schemaPath, '--config', configPath]);
+    } catch (error) {
+      const output = `${error.stdout ? error.stdout.toString() : ''}${error.stderr ? error.stderr.toString() : ''}${error.message || ''}`;
+      if (output.includes('P3009') && attemptP3009Recovery(output)) {
+        process.exit(0);
       }
-    );
+      throw error;
+    }
     log('✓ Migrations completed successfully!', 'green');
     process.exit(0);
   } else if (command === 'push' || command === 'db-push') {
@@ -107,28 +249,14 @@ try {
     log(`  Schema: ${schemaPath}`, 'cyan');
     log(`  Config: ${configPath}`, 'cyan');
     log(`  Database: ${cleanDbUrl.replace(/:[^:@]+@/, ':****@')}`, 'cyan');
-    execSync(
-      `node --max-old-space-size=8192 node_modules/prisma/build/index.js db push --schema="${schemaPath}" --config="${configPath}" --accept-data-loss`,
-      {
-        stdio: 'inherit',
-        cwd: path.join(__dirname, '..'),
-        env: env,
-      }
-    );
+    runPrismaCli(['db', 'push', '--schema', schemaPath, '--config', configPath, '--accept-data-loss']);
     log('✓ Database push completed successfully!', 'green');
     process.exit(0);
   } else if (command === 'validate') {
     log('Running Prisma schema validation...', 'cyan');
     log(`  Schema: ${schemaPath}`, 'cyan');
     log(`  Config: ${configPath}`, 'cyan');
-    execSync(
-      `node --max-old-space-size=8192 node_modules/prisma/build/index.js validate --schema="${schemaPath}" --config="${configPath}"`,
-      {
-        stdio: 'inherit',
-        cwd: path.join(__dirname, '..'),
-        env: env,
-      }
-    );
+    runPrismaCli(['validate', '--schema', schemaPath, '--config', configPath]);
     log('✓ Schema validation passed!', 'green');
     process.exit(0);
   } else {
