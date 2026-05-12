@@ -26,6 +26,8 @@ export interface ClinicTemplateData {
   templateIds: {
     otp?: string;
     appointment?: string;
+    appointmentConfirmation?: string;
+    appointmentReminder?: string;
     reminder?: string;
     prescription?: string;
   };
@@ -119,6 +121,26 @@ export class ClinicTemplateService {
           ...(whatsappTemplates?.['appointment'] && {
             appointment: whatsappTemplates['appointment'],
           }),
+          ...(whatsappTemplates?.['appointmentConfirmation'] ||
+          whatsappTemplates?.['appointment_confirmation'] ||
+          whatsappTemplates?.['appointment']
+            ? {
+                appointmentConfirmation:
+                  whatsappTemplates?.['appointmentConfirmation'] ||
+                  whatsappTemplates?.['appointment_confirmation'] ||
+                  whatsappTemplates?.['appointment'],
+              }
+            : {}),
+          ...(whatsappTemplates?.['appointmentReminder'] ||
+          whatsappTemplates?.['appointment_reminder_2'] ||
+          whatsappTemplates?.['reminder']
+            ? {
+                appointmentReminder:
+                  whatsappTemplates?.['appointmentReminder'] ||
+                  whatsappTemplates?.['appointment_reminder_2'] ||
+                  whatsappTemplates?.['reminder'],
+              }
+            : {}),
           ...(whatsappTemplates?.['reminder'] && { reminder: whatsappTemplates['reminder'] }),
           ...(whatsappTemplates?.['prescription'] && {
             prescription: whatsappTemplates['prescription'],
@@ -197,7 +219,13 @@ export class ClinicTemplateService {
    */
   async getWhatsAppTemplateId(
     clinicId: string,
-    templateType: 'otp' | 'appointment' | 'reminder' | 'prescription'
+    templateType:
+      | 'otp'
+      | 'appointment'
+      | 'appointmentConfirmation'
+      | 'appointmentReminder'
+      | 'reminder'
+      | 'prescription'
   ): Promise<string | null> {
     const templateData = await this.getClinicTemplateData(clinicId);
     if (!templateData) {

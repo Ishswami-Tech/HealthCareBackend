@@ -8,6 +8,7 @@
  */
 export interface InvoicePDFData {
   invoiceNumber: string;
+  gatewayOrderId?: string;
   invoiceDate: Date;
   dueDate: Date;
   status: string;

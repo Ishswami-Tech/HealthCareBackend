@@ -125,17 +125,19 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
             language: {
               code: options.language || 'en',
             },
-            ...(options.templateParams && {
-              components: [
-                {
-                  type: 'body',
-                  parameters: Object.entries(options.templateParams).map(([_, value]) => ({
-                    type: 'text',
-                    text: String(value),
-                  })),
-                },
-              ],
-            }),
+            components:
+              options.templateComponents ||
+              (options.templateParams
+                ? [
+                    {
+                      type: 'body',
+                      parameters: Object.entries(options.templateParams).map(([_, value]) => ({
+                        type: 'text',
+                        text: String(value),
+                      })),
+                    },
+                  ]
+                : undefined),
           },
         };
       } else {

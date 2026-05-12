@@ -3,6 +3,7 @@ import { EmailService } from '@communication/channels/email/email.service';
 import { ConfigService } from '@config/config.service';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { EmailTemplate, EmailContext } from '@core/types';
+import type { AppointmentTemplateData } from '@core/types/communication.types';
 import { formatDateTimeInIST, nowIso } from '../../../utils/date-time.util';
 
 class SendTestEmailDto {
@@ -50,9 +51,11 @@ export class EmailController {
     const urlsConfig = this.configService.getUrlsConfig();
     const frontendUrl =
       urlsConfig.frontend || this.configService.getEnv('FRONTEND_URL') || 'http://localhost:3000';
+    const testRecipient =
+      this.configService.getEnv('EMAIL_TEST_RECIPIENT') || 'aadeshbhujba1@gmail.com';
 
     const result = await this.emailService.sendEmail({
-      to: 'aadeshbhujba1@gmail.com', // Your email address
+      to: testRecipient,
       subject: `${this.configService.getEnv('APP_NAME', 'Healthcare App')} - Email Test`,
       template: EmailTemplate.VERIFICATION,
       context: {
@@ -65,8 +68,9 @@ export class EmailController {
       message: result ? 'Test email sent successfully' : 'Failed to send test email',
       details: {
         template: 'VERIFICATION',
-        sentTo: 'aadeshbhujbal43@gmail.com',
-        checkMailtrap: 'Please check your Mailtrap inbox at https://mailtrap.io',
+        sentTo: testRecipient,
+        checkMailtrap:
+          'Check the configured email inbox/provider dashboard (Mailtrap, ZeptoMail, or SMTP destination).',
       },
     };
   }
@@ -116,7 +120,7 @@ export class EmailController {
           role: 'Patient',
           loginUrl: `${frontendUrl}/login`,
           dashboardUrl: `${frontendUrl}/patient/dashboard`,
-          supportEmail: 'support@healthcareapp.com',
+          supportEmail: 'info@viddhakarma.com',
           isGoogleAccount: false,
         };
         break;
@@ -131,6 +135,19 @@ export class EmailController {
           location: 'New York, USA',
         };
         break;
+      case EmailTemplate.APPOINTMENT_REMINDER:
+        context = {
+          patientName: 'Test User',
+          doctorName: 'Test Doctor',
+          clinicName: 'Test Clinic',
+          appointmentDate: formatDateTimeInIST(new Date()),
+          appointmentTime: '10:00 AM',
+          location: 'Test Clinic Location',
+          appointmentId: 'appt_test_001',
+          rescheduleUrl: `${frontendUrl}/appointments/reschedule/appt_test_001`,
+          cancelUrl: `${frontendUrl}/appointments/cancel/appt_test_001`,
+        } satisfies AppointmentTemplateData;
+        break;
       case EmailTemplate.SECURITY_ALERT:
         context = {
           name: 'Test User',
@@ -142,7 +159,7 @@ export class EmailController {
         context = {
           name: 'Test User',
           time: formatDateTimeInIST(new Date()),
-          supportEmail: 'support@healthcareapp.com',
+          supportEmail: 'info@viddhakarma.com',
         };
         break;
     }

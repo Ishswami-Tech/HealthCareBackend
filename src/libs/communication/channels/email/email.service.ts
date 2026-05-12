@@ -24,6 +24,7 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import {
   generateVerificationTemplate,
+  generateAppointmentReminderTemplate,
   generatePasswordResetRequestTemplate,
   generatePasswordResetConfirmationTemplate,
   generateOTPLoginTemplate,
@@ -884,7 +885,7 @@ export class EmailService implements OnModuleInit {
       (context['supportEmail'] as string | undefined) ||
       this.configService.getEnv('SUPPORT_EMAIL') ||
       this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
-      'support@healthcareapp.com';
+      'info@viddhakarma.com';
 
     const enrichedContext: EmailContext = {
       ...context,
@@ -917,6 +918,10 @@ export class EmailService implements OnModuleInit {
         return generateWelcomeTemplate(enrichedContext as WelcomeEmailContext);
       case EmailTemplate.LOGIN_NOTIFICATION:
         return generateLoginNotificationTemplate(enrichedContext as LoginNotificationEmailContext);
+      case EmailTemplate.APPOINTMENT_REMINDER:
+        return generateAppointmentReminderTemplate(
+          enrichedContext as import('@core/types/communication.types').AppointmentTemplateData
+        );
       case EmailTemplate.SECURITY_ALERT:
         return generateSecurityAlertTemplate(enrichedContext as SecurityAlertEmailContext);
       case EmailTemplate.SUSPICIOUS_ACTIVITY:

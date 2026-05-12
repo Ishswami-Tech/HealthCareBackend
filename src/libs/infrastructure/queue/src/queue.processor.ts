@@ -9,6 +9,7 @@ import { LoggingService } from '@infrastructure/logging';
 import { S3StorageService } from '@infrastructure/storage';
 // Use direct import to avoid circular dependency with barrel exports
 import { DatabaseService } from '@infrastructure/database/database.service';
+import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 
 // Internal imports - Core
 import { LogType, LogLevel } from '@core/types';
@@ -18,6 +19,7 @@ import {
   type JobData,
   type JobMetadata,
 } from '@core/types/queue.types';
+import type { NotificationData } from '@core/types/appointment.types';
 import type { InvoicePDFData } from '@core/types/billing.types';
 import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 import { formatDateInIST, nowIso } from '../../../utils/date-time.util';
@@ -86,6 +88,8 @@ export class QueueProcessor {
           return this.processEmail(job as unknown as Job<JobData>);
         case JobType.NOTIFICATION:
           return this.processNotification(job as unknown as Job<JobData>);
+        case JobType.REMINDER:
+          return await this.processReminderJob(job as unknown as Job<JobData>);
         case JobType.LAB_REPORT:
           return await this.processLabReport(job as unknown as Job<JobData>);
         case JobType.BULK_EHR_IMPORT:
@@ -139,6 +143,8 @@ export class QueueProcessor {
                 return await this.processVideoRecording(job as unknown as Job<JobData>);
               if (job.name.includes('email'))
                 return this.processEmail(job as unknown as Job<JobData>);
+              if (job.name.includes('reminder'))
+                return await this.processReminderJob(job as unknown as Job<JobData>);
               if (job.name.includes('notification'))
                 return this.processNotification(job as unknown as Job<JobData>);
 
@@ -522,6 +528,54 @@ export class QueueProcessor {
     // Implementation logic using ModuleRef for NotificationService
   }
 
+  async processReminderJob(job: Job<JobData>): Promise<{ success: boolean }> {
+    const service = this.moduleRef?.get(AppointmentNotificationService, { strict: false });
+    if (!service) {
+      throw new Error('AppointmentNotificationService not available in QueueProcessor');
+    }
+
+    const payload = this.extractCanonicalPayload(job.data);
+    const reminderType = this.resolveReminderType(payload['reminderType']);
+    const channels = this.resolveReminderChannels(payload['channels']);
+    const templateData = this.resolveReminderTemplateData(payload['templateData']);
+    const scheduledFor = this.resolveReminderScheduledFor(payload['scheduledFor']);
+
+    const notificationData: NotificationData = {
+      appointmentId: this.resolveRequiredString(payload['appointmentId'], 'appointmentId'),
+      patientId: this.resolveRequiredString(payload['patientId'], 'patientId'),
+      doctorId: this.resolveRequiredString(payload['doctorId'], 'doctorId'),
+      clinicId: this.resolveRequiredString(payload['clinicId'], 'clinicId'),
+      type: reminderType,
+      priority: this.resolveReminderPriority(payload['priority']),
+      channels,
+      templateData,
+    };
+
+    if (scheduledFor) {
+      notificationData.scheduledFor = scheduledFor;
+    }
+
+    void this.loggingService.log(
+      LogType.QUEUE,
+      LogLevel.INFO,
+      `Processing reminder job ${safeStringify(job.id)}`,
+      'QueueProcessor',
+      {
+        jobId: safeStringify(job.id),
+        appointmentId: notificationData.appointmentId,
+        reminderType: notificationData.type,
+        channels,
+      }
+    );
+
+    const result = await service.sendNotification(notificationData);
+    if (!result.success) {
+      throw new Error(`Reminder notification failed for job ${safeStringify(job.id)}`);
+    }
+
+    return { success: true };
+  }
+
   processPaymentProcessing(job: Job<JobData>): { success: boolean } {
     try {
       void this.loggingService.log(
@@ -589,6 +643,138 @@ export class QueueProcessor {
       );
       throw error;
     }
+  }
+
+  private extractCanonicalPayload(data: unknown): Record<string, unknown> {
+    if (typeof data !== 'object' || data === null) {
+      return {};
+    }
+
+    const record = data as Record<string, unknown>;
+    const nested = record['data'];
+
+    if (typeof nested === 'object' && nested !== null) {
+      return nested as Record<string, unknown>;
+    }
+
+    return record;
+  }
+
+  private resolveReminderType(value: unknown): NotificationData['type'] {
+    if (value === 'follow_up') {
+      return 'follow_up';
+    }
+    if (value === 'prescription') {
+      return 'prescription';
+    }
+    if (value === 'confirmation' || value === 'cancellation' || value === 'reschedule') {
+      return value as NotificationData['type'];
+    }
+    return 'reminder';
+  }
+
+  private resolveReminderChannels(value: unknown): NotificationData['channels'] {
+    const fallback: NotificationData['channels'] = ['email', 'whatsapp'];
+    if (!Array.isArray(value)) {
+      return fallback;
+    }
+
+    const channels = value.filter(
+      (channel): channel is NotificationData['channels'][number] =>
+        channel === 'email' ||
+        channel === 'sms' ||
+        channel === 'whatsapp' ||
+        channel === 'push' ||
+        channel === 'socket'
+    );
+
+    return channels.length > 0 ? channels : fallback;
+  }
+
+  private resolveReminderTemplateData(value: unknown): NotificationData['templateData'] {
+    const fallback: NotificationData['templateData'] = {
+      patientName: 'Patient',
+      doctorName: 'Doctor',
+      appointmentDate: formatDateInIST(new Date()),
+      appointmentTime: '10:00',
+      location: 'Clinic',
+      clinicName: 'Healthcare Clinic',
+    };
+
+    if (typeof value !== 'object' || value === null) {
+      return fallback;
+    }
+
+    const record = value as Record<string, unknown>;
+    const templateData: NotificationData['templateData'] = {
+      patientName: this.resolveStringOrDefault(record['patientName'], fallback.patientName),
+      doctorName: this.resolveStringOrDefault(record['doctorName'], fallback.doctorName),
+      appointmentDate: this.resolveStringOrDefault(
+        record['appointmentDate'],
+        fallback.appointmentDate
+      ),
+      appointmentTime: this.resolveStringOrDefault(
+        record['appointmentTime'],
+        fallback.appointmentTime
+      ),
+      location: this.resolveStringOrDefault(record['location'], fallback.location),
+      clinicName: this.resolveStringOrDefault(record['clinicName'], fallback.clinicName),
+    };
+
+    if (typeof record['appointmentType'] === 'string') {
+      templateData.appointmentType = record['appointmentType'];
+    }
+    if (typeof record['notes'] === 'string') {
+      templateData.notes = record['notes'];
+    }
+    if (typeof record['rescheduleUrl'] === 'string') {
+      templateData.rescheduleUrl = record['rescheduleUrl'];
+    }
+    if (typeof record['medicationDetails'] === 'string') {
+      templateData.medicationDetails = record['medicationDetails'];
+    }
+    if (typeof record['prescriptionUrl'] === 'string') {
+      templateData.prescriptionUrl = record['prescriptionUrl'];
+    }
+    if (typeof record['cancelUrl'] === 'string') {
+      templateData.cancelUrl = record['cancelUrl'];
+    }
+    if (typeof record['changes'] === 'object' && record['changes'] !== null) {
+      templateData.changes = record['changes'] as Record<string, unknown>;
+    }
+
+    return templateData;
+  }
+
+  private resolveReminderScheduledFor(value: unknown): Date | undefined {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = new Date(value);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+    return undefined;
+  }
+
+  private resolveReminderPriority(value: unknown): NotificationData['priority'] {
+    if (value === 'low' || value === 'high' || value === 'urgent') {
+      return value;
+    }
+    return 'normal';
+  }
+
+  private resolveRequiredString(value: unknown, field: string): string {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+    throw new Error(`Invalid or missing ${field} in reminder job payload`);
+  }
+
+  private resolveStringOrDefault(value: unknown, defaultValue: string): string {
+    return typeof value === 'string' && value.trim().length > 0 ? value : defaultValue;
   }
 
   // ============ EHR Module Queue Workers ============

@@ -45,8 +45,18 @@ export class WhatsAppConfig {
     return this.getConfig<string>('WHATSAPP_OTP_TEMPLATE_ID', 'otp_verification');
   }
 
-  get appointmentTemplateId(): string {
-    return this.getConfig<string>('WHATSAPP_APPOINTMENT_TEMPLATE_ID', 'appointment_reminder');
+  get appointmentConfirmationTemplateId(): string {
+    return this.getConfig<string>(
+      'WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID',
+      'appointment_confirmation'
+    );
+  }
+
+  get appointmentReminderTemplateId(): string {
+    return this.getConfig<string>(
+      'WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID',
+      'appointment_reminder_2'
+    );
   }
 
   get prescriptionTemplateId(): string {

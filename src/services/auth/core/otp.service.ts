@@ -183,7 +183,8 @@ export class OtpService {
         otp,
         this.config.expiryMinutes,
         2, // retries
-        clinicId
+        clinicId,
+        purpose
       );
 
       if (sent) {

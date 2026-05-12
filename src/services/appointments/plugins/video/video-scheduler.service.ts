@@ -49,7 +49,7 @@ export class VideoAppointmentSchedulerService {
 
   /** Minutes after scheduled start before a session is flagged as no-show */
   private get gracePeriodMinutes(): number {
-    return this.configService.get<number>('VIDEO_NO_SHOW_GRACE_MINUTES', 15);
+    return this.configService.get<number>('VIDEO_NO_SHOW_GRACE_MINUTES', 180);
   }
 
   constructor(

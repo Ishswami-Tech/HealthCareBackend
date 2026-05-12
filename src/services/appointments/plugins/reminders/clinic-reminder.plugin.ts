@@ -3,7 +3,7 @@ import { BaseAppointmentPlugin } from '@services/appointments/plugins/base/base-
 import { AppointmentReminderService } from './appointment-reminder.service';
 import { LoggingService } from '@infrastructure/logging';
 import type { ReminderRule } from '@core/types/appointment.types';
-import { formatDateKeyInIST } from '../../../../libs/utils/date-time.util';
+import { formatDateKeyInIST, parseIstDateTime } from '../../../../libs/utils/date-time.util';
 
 interface ReminderPluginData {
   operation: string;
@@ -16,12 +16,12 @@ interface ReminderPluginData {
   channels?: string[];
   templateData?: unknown;
   reminderId?: string;
+  appointmentTime?: string;
   rule?: Omit<ReminderRule, 'id'>;
   dateRange?: { from: Date; to: Date };
   patientName?: string;
   doctorName?: string;
   appointmentDate?: string;
-  appointmentTime?: string;
   location?: string;
   clinicName?: string;
   appointmentType?: string;
@@ -91,6 +91,16 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
         return await this.reminderService.cancelReminder(pluginData.reminderId);
       }
 
+      case 'cancelAppointmentReminder': {
+        if (!pluginData.appointmentId) {
+          throw new Error('Missing required field: appointmentId');
+        }
+        return await this.reminderService.cancelAppointmentReminder(
+          pluginData.appointmentId,
+          pluginData.reminderType || 'appointment_reminder'
+        );
+      }
+
       case 'getReminderRules': {
         if (!pluginData.clinicId) {
           throw new Error('Missing required field: clinicId');
@@ -117,6 +127,9 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
 
       case 'scheduleAppointmentReminder':
         return await this.scheduleAppointmentReminder(data);
+
+      case 'rescheduleAppointmentReminder':
+        return await this.rescheduleAppointmentReminder(data);
 
       case 'scheduleFollowUpReminder':
         return await this.scheduleFollowUpReminder(data);
@@ -164,6 +177,8 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
         createReminderRule: ['rule'],
         getReminderStats: ['clinicId', 'dateRange'],
         scheduleAppointmentReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
+        cancelAppointmentReminder: ['appointmentId'],
+        rescheduleAppointmentReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
         scheduleFollowUpReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
         schedulePrescriptionReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
         schedulePaymentReminder: ['appointmentId', 'patientId', 'doctorId', 'clinicId'],
@@ -207,8 +222,13 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       throw new Error('Missing required fields for scheduleAppointmentReminder');
     }
     const reminderType = 'appointment_reminder';
-    const hoursBefore = pluginData.hoursBefore ?? 24;
+    const leadHours = pluginData.hoursBefore ?? 24;
     const channels = pluginData.channels ?? ['email', 'whatsapp', 'push'];
+    const reminderTargetTime = this.resolveReminderScheduledFor(
+      pluginData.appointmentDate,
+      pluginData.appointmentTime,
+      leadHours
+    );
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
@@ -226,9 +246,10 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       pluginData.doctorId,
       pluginData.clinicId,
       reminderType,
-      hoursBefore,
+      leadHours,
       channels,
-      templateData
+      templateData,
+      reminderTargetTime
     );
   }
 
@@ -248,6 +269,11 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const reminderType = 'follow_up';
     const hoursBefore = pluginData.hoursBefore ?? 168; // 1 week
     const channels = pluginData.channels ?? ['email', 'whatsapp'];
+    const scheduledFor = this.resolveReminderScheduledFor(
+      pluginData.appointmentDate,
+      pluginData.appointmentTime,
+      hoursBefore
+    );
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
@@ -267,7 +293,54 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData
+      templateData,
+      scheduledFor
+    );
+  }
+
+  /**
+   * Reschedule appointment reminder
+   */
+  private async rescheduleAppointmentReminder(data: unknown): Promise<unknown> {
+    const pluginData = this.validatePluginData(data);
+    if (
+      !pluginData.appointmentId ||
+      !pluginData.patientId ||
+      !pluginData.doctorId ||
+      !pluginData.clinicId
+    ) {
+      throw new Error('Missing required fields for rescheduleAppointmentReminder');
+    }
+
+    const reminderType = 'appointment_reminder';
+    const leadHours = pluginData.hoursBefore ?? 24;
+    const channels = pluginData.channels ?? ['email', 'whatsapp', 'push'];
+    const scheduledFor = this.resolveReminderScheduledFor(
+      pluginData.appointmentDate,
+      pluginData.appointmentTime,
+      leadHours
+    );
+    const templateData = {
+      patientName: pluginData.patientName ?? 'Patient',
+      doctorName: pluginData.doctorName ?? 'Doctor',
+      appointmentDate: pluginData.appointmentDate ?? formatDateKeyInIST(new Date()),
+      appointmentTime: pluginData.appointmentTime ?? '10:00',
+      location: pluginData.location ?? 'Clinic',
+      clinicName: pluginData.clinicName ?? 'Healthcare Clinic',
+      appointmentType: pluginData.appointmentType,
+      notes: pluginData.notes,
+    };
+
+    return await this.reminderService.rescheduleReminder(
+      pluginData.appointmentId,
+      pluginData.patientId,
+      pluginData.doctorId,
+      pluginData.clinicId,
+      reminderType,
+      leadHours,
+      channels,
+      templateData,
+      scheduledFor
     );
   }
 
@@ -287,6 +360,11 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const reminderType = 'prescription';
     const hoursBefore = pluginData.hoursBefore ?? 24;
     const channels = pluginData.channels ?? ['whatsapp', 'push'];
+    const scheduledFor = this.resolveReminderScheduledFor(
+      pluginData.appointmentDate,
+      pluginData.appointmentTime,
+      hoursBefore
+    );
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
@@ -307,7 +385,8 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData
+      templateData,
+      scheduledFor
     );
   }
 
@@ -327,6 +406,11 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     const reminderType = 'payment';
     const hoursBefore = pluginData.hoursBefore ?? 24;
     const channels = pluginData.channels ?? ['email', 'whatsapp'];
+    const scheduledFor = this.resolveReminderScheduledFor(
+      pluginData.appointmentDate,
+      pluginData.appointmentTime,
+      hoursBefore
+    );
     const templateData = {
       patientName: pluginData.patientName ?? 'Patient',
       doctorName: pluginData.doctorName ?? 'Doctor',
@@ -348,7 +432,24 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       reminderType,
       hoursBefore,
       channels,
-      templateData
+      templateData,
+      scheduledFor
     );
+  }
+
+  private resolveReminderScheduledFor(
+    appointmentDate: string | undefined,
+    appointmentTime: string | undefined,
+    hoursBefore: number
+  ): Date {
+    const appointmentDateTime =
+      parseIstDateTime(appointmentDate, appointmentTime) ??
+      (appointmentDate ? new Date(appointmentDate) : null);
+
+    if (appointmentDateTime instanceof Date && !Number.isNaN(appointmentDateTime.getTime())) {
+      return new Date(appointmentDateTime.getTime() - hoursBefore * 60 * 60 * 1000);
+    }
+
+    return new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
   }
 }

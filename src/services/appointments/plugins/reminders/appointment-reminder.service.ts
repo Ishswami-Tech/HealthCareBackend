@@ -1,11 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
-import { QueueService, JobPriority } from '@infrastructure/queue';
-import { JobType } from '@core/types/queue.types';
+import { QueueService, JobPriority, HEALTHCARE_QUEUE } from '@infrastructure/queue';
 import { DatabaseService } from '@infrastructure/database';
+import { JobType } from '@core/types/queue.types';
 import type { ReminderSchedule, ReminderRule, ReminderResult } from '@core/types/appointment.types';
 
 // Re-export types for backward compatibility
@@ -14,17 +12,18 @@ export type { ReminderSchedule, ReminderRule, ReminderResult };
 @Injectable()
 export class AppointmentReminderService {
   private readonly logger = new Logger(AppointmentReminderService.name);
-  private readonly REMINDER_CACHE_TTL = 3600; // 1 hour
   private readonly RULE_CACHE_TTL = 7200; // 2 hours
 
   constructor(
     private readonly cacheService: CacheService,
     private readonly loggingService: LoggingService,
-    private readonly notificationService: AppointmentNotificationService,
     private readonly queueService: QueueService,
-    private readonly configService: ConfigService,
     private readonly databaseService: DatabaseService
   ) {}
+
+  buildReminderJobId(appointmentId: string, reminderType: string): string {
+    return `reminder:${reminderType}:${appointmentId}`;
+  }
 
   /**
    * Schedule a reminder for an appointment
@@ -37,22 +36,26 @@ export class AppointmentReminderService {
     reminderType: string,
     hoursBefore: number,
     channels: string[],
-    templateData: unknown
+    templateData: unknown,
+    scheduledFor?: Date
   ): Promise<ReminderResult> {
-    const reminderId = `reminder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    const scheduledFor = new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
+    const jobId = this.buildReminderJobId(appointmentId, reminderType);
+    const resolvedScheduledFor =
+      scheduledFor instanceof Date && !Number.isNaN(scheduledFor.getTime())
+        ? scheduledFor
+        : new Date(Date.now() + hoursBefore * 60 * 60 * 1000);
+    const delayMs = Math.max(0, resolvedScheduledFor.getTime() - Date.now());
 
-    this.logger.log(`Scheduling reminder ${reminderId}`, {
+    this.logger.log(`Scheduling reminder ${jobId}`, {
       appointmentId,
       reminderType,
       hoursBefore,
-      scheduledFor,
+      scheduledFor: resolvedScheduledFor,
     });
 
     try {
-      // Store reminder in cache
       const reminderData: ReminderSchedule = {
-        id: reminderId,
+        id: jobId,
         appointmentId,
         patientId,
         doctorId,
@@ -62,7 +65,7 @@ export class AppointmentReminderService {
           | 'follow_up'
           | 'prescription'
           | 'payment',
-        scheduledFor,
+        scheduledFor: resolvedScheduledFor,
         status: 'scheduled',
         channels: channels as ('push' | 'email' | 'socket' | 'sms' | 'whatsapp')[],
         priority: 'normal',
@@ -80,37 +83,77 @@ export class AppointmentReminderService {
         updatedAt: new Date(),
       };
 
-      const cacheKey = `reminder:${reminderId}`;
-      await this.cacheService.set(
-        cacheKey,
-        reminderData,
-        Math.floor((scheduledFor.getTime() - Date.now()) / 1000) + 3600 // 1 hour buffer
+      await this.queueService.addJob(
+        JobType.REMINDER,
+        reminderData.reminderType,
+        {
+          reminderId: jobId,
+          appointmentId,
+          patientId,
+          doctorId,
+          clinicId,
+          reminderType: reminderData.reminderType,
+          scheduledFor: resolvedScheduledFor,
+          channels: reminderData.channels,
+          priority: reminderData.priority,
+          templateData: reminderData.templateData,
+        },
+        {
+          correlationId: jobId,
+          delay: delayMs,
+          priority: JobPriority.NORMAL as unknown as number,
+          attempts: 3,
+          removeOnComplete: 100,
+          removeOnFail: 50,
+        }
       );
-
-      // Schedule the actual reminder execution
-      void this.scheduleReminderExecution(reminderData);
 
       return {
         success: true,
-        reminderId,
-        scheduledFor,
+        reminderId: jobId,
+        scheduledFor: resolvedScheduledFor,
         channels,
-        message: `Reminder scheduled for ${scheduledFor.toISOString()}`,
+        message: `Reminder queued for ${resolvedScheduledFor.toISOString()}`,
       };
     } catch (_error) {
-      this.logger.error(`Failed to schedule reminder ${reminderId}`, {
+      this.logger.error(`Failed to schedule reminder ${jobId}`, {
         error: _error instanceof Error ? _error.message : 'Unknown error',
         appointmentId,
       });
 
       return {
         success: false,
-        reminderId,
-        scheduledFor,
+        reminderId: jobId,
+        scheduledFor: resolvedScheduledFor,
         channels,
         error: _error instanceof Error ? _error.message : 'Unknown error',
       };
     }
+  }
+
+  async rescheduleReminder(
+    appointmentId: string,
+    patientId: string,
+    doctorId: string,
+    clinicId: string,
+    reminderType: string,
+    hoursBefore: number,
+    channels: string[],
+    templateData: unknown,
+    scheduledFor?: Date
+  ): Promise<ReminderResult> {
+    await this.cancelAppointmentReminder(appointmentId, reminderType);
+    return await this.scheduleReminder(
+      appointmentId,
+      patientId,
+      doctorId,
+      clinicId,
+      reminderType,
+      hoursBefore,
+      channels,
+      templateData,
+      scheduledFor
+    );
   }
 
   /**
@@ -121,38 +164,34 @@ export class AppointmentReminderService {
     sent: number;
     failed: number;
   }> {
-    this.logger.log('Processing scheduled reminders');
-
-    let processed = 0;
-    let sent = 0;
-    let failed = 0;
+    this.logger.log('Inspecting queued reminders');
 
     try {
-      // In a real implementation, this would query the database for due reminders
-      // For now, we'll simulate processing
-      const dueReminders = await this.getDueReminders();
+      const jobs = await this.queueService.getJobs(HEALTHCARE_QUEUE, {
+        status: ['waiting', 'active', 'delayed'],
+      });
+      const reminderJobs = jobs.filter(job => {
+        const jobData = job.data as Record<string, unknown>;
+        const nestedData =
+          typeof jobData['data'] === 'object' && jobData['data'] !== null
+            ? (jobData['data'] as Record<string, unknown>)
+            : undefined;
+        return (
+          String(jobData['jobType']) === 'reminder' ||
+          String(job.name) === 'reminder' ||
+          nestedData?.['reminderType'] !== undefined
+        );
+      });
 
-      for (const reminder of dueReminders) {
-        processed++;
-        try {
-          await this.executeReminder(reminder);
-          sent++;
-        } catch (_error) {
-          failed++;
-          this.logger.error(`Failed to execute reminder ${reminder.id}`, {
-            error: _error instanceof Error ? _error.message : 'Unknown error',
-          });
-        }
-      }
-
-      this.logger.log(`Processed ${processed} reminders: ${sent} sent, ${failed} failed`);
+      this.logger.log(`Found ${reminderJobs.length} queued reminder jobs`);
+      return { processed: reminderJobs.length, sent: 0, failed: 0 };
     } catch (_error) {
       this.logger.error('Failed to process scheduled reminders', {
         error: _error instanceof Error ? _error.message : 'Unknown error',
       });
     }
 
-    return { processed, sent, failed };
+    return { processed: 0, sent: 0, failed: 0 };
   }
 
   /**
@@ -160,22 +199,11 @@ export class AppointmentReminderService {
    */
   async cancelReminder(reminderId: string): Promise<boolean> {
     try {
-      const cacheKey = `reminder:${reminderId}`;
-      const reminder = await this.cacheService.get(cacheKey);
-
-      if (!reminder) {
-        this.logger.warn(`Reminder ${reminderId} not found`);
+      const removed = await this.queueService.removeJob(HEALTHCARE_QUEUE, reminderId);
+      if (!removed) {
+        this.logger.warn(`Reminder job ${reminderId} not found`);
         return false;
       }
-
-      // Update status to cancelled
-      const updatedReminder = {
-        ...reminder,
-        status: 'cancelled',
-        updatedAt: new Date(),
-      };
-
-      await this.cacheService.set(cacheKey, updatedReminder, this.REMINDER_CACHE_TTL);
 
       this.logger.log(`Reminder ${reminderId} cancelled`);
       return true;
@@ -185,6 +213,14 @@ export class AppointmentReminderService {
       });
       return false;
     }
+  }
+
+  async cancelAppointmentReminder(
+    appointmentId: string,
+    reminderType: string = 'appointment_reminder'
+  ): Promise<boolean> {
+    const jobId = this.buildReminderJobId(appointmentId, reminderType);
+    return await this.cancelReminder(jobId);
   }
 
   /**
@@ -362,95 +398,5 @@ export class AppointmentReminderService {
       successRate: Math.round(successRate * 10) / 10,
       averageResponseTime: Math.round(averageResponseTime * 10) / 10,
     });
-  }
-
-  /**
-   * Schedule reminder execution
-   */
-  private scheduleReminderExecution(reminder: ReminderSchedule): void {
-    // In a real implementation, this would use a job queue like BullMQ
-    // For now, we'll just log the scheduling
-    this.logger.log(`Scheduled reminder execution for ${reminder.scheduledFor.toISOString()}`, {
-      reminderId: reminder.id,
-      appointmentId: reminder.appointmentId,
-    });
-  }
-
-  /**
-   * Execute a reminder
-   */
-  private async executeReminder(reminder: ReminderSchedule): Promise<void> {
-    this.logger.log(`Executing reminder ${reminder.id}`, {
-      appointmentId: reminder.appointmentId,
-      reminderType: reminder.reminderType,
-    });
-
-    try {
-      // Send notification through the notification service
-      const notificationData = {
-        appointmentId: reminder.appointmentId,
-        patientId: reminder.patientId,
-        doctorId: reminder.doctorId,
-        clinicId: reminder.clinicId,
-        type: (reminder.reminderType === 'appointment_reminder' ? 'reminder' : 'follow_up') as
-          | 'reminder'
-          | 'confirmation'
-          | 'cancellation'
-          | 'reschedule'
-          | 'follow_up',
-        priority: reminder.priority,
-        channels: reminder.channels,
-        templateData: reminder.templateData,
-      };
-
-      await this.queueService.addJob(
-        JobType.NOTIFICATION,
-        'appointment_reminder',
-        notificationData,
-        { priority: JobPriority.HIGH as unknown as number, attempts: 3 }
-      );
-
-      const result = { success: true, sentChannels: reminder.channels };
-
-      // Update reminder status
-      const updatedReminder = {
-        ...reminder,
-        status: result.success ? 'sent' : 'failed',
-        updatedAt: new Date(),
-      };
-
-      const cacheKey = `reminder:${reminder.id}`;
-      await this.cacheService.set(cacheKey, updatedReminder, this.REMINDER_CACHE_TTL);
-
-      this.logger.log(`Reminder ${reminder.id} executed successfully`, {
-        success: result.success,
-        sentChannels: result.sentChannels,
-      });
-    } catch (_error) {
-      this.logger.error(`Failed to execute reminder ${reminder.id}`, {
-        error: _error instanceof Error ? _error.message : 'Unknown error',
-      });
-
-      // Update reminder status to failed
-      const failedReminder = {
-        ...reminder,
-        status: 'failed',
-        updatedAt: new Date(),
-      };
-
-      const cacheKey = `reminder:${reminder.id}`;
-      await this.cacheService.set(cacheKey, failedReminder, this.REMINDER_CACHE_TTL);
-
-      throw _error;
-    }
-  }
-
-  /**
-   * Get due reminders
-   */
-  private async getDueReminders(): Promise<ReminderSchedule[]> {
-    // In a real implementation, this would query the database for reminders due now
-    // For now, we'll return an empty array
-    return Promise.resolve([]);
   }
 }

@@ -218,8 +218,16 @@ export class ClinicGuard implements CanActivate {
     user: { id?: string; sub?: string; clinicId?: string; primaryClinicId?: string; role?: string },
     headerClinicId: string
   ): Promise<boolean> {
+    const userId = user.id || user.sub;
+    const currentUser =
+      userId && this.databaseService ? await this.databaseService.findUserByIdSafe(userId) : null;
+    const databasePrimaryClinicId =
+      currentUser && typeof currentUser === 'object' && 'primaryClinicId' in currentUser
+        ? (currentUser as { primaryClinicId?: string | null }).primaryClinicId || undefined
+        : undefined;
+
     // Extract clinic ID from JWT payload
-    const jwtClinicId = user.clinicId || user.primaryClinicId;
+    const jwtClinicId = user.clinicId || user.primaryClinicId || databasePrimaryClinicId;
 
     if (!jwtClinicId) {
       void this.loggingService.log(
@@ -235,8 +243,23 @@ export class ClinicGuard implements CanActivate {
     try {
       // Resolve both to UUIDs for comparison
       const { resolveClinicUUID } = await import('@utils/clinic.utils');
-      const headerUUID = await resolveClinicUUID(this.databaseService, headerClinicId);
-      const jwtUUID = await resolveClinicUUID(this.databaseService, jwtClinicId);
+      const resolveWithFallback = async (clinicId: string): Promise<string> => {
+        try {
+          return await resolveClinicUUID(this.databaseService, clinicId);
+        } catch (_error) {
+          if (
+            databasePrimaryClinicId &&
+            databasePrimaryClinicId !== clinicId &&
+            databasePrimaryClinicId.trim() !== ''
+          ) {
+            return await resolveClinicUUID(this.databaseService, databasePrimaryClinicId);
+          }
+          throw _error;
+        }
+      };
+
+      const headerUUID = await resolveWithFallback(headerClinicId);
+      const jwtUUID = await resolveWithFallback(jwtClinicId);
 
       // Validate they match (prevents clinic ID spoofing)
       if (headerUUID !== jwtUUID) {
@@ -286,16 +309,29 @@ export class ClinicGuard implements CanActivate {
 
       // Extract locationId if provided
       const locationId = this.extractLocationId(request);
+      const mutableRequest = request as unknown as {
+        clinicId?: string;
+        locationId?: string;
+        clinicContext?: Record<string, unknown>;
+        user?: Record<string, unknown>;
+        headers: Record<string, string | string[] | undefined>;
+      };
 
       // Store validated clinic info in request
-      request.clinicId = headerUUID;
-      if (locationId) {
-        request.locationId = locationId;
-      }
-      request.clinicContext = accessResult.clinicContext as unknown as {
-        [key: string]: unknown;
-        clinicName?: string;
+      mutableRequest.clinicId = headerUUID;
+      mutableRequest.headers['x-clinic-id'] = headerUUID;
+      mutableRequest.user = {
+        ...user,
+        clinicId: headerUUID,
+        primaryClinicId: headerUUID,
       };
+      if (locationId) {
+        mutableRequest.locationId = locationId;
+      }
+      mutableRequest.clinicContext = accessResult.clinicContext as unknown as Record<
+        string,
+        unknown
+      >;
 
       void this.loggingService.log(
         LogType.AUTH,

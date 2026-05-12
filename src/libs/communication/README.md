@@ -1,8 +1,7 @@
 # Communication Module
 
 **Purpose:** Multi-channel communication orchestration with smart routing
-**Location:** `src/libs/communication`
-**Status:** ✅ Production-ready
+**Location:** `src/libs/communication` **Status:** ✅ Production-ready
 
 ---
 
@@ -59,18 +58,18 @@ export class MyService {
 
 Category-based channel routing with smart defaults:
 
-| Category | Default Channels | Strategy | Priority | Rate Limit |
-|----------|------------------|----------|----------|------------|
-| **LOGIN** | socket | immediate | low | 10/60s |
-| **EHR_RECORD** | socket, push, email | immediate | high | - |
-| **APPOINTMENT** | socket, push, email | immediate | high | - |
-| **REMINDER** | push, email | scheduled | normal | - |
-| **BILLING** | push, email | queued | normal | - |
-| **CRITICAL** | all channels + fallback | immediate | critical | - |
-| **SYSTEM** | socket, email | queued | normal | - |
-| **USER_ACTIVITY** | socket | immediate | low | - |
-| **PRESCRIPTION** | push, email | immediate | high | - |
-| **CHAT** | socket | immediate | normal | - |
+| Category          | Default Channels        | Strategy  | Priority | Rate Limit |
+| ----------------- | ----------------------- | --------- | -------- | ---------- |
+| **LOGIN**         | socket                  | immediate | low      | 10/60s     |
+| **EHR_RECORD**    | socket, push, email     | immediate | high     | -          |
+| **APPOINTMENT**   | socket, push, email     | immediate | high     | -          |
+| **REMINDER**      | push, email             | scheduled | normal   | -          |
+| **BILLING**       | push, email             | queued    | normal   | -          |
+| **CRITICAL**      | all channels + fallback | immediate | critical | -          |
+| **SYSTEM**        | socket, email           | queued    | normal   | -          |
+| **USER_ACTIVITY** | socket                  | immediate | low      | -          |
+| **PRESCRIPTION**  | push, email             | immediate | high     | -          |
+| **CHAT**          | socket                  | immediate | normal   | -          |
 
 ---
 
@@ -85,9 +84,7 @@ await this.communicationService.send({
   priority: CommunicationPriority.HIGH,
   title: 'Appointment Scheduled',
   body: 'Your appointment is confirmed for tomorrow at 10:00 AM',
-  recipients: [
-    { userId: 'user123', email: 'patient@example.com' }
-  ],
+  recipients: [{ userId: 'user123', email: 'patient@example.com' }],
 });
 ```
 
@@ -105,8 +102,8 @@ await this.communicationService.send({
       userId: 'user123',
       email: 'patient@example.com',
       phoneNumber: '+1234567890',
-      deviceToken: 'fcm-token-here'
-    }
+      deviceToken: 'fcm-token-here',
+    },
   ],
   channels: ['socket', 'push', 'email', 'whatsapp'], // Explicit
 });
@@ -137,7 +134,7 @@ await this.communicationService.send({
   body: 'Time to take your medication',
   recipients: [{ userId: 'user123', email: 'patient@example.com' }],
   respectPreferences: true, // Default: true
-  applyRateLimit: true,     // Default: true
+  applyRateLimit: true, // Default: true
 });
 ```
 
@@ -183,11 +180,11 @@ Users can control notification behavior:
 // User preferences control which channels receive notifications
 interface UserCommunicationPreferences {
   userId: string;
-  enabledChannels: CommunicationChannel[];  // ['email', 'push']
+  enabledChannels: CommunicationChannel[]; // ['email', 'push']
   disabledChannels: CommunicationChannel[]; // ['sms', 'whatsapp']
   quietHours?: {
-    start: string;    // '22:00'
-    end: string;      // '08:00'
+    start: string; // '22:00'
+    end: string; // '08:00'
     timezone: string; // 'America/New_York'
   };
   categoryPreferences?: {
@@ -199,6 +196,7 @@ interface UserCommunicationPreferences {
 ```
 
 **Preference Hierarchy:**
+
 1. Required channels (CRITICAL category) always sent
 2. Quiet hours honored for non-critical messages
 3. Category-specific preferences override defaults
@@ -232,6 +230,7 @@ await this.whatsAppService.sendCustomMessage(
 ```
 
 **Supported Providers:**
+
 - **Email:** SMTP, Mailtrap (dev), AWS SES, SendGrid
 - **WhatsApp:** Meta Business API, Twilio WhatsApp
 - **Push:** Firebase Cloud Messaging (FCM), AWS SNS (fallback)
@@ -362,9 +361,11 @@ SOCKET_IO_PATH=/socket.io
 ## Troubleshooting
 
 **Issue: Messages not being delivered**
+
 ```typescript
 // 1. Check user preferences
-const prefs = await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
+const prefs =
+  await this.databaseService.findNotificationPreferenceByUserIdSafe(userId);
 
 // 2. Check channel health
 const [healthy, latency] = await this.communicationService.getHealthStatus();
@@ -373,15 +374,16 @@ const [healthy, latency] = await this.communicationService.getHealthStatus();
 const metrics = this.communicationService.getMetrics();
 
 // 4. Check delivery logs
-const logs = await this.databaseService.executeRead(async (client) => {
+const logs = await this.databaseService.executeRead(async client => {
   return await client.notificationDeliveryLog.findMany({
     where: { notificationId },
-    orderBy: { sentAt: 'desc' }
+    orderBy: { sentAt: 'desc' },
   });
 });
 ```
 
 **Issue: Rate limiting blocking messages**
+
 ```typescript
 // Option 1: Disable rate limiting for critical messages
 await this.communicationService.send({
@@ -396,6 +398,7 @@ const isLimited = await this.cacheService.isRateLimited(key, 10, 60);
 ```
 
 **Issue: Multi-tenant provider not routing correctly**
+
 ```typescript
 // Ensure clinicId is passed in metadata
 await this.communicationService.send({
@@ -434,6 +437,7 @@ CommunicationService (orchestrator)
 ```
 
 **Flow:**
+
 1. `send()` called with CommunicationRequest
 2. Determine channels (category config or explicit)
 3. Apply rate limiting (if enabled)
@@ -453,33 +457,38 @@ CommunicationService (orchestrator)
 
 ### Overview
 
-The communication system is fully integrated with WhatsApp as a primary channel alongside Email, with complete multi-tenant support. Each clinic can configure its own WhatsApp provider (Meta Business API or Twilio) with clinic-specific templates and dynamic clinic names.
+The communication system is fully integrated with WhatsApp as a primary channel
+alongside Email, with complete multi-tenant support. Each clinic can configure
+its own WhatsApp provider (Meta Business API or Twilio) with clinic-specific
+templates and dynamic clinic names.
 
 ### Channel Priority Configuration
 
 **Primary Channels (Always Sent):**
+
 - **Email** - Primary communication channel
 - **WhatsApp** - Primary communication channel
 - **Push Notifications** - In-house channel (FCM primary, SNS fallback)
 - **Socket (WebSocket)** - In-house real-time channel
 
 **Secondary Channel (Opt-in Only):**
+
 - **SMS** - Only sent when user explicitly enables it (`smsEnabled: true`)
 
 ### Category Channel Mapping
 
-| Category | Default Channels | Notes |
-|----------|------------------|-------|
-| **LOGIN** | `email`, `whatsapp` | Auth: Only email + WhatsApp (no push/socket for security) |
-| **EHR_RECORD** | `socket`, `push`, `email`, `whatsapp` | Required: socket |
-| **APPOINTMENT** | `socket`, `push`, `email`, `whatsapp` | All primary channels |
-| **REMINDER** | `push`, `email`, `whatsapp`, `socket` | Scheduled delivery |
-| **BILLING** | `push`, `email`, `whatsapp`, `socket` | Queued delivery |
-| **CRITICAL** | `socket`, `push`, `email`, `whatsapp` | Required: socket, push. Fallback: SMS (if enabled) |
-| **SYSTEM** | `socket`, `email`, `whatsapp` | System notifications |
-| **USER_ACTIVITY** | `socket`, `email`, `whatsapp` | User activity tracking |
-| **PRESCRIPTION** | `push`, `email`, `whatsapp`, `socket` | Prescription ready notifications |
-| **CHAT** | `socket`, `email`, `whatsapp` | Chat notifications |
+| Category          | Default Channels                      | Notes                                                     |
+| ----------------- | ------------------------------------- | --------------------------------------------------------- |
+| **LOGIN**         | `email`, `whatsapp`                   | Auth: Only email + WhatsApp (no push/socket for security) |
+| **EHR_RECORD**    | `socket`, `push`, `email`, `whatsapp` | Required: socket                                          |
+| **APPOINTMENT**   | `socket`, `push`, `email`, `whatsapp` | All primary channels                                      |
+| **REMINDER**      | `push`, `email`, `whatsapp`, `socket` | Scheduled delivery                                        |
+| **BILLING**       | `push`, `email`, `whatsapp`, `socket` | Queued delivery                                           |
+| **CRITICAL**      | `socket`, `push`, `email`, `whatsapp` | Required: socket, push. Fallback: SMS (if enabled)        |
+| **SYSTEM**        | `socket`, `email`, `whatsapp`         | System notifications                                      |
+| **USER_ACTIVITY** | `socket`, `email`, `whatsapp`         | User activity tracking                                    |
+| **PRESCRIPTION**  | `push`, `email`, `whatsapp`, `socket` | Prescription ready notifications                          |
+| **CHAT**          | `socket`, `email`, `whatsapp`         | Chat notifications                                        |
 
 ### Multi-Tenant WhatsApp Features
 
@@ -512,20 +521,18 @@ Clinic names are dynamically injected into all WhatsApp templates:
 ```typescript
 // OTP Template Parameters
 [
-  { type: 'text', text: clinicName },  // "City Medical Center"
-  { type: 'text', text: otp },          // "123456"
-  { type: 'text', text: expiryMinutes } // "10"
-]
-
-// Appointment Template Parameters
-[
-  { type: 'text', text: clinicName },     // "City Medical Center"
-  { type: 'text', text: patientName },    // "John Doe"
-  { type: 'text', text: doctorName },     // "Dr. Smith"
+  { type: 'text', text: clinicName }, // "City Medical Center"
+  { type: 'text', text: otp }, // "123456"
+  { type: 'text', text: expiryMinutes }, // "10"
+][
+  // Appointment Template Parameters
+  ({ type: 'text', text: clinicName }, // "City Medical Center"
+  { type: 'text', text: patientName }, // "John Doe"
+  { type: 'text', text: doctorName }, // "Dr. Smith"
   { type: 'text', text: appointmentDate }, // "2024-01-15"
   { type: 'text', text: appointmentTime }, // "10:00 AM"
-  { type: 'text', text: location }        // "Main Clinic"
-]
+  { type: 'text', text: location }) // "Main Clinic"
+];
 ```
 
 #### 3. Provider Routing
@@ -538,8 +545,9 @@ await whatsAppService.sendOTP(
   phoneNumber,
   otp,
   10, // expiry minutes
-  2,  // max retries
-  'clinic-abc-123' // Routes to clinic's Meta WhatsApp account
+  2, // max retries
+  'clinic-abc-123', // Routes to clinic's Meta WhatsApp account
+  'verification' // Template purpose label
 );
 
 // Falls back to global provider if clinic provider fails
@@ -553,20 +561,21 @@ The system automatically enriches recipients with missing contact information:
 ```typescript
 // Before enrichment
 recipients: [
-  { userId: 'user123' } // Only userId provided
-]
+  { userId: 'user123' }, // Only userId provided
+];
 
 // After enrichment (automatic)
 recipients: [
   {
     userId: 'user123',
-    email: 'patient@example.com',    // Fetched from database
-    phoneNumber: '+1234567890'       // Fetched from database
-  }
-]
+    email: 'patient@example.com', // Fetched from database
+    phoneNumber: '+1234567890', // Fetched from database
+  },
+];
 ```
 
 **Enrichment Process:**
+
 1. Check if `email` or `phoneNumber` already provided
 2. If missing and `userId` provided, fetch from database
 3. Cache results to avoid repeated database queries
@@ -578,14 +587,15 @@ Channels are validated before sending to prevent errors:
 
 ```typescript
 // Automatic validation
-canSendChannel('email', recipient)      // Requires: recipient.email
-canSendChannel('whatsapp', recipient)  // Requires: recipient.phoneNumber
-canSendChannel('sms', recipient)        // Requires: recipient.phoneNumber
-canSendChannel('push', recipient)      // Requires: recipient.deviceToken or userId
-canSendChannel('socket', recipient)    // Requires: recipient.socketRoom or userId
+canSendChannel('email', recipient); // Requires: recipient.email
+canSendChannel('whatsapp', recipient); // Requires: recipient.phoneNumber
+canSendChannel('sms', recipient); // Requires: recipient.phoneNumber
+canSendChannel('push', recipient); // Requires: recipient.deviceToken or userId
+canSendChannel('socket', recipient); // Requires: recipient.socketRoom or userId
 ```
 
 **Behavior:**
+
 - Missing contact info → Channel skipped (no error)
 - Logged at DEBUG level with reason
 - Other channels continue to send
@@ -598,7 +608,7 @@ canSendChannel('socket', recipient)    // Requires: recipient.socketRoom or user
 // AuthService.requestOtp() sends OTP via both channels
 await authService.requestOtp({
   identifier: 'patient@example.com',
-  clinicId: 'clinic-abc-123' // Optional, uses user's primary clinic if not provided
+  clinicId: 'clinic-abc-123', // Optional, uses user's primary clinic if not provided
 });
 
 // Sends:
@@ -659,6 +669,7 @@ SMS is a **secondary channel** that requires explicit user opt-in:
 ```
 
 **SMS Usage:**
+
 - Only sent when `smsEnabled: true` in user preferences
 - Checked in `filterChannelsByPreferences()`
 - Double-checked in `sendSMS()` for safety
@@ -734,6 +745,7 @@ const clinicName = await clinicTemplateService.getClinicName(clinicId);
 ```
 
 **Caching:**
+
 - Clinic template data cached for 1 hour
 - Cache key: `clinic_template_data:{clinicId}`
 - Cache invalidation on clinic update
@@ -741,40 +753,47 @@ const clinicName = await clinicTemplateService.getClinicName(clinicId);
 ### Implementation Checklist
 
 ✅ **Multi-Tenant Support**
+
 - Clinic-specific WhatsApp providers
 - Clinic-specific template IDs
 - Dynamic clinic names in templates
 - Provider fallback chains
 
 ✅ **Channel Configuration**
+
 - Email + WhatsApp as primary channels
 - Push + Socket as in-house channels
 - SMS as secondary (opt-in only)
 - Category-based channel routing
 
 ✅ **Recipient Enrichment**
+
 - Automatic phone number fetching
 - Automatic email fetching
 - Graceful handling of missing data
 
 ✅ **Channel Validation**
+
 - Pre-send validation of required contact info
 - Automatic channel skipping when data missing
 - Comprehensive logging
 
 ✅ **WhatsApp Integration**
+
 - OTP via WhatsApp
 - Appointment notifications
 - Appointment reminders
 - Prescription notifications
 
 ✅ **Error Handling**
+
 - Provider fallback chains
 - Channel failure isolation
 - Retry logic with exponential backoff
 - Graceful degradation
 
 ✅ **User Preferences**
+
 - SMS opt-in mechanism
 - Preference checking before sending
 - Category-specific preferences
@@ -788,7 +807,7 @@ const clinicName = await clinicTemplateService.getClinicName(clinicId);
 // AuthService automatically handles this
 await authService.requestOtp({
   identifier: 'patient@example.com',
-  clinicId: 'clinic-abc-123' // Optional
+  clinicId: 'clinic-abc-123', // Optional
 });
 
 // Sends:
@@ -806,11 +825,11 @@ await communicationService.send({
   title: 'Appointment Scheduled',
   body: 'Your appointment is confirmed',
   recipients: [
-    { userId: 'user123' } // Email & phone fetched automatically
+    { userId: 'user123' }, // Email & phone fetched automatically
   ],
   metadata: {
-    clinicId: 'clinic-abc-123' // Routes to clinic providers
-  }
+    clinicId: 'clinic-abc-123', // Routes to clinic providers
+  },
 });
 
 // Sends via:
@@ -829,15 +848,16 @@ await communicationService.send({
   title: 'Critical Alert',
   body: 'Urgent notification',
   recipients: [
-    { userId: 'user123' } // Must have smsEnabled: true
+    { userId: 'user123' }, // Must have smsEnabled: true
   ],
-  channels: ['sms'] // Explicitly request SMS
+  channels: ['sms'], // Explicitly request SMS
 });
 ```
 
 ### Troubleshooting
 
 **Issue: WhatsApp messages not sending**
+
 ```typescript
 // 1. Check clinic configuration
 const config = await communicationConfigService.getClinicConfig(clinicId);
@@ -855,6 +875,7 @@ const health = await adapter.getHealthStatus();
 ```
 
 **Issue: Clinic name not appearing in templates**
+
 ```typescript
 // 1. Verify clinic exists
 const clinic = await databaseService.findClinicByIdSafe(clinicId);
@@ -867,9 +888,11 @@ await clinicTemplateService.invalidateCache(clinicId);
 ```
 
 **Issue: SMS not sending even when enabled**
+
 ```typescript
 // 1. Verify user preference
-const prefs = await databaseService.findNotificationPreferenceByUserIdSafe(userId);
+const prefs =
+  await databaseService.findNotificationPreferenceByUserIdSafe(userId);
 console.log(prefs.smsEnabled); // Must be true
 
 // 2. Check category allows SMS

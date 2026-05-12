@@ -10,6 +10,7 @@
 
 import {
   Controller,
+  Get,
   Post,
   Body,
   HttpCode,
@@ -80,6 +81,53 @@ export class WhatsAppWebhookController {
     private readonly configService: ConfigService
   ) {}
 
+  @Get('meta')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Verify Meta WhatsApp webhook endpoint',
+    description:
+      'Handles the Meta webhook verification challenge and returns the challenge token when the verify token matches.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Webhook verification succeeded',
+  })
+  @ApiResponse({
+    status: 401,
+    description: 'Invalid webhook verification token',
+  })
+  @ApiQuery({
+    name: 'hub.mode',
+    description: 'Webhook verification mode',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'hub.verify_token',
+    description: 'Webhook verification token',
+    required: false,
+  })
+  @ApiQuery({
+    name: 'hub.challenge',
+    description: 'Webhook verification challenge',
+    required: false,
+  })
+  verifyMetaWebhook(
+    @Query('hub.mode') mode?: string,
+    @Query('hub.verify_token') verifyToken?: string,
+    @Query('hub.challenge') challenge?: string
+  ): string {
+    if (mode !== 'subscribe' || !verifyToken || !challenge) {
+      throw new UnauthorizedException('Invalid webhook verification request');
+    }
+
+    const configuredToken = this.configService.getEnv('META_WHATSAPP_WEBHOOK_VERIFY_TOKEN');
+    if (configuredToken && verifyToken !== configuredToken) {
+      throw new UnauthorizedException('Invalid webhook verification token');
+    }
+
+    return challenge;
+  }
+
   @Post('meta')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -133,24 +181,11 @@ export class WhatsAppWebhookController {
   async handleMetaWebhook(
     @Body() event: MetaWhatsAppWebhookEvent,
     @Headers('x-hub-signature-256') signature?: string,
-    @Query('hub.mode') mode?: string,
-    @Query('hub.verify_token') verifyToken?: string,
-    @Query('hub.challenge') challenge?: string
+    @Query('hub.mode') _mode?: string,
+    @Query('hub.verify_token') _verifyToken?: string,
+    @Query('hub.challenge') _challenge?: string
   ): Promise<string | { received: boolean; processed: boolean }> {
     try {
-      // Handle webhook verification (Meta requires this for initial setup)
-      if (mode === 'subscribe' && verifyToken) {
-        // Verify token matches configured token
-        const configuredToken = this.configService.getEnv('META_WHATSAPP_WEBHOOK_VERIFY_TOKEN');
-        if (configuredToken && verifyToken !== configuredToken) {
-          throw new UnauthorizedException('Invalid webhook verification token');
-        }
-        // Return challenge for webhook verification
-        if (challenge) {
-          return challenge;
-        }
-      }
-
       // Verify webhook signature if provided (production security)
       if (signature && process.env['NODE_ENV'] === 'production') {
         const appSecret = this.configService.getEnv('META_WHATSAPP_APP_SECRET');

@@ -39,6 +39,7 @@ import { ClinicNotificationPlugin } from './plugins/notifications/clinic-notific
 import { ClinicConfirmationPlugin } from './plugins/confirmation/clinic-confirmation.plugin';
 import { ClinicLocationPlugin } from './plugins/location/clinic-location.plugin';
 import { ClinicFollowUpPlugin } from './plugins/followup/clinic-followup.plugin';
+import { ClinicReminderPlugin } from './plugins/reminders/clinic-reminder.plugin';
 import { ClinicVideoPlugin } from './plugins/video/clinic-video.plugin';
 import { CheckInService } from './plugins/checkin/check-in.service';
 
@@ -405,6 +406,7 @@ export class AppointmentsService {
     private readonly clinicConfirmationPlugin: ClinicConfirmationPlugin, // Hot path: Confirmations (common)
     private readonly clinicLocationPlugin: ClinicLocationPlugin, // Medium: Location queries (moderate frequency)
     private readonly clinicFollowUpPlugin: ClinicFollowUpPlugin, // Medium: Follow-up operations (moderate frequency)
+    private readonly clinicReminderPlugin: ClinicReminderPlugin, // Scheduled reminder workflows
     private readonly clinicVideoPlugin: ClinicVideoPlugin, // Video consultations (medium-low frequency)
 
     // Infrastructure Services
@@ -1613,6 +1615,38 @@ export class AppointmentsService {
         );
       }
 
+      // Schedule the automatic reminder for this appointment.
+      // The reminder plugin converts the appointment time into an actual delayed execution window.
+      void this.clinicReminderPlugin
+        .process({
+          operation: 'scheduleAppointmentReminder',
+          appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+          patientId: createDto.patientId,
+          doctorId: createDto.doctorId,
+          clinicId,
+          appointmentDate: createDto.appointmentDate,
+          appointmentTime: (createDto as CreateAppointmentDto & { time?: string }).time,
+          appointmentType: createDto.type,
+          notes: createDto.notes,
+          clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
+          patientName: 'Patient',
+          doctorName: 'Doctor',
+          hoursBefore: this.configService.getEnvNumber('APPOINTMENT_REMINDER_HOURS_BEFORE', 24),
+          channels: ['email', 'whatsapp'],
+        })
+        .catch(reminderError => {
+          void this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.WARN,
+            'Failed to schedule appointment reminder',
+            'AppointmentsService.createAppointment',
+            {
+              appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
+              error: reminderError instanceof Error ? reminderError.message : String(reminderError),
+            }
+          );
+        });
+
       // Room creation for VIDEO_CALL appointments is handled dynamically during generateMeetingToken
       // No explicit pre-creation is needed.
 
@@ -2392,6 +2426,36 @@ export class AppointmentsService {
 
     await this.syncPaidAppointmentBillingAfterReschedule(appointment, newDate, newTime, userId);
 
+    try {
+      await this.clinicReminderPlugin.process({
+        operation: 'rescheduleAppointmentReminder',
+        appointmentId,
+        patientId: appointment.patientId,
+        doctorId: appointment.doctorId,
+        clinicId,
+        appointmentDate: newDate,
+        appointmentTime: newTime,
+        appointmentType: appointment.type,
+        notes: appointment.notes ?? undefined,
+        clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
+        patientName: 'Patient',
+        doctorName: 'Doctor',
+        hoursBefore: this.configService.getEnvNumber('APPOINTMENT_REMINDER_HOURS_BEFORE', 24),
+        channels: ['email', 'whatsapp'],
+      });
+    } catch (reminderError) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        'Failed to reschedule queued appointment reminder',
+        'AppointmentsService.rescheduleAppointment',
+        {
+          appointmentId,
+          error: reminderError instanceof Error ? reminderError.message : String(reminderError),
+        }
+      );
+    }
+
     // Notify
     await this.eventService.emit('appointment.rescheduled', {
       appointmentId,
@@ -3046,6 +3110,28 @@ export class AppointmentsService {
         (result.data as Record<string, unknown>)?.['doctorId'] as string,
         clinicId
       );
+
+      try {
+        await this.clinicReminderPlugin.process({
+          operation: 'cancelAppointmentReminder',
+          appointmentId,
+          patientId: (result.data as Record<string, unknown>)?.['patientId'] as string,
+          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
+          clinicId,
+          reminderType: 'appointment_reminder',
+        });
+      } catch (reminderError) {
+        void this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Failed to cancel queued appointment reminder',
+          'AppointmentsService.cancelAppointment',
+          {
+            appointmentId,
+            error: reminderError instanceof Error ? reminderError.message : String(reminderError),
+          }
+        );
+      }
 
       // Hot path: Trigger notification plugin (direct injection for performance)
       try {

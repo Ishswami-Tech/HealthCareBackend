@@ -248,7 +248,18 @@ export class InvoicePDFService {
       .fillColor(this.c.dark)
       .text(`#${data.invoiceNumber}`, x + w - 210, y + 16, { width: 210, align: 'right' });
 
-    return y + 70;
+    if (data.gatewayOrderId) {
+      doc
+        .font('Helvetica')
+        .fontSize(10)
+        .fillColor(this.c.gray)
+        .text(`Order Id: ${data.gatewayOrderId}`, x + w - 210, y + 44, {
+          width: 210,
+          align: 'right',
+        });
+    }
+
+    return y + 82;
   }
 
   private drawInfoRow(

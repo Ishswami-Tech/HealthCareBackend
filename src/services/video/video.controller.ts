@@ -27,6 +27,7 @@ import {
   Put,
   ValidationPipe,
   HttpException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -933,6 +934,9 @@ export class VideoController {
       const context = 'VideoController.getConsultationStatus';
       if (error instanceof HealthcareError) {
         this.errors.handleError(error, context);
+        throw error;
+      }
+      if (error instanceof ForbiddenException) {
         throw error;
       }
       // NotFoundException originates from ensureAppointmentJoinable (via the appointment
