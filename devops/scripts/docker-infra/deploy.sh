@@ -2381,6 +2381,8 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
         log_error "=== End of Migration Error Output ==="
         log_error "Full migration log saved to: /tmp/migration.log"
         
+        local migration_recovery_action="none"
+
         # Check if this is the P3005 error (database not empty, needs baseline)
         if echo "$migration_output" | grep -q "P3005"; then
             log_warning "Detected P3005 error - database has existing schema but no migration history"
@@ -2430,6 +2432,7 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
                 
                 if $baseline_success; then
                     log_success "All migrations baselined successfully"
+                    migration_recovery_action="baseline:P3005"
                     log_info "Retrying migration deploy..."
                     
                     # Retry migration
@@ -2442,8 +2445,9 @@ console.log('[DEBUG] process.env.DIRECT_URL:', process.env.DIRECT_URL || 'UNSET'
                     local retry_exit_code=$?
                     
                     if [[ $retry_exit_code -eq 0 ]]; then
-                        log_success "Migration succeeded after baseline!"
-                        return 0
+                            log_success "Migration succeeded after baseline!"
+                            log_success "Migration recovery summary: ${migration_recovery_action}"
+                            return 0
                     else
                         log_error "Migration still failed after baseline"
                         echo "$retry_output" >&2
@@ -2560,7 +2564,8 @@ BASELINE_SQL
                                 --schema './schema.prisma' \
                                 --config './prisma.config.js'
                         " 2>&1; then
-                            log_success "Resolved failed migration as applied: $failed_migration_name"
+                        log_success "Resolved failed migration as applied: $failed_migration_name"
+                        migration_recovery_action="resolve:P3009:${failed_migration_name}"
                             log_info "Retrying migration deploy..."
 
                             local retry_output
@@ -2573,6 +2578,7 @@ BASELINE_SQL
 
                             if [[ $retry_exit_code -eq 0 ]]; then
                                 log_success "Migration succeeded after resolving failed migration!"
+                                log_success "Migration recovery summary: ${migration_recovery_action}"
                                 return 0
                             else
                                 log_error "Migration still failed after resolving failed migration"
@@ -2641,6 +2647,9 @@ BASELINE_SQL
         fi
         
         log_error "To debug, check the migration output above for Prisma errors"
+        if [[ "$migration_recovery_action" != "none" ]]; then
+            log_warning "Migration recovery summary: ${migration_recovery_action}"
+        fi
         if [[ -n "$PRE_MIGRATION_BACKUP" ]]; then
             log_warning "Rolling back to pre-migration backup..."
             restore_backup "$PRE_MIGRATION_BACKUP" || {
