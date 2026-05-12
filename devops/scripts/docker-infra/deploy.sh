@@ -2500,6 +2500,94 @@ BASELINE_SQL
                 fi
             fi
         fi
+
+        # Check if this is the P3009 error (failed migration already recorded in target DB)
+        if echo "$migration_output" | grep -q "P3009"; then
+            log_warning "Detected P3009 error - target database contains a failed migration record"
+            log_info "Attempting safe auto-resolve of the failed migration..."
+
+            local failed_migration_name
+            failed_migration_name=$(printf '%s\n' "$migration_output" | sed -nE 's/.*The `([^`]+)` migration started.*/\1/p' | head -n 1)
+
+            if [[ -z "$failed_migration_name" ]]; then
+                log_error "Could not determine failed migration name from Prisma output"
+            else
+                local migration_sql_path="/app/src/libs/infrastructure/database/prisma/migrations/$failed_migration_name/migration.sql"
+                if ! docker exec "${CONTAINER_PREFIX}api" test -f "$migration_sql_path"; then
+                    log_error "Migration SQL file not found in container: $migration_sql_path"
+                else
+                    local tables_to_check
+                    local types_to_check
+                    tables_to_check=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        grep -oE 'CREATE TABLE \"[^\"]+\"' '$migration_sql_path' 2>/dev/null | sed -E 's/CREATE TABLE \"([^\"]+)\"/\\1/'
+                    " 2>/dev/null || true)
+                    types_to_check=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
+                        grep -oE 'CREATE TYPE \"[^\"]+\"' '$migration_sql_path' 2>/dev/null | sed -E 's/CREATE TYPE \"([^\"]+)\"/\\1/'
+                    " 2>/dev/null || true)
+
+                    local safe_to_resolve=true
+                    local missing_object=false
+
+                    if [[ -z "$tables_to_check" && -z "$types_to_check" ]]; then
+                        log_warning "No CREATE TABLE or CREATE TYPE statements found to validate"
+                        safe_to_resolve=false
+                    fi
+
+                    for table_name in $tables_to_check; do
+                        if ! docker exec -e PGPASSWORD="$clean_password" postgres psql -U postgres -d userdb -tAc "SELECT to_regclass('\"$table_name\"') IS NOT NULL;" 2>/dev/null | grep -qx "t"; then
+                            log_warning "Missing table for auto-resolve: $table_name"
+                            missing_object=true
+                        fi
+                    done
+
+                    for type_name in $types_to_check; do
+                        if ! docker exec -e PGPASSWORD="$clean_password" postgres psql -U postgres -d userdb -tAc "SELECT EXISTS (SELECT 1 FROM pg_type WHERE typname = '$type_name');" 2>/dev/null | grep -qx "t"; then
+                            log_warning "Missing enum/type for auto-resolve: $type_name"
+                            missing_object=true
+                        fi
+                    done
+
+                    if [[ "$missing_object" == "true" ]]; then
+                        safe_to_resolve=false
+                    fi
+
+                    if [[ "$safe_to_resolve" == "true" ]]; then
+                        log_info "Safe to mark failed migration as applied: $failed_migration_name"
+                        if docker exec "${CONTAINER_PREFIX}api" bash -c "
+                            export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                            unset DIRECT_URL
+                            cd /app/src/libs/infrastructure/database/prisma && npx prisma migrate resolve --applied '$failed_migration_name' \
+                                --schema './schema.prisma' \
+                                --config './prisma.config.js'
+                        " 2>&1; then
+                            log_success "Resolved failed migration as applied: $failed_migration_name"
+                            log_info "Retrying migration deploy..."
+
+                            local retry_output
+                            retry_output=$(docker exec "${CONTAINER_PREFIX}api" bash -c "
+                                export DATABASE_URL=\$(echo '$encoded_url' | base64 -d)
+                                unset DIRECT_URL
+                                cd /app && yarn prisma:migrate
+                            " 2>&1)
+                            local retry_exit_code=$?
+
+                            if [[ $retry_exit_code -eq 0 ]]; then
+                                log_success "Migration succeeded after resolving failed migration!"
+                                return 0
+                            else
+                                log_error "Migration still failed after resolving failed migration"
+                                echo "$retry_output" >&2
+                            fi
+                        else
+                            log_error "Failed to resolve migration as applied: $failed_migration_name"
+                        fi
+                    else
+                        log_error "Auto-resolve skipped because not all expected objects were present"
+                        log_error "Resolve this migration manually after verifying the database state"
+                    fi
+                fi
+            fi
+        fi
         
         # Check if container crashed during migration (exit code 137 = killed, often OOM)
         if [[ $migration_exit_code -eq 137 ]]; then
