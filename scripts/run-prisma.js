@@ -12,7 +12,7 @@
  * - run-db-push.js
  */
 
-const { execFileSync, execSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -88,12 +88,39 @@ const env = {
 };
 
 function runPrismaCli(args, options = {}) {
-  return execFileSync('node', ['--max-old-space-size=8192', 'node_modules/prisma/build/index.js', ...args], {
-    stdio: 'inherit',
-    cwd: path.join(__dirname, '..'),
-    env,
-    ...options,
-  });
+  const result = spawnSync(
+    'node',
+    ['--max-old-space-size=8192', 'node_modules/prisma/build/index.js', ...args],
+    {
+      cwd: path.join(__dirname, '..'),
+      env,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...options,
+    }
+  );
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (result.status !== 0) {
+    const error = new Error(`Prisma command failed with exit code ${result.status}`);
+    error.stdout = result.stdout || '';
+    error.stderr = result.stderr || '';
+    error.status = result.status;
+    throw error;
+  }
+
+  return result;
 }
 
 function readMigrationSql(migrationName) {
