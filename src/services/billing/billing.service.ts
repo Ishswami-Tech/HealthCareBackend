@@ -401,6 +401,7 @@ export class BillingService implements OnModuleInit {
     paymentId: string;
     userId?: string;
     appointmentId?: string;
+    appointment?: AppointmentWithRelations | null;
     subscriptionId?: string;
     status: string;
     amount: number;
@@ -442,6 +443,7 @@ export class BillingService implements OnModuleInit {
         clinicId: args.clinicId,
         ...(args.userId ? { userId: args.userId } : {}),
         ...(args.appointmentId ? { appointmentId: args.appointmentId } : {}),
+        ...(args.appointment ? { appointment: args.appointment } : {}),
         ...(args.subscriptionId ? { subscriptionId: args.subscriptionId } : {}),
       },
     };
@@ -454,6 +456,7 @@ export class BillingService implements OnModuleInit {
         paymentId: args.paymentId,
         status: normalizedStatus,
         clinicId: args.clinicId,
+        ...(args.appointment ? { appointment: args.appointment } : {}),
       });
 
       if (this.isSoleProprietorModeEnabled() && normalizedStatus === 'completed') {
@@ -535,7 +538,7 @@ export class BillingService implements OnModuleInit {
       return normalizedUnique || `order-${Date.now()}`;
     }
 
-    return normalizedUnique ? `${normalizedBase}-${normalizedUnique}` : normalizedBase;
+    return normalizedUnique ? `${normalizedBase}${normalizedUnique}` : normalizedBase;
   }
 
   private roundToTwo(value: number): number {
@@ -3008,18 +3011,19 @@ export class BillingService implements OnModuleInit {
         invoice = await this.markInvoiceAsPaid(payment.invoiceId);
       }
 
-      if (incomingStatusLower === 'completed' && payment.appointmentId) {
-        const appointment = await this.databaseService.findAppointmentByIdSafe(
-          payment.appointmentId
-        );
+      const completedAppointment =
+        incomingStatusLower === 'completed' && payment.appointmentId
+          ? await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)
+          : null;
 
+      if (incomingStatusLower === 'completed' && payment.appointmentId) {
         await this.syncAppointmentAfterPayment({
           appointmentId: payment.appointmentId,
-          clinicId: appointment?.clinicId || clinicId,
+          clinicId: completedAppointment?.clinicId || clinicId,
           paymentId: payment.id,
           paymentStatus: normalizedIncomingStatus,
           amount: paymentStatus.amount,
-          appointment,
+          appointment: completedAppointment,
           userId: payment.userId ?? null,
           emitAppointmentUpdated: false,
         });
@@ -3037,6 +3041,9 @@ export class BillingService implements OnModuleInit {
         amount: paymentStatus.amount,
         ...(payment.userId ? { userId: payment.userId } : {}),
         ...(payment.appointmentId ? { appointmentId: payment.appointmentId } : {}),
+        ...(payment.appointmentId && completedAppointment
+          ? { appointment: completedAppointment }
+          : {}),
         ...(payment.subscriptionId ? { subscriptionId: payment.subscriptionId } : {}),
       });
 
@@ -4115,6 +4122,10 @@ export class BillingService implements OnModuleInit {
 
     const pdfData: InvoicePDFData = {
       invoiceNumber: String(invoice.invoiceNumber ?? invoiceId),
+      gatewayOrderId: this.buildGatewayOrderId(
+        String(invoice.invoiceNumber ?? invoiceId),
+        String(invoice.id ?? invoiceId)
+      ),
       invoiceDate: new Date(invoice.createdAt),
       dueDate: new Date(invoice.dueDate),
       status: String(invoice.status ?? 'OPEN'),

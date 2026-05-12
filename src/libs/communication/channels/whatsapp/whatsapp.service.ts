@@ -8,6 +8,10 @@ import { LogType, LogLevel } from '@core/types';
 import { ProviderFactory } from '@communication/adapters/factories/provider.factory';
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
+import {
+  formatAppointmentConfirmationTemplateParams,
+  formatAppointmentReminderTemplateParams,
+} from '@communication/templates/WhatsappTemplates/template-helpers';
 
 /**
  * WhatsApp Business API service for sending messages and notifications
@@ -51,6 +55,7 @@ export class WhatsAppService {
    * @param expiryMinutes - OTP expiry time in minutes (default: 10)
    * @param maxRetries - Maximum retry attempts (default: 2)
    * @param clinicId - Optional clinic ID for multi-tenant template and provider routing
+   * @param purpose - OTP purpose label used in the template body
    * @returns Promise resolving to true if message was sent successfully
    */
   async sendOTP(
@@ -58,7 +63,8 @@ export class WhatsAppService {
     otp: string,
     expiryMinutes: number = 10,
     maxRetries: number = 2,
-    clinicId?: string
+    clinicId?: string,
+    purpose: string = 'verification'
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -78,10 +84,11 @@ export class WhatsAppService {
         const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
         // Get clinic name and template ID if clinicId provided
-        let clinicName =
+        const appName =
           this.configService.getEnv('APP_NAME') ||
           this.configService.getEnv('DEFAULT_FROM_NAME') ||
           'Healthcare App';
+        let clinicName = appName;
         let templateId = this.whatsAppConfig.otpTemplateId;
 
         if (clinicId) {
@@ -99,8 +106,10 @@ export class WhatsAppService {
             {
               type: 'body',
               parameters: [
+                { type: 'text', text: purpose.replace(/_/g, ' ').trim() || 'verification' },
                 { type: 'text', text: clinicName },
                 { type: 'text', text: otp },
+                { type: 'text', text: appName },
                 { type: 'text', text: `${expiryMinutes}` },
               ],
             },
@@ -167,7 +176,9 @@ export class WhatsAppService {
     appointmentDate: string,
     appointmentTime: string,
     location: string,
-    clinicId?: string
+    clinicId?: string,
+    detailsUrl?: string,
+    appointmentType: string = 'in-person'
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -183,34 +194,27 @@ export class WhatsAppService {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
 
       // Get clinic name and template ID if clinicId provided
-      let clinicName = 'Healthcare Clinic';
-      let templateId = this.whatsAppConfig.appointmentTemplateId;
+      let templateId = this.whatsAppConfig.appointmentReminderTemplateId;
 
       if (clinicId) {
         const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
         if (clinicData) {
-          clinicName = clinicData.clinicName;
           templateId =
-            clinicData.templateIds.appointment || this.whatsAppConfig.appointmentTemplateId;
+            clinicData.templateIds.appointmentReminder ||
+            this.whatsAppConfig.appointmentReminderTemplateId;
         }
       }
 
       await this.sendTemplateMessage(
         formattedPhone,
         templateId,
-        [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: clinicName },
-              { type: 'text', text: patientName },
-              { type: 'text', text: doctorName },
-              { type: 'text', text: appointmentDate },
-              { type: 'text', text: appointmentTime },
-              { type: 'text', text: location },
-            ],
-          },
-        ],
+        formatAppointmentReminderTemplateParams(
+          patientName,
+          appointmentType,
+          doctorName,
+          `${appointmentDate} at ${appointmentTime}`,
+          detailsUrl
+        ),
         clinicId
       );
 
@@ -226,6 +230,77 @@ export class WhatsAppService {
         LogType.SYSTEM,
         LogLevel.ERROR,
         `Failed to send appointment reminder via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        'WhatsAppService',
+        { stack: (error as Error)?.stack }
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Send appointment confirmation via WhatsApp
+   */
+  async sendAppointmentConfirmation(
+    phoneNumber: string,
+    patientName: string,
+    doctorName: string,
+    appointmentDate: string,
+    appointmentTime: string,
+    location: string,
+    clinicId?: string,
+    detailsUrl?: string,
+    appointmentType: string = 'in-person'
+  ): Promise<boolean> {
+    if (!this.whatsAppConfig.enabled && !clinicId) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'WhatsApp service is disabled. Simulating successful appointment confirmation.',
+        'WhatsAppService'
+      );
+      return true;
+    }
+
+    try {
+      const formattedPhone = this.formatPhoneNumber(phoneNumber);
+
+      let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
+
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          templateId =
+            clinicData.templateIds.appointmentConfirmation ||
+            this.whatsAppConfig.appointmentConfirmationTemplateId;
+        }
+      }
+
+      await this.sendTemplateMessage(
+        formattedPhone,
+        templateId,
+        formatAppointmentConfirmationTemplateParams(
+          patientName,
+          appointmentType,
+          doctorName,
+          appointmentDate,
+          appointmentTime,
+          detailsUrl
+        ),
+        clinicId
+      );
+
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        `Appointment confirmation sent to ${phoneNumber} via WhatsApp`,
+        'WhatsAppService'
+      );
+      return true;
+    } catch (error) {
+      void this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.ERROR,
+        `Failed to send appointment confirmation via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
         { stack: (error as Error)?.stack }
       );

@@ -105,6 +105,7 @@ type VideoProviderSettingRow = {
 
 @Injectable()
 export class VideoService implements OnModuleInit, OnModuleDestroy {
+  private static readonly VIDEO_ACTIVE_WINDOW_MINUTES = 180;
   private provider: IVideoProvider | undefined;
   private readonly VIDEO_CACHE_TTL = 1800; // 30 minutes
   private readonly CALL_CACHE_TTL = 300; // 5 minutes
@@ -908,15 +909,50 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
 
   private isAppointmentPaid(appointment: {
     payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
+    paymentStatus?: string | null;
+    billing?: {
+      paymentStatus?: string | null;
+      status?: string | null;
+      paid?: boolean | null;
+    } | null;
+    invoice?: {
+      paymentStatus?: string | null;
+      status?: string | null;
+      paid?: boolean | null;
+    } | null;
+    paymentCompleted?: boolean | null;
+    isPaid?: boolean | null;
+    paid?: boolean | null;
   }): boolean {
+    if (
+      appointment.paymentCompleted === true ||
+      appointment.isPaid === true ||
+      appointment.paid === true
+    ) {
+      return true;
+    }
+
     const paymentEntries = Array.isArray(appointment.payment)
       ? appointment.payment
       : appointment.payment
         ? [appointment.payment]
         : [];
 
-    return paymentEntries.some(payment =>
-      ['PAID', 'COMPLETED'].includes(String(payment.status || '').toUpperCase())
+    return (
+      paymentEntries.some(payment =>
+        ['PAID', 'COMPLETED'].includes(String(payment.status || '').toUpperCase())
+      ) ||
+      ['PAID', 'COMPLETED'].includes(String(appointment.paymentStatus || '').toUpperCase()) ||
+      ['PAID', 'COMPLETED'].includes(
+        String(appointment.billing?.paymentStatus || '').toUpperCase()
+      ) ||
+      ['PAID', 'COMPLETED'].includes(String(appointment.billing?.status || '').toUpperCase()) ||
+      appointment.billing?.paid === true ||
+      ['PAID', 'COMPLETED'].includes(
+        String(appointment.invoice?.paymentStatus || '').toUpperCase()
+      ) ||
+      ['PAID', 'COMPLETED'].includes(String(appointment.invoice?.status || '').toUpperCase()) ||
+      appointment.invoice?.paid === true
     );
   }
 
@@ -957,11 +993,9 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    const appointmentDurationMinutes =
-      typeof appointment.duration === 'number' && appointment.duration > 0
-        ? appointment.duration
-        : 30;
-    const endTime = new Date(startTime.getTime() + appointmentDurationMinutes * 60_000);
+    const endTime = new Date(
+      startTime.getTime() + VideoService.VIDEO_ACTIVE_WINDOW_MINUTES * 60_000
+    );
     return { startTime, endTime };
   }
 

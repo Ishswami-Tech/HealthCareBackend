@@ -1,18 +1,25 @@
 # 📧 Communication & Notification System - Complete Guide
 
-> **Comprehensive guide for the Healthcare Backend communication and notification system with ZeptoMail as primary email provider**
+> **Comprehensive guide for the Healthcare Backend communication and
+> notification system with ZeptoMail as primary email provider**
 
 **Status:** ✅ Production-ready  
 **Last Updated:** January 2025
 
-**Note:** All deprecated `/notifications/*` endpoints have been removed. Use `/communication/*` endpoints only.
+**Note:** All deprecated `/notifications/*` endpoints have been removed. Use
+`/communication/*` endpoints only.
 
 > **📚 Related Guides:**
-> - **[Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md)** - Detailed email provider setup (ZeptoMail, AWS SES, SMTP)
-> - **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** - AWS SES specific setup, best practices, and compliance audit
-> - **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)** - Push notification setup (Firebase Cloud Messaging)
-> 
-> **When to use this guide:** Use this guide for system-wide communication overview. For detailed provider-specific setup, see the individual guides.
+>
+> - **[Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md)** - Detailed email
+>   provider setup (ZeptoMail, AWS SES, SMTP)
+> - **[AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md)** - AWS SES specific
+>   setup, best practices, and compliance audit
+> - **[FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md)** - Push notification
+>   setup (Firebase Cloud Messaging)
+>
+> **When to use this guide:** Use this guide for system-wide communication
+> overview. For detailed provider-specific setup, see the individual guides.
 
 ---
 
@@ -51,12 +58,12 @@
 
 ### Primary Providers
 
-| Channel | Primary Provider | Fallback Providers |
-|---------|-----------------|-------------------|
-| **Email** | **ZeptoMail** | AWS SES, SMTP |
-| **Push** | Firebase Cloud Messaging | AWS SNS |
-| **WhatsApp** | Meta Business API | Twilio |
-| **SMS** | AWS SNS | Twilio (Configuration ready, adapters pending) |
+| Channel      | Primary Provider         | Fallback Providers                             |
+| ------------ | ------------------------ | ---------------------------------------------- |
+| **Email**    | **ZeptoMail**            | AWS SES, SMTP                                  |
+| **Push**     | Firebase Cloud Messaging | AWS SNS                                        |
+| **WhatsApp** | Meta Business API        | Twilio                                         |
+| **SMS**      | AWS SNS                  | Twilio (Configuration ready, adapters pending) |
 
 ---
 
@@ -86,7 +93,8 @@ Delivery & Tracking
 2. **NotificationEventListener** - Event-driven automatic notifications
 3. **Channel Services** - Email, WhatsApp, Push, Socket, SMS
 4. **Provider Adapters** - Multi-tenant provider routing
-5. **CommunicationController** - Unified REST API endpoints at `/communication/*`
+5. **CommunicationController** - Unified REST API endpoints at
+   `/communication/*`
 
 ---
 
@@ -97,6 +105,7 @@ Delivery & Tracking
 **Status:** ✅ Fully Integrated
 
 **Implementation:**
+
 - ✅ `EmailService` - Unified email service
 - ✅ `ZeptoMailEmailAdapter` - Primary provider (multi-tenant)
 - ✅ `SESEmailAdapter` - AWS SES fallback (multi-tenant)
@@ -107,12 +116,14 @@ Delivery & Tracking
 - ✅ Credential encryption/decryption
 
 **Integration Points:**
+
 - ✅ `AuthService` - Welcome emails, password reset, OTP
 - ✅ `AppointmentNotificationService` - Appointment reminders
 - ✅ `CommunicationService` - Unified email sending
 - ✅ `CommunicationController` - REST API endpoints at `/communication/*`
 
 **Usage Examples:**
+
 ```typescript
 // Direct usage in services
 await this.emailService.sendEmail({
@@ -120,7 +131,7 @@ await this.emailService.sendEmail({
   subject: 'Welcome',
   template: EmailTemplate.WELCOME,
   context: { name: 'John' },
-  clinicId: 'clinic-123' // Multi-tenant routing
+  clinicId: 'clinic-123', // Multi-tenant routing
 });
 
 // Via CommunicationService
@@ -130,7 +141,7 @@ await this.communicationService.send({
   body: 'Your appointment is tomorrow',
   recipients: [{ email: 'user@example.com' }],
   channels: ['email'],
-  metadata: { clinicId: 'clinic-123' }
+  metadata: { clinicId: 'clinic-123' },
 });
 ```
 
@@ -139,6 +150,7 @@ await this.communicationService.send({
 **Status:** ✅ Fully Integrated
 
 **Implementation:**
+
 - ✅ `WhatsAppService` - Unified WhatsApp service
 - ✅ `MetaWhatsAppAdapter` - Meta Business API (multi-tenant)
 - ✅ `TwilioWhatsAppAdapter` - Twilio WhatsApp (multi-tenant)
@@ -148,11 +160,13 @@ await this.communicationService.send({
 - ✅ OTP support with retry logic
 
 **Integration Points:**
+
 - ✅ `AppointmentNotificationService` - Appointment reminders
 - ✅ `CommunicationService` - Unified WhatsApp sending
 - ✅ `CommunicationController` - REST API endpoints at `/communication/*`
 
 **Usage Examples:**
+
 ```typescript
 // Via CommunicationService
 await this.communicationService.send({
@@ -161,7 +175,7 @@ await this.communicationService.send({
   body: 'Your appointment is tomorrow',
   recipients: [{ phoneNumber: '+1234567890' }],
   channels: ['whatsapp'],
-  metadata: { clinicId: 'clinic-123' }
+  metadata: { clinicId: 'clinic-123' },
 });
 ```
 
@@ -170,6 +184,7 @@ await this.communicationService.send({
 **Status:** ✅ Fully Integrated
 
 **Implementation:**
+
 - ✅ `PushNotificationService` - Unified push service
 - ✅ Firebase Cloud Messaging (FCM) - Primary
 - ✅ AWS SNS - Fallback
@@ -178,11 +193,14 @@ await this.communicationService.send({
 - ✅ Delivery tracking
 
 **Integration Points:**
+
 - ✅ `AppointmentNotificationService` - Appointment reminders
 - ✅ `CommunicationService` - Unified push sending
-- ✅ `CommunicationController` - REST API endpoints at `/communication/*` (includes topic-based)
+- ✅ `CommunicationController` - REST API endpoints at `/communication/*`
+  (includes topic-based)
 
 **Usage Examples:**
+
 ```typescript
 // Via CommunicationService
 await this.communicationService.send({
@@ -191,7 +209,7 @@ await this.communicationService.send({
   body: 'Your appointment is tomorrow',
   recipients: [{ deviceToken: 'fcm-token' }],
   channels: ['push'],
-  metadata: { clinicId: 'clinic-123' }
+  metadata: { clinicId: 'clinic-123' },
 });
 ```
 
@@ -200,6 +218,7 @@ await this.communicationService.send({
 **Status:** ✅ Fully Integrated
 
 **Implementation:**
+
 - ✅ `SocketService` - Real-time WebSocket service
 - ✅ Socket.IO integration
 - ✅ Room-based messaging
@@ -207,11 +226,13 @@ await this.communicationService.send({
 - ✅ Real-time delivery
 
 **Integration Points:**
+
 - ✅ `AppointmentNotificationService` - Real-time appointment updates
 - ✅ `CommunicationService` - Unified socket sending
 - ✅ EHR updates - Real-time medical record notifications
 
 **Usage Examples:**
+
 ```typescript
 // Via CommunicationService
 await this.communicationService.send({
@@ -220,7 +241,7 @@ await this.communicationService.send({
   body: 'Your lab results are ready',
   recipients: [{ userId: 'user-123', socketRoom: 'user:user-123' }],
   channels: ['socket'],
-  metadata: { clinicId: 'clinic-123' }
+  metadata: { clinicId: 'clinic-123' },
 });
 ```
 
@@ -229,6 +250,7 @@ await this.communicationService.send({
 **Status:** ⚠️ Configuration Ready, Adapter Implementation Pending
 
 **Implementation:**
+
 - ✅ Configuration system ready
 - ✅ Multi-tenant credential storage
 - ✅ Provider configuration (Twilio, AWS SNS)
@@ -236,6 +258,7 @@ await this.communicationService.send({
 - ✅ Opt-in logic implemented (only sent when user enables)
 
 **Integration Points:**
+
 - ✅ `CommunicationService` - SMS channel configured
 - ✅ User preference filtering (SMS only if enabled)
 - ⚠️ Adapter implementation needed
@@ -246,7 +269,8 @@ await this.communicationService.send({
 
 ### Primary Provider: ZeptoMail
 
-**ZeptoMail** is configured as the **primary email provider** by default for all clinics.
+**ZeptoMail** is configured as the **primary email provider** by default for all
+clinics.
 
 #### Why ZeptoMail?
 
@@ -324,6 +348,7 @@ Authorization: Bearer <token>
 **Authentication:** `Zoho-enczapikey <send_mail_token>`
 
 **Request Format:**
+
 ```json
 {
   "bounce_address": "bounces@yourdomain.com",
@@ -346,12 +371,14 @@ Authorization: Bearer <token>
 ```
 
 **Features:**
+
 - Template support
 - Attachment management via file cache
 - Full control over email headers
 - Open/click tracking via `X-TM-OPEN-TRACK` and `X-TM-CLICK-TRACK` headers
 
 **Limitations:**
+
 - Email size limit: **15 MB** (headers + body + attachments)
 - Transactional emails only (no bulk/promotional)
 - IP restrictions recommended for production
@@ -359,17 +386,20 @@ Authorization: Bearer <token>
 #### Fallback Providers
 
 **AWS SES (Fallback 1):**
+
 - High deliverability
 - HIPAA compliant
 - Global infrastructure
 - See [AWS_SES_COMPLETE_GUIDE.md](./AWS_SES_COMPLETE_GUIDE.md) for setup
 
 **SMTP (Fallback 2):**
+
 - Custom SMTP servers
 - Gmail, Outlook, or custom SMTP
 - Standard SMTP protocol
 
 **Fallback Flow:**
+
 1. Try ZeptoMail (primary)
 2. If unhealthy → Try AWS SES
 3. If unhealthy → Try SMTP
@@ -425,6 +455,7 @@ POST /api/v1/communication/push
 **Setup:** See [AWS_SNS_INTEGRATION_GUIDE.md](./AWS_SNS_INTEGRATION_GUIDE.md)
 
 **Features:**
+
 - HIPAA compliant
 - High reliability
 - Automatic failover
@@ -443,7 +474,8 @@ POST /api/v1/communication/push
 #### Why WhatsApp?
 
 - ✅ **High engagement** - Better open rates than email/SMS
-- ✅ **Template support** - Pre-approved templates for OTP, appointments, prescriptions
+- ✅ **Template support** - Pre-approved templates for OTP, appointments,
+  prescriptions
 - ✅ **Rich media** - Support for documents, images, videos
 - ✅ **Two-way communication** - Users can reply directly
 - ✅ **Global reach** - 2B+ users worldwide
@@ -511,6 +543,7 @@ Authorization: Bearer <token>
 **Authentication:** `Bearer <api_key>`
 
 **Features:**
+
 - Template messages (OTP, appointment reminders, prescriptions)
 - Custom text messages
 - Document sending (prescriptions, invoices)
@@ -519,6 +552,7 @@ Authorization: Bearer <token>
 - Retry logic for failed deliveries
 
 **Template Message Format:**
+
 ```json
 {
   "messaging_product": "whatsapp",
@@ -541,6 +575,7 @@ Authorization: Bearer <token>
 ```
 
 **Usage Examples:**
+
 ```typescript
 // Via CommunicationService
 await this.communicationService.send({
@@ -549,7 +584,7 @@ await this.communicationService.send({
   body: 'Your appointment is tomorrow at 10 AM',
   recipients: [{ phoneNumber: '+1234567890' }],
   channels: ['whatsapp'],
-  metadata: { clinicId: 'clinic-123' }
+  metadata: { clinicId: 'clinic-123' },
 });
 
 // Direct WhatsApp service
@@ -557,7 +592,7 @@ await this.whatsAppService.sendOTP(
   '+1234567890',
   '123456',
   10, // expiry minutes
-  2,  // max retries
+  2, // max retries
   'clinic-123' // clinicId for multi-tenant routing
 );
 ```
@@ -569,6 +604,7 @@ await this.whatsAppService.sendOTP(
 **Setup:** Configure via clinic communication settings with Twilio credentials.
 
 **Features:**
+
 - Automatic failover
 - Template support
 - Global coverage
@@ -598,11 +634,13 @@ CLINIC_AADESH_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID=clinic_phone_id
 **Primary provider** for SMS notifications.
 
 **Use cases:**
+
 - OTP verification
 - Critical alerts
 - Emergency notifications
 
-**Note:** SMS is a **secondary/opt-in channel** - only sent when user explicitly enables it (`smsEnabled: true` in user preferences).
+**Note:** SMS is a **secondary/opt-in channel** - only sent when user explicitly
+enables it (`smsEnabled: true` in user preferences).
 
 **Status:** Configuration ready, adapters pending implementation.
 
@@ -615,12 +653,14 @@ CLINIC_AADESH_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID=clinic_phone_id
 **Status:** ✅ Fully Integrated
 
 **Email Notifications:**
+
 - ✅ Welcome emails (registration)
 - ✅ Password reset emails
 - ✅ OTP emails
 - ✅ Social auth welcome emails
 
 **Implementation:**
+
 ```typescript
 // src/services/auth/auth.service.ts
 await this.emailService.sendEmail({
@@ -628,11 +668,12 @@ await this.emailService.sendEmail({
   subject: `Welcome to ${appName}`,
   template: EmailTemplate.WELCOME,
   context: { name: user.name, role: user.role },
-  clinicId: requestDto.clinicId // Multi-tenant routing
+  clinicId: requestDto.clinicId, // Multi-tenant routing
 });
 ```
 
 **Verification:**
+
 - ✅ All email calls include `clinicId` for multi-tenant routing
 - ✅ Dynamic app name from environment variables
 - ✅ Template-based emails with proper context
@@ -642,12 +683,14 @@ await this.emailService.sendEmail({
 **Status:** ✅ Fully Integrated
 
 **Channels Used:**
+
 - ✅ Email - Appointment reminders, confirmations, cancellations
 - ✅ WhatsApp - Appointment reminders, confirmations
 - ✅ Push - Real-time appointment updates
 - ✅ Socket - Real-time appointment notifications
 
 **Implementation:**
+
 ```typescript
 // src/services/appointments/plugins/notifications/appointment-notification.service.ts
 await this.sendNotification({
@@ -660,6 +703,7 @@ await this.sendNotification({
 ```
 
 **Verification:**
+
 - ✅ All channels properly integrated
 - ✅ Multi-tenant routing via `clinicId`
 - ✅ Template support with clinic-specific data
@@ -670,6 +714,7 @@ await this.sendNotification({
 **Status:** ✅ Fully Integrated
 
 **Endpoints:**
+
 - ✅ `POST /communication/send` - Unified communication
 - ✅ `POST /communication/email` - Email only
 - ✅ `POST /communication/push` - Push only
@@ -681,12 +726,14 @@ await this.sendNotification({
 - ✅ `GET /communication/alerts` - Active alerts
 
 **Verification:**
+
 - ✅ All endpoints properly implemented
 - ✅ Category-based channel selection
 - ✅ Multi-tenant support
 - ✅ Health monitoring
 
-**Note:** All deprecated `/notifications/*` endpoints have been removed. Use `/communication/*` endpoints only.
+**Note:** All deprecated `/notifications/*` endpoints have been removed. Use
+`/communication/*` endpoints only.
 
 ---
 
@@ -697,6 +744,7 @@ await this.sendNotification({
 **Status:** ✅ Fully Integrated
 
 **Event Patterns Handled:**
+
 - ✅ `ehr.*.created` - EHR record notifications
 - ✅ `appointment.*` - Appointment notifications
 - ✅ `auth.*` - Authentication notifications
@@ -704,6 +752,7 @@ await this.sendNotification({
 - ✅ `prescription.*` - Prescription notifications
 
 **Implementation:**
+
 ```typescript
 // src/libs/communication/listeners/notification-event.listener.ts
 @OnEvent('**')
@@ -723,6 +772,7 @@ async handleEvent(eventType: string, payload: EnterpriseEventPayload) {
 ```
 
 **Verification:**
+
 - ✅ Listener registered and active
 - ✅ Event patterns properly matched
 - ✅ CommunicationService called correctly
@@ -737,24 +787,26 @@ async handleEvent(eventType: string, payload: EnterpriseEventPayload) {
 **Status:** ✅ Fully Integrated
 
 **Implementation:**
+
 - ✅ `clinicId` passed through all communication calls
 - ✅ `ProviderFactory` routes to clinic-specific adapters
 - ✅ `CommunicationConfigService` loads clinic-specific credentials
 - ✅ Environment variable fallback (clinic-specific → global)
 
 **Verification:**
+
 ```typescript
 // Email routing
 await this.emailService.sendEmail({
   to: 'user@example.com',
-  clinicId: 'clinic-123' // Routes to clinic-123's email provider
+  clinicId: 'clinic-123', // Routes to clinic-123's email provider
 });
 
 // WhatsApp routing
 await this.communicationService.send({
   recipients: [{ phoneNumber: '+1234567890' }],
   channels: ['whatsapp'],
-  metadata: { clinicId: 'clinic-123' } // Routes to clinic-123's WhatsApp provider
+  metadata: { clinicId: 'clinic-123' }, // Routes to clinic-123's WhatsApp provider
 });
 ```
 
@@ -766,20 +818,21 @@ await this.communicationService.send({
 
 **Status:** ✅ Fully Integrated
 
-| Category | Default Channels | Strategy | Priority | Rate Limit |
-|----------|----------------|----------|----------|------------|
-| **LOGIN** | `email`, `whatsapp` | IMMEDIATE | LOW | 10/60s |
-| **APPOINTMENT** | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | HIGH | None |
-| **REMINDER** | `push`, `email`, `whatsapp`, `socket` | SCHEDULED | NORMAL | None |
-| **BILLING** | `push`, `email`, `whatsapp`, `socket` | QUEUED | NORMAL | None |
-| **EHR_RECORD** | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | HIGH | None |
-| **CRITICAL** | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | CRITICAL | None |
-| **SYSTEM** | `email` | IMMEDIATE | LOW | None |
-| **USER_ACTIVITY** | `push`, `socket` | IMMEDIATE | LOW | None |
-| **PRESCRIPTION** | `push`, `email`, `whatsapp`, `socket` | IMMEDIATE | HIGH | None |
-| **CHAT** | `socket`, `push` | IMMEDIATE | NORMAL | None |
+| Category          | Default Channels                      | Strategy  | Priority | Rate Limit |
+| ----------------- | ------------------------------------- | --------- | -------- | ---------- |
+| **LOGIN**         | `email`, `whatsapp`                   | IMMEDIATE | LOW      | 10/60s     |
+| **APPOINTMENT**   | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | HIGH     | None       |
+| **REMINDER**      | `push`, `email`, `whatsapp`, `socket` | SCHEDULED | NORMAL   | None       |
+| **BILLING**       | `push`, `email`, `whatsapp`, `socket` | QUEUED    | NORMAL   | None       |
+| **EHR_RECORD**    | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | HIGH     | None       |
+| **CRITICAL**      | `socket`, `push`, `email`, `whatsapp` | IMMEDIATE | CRITICAL | None       |
+| **SYSTEM**        | `email`                               | IMMEDIATE | LOW      | None       |
+| **USER_ACTIVITY** | `push`, `socket`                      | IMMEDIATE | LOW      | None       |
+| **PRESCRIPTION**  | `push`, `email`, `whatsapp`, `socket` | IMMEDIATE | HIGH     | None       |
+| **CHAT**          | `socket`, `push`                      | IMMEDIATE | NORMAL   | None       |
 
 **Verification:**
+
 - ✅ All categories properly configured
 - ✅ Channel selection works correctly
 - ✅ Strategy (IMMEDIATE/SCHEDULED/QUEUED) implemented
@@ -795,12 +848,14 @@ await this.communicationService.send({
 **Status:** ✅ Fully Integrated
 
 **Features:**
+
 - ✅ Channel preferences (enable/disable channels)
 - ✅ Quiet hours (time-based filtering)
 - ✅ Category preferences (enable/disable categories)
 - ✅ SMS opt-in (only sent when explicitly enabled)
 
 **Implementation:**
+
 ```typescript
 // CommunicationService filters channels based on preferences
 const preferences = await this.getUserPreferences(recipients);
@@ -813,6 +868,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ```
 
 **Verification:**
+
 - ✅ Preferences loaded from database/cache
 - ✅ Channels filtered correctly
 - ✅ SMS only sent when `smsEnabled: true`
@@ -824,14 +880,17 @@ const finalChannels = this.filterChannelsByPreferences(
 
 ### 1. Circuit Breaker Pattern
 
-**Purpose:** Prevents cascading failures by temporarily stopping requests to failing providers.
+**Purpose:** Prevents cascading failures by temporarily stopping requests to
+failing providers.
 
 **Configuration:**
+
 - **Threshold:** Opens after 5 consecutive failures
 - **Recovery:** Attempts recovery after 60 seconds
 - **States:** `closed` → `open` → `half-open` → `closed`
 
 **Benefits:**
+
 - Prevents overwhelming failing providers
 - Fast failure detection
 - Automatic recovery attempts
@@ -840,6 +899,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 2. Rate Limiting
 
 **Configuration:**
+
 ```typescript
 {
   zeptomail: { maxRequests: 1000, windowMs: 60000, burstAllowance: 100 },
@@ -849,6 +909,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ```
 
 **Features:**
+
 - Per-provider limits
 - Per-clinic isolation
 - Burst allowance for traffic spikes
@@ -857,6 +918,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 3. Retry Logic with Exponential Backoff
 
 **Strategy:**
+
 - **Max Retries:** 3 attempts (configurable)
 - **Base Delay:** 1 second
 - **Exponential Backoff:** `delay = baseDelay * 2^attempt`
@@ -864,6 +926,7 @@ const finalChannels = this.filterChannelsByPreferences(
 - **Smart Retry:** Only retries retryable errors
 
 **Non-Retryable Errors:**
+
 - 4xx client errors (400, 401, 403, 404)
 - Invalid credentials
 - Invalid email addresses
@@ -872,6 +935,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 4. Provider Fallback
 
 **Flow:**
+
 1. Try primary provider (ZeptoMail)
 2. Check health status
 3. If unhealthy, try fallback providers in order
@@ -881,6 +945,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 5. Health Monitoring
 
 **Metrics Tracked:**
+
 - Total requests
 - Successful requests
 - Failed requests
@@ -890,6 +955,7 @@ const finalChannels = this.filterChannelsByPreferences(
 - Success rate
 
 **Health Checks:**
+
 - Performed every 30 seconds
 - Cached for 10 seconds to reduce load
 - Alerts when success rate < 80%
@@ -898,6 +964,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 6. Suppression List Management
 
 **Features:**
+
 - Automatic bounce handling
 - Complaint processing
 - Unsubscribe management
@@ -906,6 +973,7 @@ const finalChannels = this.filterChannelsByPreferences(
 - Database persistence
 
 **Integration:**
+
 - All email adapters check suppression list before sending
 - Automatic filtering of suppressed emails
 - Graceful handling (continues with allowed emails)
@@ -913,12 +981,14 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 7. Timeout Protection
 
 **Default Timeouts:**
+
 - Email sending: 30 seconds
 - Health checks: 2 seconds
 - Webhook processing: 5 seconds
 - API calls: 30 seconds
 
 **Implementation:**
+
 - Uses `Promise.race()` with timeout promise
 - Throws timeout error if exceeded
 - Logs timeout events
@@ -927,6 +997,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### 8. Error Classification
 
 **Error Categories:**
+
 - **Retryable:** Network errors, 5xx, timeouts, rate limits
 - **Non-Retryable:** 4xx, invalid credentials, suppressed emails
 - **Circuit Breaker:** Opens circuit for retryable errors
@@ -940,6 +1011,7 @@ const finalChannels = this.filterChannelsByPreferences(
 **Status:** ✅ Fully Integrated
 
 **Features:**
+
 - ✅ Real-time channel health status
 - ✅ Provider health monitoring
 - ✅ Delivery metrics (success/failure rates)
@@ -949,12 +1021,14 @@ const finalChannels = this.filterChannelsByPreferences(
 - ✅ Active alerts system
 
 **Endpoints:**
+
 - ✅ `GET /communication/health` - Overall health
 - ✅ `GET /communication/analytics` - Enhanced analytics with detailed metrics
 - ✅ `GET /communication/dashboard` - Comprehensive health dashboard
 - ✅ `GET /communication/alerts` - Active alerts
 
 **Verification:**
+
 - ✅ Health monitoring active
 - ✅ Metrics tracked correctly
 - ✅ Health endpoints return accurate data
@@ -963,6 +1037,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### Enhanced Analytics (`/analytics`)
 
 **Features:**
+
 - ✅ Per-channel metrics (email, WhatsApp, push, socket, SMS)
 - ✅ Delivery rates, bounce rates, complaint rates
 - ✅ Provider-specific metrics breakdown
@@ -971,12 +1046,15 @@ const finalChannels = this.filterChannelsByPreferences(
 - ✅ Real-time data from database
 
 **Metrics Provided:**
-- **Per Channel**: Total sent, delivered, failed, bounced (email), complained (email), delivery rate (%), bounce rate (email, %), complaint rate (email, %)
+
+- **Per Channel**: Total sent, delivered, failed, bounced (email), complained
+  (email), delivery rate (%), bounce rate (email, %), complaint rate (email, %)
 - **Per Provider**: Sent count, delivered count, failed count
 - **Time Periods**: 1 hour, 24 hours, 7 days, 30 days
 - **Filtering**: By clinic ID, by provider, by time period
 
 **Example Response:**
+
 ```json
 {
   "metrics": {
@@ -1002,6 +1080,7 @@ const finalChannels = this.filterChannelsByPreferences(
 ### Health Dashboard (`/dashboard`)
 
 **Features:**
+
 - ✅ Comprehensive health status
 - ✅ Real-time metrics
 - ✅ Active alerts display
@@ -1011,6 +1090,7 @@ const finalChannels = this.filterChannelsByPreferences(
 - ✅ Clinic-specific filtering
 
 **Response Structure:**
+
 ```json
 {
   "health": {
@@ -1064,6 +1144,7 @@ const finalChannels = this.filterChannelsByPreferences(
 **Service:** `CommunicationAlertingService`
 
 **Features:**
+
 - ✅ **Failure Rate Monitoring** - Alerts when failure rate exceeds threshold
 - ✅ **Consecutive Failure Tracking** - Alerts on multiple consecutive failures
 - ✅ **Per-Channel Configuration** - Custom thresholds per channel
@@ -1074,6 +1155,7 @@ const finalChannels = this.filterChannelsByPreferences(
 - ✅ Cached for performance (30 seconds TTL)
 
 **Alert Configuration:**
+
 ```typescript
 {
   email: {
@@ -1098,11 +1180,14 @@ const finalChannels = this.filterChannelsByPreferences(
 ```
 
 **Alert Types:**
+
 1. **Failure Rate Alert** - Triggered when failure rate exceeds threshold
-2. **Consecutive Failures Alert** - Triggered when consecutive failures exceed threshold
+2. **Consecutive Failures Alert** - Triggered when consecutive failures exceed
+   threshold
 3. **Provider Down Alert** - Triggered when provider is completely down (future)
 
 **Alert Processing:**
+
 1. Check Metrics - Query delivery logs for recent failures
 2. Calculate Rates - Compute failure rates and consecutive failures
 3. Compare Thresholds - Check against configured thresholds
@@ -1110,8 +1195,8 @@ const finalChannels = this.filterChannelsByPreferences(
 5. Trigger Alert - Log alert and emit event
 6. Record Alert - Store alert time for cooldown
 
-**Alert Events:**
-Alerts are emitted as system events:
+**Alert Events:** Alerts are emitted as system events:
+
 ```typescript
 {
   eventType: 'communication.alert.triggered',
@@ -1163,7 +1248,7 @@ COMMUNICATION_HEALTH_CHECK_INTERVAL=30000
 
 # App Configuration
 APP_NAME=Healthcare App
-SUPPORT_EMAIL=support@healthcareapp.com
+SUPPORT_EMAIL=info@viddhakarma.com
 DEFAULT_FROM_EMAIL=noreply@healthcare.com
 DEFAULT_FROM_NAME=Healthcare App
 EMAIL_CATEGORY=Notification
@@ -1173,11 +1258,13 @@ APP_LOGIN_URL=https://app.healthcare/login
 ### Per-Clinic Configuration
 
 **Via API:**
+
 ```bash
 PUT /api/v1/clinics/{clinicId}/communication/config
 ```
 
 **Via Database:**
+
 ```sql
 UPDATE clinics
 SET settings = jsonb_set(
@@ -1198,6 +1285,7 @@ WHERE id = 'clinic-id-here';
 ```
 
 **Clinic-Specific Environment Variables:**
+
 ```bash
 # Pattern: CLINIC_{CLINIC_IDENTIFIER}_{BASE_KEY}
 CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_SEND_MAIL_TOKEN=clinic_specific_token
@@ -1213,27 +1301,32 @@ CLINIC_AADESH_AYURVEDELAY_ZEPTOMAIL_FROM_EMAIL=noreply@clinic.com
 All communication endpoints are available at `/api/v1/communication/*`:
 
 #### Send Communication
+
 - `POST /communication/send` - Unified send endpoint with category-based routing
 - `POST /communication/email` - Send email only
 - `POST /communication/push` - Send push notification only
 - `POST /communication/whatsapp` - Send WhatsApp message only
 
 #### Appointment & Prescription
+
 - `POST /communication/appointment/reminder` - Appointment reminders
 - `POST /communication/prescription/ready` - Prescription ready notifications
 
 #### Push Notifications
+
 - `POST /communication/push/multiple` - Send to multiple devices
 - `POST /communication/push/topic` - Send to topic
 - `POST /communication/push/subscribe` - Subscribe device to topic
 - `POST /communication/push/unsubscribe` - Unsubscribe device from topic
 
 #### Chat
+
 - `POST /communication/chat/backup` - Backup chat message
 - `GET /communication/chat/history/:userId` - Get chat history
 - `GET /communication/chat/stats` - Chat statistics
 
 #### Monitoring & Analytics
+
 - `GET /communication/health` - Health status
 - `GET /communication/analytics` - Enhanced analytics with detailed metrics
 - `GET /communication/dashboard` - Comprehensive health dashboard
@@ -1244,6 +1337,7 @@ All communication endpoints are available at `/api/v1/communication/*`:
 ### Quick Start Examples
 
 #### Send Email
+
 ```http
 POST /api/v1/communication/email
 Content-Type: application/json
@@ -1258,6 +1352,7 @@ Content-Type: application/json
 ```
 
 #### Send Push Notification
+
 ```http
 POST /api/v1/communication/push
 Content-Type: application/json
@@ -1271,6 +1366,7 @@ Content-Type: application/json
 ```
 
 #### Unified Send (Multiple Channels)
+
 ```http
 POST /api/v1/communication/send
 Content-Type: application/json
@@ -1294,16 +1390,19 @@ Content-Type: application/json
 ```
 
 #### Get Analytics
+
 ```http
 GET /api/v1/communication/analytics?clinicId=clinic-123&period=24h
 ```
 
 #### Get Dashboard
+
 ```http
 GET /api/v1/communication/dashboard?clinicId=clinic-123
 ```
 
 #### Get Active Alerts
+
 ```http
 GET /api/v1/communication/alerts?channel=email
 ```
@@ -1315,11 +1414,13 @@ GET /api/v1/communication/alerts?channel=email
 ### Email Testing
 
 **1. Simple Test Email:**
+
 ```bash
 GET /api/v1/email/test
 ```
 
 **2. Custom Test Email:**
+
 ```bash
 POST /api/v1/email/test-custom
 {
@@ -1329,6 +1430,7 @@ POST /api/v1/email/test-custom
 ```
 
 **Available Templates:**
+
 - `VERIFICATION` - Email verification
 - `PASSWORD_RESET` - Password reset
 - `OTP_LOGIN` - OTP login code
@@ -1337,6 +1439,7 @@ POST /api/v1/email/test-custom
 - `SECURITY_ALERT` - Security alert
 
 **3. Clinic-Specific Test:**
+
 ```bash
 POST /api/v1/clinics/{clinicId}/communication/test-email
 {
@@ -1345,6 +1448,7 @@ POST /api/v1/clinics/{clinicId}/communication/test-email
 ```
 
 **4. Communication Service Test:**
+
 ```bash
 POST /api/v1/communication/email
 {
@@ -1357,6 +1461,7 @@ POST /api/v1/communication/email
 ```
 
 **5. Email Service Status:**
+
 ```bash
 GET /api/v1/email/status
 ```
@@ -1364,6 +1469,7 @@ GET /api/v1/email/status
 ### Push Notification Testing
 
 **1. Register Device Token:**
+
 ```bash
 POST /api/v1/communication/push/device-token
 {
@@ -1374,6 +1480,7 @@ POST /api/v1/communication/push/device-token
 ```
 
 **2. Send Push Notification:**
+
 ```bash
 POST /api/v1/communication/push
 {
@@ -1394,6 +1501,7 @@ GET /api/v1/communication/health
 ```
 
 **Response:**
+
 ```json
 {
   "healthy": true,
@@ -1417,6 +1525,7 @@ GET /api/v1/communication/health
 **Issue: "Send Mail Token is required"**
 
 **Solution:**
+
 1. Verify `sendMailToken` is set in clinic configuration
 2. Check token is valid (not expired)
 3. Regenerate token in ZeptoMail console if needed
@@ -1424,6 +1533,7 @@ GET /api/v1/communication/health
 **Issue: "Email address is not verified"**
 
 **Solution:**
+
 1. Verify `fromEmail` in ZeptoMail console
 2. Complete domain verification if using custom domain
 3. Check Mail Agent configuration
@@ -1431,6 +1541,7 @@ GET /api/v1/communication/health
 **Issue: "Rate limit exceeded"**
 
 **Solution:**
+
 1. Check ZeptoMail quota limits
 2. Implement rate limiting in application
 3. Use fallback providers for high volume
@@ -1440,6 +1551,7 @@ GET /api/v1/communication/health
 **Symptoms:** All requests to provider fail immediately
 
 **Solutions:**
+
 1. Check provider health status
 2. Verify credentials are valid
 3. Check for rate limiting
@@ -1451,6 +1563,7 @@ GET /api/v1/communication/health
 **Symptoms:** Success rate < 80%
 
 **Solutions:**
+
 1. Check provider status page
 2. Verify credentials
 3. Check rate limits
@@ -1460,6 +1573,7 @@ GET /api/v1/communication/health
 ### Email Not Received
 
 **Solutions:**
+
 1. Check suppression list (bounces/complaints)
 2. Verify email address is valid
 3. Check spam folder
@@ -1505,6 +1619,7 @@ GET /api/v1/communication/health
 ## ✅ Integration Checklist
 
 ### ✅ Core Services
+
 - [x] CommunicationService implemented and exported
 - [x] NotificationEventListener registered and active
 - [x] All channel services (Email, WhatsApp, Push, Socket) implemented
@@ -1513,6 +1628,7 @@ GET /api/v1/communication/health
 - [x] Provider fallback mechanism
 
 ### ✅ Service Integration
+
 - [x] AuthService uses EmailService with clinicId
 - [x] AppointmentNotificationService uses all channels
 - [x] CommunicationController properly implemented (all endpoints)
@@ -1520,18 +1636,21 @@ GET /api/v1/communication/health
 - [x] Legacy NotificationController removed
 
 ### ✅ Event-Driven Integration
+
 - [x] NotificationEventListener listens to events
 - [x] Event patterns properly matched
 - [x] CommunicationService called from listeners
 - [x] Recipients extracted from event payloads
 
 ### ✅ Multi-Tenant Support
+
 - [x] clinicId passed through all communication calls
 - [x] ProviderFactory routes to clinic-specific adapters
 - [x] CommunicationConfigService loads clinic credentials
 - [x] Environment variable fallback working
 
 ### ✅ Category-Based Routing
+
 - [x] All 10 categories configured
 - [x] Channel selection based on category
 - [x] Strategy (IMMEDIATE/SCHEDULED/QUEUED) implemented
@@ -1539,12 +1658,14 @@ GET /api/v1/communication/health
 - [x] Rate limiting applied
 
 ### ✅ User Preferences
+
 - [x] Preferences loaded from database/cache
 - [x] Channels filtered by preferences
 - [x] SMS opt-in logic implemented
 - [x] Quiet hours respected
 
 ### ✅ Health & Metrics
+
 - [x] Health monitoring active
 - [x] Metrics tracked correctly
 - [x] Health endpoints implemented
@@ -1553,6 +1674,7 @@ GET /api/v1/communication/health
 - [x] Alerting system implemented
 
 ### ✅ Error Handling
+
 - [x] Errors logged properly
 - [x] Fallback providers used
 - [x] Retry logic implemented
@@ -1563,11 +1685,13 @@ GET /api/v1/communication/health
 ## ⚠️ Known Issues & Limitations
 
 ### ⚠️ SMS Channel
+
 - **Status:** Configuration ready, adapters pending
 - **Impact:** SMS cannot be sent yet, but configuration is ready
 - **Workaround:** Use WhatsApp or Email for SMS-like notifications
 
 ### ✅ Legacy Endpoints - REMOVED
+
 - **Status:** ✅ All deprecated endpoints removed
 - **Impact:** All `/notifications/*` endpoints are no longer available
 - **Action Required:** Use `/communication/*` endpoints only
@@ -1579,21 +1703,22 @@ GET /api/v1/communication/health
 **Status:** ✅ **COMPLETED** - All deprecated endpoints removed
 
 **Migration Summary:**
+
 - ✅ All deprecated `/notifications/*` endpoints removed
 - ✅ `NotificationController` deleted
 - ✅ All clients must use `/communication/*` endpoints
 - ✅ Migration complete - no legacy endpoints available
 
-**Endpoint Mappings:**
-| Legacy Endpoint | New Endpoint | Notes |
-|----------------|--------------|-------|
-| `POST /notifications/push` | `POST /communication/push` | Send push notification |
-| `POST /notifications/email` | `POST /communication/email` | Send email |
-| `POST /notifications/send` | `POST /communication/send` | Unified send endpoint |
-| `GET /notifications/stats` | `GET /communication/stats` | Statistics |
-| `GET /notifications/health` | `GET /communication/health` | Health status |
+**Endpoint Mappings:** | Legacy Endpoint | New Endpoint | Notes |
+|----------------|--------------|-------| | `POST /notifications/push` |
+`POST /communication/push` | Send push notification | |
+`POST /notifications/email` | `POST /communication/email` | Send email | |
+`POST /notifications/send` | `POST /communication/send` | Unified send endpoint
+| | `GET /notifications/stats` | `GET /communication/stats` | Statistics | |
+`GET /notifications/health` | `GET /communication/health` | Health status |
 
 **Migration Benefits:**
+
 - ✅ Unified API with category-based routing
 - ✅ Better error handling and retry logic
 - ✅ Enhanced monitoring and metrics
@@ -1606,7 +1731,8 @@ GET /api/v1/communication/health
 ## 📚 Related Documentation
 
 - [Email Integration Guide](./EMAIL_INTEGRATION_GUIDE.md) - Email system details
-- [Superadmin Clinic Management](./SUPERADMIN_CLINIC_MANAGEMENT.md) - Clinic configuration
+- [Superadmin Clinic Management](./SUPERADMIN_CLINIC_MANAGEMENT.md) - Clinic
+  configuration
 - [AWS SES Complete Guide](./AWS_SES_COMPLETE_GUIDE.md) - AWS SES setup
 - [FCM Integration Guide](./FCM_INTEGRATION_GUIDE.md) - Push notifications
 
@@ -1658,7 +1784,11 @@ GET /api/v1/communication/health
 
 **Overall Status:** ✅ **PRODUCTION READY**
 
-The communication and notification systems are fully implemented, integrated, and ready for production use. All channels (Email, WhatsApp, Push, Socket) are working correctly with multi-tenant support. All deprecated endpoints have been removed - use `/communication/*` endpoints only. The only pending item is SMS adapter implementation, but the configuration system is ready.
+The communication and notification systems are fully implemented, integrated,
+and ready for production use. All channels (Email, WhatsApp, Push, Socket) are
+working correctly with multi-tenant support. All deprecated endpoints have been
+removed - use `/communication/*` endpoints only. The only pending item is SMS
+adapter implementation, but the configuration system is ready.
 
 **Last Updated:** January 2025  
 **Primary Email Provider:** ✅ **ZeptoMail** (Configured)

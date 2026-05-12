@@ -437,8 +437,26 @@ export class AppointmentNotificationService {
     }
 
     try {
+      const appointmentType = this.normalizeAppointmentType(templateData.appointmentType);
+      const detailsUrl = this.buildAppointmentDetailsUrl(
+        notificationData.appointmentId,
+        appointmentType
+      );
+
       // Send based on notification type
-      if (type === 'reminder' || type === 'created' || type === 'updated') {
+      if (type === 'confirmation' || type === 'created') {
+        await this.whatsAppService.sendAppointmentConfirmation(
+          patientPhone,
+          templateData.patientName,
+          templateData.doctorName,
+          templateData.appointmentDate,
+          templateData.appointmentTime,
+          templateData.location,
+          clinicId,
+          detailsUrl,
+          appointmentType
+        );
+      } else if (type === 'reminder' || type === 'updated') {
         await this.whatsAppService.sendAppointmentReminder(
           patientPhone,
           templateData.patientName,
@@ -446,7 +464,9 @@ export class AppointmentNotificationService {
           templateData.appointmentDate,
           templateData.appointmentTime,
           templateData.location,
-          clinicId // Pass clinicId for multi-tenant support
+          clinicId,
+          detailsUrl,
+          appointmentType
         );
       } else if (type === 'prescription') {
         await this.whatsAppService.sendPrescriptionNotification(
@@ -704,5 +724,33 @@ export class AppointmentNotificationService {
     };
 
     return bodies[type as keyof typeof bodies] || 'Appointment notification';
+  }
+
+  private normalizeAppointmentType(appointmentType?: string): string {
+    const normalized = (appointmentType || '').trim().toUpperCase();
+    if (normalized === 'VIDEO_CALL' || normalized === 'VIDEO') {
+      return 'video';
+    }
+    if (normalized === 'IN_PERSON' || normalized === 'INPERSON' || normalized === 'IN-PERSON') {
+      return 'in-person';
+    }
+    if (normalized === 'HOME_VISIT' || normalized === 'HOME VISIT') {
+      return 'home-visit';
+    }
+    return appointmentType?.trim() || 'in-person';
+  }
+
+  private buildAppointmentDetailsUrl(appointmentId: string, appointmentType: string): string {
+    const frontendBaseUrl =
+      this.configService.getEnv('FRONTEND_URL') ||
+      this.configService.getEnv('NEXT_PUBLIC_APP_URL') ||
+      'http://localhost:3000';
+    const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
+
+    if (appointmentType === 'video') {
+      return `${normalizedFrontendUrl}/meet/${encodeURIComponent(appointmentId)}`;
+    }
+
+    return `${normalizedFrontendUrl}/patient/appointments?appointmentId=${encodeURIComponent(appointmentId)}`;
   }
 }

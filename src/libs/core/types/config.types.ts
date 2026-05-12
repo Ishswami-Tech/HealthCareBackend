@@ -283,8 +283,10 @@ export interface WhatsappConfig {
   readonly businessAccountId: string;
   /** OTP template ID */
   readonly otpTemplateId: string;
+  /** Appointment confirmation template ID */
+  readonly appointmentConfirmationTemplateId: string;
   /** Appointment reminder template ID */
-  readonly appointmentTemplateId: string;
+  readonly appointmentReminderTemplateId: string;
   /** Prescription notification template ID */
   readonly prescriptionTemplateId: string;
 }

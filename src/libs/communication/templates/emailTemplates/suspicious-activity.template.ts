@@ -30,7 +30,7 @@ export function generateSuspiciousActivityTemplate(
       <p>For your protection, we've temporarily added additional security measures to your account.</p>
       <p>The next time you log in, you'll need to verify your identity through additional steps.</p>
       
-      <p>If you believe this is an error or have questions, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
+      <p>If you believe this is an error or have questions, please contact our support team at ${context.supportEmail || 'info@viddhakarma.com'}.</p>
       
       <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Security Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : '<div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #777;"><p>This is an automated security notification. Please do not reply to this email.</p></div>'}

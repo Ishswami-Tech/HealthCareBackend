@@ -895,7 +895,7 @@ Components:
 - **Documentation**: This file
 - **API Docs**: Swagger at `/api`
 - **Issues**: GitHub Issues
-- **Email**: support@clinic.com
+- **Email**: info@viddhakarma.com
 
 ---
 

@@ -3150,7 +3150,7 @@ export class AppointmentsController {
         throw this.errors.checkInAlreadyConfirmed(appointment.id, context);
       }
 
-      // Step 4.5: Validate time window for check-in (30 min before to 2 hours after)
+      // Step 4.5: Validate time window for check-in (30 min before to 3 hours after)
       // Parse appointment date and time
       const appointmentDate = new Date(appointment.date);
       const timeParts = appointment.time.split(':').map(Number);
@@ -3161,10 +3161,10 @@ export class AppointmentsController {
       const now = new Date();
       const thirtyMinutesBefore = new Date(appointmentDate);
       thirtyMinutesBefore.setMinutes(thirtyMinutesBefore.getMinutes() - 30);
-      const twoHoursAfter = new Date(appointmentDate);
-      twoHoursAfter.setHours(twoHoursAfter.getHours() + 2);
+      const threeHoursAfter = new Date(appointmentDate);
+      threeHoursAfter.setHours(threeHoursAfter.getHours() + 3);
 
-      const isWithinWindow = now >= thirtyMinutesBefore && now <= twoHoursAfter;
+      const isWithinWindow = now >= thirtyMinutesBefore && now <= threeHoursAfter;
 
       if (!isWithinWindow && !isStaff) {
         await this.loggingService.log(

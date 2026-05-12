@@ -1031,7 +1031,7 @@ export class CommunicationController {
           role: 'Patient',
           loginUrl: `${frontendUrl}/login`,
           dashboardUrl: `${frontendUrl}/patient/dashboard`,
-          supportEmail: 'support@healthcareapp.com',
+          supportEmail: 'info@viddhakarma.com',
           isGoogleAccount: false,
         };
         break;
@@ -1057,7 +1057,7 @@ export class CommunicationController {
         context = {
           name: 'Test User',
           time: formatDateTimeInIST(new Date()),
-          supportEmail: 'support@healthcareapp.com',
+          supportEmail: 'info@viddhakarma.com',
         };
         break;
     }

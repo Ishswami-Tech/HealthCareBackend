@@ -65,7 +65,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHECKIN_APPOINTMENT_EXPIRED]:
     'This appointment has expired. Please contact the clinic to reschedule.',
   [ErrorCode.CHECKIN_TIME_WINDOW_EXPIRED]:
-    'Check-in window has expired. Please check in within 30 minutes before or 2 hours after your appointment time.',
+    'Check-in window has expired. Please check in within 30 minutes before or 3 hours after your appointment time.',
   [ErrorCode.CHECKIN_INVALID_QR_CODE]:
     'Invalid QR code. Please scan the correct QR code for this location.',
 

@@ -1,4 +1,4 @@
-import { nowIso } from '@utils/date-time.util';
+import { nowIso, formatTimeInIST } from '@utils/date-time.util';
 /**
  * Notification Event Listener
  * ============================
@@ -217,6 +217,20 @@ export class NotificationEventListener implements OnModuleInit {
     },
     // User Events
     {
+      eventPattern: /^user\.(logged_in|otp_logged_in|google_oauth_logged_in)$/,
+      category: CommunicationCategory.LOGIN,
+      channels: ['email', 'whatsapp'],
+      priority: CommunicationPriority.NORMAL,
+      template: 'login_notification',
+      recipients: payload => {
+        if (payload.userId) {
+          return [{ userId: payload.userId }];
+        }
+        return [];
+      },
+      shouldNotify: () => true,
+    },
+    {
       eventPattern: /^user\.created$/,
       category: CommunicationCategory.USER_ACTIVITY,
       channels: ['email', 'whatsapp'],
@@ -281,6 +295,45 @@ export class NotificationEventListener implements OnModuleInit {
             userId: doctorId,
             socketRoom: `user:${doctorId}`,
           }); // Doctor
+        }
+        if (payload.clinicId) {
+          recipients.push({
+            socketRoom: `clinic:${payload.clinicId}`,
+          });
+        }
+        return recipients;
+      },
+      shouldNotify: () => true,
+    },
+    {
+      eventPattern: /^appointment\.confirmed$/,
+      category: CommunicationCategory.APPOINTMENT,
+      channels: ['socket', 'push', 'email', 'whatsapp'],
+      priority: CommunicationPriority.HIGH,
+      template: 'appointment_confirmation',
+      recipients: payload => {
+        const recipients: Array<{
+          userId?: string;
+          email?: string;
+          deviceToken?: string;
+          socketRoom?: string;
+        }> = [];
+        const patientId =
+          payload.userId ||
+          (payload.metadata?.['patientId'] as string | undefined) ||
+          (payload.metadata?.['userId'] as string | undefined);
+        if (patientId) {
+          recipients.push({
+            userId: patientId,
+            socketRoom: `user:${patientId}`,
+          });
+        }
+        const doctorId = payload.metadata?.['doctorId'] as string | undefined;
+        if (doctorId) {
+          recipients.push({
+            userId: doctorId,
+            socketRoom: `user:${doctorId}`,
+          });
         }
         if (payload.clinicId) {
           recipients.push({
@@ -1051,7 +1104,16 @@ export class NotificationEventListener implements OnModuleInit {
         body = 'Your appointment has been rescheduled';
       }
     } else if (eventType.startsWith('user.')) {
-      if (eventType.includes('.created')) {
+      if (eventType.includes('.logged_in')) {
+        const loginMethod =
+          typeof _payload.metadata?.['loginMethod'] === 'string' &&
+          _payload.metadata['loginMethod'].trim().length > 0
+            ? _payload.metadata['loginMethod']
+            : 'account';
+        const loginTime = formatTimeInIST(_payload.timestamp);
+        title = 'New Login Detected';
+        body = `A ${loginMethod.replace(/_/g, ' ')} sign-in was detected for your account at ${loginTime}. If this was not you, please change your password immediately.`;
+      } else if (eventType.includes('.created')) {
         title = 'Welcome!';
         body = 'Your account has been created successfully';
       } else if (eventType.includes('.updated')) {

@@ -40,7 +40,7 @@ export function generateWelcomeTemplate(
         </a>
       </div>
       
-      <p>If you have any questions or need assistance, please contact our support team at ${context.supportEmail || 'support@healthcareapp.com'}.</p>
+      <p>If you have any questions or need assistance, please contact our support team at ${context.supportEmail || 'info@viddhakarma.com'}.</p>
       
       <p>Best regards,<br>The ${context['appName'] || 'Healthcare App'} Team</p>
       ${unsubscribeUrl ? generateUnsubscribeFooter(unsubscribeUrl) : ''}

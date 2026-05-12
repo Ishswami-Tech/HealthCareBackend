@@ -116,10 +116,25 @@ export class TwilioWhatsAppAdapter extends BaseWhatsAppAdapter {
       if (options.templateId) {
         // Template message (Twilio uses ContentSid for templates)
         formData.append('ContentSid', options.templateId);
-        if (options.templateParams) {
-          Object.entries(options.templateParams).forEach(([key, value]) => {
+        const templateParams =
+          options.templateParams ||
+          options.templateComponents
+            ?.find(component => component.type === 'body')
+            ?.parameters?.reduce(
+              (acc, param, index) => {
+                acc[`${index}`] = param.text;
+                return acc;
+              },
+              {} as Record<string, string>
+            );
+        if (templateParams) {
+          Object.entries(templateParams).forEach(([key, value]) => {
             formData.append(`ContentVariables[${key}]`, String(value));
           });
+        }
+        if (options.templateComponents?.some(component => component.type === 'button')) {
+          // Twilio content templates handle buttons at template definition time.
+          // The provider API does not need extra button variables here for the common case.
         }
       } else {
         // Regular text message

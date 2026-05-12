@@ -193,7 +193,7 @@ specification:
   "track_clicks": true,
   "reply_to": [
     {
-      "address": "support@yourdomain.com",
+      "address": "info@viddhakarma.com",
       "name": "Support Team"
     }
   ],
@@ -434,7 +434,7 @@ await emailService.sendEmail({
   context: {
     name: 'John Doe',
     appName: 'Healthcare App',
-    supportEmail: 'support@healthcare.com',
+    supportEmail: 'info@viddhakarma.com',
   },
   clinicId: 'clinic-123', // ← Multi-tenant routing
 });

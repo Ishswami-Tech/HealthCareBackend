@@ -19,6 +19,12 @@ export interface WhatsAppOptions {
   mediaType?: 'image' | 'video' | 'audio' | 'document';
   templateId?: string; // Required for template messages
   templateParams?: Record<string, string>;
+  templateComponents?: Array<{
+    type: string;
+    parameters: Array<{ type: string; text: string }>;
+    sub_type?: string;
+    index?: string;
+  }>;
   language?: string; // Language code for templates (default: 'en')
   metadata?: Record<string, unknown>;
 }

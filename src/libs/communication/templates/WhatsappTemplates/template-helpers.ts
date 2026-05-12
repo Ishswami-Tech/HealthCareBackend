@@ -31,37 +31,93 @@ export function formatOTPTemplateParams(
   ];
 }
 
+type WhatsAppTemplateComponent = {
+  type: string;
+  parameters: Array<{ type: string; text: string }>;
+  sub_type?: string;
+  index?: string;
+};
+
+function buildDetailsButton(detailsUrl?: string): WhatsAppTemplateComponent[] {
+  if (!detailsUrl) {
+    return [];
+  }
+
+  return [
+    {
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [{ type: 'text', text: detailsUrl }],
+    },
+  ];
+}
+
 /**
- * Formats appointment reminder template parameters for WhatsApp
+ * Formats appointment confirmation template parameters for WhatsApp
  * @param patientName - Patient name
+ * @param appointmentType - Appointment type label
  * @param doctorName - Doctor name
  * @param appointmentDate - Appointment date
  * @param appointmentTime - Appointment time
- * @param location - Appointment location
+ * @param detailsUrl - Dynamic details URL for the CTA button
  * @returns Template components array
  */
-export function formatAppointmentReminderTemplateParams(
+export function formatAppointmentConfirmationTemplateParams(
   patientName: string,
+  appointmentType: string,
   doctorName: string,
   appointmentDate: string,
   appointmentTime: string,
-  location: string
-): Array<{
-  type: string;
-  parameters: Array<{ type: string; text: string }>;
-}> {
-  return [
+  detailsUrl?: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
         { type: 'text', text: patientName },
+        { type: 'text', text: appointmentType },
         { type: 'text', text: doctorName },
         { type: 'text', text: appointmentDate },
         { type: 'text', text: appointmentTime },
-        { type: 'text', text: location },
       ],
     },
   ];
+
+  components.push(...buildDetailsButton(detailsUrl));
+  return components;
+}
+
+/**
+ * Formats appointment reminder template parameters for WhatsApp
+ * @param patientName - Patient name
+ * @param appointmentType - Appointment type label
+ * @param doctorName - Doctor name
+ * @param appointmentDateTime - Combined appointment date/time
+ * @param detailsUrl - Dynamic details URL for the CTA button
+ * @returns Template components array
+ */
+export function formatAppointmentReminderTemplateParams(
+  patientName: string,
+  appointmentType: string,
+  doctorName: string,
+  appointmentDateTime: string,
+  detailsUrl?: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: patientName },
+        { type: 'text', text: appointmentType },
+        { type: 'text', text: doctorName },
+        { type: 'text', text: appointmentDateTime },
+      ],
+    },
+  ];
+
+  components.push(...buildDetailsButton(detailsUrl));
+  return components;
 }
 
 /**
@@ -112,9 +168,15 @@ export function formatPrescriptionNotificationTemplateParams(
  * Template Name: otp_verification
  * Template Body: "Your OTP code is {{1}} and is valid for {{2}} minutes. Please do not share this code with anyone."
  *
+ * Appointment Confirmation Template Example:
+ * Template Name: appointment_confirmation
+ * Template Body: "Your {{2}} appointment with {{3}} is confirmed for {{4}} at {{5}}"
+ * Button: "View details" -> {{1}}
+ *
  * Appointment Reminder Template Example:
- * Template Name: appointment_reminder
- * Template Body: "Hello {{1}}, this is a reminder for your appointment with Dr. {{2}} on {{3}} at {{4}}. Location: {{5}}"
+ * Template Name: appointment_reminder_2
+ * Template Body: "Hello {{1}}, this is a reminder about your {{2}} appointment with Dr. {{3}} at {{4}}"
+ * Button: "View details" -> {{1}}
  *
  * Prescription Notification Template Example:
  * Template Name: prescription_notification

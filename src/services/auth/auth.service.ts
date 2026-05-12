@@ -618,6 +618,11 @@ export class AuthService {
         role: user.role,
         clinicId,
         sessionId: session.sessionId,
+        metadata: {
+          loginMethod: 'password',
+          userAgent: sessionMetadata?.userAgent,
+          ipAddress: sessionMetadata?.ipAddress,
+        },
       });
 
       await this.logging.log(
@@ -1337,6 +1342,11 @@ export class AuthService {
         role: user.role,
         clinicId: clinicUUID,
         sessionId: session.sessionId,
+        metadata: {
+          loginMethod: 'otp',
+          userAgent: sessionMetadata?.userAgent,
+          ipAddress: sessionMetadata?.ipAddress,
+        },
       });
 
       await this.logging.log(
@@ -2105,6 +2115,11 @@ export class AuthService {
         clinicId: finalClinicId,
         sessionId: session.sessionId,
         isNewUser: socialAuthResult.isNewUser,
+        metadata: {
+          loginMethod: 'google_oauth',
+          userAgent: sessionMetadata?.userAgent,
+          ipAddress: sessionMetadata?.ipAddress,
+        },
       });
 
       await this.logging.log(
