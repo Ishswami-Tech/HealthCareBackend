@@ -63,6 +63,29 @@ normalize_bool() {
     esac
 }
 
+# Retry a registry pull for a short period to absorb GHCR propagation delay.
+retry_docker_pull() {
+    local image="$1"
+    local max_attempts="${2:-12}"
+    local delay_seconds="${3:-10}"
+    local attempt=1
+
+    while [[ "$attempt" -le "$max_attempts" ]]; do
+        if docker pull "${image}" >/dev/null 2>&1; then
+            return 0
+        fi
+
+        if [[ "$attempt" -lt "$max_attempts" ]]; then
+            log_warning "Pull attempt ${attempt}/${max_attempts} failed for ${image}; retrying in ${delay_seconds}s..."
+            sleep "${delay_seconds}"
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    return 1
+}
+
 INFRA_CHANGED=$(normalize_bool "$INFRA_CHANGED")
 APP_CHANGED=$(normalize_bool "$APP_CHANGED")
 INFRA_HEALTHY=$(normalize_bool "$INFRA_HEALTHY")
@@ -488,7 +511,7 @@ deploy_application() {
     
     # CRITICAL: Force pull without using cache to ensure we get absolute latest from registry
     log_info "Pulling image (forcing fresh pull from registry)..."
-    if docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+    if retry_docker_pull "${DOCKER_IMAGE}" 12 10; then
         log_success "Successfully pulled image: ${DOCKER_IMAGE}"
         pull_success=true
         
@@ -523,7 +546,7 @@ deploy_application() {
         log_info "Trying fallback image: ${fallback_image}"
         export DOCKER_IMAGE="${fallback_image}"
         
-        if docker pull "${DOCKER_IMAGE}" >/dev/null 2>&1; then
+        if retry_docker_pull "${DOCKER_IMAGE}" 6 10; then
             log_success "Successfully pulled fallback image: ${fallback_image}"
             log_warning "Using :latest tag instead of specific tag: ${original_docker_image}"
             log_warning "This ensures deployment continues even if SHA tag hasn't propagated yet"
