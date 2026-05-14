@@ -1301,7 +1301,6 @@ jobs:
             CLOUDFLARE_API_TOKEN
             GOOGLE_CLIENT_ID
             GOOGLE_CLIENT_SECRET
-            GOOGLE_MEET_REFRESH_TOKEN
             CASHFREE_APP_ID
             CASHFREE_SECRET_KEY
             CASHFREE_API_VERSION
