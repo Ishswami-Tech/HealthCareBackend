@@ -66,7 +66,7 @@ data:
   # FRONTEND_URL: Default/fallback frontend URL (used when clinic-specific URL not available)
   # Clinic-specific frontend URLs are configured via environment variables:
   # Pattern: CLINIC_{SANITIZED_CLINIC_NAME}_FRONTEND_URL
-  # Example: CLINIC_VISHWAMURTI_AYURVEDELAY_FRONTEND_URL=https://vishwamurti.viddhakarma.com
+  # Example: CLINIC_DRCHANDRAKUMARDESHMUKH_FRONTEND_URL=https://drchandrakumardeshmukh.viddhakarma.com
   # All clinic frontend URLs must also be included in CORS_ORIGIN above
   # All frontends connect to the SAME backend API (API_URL)
   FRONTEND_URL: "https://ishswami.in"
