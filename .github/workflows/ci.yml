@@ -1005,7 +1005,7 @@ jobs:
           REDIS_TTL=${{ vars.REDIS_TTL }}
           REDIS_PREFIX=${{ vars.REDIS_PREFIX }}
           REDIS_ENABLED=${{ vars.REDIS_ENABLED }}
-          REDIS_PASSWORD=${{ vars.REDIS_PASSWORD }}
+          REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
           PORT=${{ vars.PORT }}
           API_PREFIX=${{ vars.API_PREFIX }}
           HOST=${{ vars.HOST }}
@@ -1047,6 +1047,7 @@ jobs:
           ZEPTOMAIL_FROM_NAME=${{ vars.ZEPTOMAIL_FROM_NAME }}
           ZEPTOMAIL_BOUNCE_ADDRESS=${{ vars.ZEPTOMAIL_BOUNCE_ADDRESS }}
           ZEPTOMAIL_API_BASE_URL=${{ vars.ZEPTOMAIL_API_BASE_URL }}
+          ZEPTOMAIL_WEBHOOK_SECRET=${{ secrets.ZEPTOMAIL_WEBHOOK_SECRET }}
 
           # Clinic-Specific Email Configuration (Multi-Tenant)
           # ===================================================
@@ -1097,8 +1098,20 @@ jobs:
           WHATSAPP_PHONE_NUMBER_ID=${{ vars.WHATSAPP_PHONE_NUMBER_ID }}
           WHATSAPP_BUSINESS_ACCOUNT_ID=${{ vars.WHATSAPP_BUSINESS_ACCOUNT_ID }}
           WHATSAPP_OTP_TEMPLATE_ID=${{ vars.WHATSAPP_OTP_TEMPLATE_ID }}
+          WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID=${{ vars.WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID }}
           WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ vars.WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
+          WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID=${{ vars.WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID }}
           WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ vars.WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
+          META_WHATSAPP_WEBHOOK_VERIFY_TOKEN=${{ secrets.META_WHATSAPP_WEBHOOK_VERIFY_TOKEN }}
+          META_WHATSAPP_APP_ID=${{ vars.META_WHATSAPP_APP_ID }}
+          META_WHATSAPP_APP_SECRET=${{ secrets.META_WHATSAPP_APP_SECRET }}
+          PAYMENT_ENABLED_PROVIDERS=${{ vars.PAYMENT_ENABLED_PROVIDERS }}
+          CASHFREE_ENVIRONMENT=${{ vars.CASHFREE_ENVIRONMENT }}
+          CASHFREE_APP_ID=${{ secrets.CASHFREE_APP_ID }}
+          CASHFREE_SECRET_KEY=${{ secrets.CASHFREE_SECRET_KEY }}
+          CASHFREE_API_VERSION=${{ vars.CASHFREE_API_VERSION }}
+          CASHFREE_RETURN_URL=${{ vars.CASHFREE_RETURN_URL }}
+          CASHFREE_NOTIFY_URL=${{ vars.CASHFREE_NOTIFY_URL }}
 
           # Clinic-Specific WhatsApp Configuration (Multi-Tenant)
           # =======================================================
@@ -1110,7 +1123,9 @@ jobs:
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PHONE_NUMBER_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_BUSINESS_ACCOUNT_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_OTP_TEMPLATE_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_TEMPLATE_ID }}
+          CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID }}
           CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID=${{ vars.CLINIC_VISHWAMURTI_AYURVEDELAY_WHATSAPP_PRESCRIPTION_TEMPLATE_ID }}
 
           # Clinic-Specific Frontend URLs (Multi-Tenant)
@@ -1156,6 +1171,7 @@ jobs:
           GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET=${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REDIRECT_URI=${{ vars.GOOGLE_REDIRECT_URI }}
+          VIDEO_PROVIDER=${{ vars.VIDEO_PROVIDER }}
 
           # Payment - Cashfree (Primary Provider)
           # =======================================
@@ -1175,7 +1191,7 @@ jobs:
 
           # Coturn Configuration (for infrastructure services)
           SESSION_SECRET=${{ secrets.SESSION_SECRET }}
-          SESSION_TIMEOUT=${{ secrets.SESSION_TIMEOUT }}
+          SESSION_TIMEOUT=${{ vars.SESSION_TIMEOUT }}
           SESSION_SECURE_COOKIES=${{ vars.SESSION_SECURE_COOKIES }}
           SESSION_SAME_SITE=${{ vars.SESSION_SAME_SITE }}
           COOKIE_SECRET=${{ secrets.COOKIE_SECRET }}
@@ -1252,6 +1268,63 @@ jobs:
           FACEBOOK_REDIRECT_URI=${{ vars.FACEBOOK_REDIRECT_URI }}
           APPLE_REDIRECT_URI=${{ vars.APPLE_REDIRECT_URI }}
           EOF
+
+      - name: Validate deployment env values
+        run: |
+          set -e
+          declare -a MANDATORY_ENV_KEYS=(
+            DATABASE_URL
+            JWT_SECRET
+            JWT_REFRESH_SECRET
+            SESSION_SECRET
+            COOKIE_SECRET
+            COMMUNICATION_ENCRYPTION_KEY
+            REDIS_PASSWORD
+            EMAIL_PROVIDER
+            ZEPTOMAIL_ENABLED
+            ZEPTOMAIL_SEND_MAIL_TOKEN
+            ZEPTOMAIL_WEBHOOK_SECRET
+            WHATSAPP_API_KEY
+            WHATSAPP_PHONE_NUMBER_ID
+            WHATSAPP_BUSINESS_ACCOUNT_ID
+            WHATSAPP_OTP_TEMPLATE_ID
+            WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID
+            WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID
+            META_WHATSAPP_WEBHOOK_VERIFY_TOKEN
+            META_WHATSAPP_APP_ID
+            META_WHATSAPP_APP_SECRET
+            PAYMENT_ENABLED_PROVIDERS
+            CASHFREE_ENVIRONMENT
+            VIDEO_PROVIDER
+            DAILY_API_KEY
+            DAILY_DOMAIN
+            CLOUDFLARE_API_TOKEN
+            GOOGLE_CLIENT_ID
+            GOOGLE_CLIENT_SECRET
+            GOOGLE_MEET_REFRESH_TOKEN
+            CASHFREE_APP_ID
+            CASHFREE_SECRET_KEY
+            CASHFREE_API_VERSION
+            CASHFREE_RETURN_URL
+            CASHFREE_NOTIFY_URL
+            S3_ACCESS_KEY_ID
+            S3_SECRET_ACCESS_KEY
+            FIREBASE_PRIVATE_KEY
+            FIREBASE_VAPID_KEY
+            QUEUE_DASHBOARD_PASSWORD
+          )
+
+          missing=()
+          for key in "${MANDATORY_ENV_KEYS[@]}"; do
+            if ! grep -Eq "^${key}=.+" /tmp/.env.production; then
+              missing+=("$key")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "❌ Missing or empty deployment values: ${missing[*]}"
+            exit 1
+          fi
 
       - name: Copy files to server
         run: |

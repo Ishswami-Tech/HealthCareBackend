@@ -103,6 +103,43 @@ export function validateEnvironmentConfig(
     }
   }
 
+  const addConditionalWarnings = (enabled: boolean, vars: readonly string[]): void => {
+    if (!enabled) {
+      return;
+    }
+
+    for (const varName of vars) {
+      if (!getEnv(varName) && !requiredVars.includes(varName) && !warnings.includes(varName)) {
+        warnings.push(varName);
+      }
+    }
+  };
+
+  const whatsappEnabled = getEnv(ENV_VARS.WHATSAPP_ENABLED) === 'true';
+  addConditionalWarnings(whatsappEnabled, [
+    ENV_VARS.WHATSAPP_API_KEY,
+    ENV_VARS.WHATSAPP_PHONE_NUMBER_ID,
+    ENV_VARS.WHATSAPP_BUSINESS_ACCOUNT_ID,
+    ENV_VARS.WHATSAPP_OTP_TEMPLATE_ID,
+    ENV_VARS.WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID,
+    ENV_VARS.WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID,
+    ENV_VARS.WHATSAPP_PRESCRIPTION_TEMPLATE_ID,
+    'META_WHATSAPP_WEBHOOK_VERIFY_TOKEN',
+    ENV_VARS.META_WHATSAPP_APP_ID,
+    'META_WHATSAPP_APP_SECRET',
+  ]);
+
+  const emailProvider = (getEnv(ENV_VARS.EMAIL_PROVIDER) || '').toLowerCase();
+  const zeptoMailEnabled = getEnv('ZEPTOMAIL_ENABLED') === 'true' || emailProvider === 'zeptomail';
+  addConditionalWarnings(zeptoMailEnabled, [
+    'ZEPTOMAIL_SEND_MAIL_TOKEN',
+    'ZEPTOMAIL_FROM_EMAIL',
+    'ZEPTOMAIL_FROM_NAME',
+    'ZEPTOMAIL_BOUNCE_ADDRESS',
+    'ZEPTOMAIL_API_BASE_URL',
+    'ZEPTOMAIL_WEBHOOK_SECRET',
+  ]);
+
   // Throw error if required variables are missing
   if (missing.length > 0 && throwOnMissing) {
     const envFile = `.env.${environment}`;

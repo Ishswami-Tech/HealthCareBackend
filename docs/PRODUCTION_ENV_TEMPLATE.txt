@@ -104,7 +104,7 @@ ZEPTOMAIL_FROM_EMAIL=noreply@yourdomain.com
 ZEPTOMAIL_FROM_NAME=Healthcare App
 # Optional: Bounce address for handling bounces
 ZEPTOMAIL_BOUNCE_ADDRESS=bounces@yourdomain.com
-ZEPTOMAIL_API_BASE_URL=https://api.zeptomail.com/v1.1
+ZEPTOMAIL_API_BASE_URL=https://api.zeptomail.in/v1.1
 
 # CORS Configuration
 # Add all allowed origins (frontend domains, API domains, etc.)
@@ -128,16 +128,29 @@ QUEUE_DASHBOARD_PASSWORD=
 # WhatsApp Configuration (Meta Business API)
 # See: https://developers.facebook.com/docs/whatsapp/cloud-api
 WHATSAPP_ENABLED=false
-WHATSAPP_API_URL=https://graph.facebook.com/v17.0
+WHATSAPP_API_URL=https://graph.facebook.com/v25.0
 WHATSAPP_API_KEY=
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_BUSINESS_ACCOUNT_ID=
 WHATSAPP_OTP_TEMPLATE_ID=otp_verification
+WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID=appointment_confirmation
+WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID=appointment_reminder_2
 WHATSAPP_APPOINTMENT_TEMPLATE_ID=appointment_reminder
 WHATSAPP_PRESCRIPTION_TEMPLATE_ID=prescription_notification
 # Meta WhatsApp Webhook (required for /webhooks/whatsapp/meta verification & signature validation)
 META_WHATSAPP_WEBHOOK_VERIFY_TOKEN=CHANGE_THIS_VERIFY_TOKEN_FOR_META_WEBHOOK
+META_WHATSAPP_APP_ID=YOUR_META_WHATSAPP_APP_ID_HERE
 META_WHATSAPP_APP_SECRET=
+
+# Payment Configuration - Cashfree
+# See: https://www.cashfree.com/docs
+PAYMENT_ENABLED_PROVIDERS=cashfree
+CASHFREE_ENVIRONMENT=sandbox
+CASHFREE_APP_ID=YOUR_CASHFREE_APP_ID_HERE
+CASHFREE_SECRET_KEY=YOUR_CASHFREE_SECRET_KEY_HERE
+CASHFREE_API_VERSION=2025-01-01
+CASHFREE_RETURN_URL=https://www.viddhakarma.com/payment/callback
+CASHFREE_NOTIFY_URL=https://backend-service-v1.ishswami.in/api/v1/payments/cashfree/webhook
 
 # Video Configuration
 VIDEO_ENABLED=true
