@@ -2228,7 +2228,14 @@ export class AppointmentsController {
    */
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
-  @Roles(Role.DOCTOR, Role.ASSISTANT_DOCTOR, Role.THERAPIST, Role.COUNSELOR, Role.NURSE, Role.RECEPTIONIST)
+  @Roles(
+    Role.DOCTOR,
+    Role.ASSISTANT_DOCTOR,
+    Role.THERAPIST,
+    Role.COUNSELOR,
+    Role.NURSE,
+    Role.RECEPTIONIST
+  )
   @ClinicRoute()
   @RequireResourcePermission('appointments', 'update', {
     requireOwnership: false,
