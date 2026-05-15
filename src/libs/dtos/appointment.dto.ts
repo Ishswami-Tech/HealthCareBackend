@@ -242,13 +242,13 @@ export class CreateAppointmentDto {
   @IsNotEmpty({ message: 'Doctor ID is required' })
   doctorId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'CL0001',
     description: 'Clinic ID where appointment will take place (UUID or clinic code like CL0001)',
   })
+  @IsOptional()
   @IsClinicId({ message: 'Clinic ID must be a valid UUID or clinic code format (e.g., CL0001)' })
-  @IsNotEmpty({ message: 'Clinic ID is required' })
-  clinicId!: string;
+  clinicId?: string;
 
   @ApiPropertyOptional({
     example: 'location-uuid-123',
@@ -1371,10 +1371,10 @@ export class VerifyAppointmentQRDto {
  * @class CompleteAppointmentDto
  */
 export class CompleteAppointmentDto {
-  @ApiProperty({ description: 'Doctor ID' })
+  @ApiPropertyOptional({ description: 'Doctor ID' })
+  @IsOptional()
   @IsUUID('4', { message: 'Doctor ID must be a valid UUID' })
-  @IsNotEmpty({ message: 'Doctor ID is required' })
-  doctorId!: string;
+  doctorId?: string;
 
   @ApiPropertyOptional({ description: 'Completion notes', required: false })
   @IsOptional()

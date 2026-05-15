@@ -31,6 +31,7 @@ import {
   isInPersonAppointmentType,
   isHomeVisitAppointmentType,
 } from '@core/types/appointment-guards.types';
+import { resolveClinicUUID } from '@utils/clinic.utils';
 // PaymentStatus, PaymentMethod, Language removed - not used in this service
 import type {
   AppointmentContext,
@@ -117,12 +118,24 @@ export class CoreAppointmentService {
 
       // 0. Validate clinic context integrity
       if (createDto.clinicId && createDto.clinicId !== context.clinicId) {
-        return {
-          success: false,
-          error: 'VALIDATION_ERROR',
-          message: 'Clinic ID mismatch: Request body does not match context',
-          metadata: { processingTime: Date.now() - startTime },
-        };
+        let resolvedRequestClinicId: string | null = null;
+        try {
+          resolvedRequestClinicId = await resolveClinicUUID(
+            this.databaseService,
+            createDto.clinicId
+          );
+        } catch (_error) {
+          resolvedRequestClinicId = null;
+        }
+
+        if (resolvedRequestClinicId !== context.clinicId) {
+          return {
+            success: false,
+            error: 'VALIDATION_ERROR',
+            message: 'Clinic ID mismatch: Request body does not match context',
+            metadata: { processingTime: Date.now() - startTime },
+          };
+        }
       }
 
       // 1. Validate appointment type requirements using strict type guards
