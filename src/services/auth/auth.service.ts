@@ -1469,7 +1469,7 @@ export class AuthService {
 
   /**
    * Resolve clinic for authentication flows.
-   * Priority: explicit clinic (header/body) -> primaryClinicId -> active UserRole clinic assignment
+   * Priority: explicit clinic (header/body) -> primaryClinicId -> ClinicAdmin -> active UserRole clinic assignment
    */
   private async resolveClinicForAuthentication(
     user: { id: string; role: Role | string; primaryClinicId?: string | null },
@@ -1485,6 +1485,28 @@ export class AuthService {
 
     if ((user.role as Role) === Role.SUPER_ADMIN) {
       return undefined;
+    }
+
+    const clinicAdminAssignment = await this.databaseService.executeHealthcareRead<{
+      clinicId: string | null;
+    } | null>(async client => {
+      const typedClient = client as unknown as {
+        clinicAdmin: {
+          findFirst: (args: {
+            where: { userId: string };
+            select: { clinicId: true };
+          }) => Promise<{ clinicId: string | null } | null>;
+        };
+      };
+
+      return typedClient.clinicAdmin.findFirst({
+        where: { userId: user.id },
+        select: { clinicId: true },
+      });
+    });
+
+    if (clinicAdminAssignment?.clinicId) {
+      return clinicAdminAssignment.clinicId;
     }
 
     const activeRoleAssignment = await this.databaseService.executeHealthcareRead<{

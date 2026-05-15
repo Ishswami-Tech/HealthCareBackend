@@ -436,8 +436,17 @@ export class ClinicIsolationService implements OnModuleInit {
           select: { id: true },
         });
 
-        // access is granted if EITHER direct association OR valid UserRole exists
-        if (!userClinicAccess && !userRoleAssignment) {
+        // Clinic admins are also considered valid clinic-scoped users.
+        const clinicAdminAssignment = await this.prismaService.clinicAdmin.findFirst({
+          where: {
+            userId,
+            clinicId,
+          },
+          select: { id: true },
+        });
+
+        // Access is granted if EITHER direct association, valid UserRole, or ClinicAdmin exists.
+        if (!userClinicAccess && !userRoleAssignment && !clinicAdminAssignment) {
           return {
             success: false,
             error: `User ${userId} does not have access to clinic ${clinicId}`,

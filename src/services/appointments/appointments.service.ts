@@ -80,6 +80,7 @@ import { BillingService } from '@services/billing/billing.service';
 // Use centralized types
 import type { AppointmentWithRelations } from '@core/types/database.types';
 import type { PrismaDelegateArgs } from '@core/types/prisma.types';
+import { getVideoConsultationDelegate } from '@core/types/video-database.types';
 
 type AssistantDoctorCoverageEntry = {
   assistantDoctorId: string;
@@ -3494,6 +3495,30 @@ export class AppointmentsService {
           }
         );
 
+        try {
+          await this.completeAssociatedVideoSession(
+            appointmentId,
+            completedAt,
+            clinicId,
+            userId,
+            finalDoctorId,
+            _role
+          );
+        } catch (videoSessionError) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.WARN,
+            `Failed to mark linked video consultation as completed: ${videoSessionError instanceof Error ? videoSessionError.message : String(videoSessionError)}`,
+            'AppointmentsService.completeAppointment',
+            {
+              appointmentId,
+              clinicId,
+              doctorId: finalDoctorId,
+              error: videoSessionError instanceof Error ? videoSessionError.stack : undefined,
+            }
+          );
+        }
+
         // Log the completion event
         await this.loggingService.log(
           LogType.BUSINESS,
@@ -3559,7 +3584,7 @@ export class AppointmentsService {
               const followUpPlanResult = await this.createFollowUpPlan(
                 appointmentId,
                 appointment.patientId,
-                completeDto.doctorId,
+                finalDoctorId,
                 clinicId,
                 completeDto.followUpType,
                 daysAfter,
@@ -3607,7 +3632,7 @@ export class AppointmentsService {
                     const followUpAppointment = await this.createAppointment(
                       {
                         patientId: appointment.patientId,
-                        doctorId: completeDto.doctorId || appointment.doctorId,
+                        doctorId: finalDoctorId,
                         clinicId,
                         appointmentDate: followUpDate.toISOString(),
                         duration: appointment.duration || 30,
@@ -3763,6 +3788,58 @@ export class AppointmentsService {
         'AppointmentsService.completeAppointment'
       );
     }
+  }
+
+  private async completeAssociatedVideoSession(
+    appointmentId: string,
+    completedAt: Date,
+    clinicId: string,
+    userId: string,
+    doctorId: string,
+    role: string
+  ): Promise<void> {
+    await this.databaseService.executeHealthcareWrite(
+      async client => {
+        const delegate = getVideoConsultationDelegate(client);
+        const consultation = await delegate.findFirst({
+          where: { OR: [{ appointmentId }] },
+        });
+
+        if (!consultation) {
+          return;
+        }
+
+        const startTime = consultation.startTime ? new Date(consultation.startTime) : null;
+        const duration =
+          startTime instanceof Date && !Number.isNaN(startTime.getTime())
+            ? Math.max(0, Math.floor((completedAt.getTime() - startTime.getTime()) / 1000))
+            : (consultation.duration ?? null);
+
+        await delegate.update({
+          where: { id: consultation.id },
+          data: {
+            status: 'COMPLETED',
+            endTime: completedAt,
+            ...(duration !== null ? { duration } : {}),
+          },
+        });
+      },
+      {
+        userId,
+        userRole: String(role || 'DOCTOR').toUpperCase(),
+        clinicId,
+        operation: 'UPDATE_VIDEO_CONSULTATION',
+        resourceType: 'VIDEO_CONSULTATION',
+        resourceId: appointmentId,
+        timestamp: completedAt,
+        details: {
+          doctorId,
+          status: 'COMPLETED',
+        },
+      }
+    );
+
+    await this.cacheService.del(`video_session:${appointmentId}`);
   }
 
   /**

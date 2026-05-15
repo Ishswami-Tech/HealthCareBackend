@@ -2967,7 +2967,7 @@ export class BillingService implements OnModuleInit {
 
       // Idempotency + anti-regression for repeated gateway callbacks.
       if (
-        isSameStatus ||
+        (isSameStatus && incomingStatusLower !== 'completed') ||
         (isCurrentFinal && incomingStatusLower !== currentStatusLower) ||
         (currentStatusLower === 'failed' && incomingStatusLower === 'pending')
       ) {
@@ -3011,10 +3011,50 @@ export class BillingService implements OnModuleInit {
         invoice = await this.markInvoiceAsPaid(payment.invoiceId);
       }
 
-      const completedAppointment =
+      let completedAppointment =
         incomingStatusLower === 'completed' && payment.appointmentId
           ? await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)
           : null;
+
+      if (incomingStatusLower === 'completed' && payment.appointmentId && completedAppointment) {
+        if (String(completedAppointment.status) !== String(AppointmentStatus.CONFIRMED)) {
+          completedAppointment = await this.databaseService.executeHealthcareWrite(
+            async client => {
+              const appointmentClient = client as unknown as {
+                appointment: {
+                  update: (args: {
+                    where: { id: string };
+                    data: { status: string };
+                  }) => Promise<unknown>;
+                };
+              };
+              return (await appointmentClient.appointment.update({
+                where: { id: payment.appointmentId as string },
+                data: {
+                  status: AppointmentStatus.CONFIRMED,
+                },
+              })) as AppointmentWithRelations;
+            },
+            {
+              userId: 'system',
+              clinicId: completedAppointment.clinicId,
+              resourceType: 'APPOINTMENT',
+              operation: 'UPDATE',
+              resourceId: payment.appointmentId,
+              userRole: 'system',
+              details: {
+                reason: 'Payment callback completed',
+                paymentId: payment.id,
+                orderId,
+              },
+            }
+          );
+        }
+
+        completedAppointment =
+          (await this.databaseService.findAppointmentByIdSafe(payment.appointmentId)) ??
+          completedAppointment;
+      }
 
       if (incomingStatusLower === 'completed' && payment.appointmentId) {
         await this.syncAppointmentAfterPayment({
