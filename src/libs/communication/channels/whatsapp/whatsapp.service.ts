@@ -263,31 +263,45 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      const normalizedAppointmentType = appointmentType.trim() || 'in-person';
+      const confirmationLink = detailsUrl?.trim() || '';
 
-      let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
+      if (confirmationLink) {
+        const message =
+          `Hello ${patientName},\n\n` +
+          `Your ${normalizedAppointmentType} appointment with Dr. ${doctorName} is confirmed.\n` +
+          `Date: ${appointmentDate}\n` +
+          `Time: ${appointmentTime}\n\n` +
+          `View your booking in the frontend:\n${confirmationLink}\n\n` +
+          `Please keep this message for your records.`;
 
-      if (clinicId) {
-        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
-        if (clinicData) {
-          templateId =
-            clinicData.templateIds.appointmentConfirmation ||
-            this.whatsAppConfig.appointmentConfirmationTemplateId;
+        await this.sendCustomMessage(formattedPhone, message, clinicId);
+      } else {
+        let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
+
+        if (clinicId) {
+          const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+          if (clinicData) {
+            templateId =
+              clinicData.templateIds.appointmentConfirmation ||
+              this.whatsAppConfig.appointmentConfirmationTemplateId;
+          }
         }
-      }
 
-      await this.sendTemplateMessage(
-        formattedPhone,
-        templateId,
-        formatAppointmentConfirmationTemplateParams(
-          patientName,
-          appointmentType,
-          doctorName,
-          appointmentDate,
-          appointmentTime,
-          detailsUrl
-        ),
-        clinicId
-      );
+        await this.sendTemplateMessage(
+          formattedPhone,
+          templateId,
+          formatAppointmentConfirmationTemplateParams(
+            patientName,
+            normalizedAppointmentType,
+            doctorName,
+            appointmentDate,
+            appointmentTime,
+            detailsUrl
+          ),
+          clinicId
+        );
+      }
 
       void this.loggingService.log(
         LogType.SYSTEM,
