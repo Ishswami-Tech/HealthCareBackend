@@ -1588,34 +1588,6 @@ export class AppointmentsService {
         );
       }
 
-      // Hot path: Trigger notification plugin (direct injection for performance)
-      // Notification is sent on every appointment creation - high frequency operation
-      try {
-        void this.clinicNotificationPlugin.process({
-          operation: 'send_appointment_created',
-          appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
-          patientId: createDto.patientId,
-          doctorId: createDto.doctorId,
-          clinicId,
-          appointmentData: result.data,
-        });
-      } catch (notificationError) {
-        // Log but don't fail appointment creation if notification fails
-        void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          'Failed to send appointment creation notification',
-          'AppointmentsService.createAppointment',
-          {
-            appointmentId: (result.data as Record<string, unknown>)?.['id'] as string,
-            error:
-              notificationError instanceof Error
-                ? notificationError.message
-                : String(notificationError),
-          }
-        );
-      }
-
       // Schedule the automatic reminder for this appointment.
       // The reminder plugin converts the appointment time into an actual delayed execution window.
       void this.clinicReminderPlugin
@@ -2633,32 +2605,6 @@ export class AppointmentsService {
         clinicId
       );
 
-      // Hot path: Trigger notification plugin (direct injection for performance)
-      try {
-        await this.clinicNotificationPlugin.process({
-          operation: 'send_appointment_updated',
-          appointmentId,
-          patientId: (result.data as Record<string, unknown>)?.['patientId'] as string,
-          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
-          clinicId,
-          changes: updateDto,
-        });
-      } catch (notificationError) {
-        void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          'Failed to send appointment update notification',
-          'AppointmentsService.updateAppointment',
-          {
-            appointmentId,
-            error:
-              notificationError instanceof Error
-                ? notificationError.message
-                : String(notificationError),
-          }
-        );
-      }
-
       // Emit enterprise event for real-time WebSocket broadcasting
       await this.emitAppointmentEnterpriseEvent('appointment.updated', {
         eventId: `appointment-updated-${appointmentId}-${Date.now()}`,
@@ -3130,32 +3076,6 @@ export class AppointmentsService {
           {
             appointmentId,
             error: reminderError instanceof Error ? reminderError.message : String(reminderError),
-          }
-        );
-      }
-
-      // Hot path: Trigger notification plugin (direct injection for performance)
-      try {
-        await this.clinicNotificationPlugin.process({
-          operation: 'send_appointment_cancelled',
-          appointmentId,
-          patientId: (result.data as Record<string, unknown>)?.['patientId'] as string,
-          doctorId: (result.data as Record<string, unknown>)?.['doctorId'] as string,
-          clinicId,
-          reason,
-        });
-      } catch (notificationError) {
-        void this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          'Failed to send appointment cancellation notification',
-          'AppointmentsService.cancelAppointment',
-          {
-            appointmentId,
-            error:
-              notificationError instanceof Error
-                ? notificationError.message
-                : String(notificationError),
           }
         );
       }

@@ -1,9 +1,9 @@
-import { nowIso } from '@utils/date-time.util';
+import { nowIso, formatDateKeyInIST, formatTimeInIST } from '@utils/date-time.util';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@config/config.service';
 import { CacheService } from '@infrastructure/cache/cache.service';
 import { LoggingService } from '@infrastructure/logging';
-import { LogType, LogLevel } from '@core/types';
+import { LogType, LogLevel, AppointmentStatus } from '@core/types';
 import { EmailService } from '@communication/channels/email/email.service';
 import { WhatsAppService } from '@communication/channels/whatsapp/whatsapp.service';
 import { PushNotificationService } from '@communication/channels/push/push.service';
@@ -26,6 +26,16 @@ import type {
 } from '@core/types/appointment.types';
 // Re-export types for backward compatibility
 export type { NotificationData, NotificationResult, NotificationTemplate };
+
+function resolveText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return fallback;
+}
 
 @Injectable()
 export class AppointmentNotificationService {
@@ -176,13 +186,106 @@ export class AppointmentNotificationService {
       }
     );
 
-    // This would typically query the database for upcoming appointments
-    // For now, we'll return a mock response
-    const processed = 0;
-    const sent = 0;
-    const failed = 0;
+    try {
+      const now = new Date();
+      const windowEnd = new Date(now.getTime() + hoursBefore * 60 * 60 * 1000);
 
-    return Promise.resolve({ processed, sent, failed });
+      const appointments = await this.databaseService.findAppointmentsSafe(
+        {
+          clinicId,
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          } as never,
+          date: {
+            gte: now,
+            lte: windowEnd,
+          } as never,
+        } as never,
+        {
+          orderBy: { date: 'asc' },
+          rowLevelSecurity: false,
+        }
+      );
+
+      let sent = 0;
+      let failed = 0;
+
+      for (const appointment of appointments) {
+        try {
+          const patientName =
+            appointment.patient?.user?.name ||
+            [appointment.patient?.user?.firstName, appointment.patient?.user?.lastName]
+              .filter(Boolean)
+              .join(' ') ||
+            'Patient';
+          const doctorName =
+            appointment.doctor?.user?.name ||
+            [appointment.doctor?.user?.firstName, appointment.doctor?.user?.lastName]
+              .filter(Boolean)
+              .join(' ') ||
+            'Doctor';
+          const clinicName = appointment.clinic?.name || 'Healthcare Clinic';
+          const appointmentDate = formatDateKeyInIST(appointment.date);
+          const appointmentTime = formatTimeInIST(
+            appointment.time ? new Date(`1970-01-01T${appointment.time}`) : appointment.date
+          );
+
+          const result = await this.sendNotification({
+            appointmentId: appointment.id,
+            patientId: appointment.patientId,
+            doctorId: appointment.doctorId,
+            clinicId,
+            type: 'reminder',
+            priority: 'normal',
+            channels: ['email', 'whatsapp'],
+            templateData: {
+              patientName,
+              doctorName,
+              appointmentDate,
+              appointmentTime,
+              location: appointment.location?.name || clinicName,
+              clinicName,
+              appointmentType: appointment.type || 'appointment',
+            },
+          });
+
+          if (result.success) {
+            sent++;
+          } else {
+            failed++;
+          }
+        } catch (error) {
+          failed++;
+          await this.loggingService.log(
+            LogType.ERROR,
+            LogLevel.ERROR,
+            'Failed to send reminder notification for appointment',
+            'AppointmentNotificationService.sendReminderNotifications',
+            {
+              clinicId,
+              appointmentId: appointment.id,
+              error: error instanceof Error ? error.message : String(error),
+            }
+          );
+        }
+      }
+
+      const processed = appointments.length;
+      return { processed, sent, failed };
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `Failed to send reminder notifications: ${error instanceof Error ? error.message : String(error)}`,
+        'AppointmentNotificationService.sendReminderNotifications',
+        {
+          clinicId,
+          hoursBefore,
+          error: error instanceof Error ? error.stack : undefined,
+        }
+      );
+      return { processed: 0, sent: 0, failed: 0 };
+    }
   }
 
   /**
@@ -744,15 +847,19 @@ export class AppointmentNotificationService {
    */
   private getEmailSubject(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
+    const displayName = resolveText(
+      data['clinicName'] || data['appName'],
+      'Healthcare App'
+    ).toUpperCase();
     const subjects = {
-      reminder: `Appointment Reminder - ${data['clinicName'] as string}`,
-      confirmation: `Appointment Confirmed - ${data['clinicName'] as string}`,
-      cancellation: `Appointment Cancelled - ${data['clinicName'] as string}`,
-      reschedule: `Appointment Rescheduled - ${data['clinicName'] as string}`,
-      follow_up: `Follow-up Required - ${data['clinicName'] as string}`,
+      reminder: `APPOINTMENT REMINDER - ${displayName}`,
+      confirmation: `APPOINTMENT CONFIRMED - ${displayName}`,
+      cancellation: `APPOINTMENT CANCELLED - ${displayName}`,
+      reschedule: `APPOINTMENT RESCHEDULED - ${displayName}`,
+      follow_up: `FOLLOW-UP REQUIRED - ${displayName}`,
     };
 
-    return subjects[type as keyof typeof subjects] || 'Appointment Notification';
+    return subjects[type as keyof typeof subjects] || 'APPOINTMENT NOTIFICATION';
   }
 
   /**
@@ -760,23 +867,27 @@ export class AppointmentNotificationService {
    */
   private getEmailBody(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
+    const displayName = resolveText(
+      data['clinicName'] || data['appName'],
+      'Healthcare App'
+    ).toUpperCase();
     const bodies = {
       reminder: `
-        <h2>Appointment Reminder</h2>
+        <h2>APPOINTMENT REMINDER</h2>
         <p>Hi ${data['patientName'] as string},</p>
-        <p>This is a reminder for your appointment with ${data['doctorName'] as string} on ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
+        <p>This is a reminder for your appointment at ${displayName} with ${data['doctorName'] as string} on ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
         <p>Location: ${data['location'] as string}</p>
         <p>Please arrive 15 minutes early.</p>
       `,
       confirmation: `
-        <h2>Appointment Confirmed</h2>
+        <h2>APPOINTMENT CONFIRMED</h2>
         <p>Hi ${data['patientName'] as string},</p>
-        <p>Your appointment with ${data['doctorName'] as string} has been confirmed for ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
+        <p>Your appointment at ${displayName} with ${data['doctorName'] as string} has been confirmed for ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
         <p>Location: ${data['location'] as string}</p>
       `,
     };
 
-    return bodies[type as keyof typeof bodies] || 'Appointment notification';
+    return bodies[type as keyof typeof bodies] || 'APPOINTMENT NOTIFICATION';
   }
 
   /**
@@ -784,8 +895,9 @@ export class AppointmentNotificationService {
    */
   private getPushTitle(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
+    const displayName = resolveText(data['clinicName'] || data['appName'], 'Healthcare App');
     const titles = {
-      reminder: `Appointment Reminder - ${data['clinicName'] as string}`,
+      reminder: `Appointment Reminder - ${displayName}`,
       confirmation: `Appointment Confirmed`,
       cancellation: `Appointment Cancelled`,
       reschedule: `Appointment Rescheduled`,

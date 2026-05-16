@@ -105,8 +105,18 @@ export class PaymentController {
         (await this.databaseService.findPaymentsSafe({ transactionId: reference }))[0] ??
         null;
 
-      if (payment?.clinicId) {
-        return payment.clinicId;
+      const resolvedClinicId =
+        payment?.clinicId ||
+        payment?.invoice?.clinicId ||
+        (typeof payment?.metadata === 'object' &&
+        payment?.metadata !== null &&
+        !Array.isArray(payment.metadata) &&
+        typeof (payment.metadata as Record<string, unknown>)['clinicId'] === 'string'
+          ? String((payment.metadata as Record<string, unknown>)['clinicId'])
+          : '');
+
+      if (resolvedClinicId) {
+        return resolvedClinicId;
       }
     }
 
