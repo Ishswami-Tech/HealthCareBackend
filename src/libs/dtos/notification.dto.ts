@@ -197,44 +197,6 @@ export class AppointmentReminderDto {
   deviceToken?: string;
 }
 
-export class PrescriptionNotificationDto {
-  @ApiProperty({ description: 'Patient email address' })
-  @IsEmail()
-  to!: string;
-
-  @ApiProperty({ description: 'Patient name' })
-  @IsString()
-  @Length(1, 100)
-  patientName!: string;
-
-  @ApiProperty({ description: 'Doctor name' })
-  @IsString()
-  @Length(1, 100)
-  doctorName!: string;
-
-  @ApiProperty({ description: 'Prescription ID' })
-  @IsString()
-  @Length(1, 50)
-  prescriptionId!: string;
-
-  @ApiProperty({ description: 'List of medications', type: [String] })
-  @IsArray()
-  @ArrayMinSize(1)
-  @IsString({ each: true })
-  medications!: string[];
-
-  @ApiPropertyOptional({ description: 'Special pickup instructions' })
-  @IsOptional()
-  @IsString()
-  @Length(1, 500)
-  pickupInstructions?: string;
-
-  @ApiPropertyOptional({ description: 'Device token for push notification' })
-  @IsOptional()
-  @IsString()
-  deviceToken?: string;
-}
-
 export class ChatBackupDto {
   @ApiProperty({ description: 'Unique message ID' })
   @IsString()

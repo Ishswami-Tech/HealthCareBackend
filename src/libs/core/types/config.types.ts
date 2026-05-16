@@ -287,8 +287,6 @@ export interface WhatsappConfig {
   readonly appointmentConfirmationTemplateId: string;
   /** Appointment reminder template ID */
   readonly appointmentReminderTemplateId: string;
-  /** Prescription notification template ID */
-  readonly prescriptionTemplateId: string;
 }
 
 /**

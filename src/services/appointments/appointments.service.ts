@@ -4239,10 +4239,13 @@ export class AppointmentsService {
           role === 'PATIENT'
             ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
             : null;
-        const filters: AppointmentFilterDto = {
+        const filters: AppointmentFilterDto & { statusList?: AppointmentStatus[] } = {
           patientId: patient?.id || userId,
           startDate: formatDateKeyInIST(new Date()),
-          status: AppointmentStatus.SCHEDULED,
+          // Keep both states visible here:
+          // - SCHEDULED for the booking-created row
+          // - CONFIRMED once payment/webhook reconciliation completes
+          statusList: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
         };
 
         const result = await this.getAppointments(filters, userId, clinicId, role, 1, 10);

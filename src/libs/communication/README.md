@@ -511,8 +511,7 @@ Each clinic can configure its own WhatsApp template IDs:
       templates: {
         otp: "clinic_otp_template_id",
         appointment: "clinic_appointment_template_id",
-        reminder: "clinic_reminder_template_id",
-        prescription: "clinic_prescription_template_id"
+        reminder: "clinic_reminder_template_id"
       }
     }
   }
@@ -526,18 +525,25 @@ Clinic names are dynamically injected into all WhatsApp templates:
 ```typescript
 // OTP Template Parameters
 [
-  { type: 'text', text: clinicName }, // "City Medical Center"
+  { type: 'text', text: purpose }, // "creating"
+  { type: 'text', text: appName }, // "GoPay"
+  { type: 'text', text: clinicName }, // "merchant_name"
   { type: 'text', text: otp }, // "123456"
-  { type: 'text', text: expiryMinutes }, // "10"
-][
-  // Appointment Template Parameters
-  ({ type: 'text', text: clinicName }, // "City Medical Center"
+  { type: 'text', text: appName }, // "GoPay"
+]
+
+// OTP Button URL suffix
+// The approved template uses a dynamic URL button, so send only the suffix.
+// Example: "login"
+
+// Appointment Template Parameters
+[
   { type: 'text', text: patientName }, // "John Doe"
+  { type: 'text', text: appointmentType }, // "Video"
   { type: 'text', text: doctorName }, // "Dr. Smith"
   { type: 'text', text: appointmentDate }, // "2024-01-15"
   { type: 'text', text: appointmentTime }, // "10:00 AM"
-  { type: 'text', text: location }) // "Main Clinic"
-];
+]
 ```
 
 #### 3. Provider Routing
@@ -552,7 +558,8 @@ await whatsAppService.sendOTP(
   10, // expiry minutes
   2, // max retries
   'clinic-abc-123', // Routes to clinic's Meta WhatsApp account
-  'verification' // Template purpose label
+  'verification', // Template purpose label
+  'login' // Button URL suffix for the approved dynamic CTA
 );
 
 // Falls back to global provider if clinic provider fails
@@ -641,20 +648,6 @@ await authService.requestOtp({
 // Uses clinic-specific reminder template
 ```
 
-#### 4. Prescription Notifications
-
-```typescript
-// Prescription ready notifications via WhatsApp
-await whatsAppService.sendPrescriptionNotification(
-  phoneNumber,
-  patientName,
-  doctorName,
-  medicationDetails,
-  prescriptionUrl,
-  clinicId // Uses clinic-specific template
-);
-```
-
 ### SMS Opt-in Mechanism
 
 SMS is a **secondary channel** that requires explicit user opt-in:
@@ -739,8 +732,7 @@ const clinicData = await clinicTemplateService.getClinicTemplateData(clinicId);
 //   templateIds: {
 //     otp: "clinic_otp_template",
 //     appointment: "clinic_appointment_template",
-//     reminder: "clinic_reminder_template",
-//     prescription: "clinic_prescription_template"
+//     reminder: "clinic_reminder_template"
 //   }
 // }
 

@@ -7,7 +7,7 @@ export class WhatsAppConfig {
    * Fixed receipt template name used by the billing flow.
    * Keep this aligned with the approved WhatsApp template in Meta.
    */
-  private static readonly RECEIPT_TEMPLATE_ID = 'payment_receipt';
+  private static readonly RECEIPT_TEMPLATE_ID = 'payment_reciept';
 
   constructor(private readonly configService: ConfigService) {}
 
@@ -48,7 +48,7 @@ export class WhatsAppConfig {
   }
 
   get otpTemplateId(): string {
-    return this.getConfig<string>('WHATSAPP_OTP_TEMPLATE_ID', 'otp_verification');
+    return this.getConfig<string>('WHATSAPP_OTP_TEMPLATE_ID', 'verify_account');
   }
 
   get appointmentConfirmationTemplateId(): string {
@@ -67,9 +67,5 @@ export class WhatsAppConfig {
 
   get receiptTemplateId(): string {
     return WhatsAppConfig.RECEIPT_TEMPLATE_ID;
-  }
-
-  get prescriptionTemplateId(): string {
-    return this.getConfig<string>('WHATSAPP_PRESCRIPTION_TEMPLATE_ID', 'prescription_notification');
   }
 }

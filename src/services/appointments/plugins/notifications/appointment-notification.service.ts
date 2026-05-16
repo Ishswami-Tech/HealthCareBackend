@@ -642,16 +642,6 @@ export class AppointmentNotificationService {
             );
             didSend = true;
           }
-        } else if (type === 'prescription' && role === 'patient') {
-          await this.whatsAppService.sendPrescriptionNotification(
-            phone,
-            templateData.patientName,
-            templateData.doctorName,
-            templateData.medicationDetails || 'Prescription ready',
-            templateData.prescriptionUrl,
-            clinicId
-          );
-          didSend = true;
         }
 
         if (didSend) {
