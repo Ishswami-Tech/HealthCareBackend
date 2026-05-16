@@ -312,10 +312,16 @@ export class CommunicationHealthMonitorService implements OnModuleInit, OnModule
       if (this.pushService) {
         // Check if Push service is actually enabled
         // Use ConfigService (which uses dotenv) for environment variable access
+        const hasFirebasePushCredentials =
+          this.configService.hasEnv('FIREBASE_PROJECT_ID') ||
+          this.configService.hasEnv('FCM_PROJECT_ID') ||
+          this.configService.hasEnv('FIREBASE_CLIENT_EMAIL') ||
+          this.configService.hasEnv('FIREBASE_PRIVATE_KEY') ||
+          this.configService.hasEnv('FIREBASE_CREDENTIALS_PATH') ||
+          this.configService.hasEnv('FCM_CREDENTIALS_PATH');
         const isPushEnabled =
           this.configService.getEnvBoolean('PUSH_ENABLED', false) &&
-          (this.configService.hasEnv('FCM_SERVER_KEY') ||
-            this.configService.hasEnv('AWS_SNS_REGION'));
+          (hasFirebasePushCredentials || this.configService.hasEnv('AWS_SNS_REGION'));
 
         if (isPushEnabled) {
           configuredServices.push('push');

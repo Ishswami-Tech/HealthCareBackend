@@ -34,6 +34,16 @@ import {
 import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 
+function resolveText(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return fallback;
+}
+
 /**
  * Event-to-Communication mapping rules
  */
@@ -427,7 +437,17 @@ export class NotificationEventListener implements OnModuleInit {
         }
         return recipients;
       },
-      shouldNotify: () => true,
+      shouldNotify: payload => {
+        const metadata = payload.metadata;
+        const nestedPayload = payload.payload as Record<string, unknown> | undefined;
+        const status = resolveText(
+          metadata?.['status'] || nestedPayload?.['status'] || ''
+        ).toUpperCase();
+
+        // Payment completion emits a dedicated appointment.confirmed event.
+        // Skip the generic update notification for confirmed appointments to avoid duplicate messages.
+        return status !== 'CONFIRMED';
+      },
     },
     {
       eventPattern: /^appointment\.(checked_in|consultation_started)$/,
@@ -1124,35 +1144,71 @@ export class NotificationEventListener implements OnModuleInit {
       title = 'New Medical Record';
       body = `A new ${recordType} has been added to your health records`;
     } else if (eventType.startsWith('appointment.')) {
+      const displayName = resolveText(
+        (payload as unknown as Record<string, unknown>)['clinicName'] ||
+          payload.metadata?.['clinicName'] ||
+          payload.metadata?.['appName'],
+        'Healthcare App'
+      ).toUpperCase();
       if (eventType.includes('.created')) {
-        title = 'Appointment Scheduled';
-        body = 'Your appointment has been successfully scheduled';
+        title = 'APPOINTMENT SCHEDULED';
+        body = `YOUR APPOINTMENT HAS BEEN SUCCESSFULLY SCHEDULED AT ${displayName}.`;
       } else if (eventType.includes('.confirmed')) {
-        title = 'Appointment Confirmed';
-        body = 'Your appointment has been confirmed';
+        title = 'APPOINTMENT CONFIRMED';
+        body = `YOUR APPOINTMENT HAS BEEN CONFIRMED AT ${displayName}.`;
       } else if (eventType.includes('.cancelled')) {
-        title = 'Appointment Cancelled';
-        body = 'Your appointment has been cancelled';
+        title = 'APPOINTMENT CANCELLED';
+        body = `YOUR APPOINTMENT HAS BEEN CANCELLED AT ${displayName}.`;
       } else if (eventType.includes('.rescheduled')) {
-        title = 'Appointment Rescheduled';
-        body = 'Your appointment has been rescheduled';
+        title = 'APPOINTMENT RESCHEDULED';
+        body = `YOUR APPOINTMENT HAS BEEN RESCHEDULED AT ${displayName}.`;
       }
     } else if (eventType.startsWith('user.')) {
       if (eventType.includes('.logged_in')) {
+        const clinicName = resolveText(
+          (payload as unknown as Record<string, unknown>)['clinicName'] ||
+            payload.metadata?.['clinicName']
+        );
+        const appName = resolveText(
+          (payload as unknown as Record<string, unknown>)['appName'] ||
+            payload.metadata?.['appName'],
+          'Healthcare App'
+        );
+        const displayName = resolveText(clinicName || appName, 'Healthcare App').toUpperCase();
+        const isFirstLogin =
+          Boolean((payload as unknown as Record<string, unknown>)['isFirstLogin']) ||
+          Boolean(payload.metadata?.['isFirstLogin']);
         const loginMethod =
           typeof payload.metadata?.['loginMethod'] === 'string' &&
           payload.metadata['loginMethod'].trim().length > 0
             ? payload.metadata['loginMethod']
             : 'account';
         const loginTime = formatTimeInIST(payload.timestamp);
-        title = 'New Login Detected';
-        body = `A ${loginMethod.replace(/_/g, ' ')} sign-in was detected for your account at ${loginTime}. If this was not you, please change your password immediately.`;
+        if (isFirstLogin) {
+          title = `WELCOME TO ${displayName}`;
+          body = `YOUR ACCOUNT IS NEW AND YOU HAVE NOW LOGGED IN SUCCESSFULLY TO ${displayName} VIA ${loginMethod.replace(
+            /_/g,
+            ' '
+          )} AT ${loginTime}. IF THIS WAS NOT YOU, PLEASE CHANGE YOUR PASSWORD IMMEDIATELY.`;
+        } else {
+          title = `${displayName} Login Alert`;
+          body = `You have been logged in to ${displayName} via ${loginMethod.replace(
+            /_/g,
+            ' '
+          )} at ${loginTime}. If this was not you, please change your password immediately.`;
+        }
       } else if (eventType.includes('.created')) {
-        title = 'Welcome!';
-        body = 'Your account has been created successfully';
+        const displayName = resolveText(
+          (payload as unknown as Record<string, unknown>)['clinicName'] ||
+            payload.metadata?.['clinicName'] ||
+            payload.metadata?.['appName'],
+          'Healthcare App'
+        ).toUpperCase();
+        title = `ACCOUNT CREATED AT ${displayName}`;
+        body = `YOUR ACCOUNT HAS BEEN CREATED SUCCESSFULLY FOR ${displayName}.`;
       } else if (eventType.includes('.updated')) {
-        title = 'Account Updated';
-        body = 'Your account information has been updated';
+        title = 'ACCOUNT UPDATED';
+        body = 'YOUR ACCOUNT INFORMATION HAS BEEN UPDATED';
       }
     } else if (eventType.startsWith('billing.')) {
       title = 'Billing Update';

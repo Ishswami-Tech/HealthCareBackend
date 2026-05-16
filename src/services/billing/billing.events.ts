@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { BillingService } from './billing.service';
 import { DatabaseService } from '@infrastructure/database';
+import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
 
@@ -13,7 +14,8 @@ export class BillingEventsListener {
   constructor(
     private readonly billingService: BillingService,
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    private readonly eventService: EventService
   ) {}
 
   /**
@@ -344,6 +346,22 @@ export class BillingEventsListener {
             paymentStatus: payload.status,
             appointment: refreshedAppointment ?? appointment,
             emitAppointmentUpdated: true,
+          });
+
+          const confirmedAppointment = refreshedAppointment ?? appointment;
+          await this.eventService.emit('appointment.confirmed', {
+            appointmentId,
+            clinicId: payload.clinicId,
+            doctorId: confirmedAppointment.doctorId,
+            patientId: confirmedAppointment.patientId,
+            status: AppointmentStatus.CONFIRMED,
+            paymentId: payload.paymentId,
+            paymentStatus: payload.status,
+            appointment: confirmedAppointment,
+            context: {
+              source: 'BillingEventsListener',
+              paymentId: payload.paymentId,
+            },
           });
 
           await this.loggingService.log(

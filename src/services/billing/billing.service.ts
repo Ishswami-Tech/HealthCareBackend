@@ -445,6 +445,12 @@ export class BillingService implements OnModuleInit {
             ? 'payment.cancelled'
             : 'payment.pending';
 
+    const resolvedAppointment =
+      args.appointment ??
+      (args.appointmentId
+        ? await this.databaseService.findAppointmentByIdSafe(args.appointmentId)
+        : null);
+
     const paymentLifecycleEvent: EnterpriseEventPayload = {
       eventId: `${eventType.replace('.', '-')}-${args.paymentId}`,
       eventType,
@@ -472,7 +478,7 @@ export class BillingService implements OnModuleInit {
         clinicId: args.clinicId,
         ...(args.userId ? { userId: args.userId } : {}),
         ...(args.appointmentId ? { appointmentId: args.appointmentId } : {}),
-        ...(args.appointment ? { appointment: args.appointment } : {}),
+        ...(resolvedAppointment ? { appointment: resolvedAppointment } : {}),
         ...(args.subscriptionId ? { subscriptionId: args.subscriptionId } : {}),
       },
     };
@@ -485,7 +491,7 @@ export class BillingService implements OnModuleInit {
         paymentId: args.paymentId,
         status: normalizedStatus,
         clinicId: args.clinicId,
-        ...(args.appointment ? { appointment: args.appointment } : {}),
+        ...(resolvedAppointment ? { appointment: resolvedAppointment } : {}),
       });
 
       if (this.isSoleProprietorModeEnabled() && normalizedStatus === 'completed') {
@@ -3840,6 +3846,7 @@ export class BillingService implements OnModuleInit {
           paymentId: payment.id,
           status: 'completed',
           clinicId: payment.clinicId,
+          appointment,
         });
 
         reconciled++;

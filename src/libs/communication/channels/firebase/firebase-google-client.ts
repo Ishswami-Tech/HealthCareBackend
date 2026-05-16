@@ -1,4 +1,5 @@
 import { GoogleAuth } from 'google-auth-library';
+import { existsSync, readFileSync } from 'fs';
 import { ConfigService } from '@config/config.service';
 
 type QueryValue = string | number | boolean;
@@ -16,10 +17,24 @@ export class FirebaseGoogleClient {
   private readonly databaseUrl: string | undefined;
 
   constructor(private readonly configService: ConfigService) {
-    this.projectId = this.configService.getEnv('FIREBASE_PROJECT_ID');
-    this.clientEmail = this.configService.getEnv('FIREBASE_CLIENT_EMAIL');
-    this.privateKey = this.configService.getEnv('FIREBASE_PRIVATE_KEY')?.replace(/\\n/g, '\n');
-    this.databaseUrl = this.configService.getEnv('FIREBASE_DATABASE_URL');
+    const credentialsPath =
+      this.configService.getEnv('FIREBASE_CREDENTIALS_PATH') ||
+      this.configService.getEnv('FCM_CREDENTIALS_PATH');
+    const fileCredentials = this.loadCredentialsFromPath(credentialsPath);
+
+    this.projectId =
+      this.configService.getEnv('FIREBASE_PROJECT_ID') ||
+      this.configService.getEnv('FCM_PROJECT_ID') ||
+      fileCredentials?.projectId;
+    this.clientEmail =
+      this.configService.getEnv('FIREBASE_CLIENT_EMAIL') || fileCredentials?.clientEmail;
+    this.privateKey = this.normalizePrivateKey(
+      this.configService.getEnv('FIREBASE_PRIVATE_KEY') || fileCredentials?.privateKey
+    );
+    this.databaseUrl =
+      this.configService.getEnv('FIREBASE_DATABASE_URL') ||
+      this.configService.getEnv('FCM_DATABASE_URL') ||
+      fileCredentials?.databaseUrl;
   }
 
   isMessagingConfigured(): boolean {
@@ -125,6 +140,68 @@ export class FirebaseGoogleClient {
     }
 
     return url.toString();
+  }
+
+  private loadCredentialsFromPath(credentialsPath?: string): {
+    projectId?: string;
+    clientEmail?: string;
+    privateKey?: string;
+    databaseUrl?: string;
+  } | null {
+    if (!credentialsPath) {
+      return null;
+    }
+
+    try {
+      if (!existsSync(credentialsPath)) {
+        return null;
+      }
+
+      const raw = readFileSync(credentialsPath, 'utf8').trim();
+      if (!raw) {
+        return null;
+      }
+
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const credentials: {
+        projectId?: string;
+        clientEmail?: string;
+        privateKey?: string;
+        databaseUrl?: string;
+      } = {};
+
+      if (typeof parsed['project_id'] === 'string') {
+        credentials.projectId = parsed['project_id'];
+      } else if (typeof parsed['projectId'] === 'string') {
+        credentials.projectId = parsed['projectId'];
+      }
+
+      if (typeof parsed['client_email'] === 'string') {
+        credentials.clientEmail = parsed['client_email'];
+      } else if (typeof parsed['clientEmail'] === 'string') {
+        credentials.clientEmail = parsed['clientEmail'];
+      }
+
+      if (typeof parsed['private_key'] === 'string') {
+        credentials.privateKey = parsed['private_key'];
+      } else if (typeof parsed['privateKey'] === 'string') {
+        credentials.privateKey = parsed['privateKey'];
+      }
+
+      if (typeof parsed['databaseURL'] === 'string') {
+        credentials.databaseUrl = parsed['databaseURL'];
+      } else if (typeof parsed['databaseUrl'] === 'string') {
+        credentials.databaseUrl = parsed['databaseUrl'];
+      }
+
+      return credentials;
+    } catch {
+      return null;
+    }
+  }
+
+  private normalizePrivateKey(value?: string): string | undefined {
+    return value?.replace(/\\n/g, '\n');
   }
 
   private async requestJson<T>(

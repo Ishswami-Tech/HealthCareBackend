@@ -1380,7 +1380,7 @@ export class CommunicationService implements OnModuleInit {
 
       // Use WhatsApp service to send message
       // Pass clinicId for multi-tenant provider routing
-      const message = `${request.title}\n\n${request.body}`;
+      const message = `*${request.title}*\n\n${request.body}`;
       const success = await this.whatsAppService.sendCustomMessage(
         recipient.phoneNumber,
         message,

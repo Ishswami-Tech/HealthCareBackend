@@ -607,17 +607,23 @@ export class AuthService {
       );
 
       // Update last login
+      const isFirstLogin = !user.lastLogin;
       await this.databaseService.updateUserSafe(user.id, {
         lastLogin: new Date(),
       });
 
       // Emit user login event
+      const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
       await this.eventService.emit('user.logged_in', {
         userId: user.id,
         email: user.email,
         role: user.role,
         clinicId,
+        ...(clinicName && { clinicName }),
         sessionId: session.sessionId,
+        appName,
+        isFirstLogin,
         metadata: {
           loginMethod: 'password',
           userAgent: sessionMetadata?.userAgent,
@@ -1331,17 +1337,23 @@ export class AuthService {
       );
 
       // Update last login
+      const isFirstLogin = !user.lastLogin;
       await this.databaseService.updateUserSafe(user.id, {
         lastLogin: new Date(),
       });
 
       // Emit OTP login event
+      const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
       await this.eventService.emit('user.otp_logged_in', {
         userId: user.id,
         email: user.email,
         role: user.role,
         clinicId: clinicUUID,
+        ...(clinicName && { clinicName }),
         sessionId: session.sessionId,
+        appName,
+        isFirstLogin,
         metadata: {
           loginMethod: 'otp',
           userAgent: sessionMetadata?.userAgent,
@@ -1465,6 +1477,19 @@ export class AuthService {
     }
 
     return clinicUUID;
+  }
+
+  private async resolveClinicDisplayName(clinicId?: string | null): Promise<string | undefined> {
+    if (!clinicId) {
+      return undefined;
+    }
+
+    try {
+      const clinic = await this.databaseService.findClinicByIdSafe(clinicId);
+      return clinic?.name || undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**
@@ -2125,18 +2150,24 @@ export class AuthService {
       );
 
       // Update last login
+      const isFirstLogin = !fullUser.lastLogin || socialAuthResult.isNewUser;
       await this.databaseService.updateUserSafe(fullUser.id, {
         lastLogin: new Date(),
       });
 
       // Emit Google OAuth login event
+      const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
+      const clinicName = await this.resolveClinicDisplayName(finalClinicId);
       await this.eventService.emit('user.google_oauth_logged_in', {
         userId: fullUser.id,
         email: fullUser.email,
         role: fullUser.role,
         clinicId: finalClinicId,
+        ...(clinicName && { clinicName }),
         sessionId: session.sessionId,
         isNewUser: socialAuthResult.isNewUser,
+        appName,
+        isFirstLogin,
         metadata: {
           loginMethod: 'google_oauth',
           userAgent: sessionMetadata?.userAgent,
