@@ -4315,8 +4315,12 @@ export class AppointmentsService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        const patient =
+          role === 'PATIENT'
+            ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
+            : null;
         const filters: AppointmentFilterDto = {
-          patientId: userId,
+          patientId: patient?.id || userId,
           startDate: formatDateKeyInIST(new Date()),
           status: AppointmentStatus.SCHEDULED,
         };
