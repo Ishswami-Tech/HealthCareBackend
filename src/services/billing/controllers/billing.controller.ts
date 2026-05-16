@@ -980,12 +980,12 @@ export class BillingController {
   @Post('invoices/:id/send-whatsapp')
   @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN)
   @RequireResourcePermission('invoices', 'read')
-  async sendInvoiceViaWhatsApp(@Param('id') invoiceId: string) {
-    const success = await this.billingService.sendInvoiceViaWhatsApp(invoiceId);
+  async sendReceiptViaWhatsApp(@Param('id') invoiceId: string) {
+    const success = await this.billingService.sendReceiptViaWhatsApp(invoiceId);
     return {
       message: success
-        ? 'Invoice sent via WhatsApp successfully'
-        : 'Failed to send invoice via WhatsApp',
+        ? 'Receipt sent via WhatsApp successfully'
+        : 'Failed to send receipt via WhatsApp',
       success,
     };
   }

@@ -121,6 +121,38 @@ export function formatAppointmentReminderTemplateParams(
 }
 
 /**
+ * Formats payment receipt template parameters for WhatsApp
+ * @param recipientName - Recipient name
+ * @param receiptNumber - Receipt number
+ * @param amount - Receipt amount
+ * @param paymentDate - Paid on / payment date
+ * @param detailsUrl - Dynamic details URL for the CTA button
+ * @returns Template components array
+ */
+export function formatPaymentReceiptTemplateParams(
+  recipientName: string,
+  receiptNumber: string,
+  amount: string,
+  paymentDate: string,
+  detailsUrl?: string
+): WhatsAppTemplateComponent[] {
+  const components: WhatsAppTemplateComponent[] = [
+    {
+      type: 'body',
+      parameters: [
+        { type: 'text', text: recipientName },
+        { type: 'text', text: receiptNumber },
+        { type: 'text', text: amount },
+        { type: 'text', text: paymentDate },
+      ],
+    },
+  ];
+
+  components.push(...buildDetailsButton(detailsUrl));
+  return components;
+}
+
+/**
  * Formats prescription notification template parameters for WhatsApp
  * @param patientName - Patient name
  * @param doctorName - Doctor name
@@ -176,6 +208,11 @@ export function formatPrescriptionNotificationTemplateParams(
  * Appointment Reminder Template Example:
  * Template Name: appointment_reminder_2
  * Template Body: "Hello {{1}}, this is a reminder about your {{2}} appointment with Dr. {{3}} at {{4}}"
+ * Button: "View details" -> {{1}}
+ *
+ * Payment Receipt Template Example:
+ * Template Name: payment_receipt
+ * Template Body: "Hello {{1}}, your receipt {{2}} for {{3}} has been generated. Paid On: {{4}}"
  * Button: "View details" -> {{1}}
  *
  * Prescription Notification Template Example:

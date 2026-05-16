@@ -11,6 +11,7 @@ import { ClinicTemplateService } from '@communication/services/clinic-template.s
 import {
   formatAppointmentConfirmationTemplateParams,
   formatAppointmentReminderTemplateParams,
+  formatPaymentReceiptTemplateParams,
 } from '@communication/templates/WhatsappTemplates/template-helpers';
 
 /**
@@ -249,7 +250,8 @@ export class WhatsAppService {
     location: string,
     clinicId?: string,
     detailsUrl?: string,
-    appointmentType: string = 'in-person'
+    appointmentType: string = 'in-person',
+    recipientRole: 'patient' | 'doctor' = 'patient'
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -264,44 +266,37 @@ export class WhatsAppService {
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
       const normalizedAppointmentType = appointmentType.trim() || 'in-person';
-      const confirmationLink = detailsUrl?.trim() || '';
+      let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
 
-      if (confirmationLink) {
-        const message =
-          `Hello ${patientName},\n\n` +
-          `Your ${normalizedAppointmentType} appointment with Dr. ${doctorName} is confirmed.\n` +
-          `Date: ${appointmentDate}\n` +
-          `Time: ${appointmentTime}\n\n` +
-          `View your booking in the frontend:\n${confirmationLink}\n\n` +
-          `Please keep this message for your records.`;
-
-        await this.sendCustomMessage(formattedPhone, message, clinicId);
-      } else {
-        let templateId = this.whatsAppConfig.appointmentConfirmationTemplateId;
-
-        if (clinicId) {
-          const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
-          if (clinicData) {
-            templateId =
-              clinicData.templateIds.appointmentConfirmation ||
-              this.whatsAppConfig.appointmentConfirmationTemplateId;
-          }
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          templateId =
+            clinicData.templateIds.appointmentConfirmation ||
+            this.whatsAppConfig.appointmentConfirmationTemplateId;
         }
-
-        await this.sendTemplateMessage(
-          formattedPhone,
-          templateId,
-          formatAppointmentConfirmationTemplateParams(
-            patientName,
-            normalizedAppointmentType,
-            doctorName,
-            appointmentDate,
-            appointmentTime,
-            detailsUrl
-          ),
-          clinicId
-        );
       }
+
+      const templateParams =
+        recipientRole === 'doctor'
+          ? formatAppointmentConfirmationTemplateParams(
+              doctorName,
+              normalizedAppointmentType,
+              patientName,
+              appointmentDate,
+              appointmentTime,
+              detailsUrl
+            )
+          : formatAppointmentConfirmationTemplateParams(
+              patientName,
+              normalizedAppointmentType,
+              doctorName,
+              appointmentDate,
+              appointmentTime,
+              detailsUrl
+            );
+
+      await this.sendTemplateMessage(formattedPhone, templateId, templateParams, clinicId);
 
       void this.loggingService.log(
         LogType.SYSTEM,
@@ -702,38 +697,29 @@ export class WhatsAppService {
   }
 
   /**
-   * Send invoice via WhatsApp
-   * @param phoneNumber - The recipient's phone number
-   * @param userName - User's name
-   * @param invoiceNumber - Invoice number
-   * @param amount - Invoice amount
-   * @param dueDate - Invoice due date
-   * @param invoiceUrl - URL to download invoice PDF
-   * @returns Promise<boolean> - Success status
-   */
-  /**
-   * Sends invoice notification via WhatsApp
+   * Sends receipt notification via WhatsApp
    * @param phoneNumber - Recipient phone number (with country code)
    * @param userName - User name for personalization
    * @param invoiceNumber - Invoice number
-   * @param amount - Invoice amount
-   * @param dueDate - Payment due date
-   * @param invoiceUrl - Invoice document URL
+   * @param amount - Receipt amount
+   * @param paymentDate - Paid on / payment date
+   * @param invoiceUrl - Receipt document URL
    * @returns Promise resolving to true if message was sent successfully
    */
-  async sendInvoice(
+  async sendReceipt(
     phoneNumber: string,
     userName: string,
     invoiceNumber: string,
     amount: number,
-    dueDate: string,
-    invoiceUrl: string
+    paymentDate: string,
+    invoiceUrl: string,
+    clinicId?: string
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled) {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful invoice delivery.',
+        'WhatsApp service is disabled. Simulating successful receipt delivery.',
         'WhatsAppService'
       );
       return true;
@@ -741,24 +727,32 @@ export class WhatsAppService {
 
     try {
       const formattedPhone = this.formatPhoneNumber(phoneNumber);
+      let templateId = this.whatsAppConfig.receiptTemplateId;
 
-      // Send invoice notification message
-      await this.sendCustomMessage(
+      if (clinicId) {
+        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
+        if (clinicData) {
+          templateId = clinicData.templateIds.receipt || templateId;
+        }
+      }
+
+      await this.sendTemplateMessage(
         formattedPhone,
-        `Hello ${userName},\n\n` +
-          `Your invoice ${invoiceNumber} for ₹${amount} has been generated.\n` +
-          `Due Date: ${dueDate}\n\n` +
-          `Please find your invoice attached below. You can also download it from: ${invoiceUrl}\n\n` +
-          `Thank you for your business!`
+        templateId,
+        formatPaymentReceiptTemplateParams(
+          userName,
+          invoiceNumber,
+          `INR ${amount}`,
+          paymentDate,
+          invoiceUrl
+        ),
+        clinicId
       );
-
-      // Send invoice PDF as document
-      await this.sendDocumentMessage(formattedPhone, invoiceUrl, `Invoice ${invoiceNumber}`);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        `Invoice sent to ${phoneNumber} via WhatsApp`,
+        `Receipt sent to ${phoneNumber} via WhatsApp`,
         'WhatsAppService'
       );
       return true;
@@ -766,7 +760,7 @@ export class WhatsAppService {
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.ERROR,
-        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'WhatsAppService',
         { stack: (error as Error)?.stack }
       );

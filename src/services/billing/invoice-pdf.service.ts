@@ -290,7 +290,14 @@ export class InvoicePDFService {
 
     const dateBlockX = x + w - 250;
     this.drawKeyValue(doc, 'Issued', this.formatDate(data.invoiceDate), dateBlockX, y + 10, 105);
-    this.drawKeyValue(doc, 'Due', this.formatDate(data.dueDate), dateBlockX + 118, y + 10, 92);
+    this.drawKeyValue(
+      doc,
+      data.paidAt ? 'Paid On' : 'Due',
+      this.formatDate(data.paidAt ?? data.dueDate),
+      dateBlockX + 118,
+      y + 10,
+      92
+    );
 
     return y + rowH;
   }

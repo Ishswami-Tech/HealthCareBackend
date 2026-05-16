@@ -320,6 +320,60 @@ export class AppointmentNotificationService {
     }
   }
 
+  private async resolveDoctorUserId(
+    doctorId: string,
+    notificationId: string
+  ): Promise<string | null> {
+    try {
+      const doctor = await this.databaseService.executeHealthcareRead<{ userId: string } | null>(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
+          return (await typedClient.doctor.findUnique({
+            where: { id: doctorId } as PrismaDelegateArgs,
+            select: { userId: true } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs)) as { userId: string } | null;
+        }
+      );
+
+      if (doctor?.userId) {
+        return doctor.userId;
+      }
+
+      const directUser = await this.databaseService.findUserByIdSafe(doctorId);
+      if (directUser?.id) {
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.WARN,
+          'Doctor record not found, falling back to doctorId as userId',
+          'AppointmentNotificationService.resolveDoctorUserId',
+          {
+            notificationId,
+            doctorId,
+            userId: directUser.id,
+          }
+        );
+
+        return directUser.id;
+      }
+
+      return null;
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.WARN,
+        'Failed to resolve doctor user mapping',
+        'AppointmentNotificationService.resolveDoctorUserId',
+        {
+          notificationId,
+          doctorId,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+
+      return null;
+    }
+  }
+
   private async sendEmailNotification(
     notificationData: NotificationData,
     notificationId: string
@@ -405,33 +459,28 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    const { templateData, type, patientId, clinicId } = notificationData;
-    const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
+    const { templateData, type, patientId, doctorId, clinicId } = notificationData;
+    const [patientUserId, doctorUserId] = await Promise.all([
+      this.resolvePatientUserId(patientId, notificationId),
+      doctorId ? this.resolveDoctorUserId(doctorId, notificationId) : Promise.resolve(null),
+    ]);
 
-    // Fetch patient phone number using DatabaseService (follows architecture rules)
-    let patientPhone: string | null = null;
-    if (patientUserId) {
-      try {
-        const user = await this.databaseService.findUserByIdSafe(patientUserId);
-        patientPhone = user?.phone || null;
-      } catch (error) {
-        await this.loggingService.log(
-          LogType.ERROR,
-          LogLevel.WARN,
-          `Failed to fetch patient phone number: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          'AppointmentNotificationService',
-          { patientId, patientUserId, notificationId }
-        );
-      }
-    }
+    // Fetch recipient phone numbers using DatabaseService (follows architecture rules)
+    const [patientUser, doctorUser] = await Promise.all([
+      patientUserId ? this.databaseService.findUserByIdSafe(patientUserId) : Promise.resolve(null),
+      doctorUserId ? this.databaseService.findUserByIdSafe(doctorUserId) : Promise.resolve(null),
+    ]);
 
-    if (!patientPhone) {
+    const patientPhone = patientUser?.phone || null;
+    const doctorPhone = doctorUser?.phone || null;
+
+    if (!patientPhone && !doctorPhone) {
       await this.loggingService.log(
         LogType.NOTIFICATION,
         LogLevel.WARN,
         `Skipping WhatsApp notification - no phone number found`,
         'AppointmentNotificationService',
-        { notificationId, patientId, patientUserId }
+        { notificationId, patientId, patientUserId, doctorId, doctorUserId }
       );
       return;
     }
@@ -442,41 +491,78 @@ export class AppointmentNotificationService {
         notificationData.appointmentId,
         appointmentType
       );
+      const shouldNotifyDoctor = type === 'confirmation' || type === 'created';
+      const deliveryResults: Array<{ role: 'patient' | 'doctor'; phone: string }> = [];
 
-      // Send based on notification type
-      if (type === 'confirmation' || type === 'created') {
-        await this.whatsAppService.sendAppointmentConfirmation(
-          patientPhone,
-          templateData.patientName,
-          templateData.doctorName,
-          templateData.appointmentDate,
-          templateData.appointmentTime,
-          templateData.location,
-          clinicId,
-          detailsUrl,
-          appointmentType
-        );
-      } else if (type === 'reminder' || type === 'updated') {
-        await this.whatsAppService.sendAppointmentReminder(
-          patientPhone,
-          templateData.patientName,
-          templateData.doctorName,
-          templateData.appointmentDate,
-          templateData.appointmentTime,
-          templateData.location,
-          clinicId,
-          detailsUrl,
-          appointmentType
-        );
-      } else if (type === 'prescription') {
-        await this.whatsAppService.sendPrescriptionNotification(
-          patientPhone,
-          templateData.patientName,
-          templateData.doctorName,
-          templateData.medicationDetails || 'Prescription ready',
-          templateData.prescriptionUrl,
-          clinicId // Pass clinicId for multi-tenant support
-        );
+      const sendForRecipient = async (
+        role: 'patient' | 'doctor',
+        phone: string | null
+      ): Promise<void> => {
+        if (!phone) {
+          await this.loggingService.log(
+            LogType.NOTIFICATION,
+            LogLevel.WARN,
+            `Skipping WhatsApp notification - no ${role} phone number found`,
+            'AppointmentNotificationService',
+            { notificationId, patientId, patientUserId, doctorId, doctorUserId }
+          );
+          return;
+        }
+
+        let didSend = false;
+        if (type === 'confirmation' || type === 'created') {
+          await this.whatsAppService.sendAppointmentConfirmation(
+            phone,
+            templateData.patientName,
+            templateData.doctorName,
+            templateData.appointmentDate,
+            templateData.appointmentTime,
+            templateData.location,
+            clinicId,
+            detailsUrl,
+            appointmentType,
+            role
+          );
+          didSend = true;
+        } else if (type === 'reminder' || type === 'updated') {
+          if (role === 'patient') {
+            await this.whatsAppService.sendAppointmentReminder(
+              phone,
+              templateData.patientName,
+              templateData.doctorName,
+              templateData.appointmentDate,
+              templateData.appointmentTime,
+              templateData.location,
+              clinicId,
+              detailsUrl,
+              appointmentType
+            );
+            didSend = true;
+          }
+        } else if (type === 'prescription' && role === 'patient') {
+          await this.whatsAppService.sendPrescriptionNotification(
+            phone,
+            templateData.patientName,
+            templateData.doctorName,
+            templateData.medicationDetails || 'Prescription ready',
+            templateData.prescriptionUrl,
+            clinicId
+          );
+          didSend = true;
+        }
+
+        if (didSend) {
+          deliveryResults.push({ role, phone });
+        }
+      };
+
+      await sendForRecipient('patient', patientPhone);
+      if (shouldNotifyDoctor) {
+        await sendForRecipient('doctor', doctorPhone);
+      }
+
+      if (deliveryResults.length === 0) {
+        throw new Error('No WhatsApp recipients were available for notification');
       }
 
       await this.loggingService.log(
@@ -486,9 +572,9 @@ export class AppointmentNotificationService {
         'AppointmentNotificationService',
         {
           notificationId,
-          patientPhone,
           type,
           clinicId,
+          recipients: deliveryResults,
         }
       );
     } catch (error) {
@@ -499,7 +585,6 @@ export class AppointmentNotificationService {
         'AppointmentNotificationService',
         {
           notificationId,
-          patientPhone,
           error: error instanceof Error ? error.stack : undefined,
         }
       );
