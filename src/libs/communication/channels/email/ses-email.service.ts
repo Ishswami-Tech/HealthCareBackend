@@ -24,14 +24,6 @@ export interface AppointmentReminderData {
   appointmentId?: string;
 }
 
-export interface PrescriptionReadyData {
-  patientName: string;
-  doctorName: string;
-  prescriptionId: string;
-  medications: string[];
-  pickupInstructions?: string;
-}
-
 export interface SESEmailResult {
   success: boolean;
   messageId?: string;
@@ -213,21 +205,6 @@ export class SESEmailService implements OnModuleInit {
     });
   }
 
-  async sendPrescriptionReady(
-    to: string,
-    prescriptionData: PrescriptionReadyData
-  ): Promise<SESEmailResult> {
-    const subject = `Prescription Ready - ${prescriptionData.prescriptionId}`;
-    const htmlBody = this.generatePrescriptionReadyTemplate(prescriptionData);
-
-    return this.sendEmail({
-      to,
-      subject,
-      body: htmlBody,
-      isHtml: true,
-    });
-  }
-
   async sendBulkEmails(
     emails: Array<{ to: string; subject: string; body: string }>
   ): Promise<{ successCount: number; failureCount: number; errors: string[] }> {
@@ -332,52 +309,6 @@ export class SESEmailService implements OnModuleInit {
 
         <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #888; text-align: center;">
           <p style="margin: 0;">This is an automated reminder. Please do not reply to this email.</p>
-        </div>
-      </div>
-    `;
-  }
-
-  private generatePrescriptionReadyTemplate(data: PrescriptionReadyData): string {
-    return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h2 style="color: #2c3e50; margin: 0;">Prescription Ready for Pickup</h2>
-        </div>
-
-        <p style="font-size: 16px; color: #333;">Dear ${data.patientName},</p>
-
-        <p style="font-size: 14px; color: #555; line-height: 1.6;">
-          Your prescription is ready for pickup at our pharmacy:
-        </p>
-
-        <div style="background-color: #f8f9fa; padding: 20px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #FF9800;">
-          <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Prescription ID:</strong> <span style="color: #555;">${data.prescriptionId}</span></div>
-          <div style="margin-bottom: 15px;"><strong style="color: #2c3e50;">Prescribed by:</strong> <span style="color: #555;">${data.doctorName}</span></div>
-
-          <div style="margin-bottom: 10px;"><strong style="color: #2c3e50;">Medications:</strong></div>
-          <ul style="margin: 5px 0 0 20px; padding: 0; color: #555;">
-            ${data.medications.map(medication => `<li style="margin-bottom: 5px;">${medication}</li>`).join('')}
-          </ul>
-        </div>
-
-        <div style="background-color: #e8f5e9; padding: 15px; border-radius: 6px; margin: 20px 0; border-left: 4px solid #4CAF50;">
-          <p style="margin: 0; font-size: 14px; color: #2e7d32;">
-            <strong>Pickup Requirements:</strong> Please bring a valid photo ID when collecting your prescription.
-            ${data.pickupInstructions ? ` ${data.pickupInstructions}` : ''}
-          </p>
-        </div>
-
-        <p style="font-size: 14px; color: #555; line-height: 1.6;">
-          If you have any questions about your medication or pickup process, please don't hesitate to contact us.
-        </p>
-
-        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e0e0e0;">
-          <p style="margin: 0; font-size: 14px; color: #333;">Best regards,</p>
-          <p style="margin: 5px 0 0 0; font-size: 14px; color: #4CAF50; font-weight: bold;">Healthcare Pharmacy Team</p>
-        </div>
-
-        <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #e0e0e0; font-size: 12px; color: #888; text-align: center;">
-          <p style="margin: 0;">This is an automated notification. Please do not reply to this email.</p>
         </div>
       </div>
     `;

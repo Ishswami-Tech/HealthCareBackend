@@ -4,14 +4,12 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type {
   AppointmentTemplateData,
-  PrescriptionTemplateData,
   PaymentTemplateData,
   PasswordResetTemplateData,
   AccountVerificationTemplateData,
 } from '@core/types/communication.types';
 import {
   generateAppointmentReminderTemplate,
-  generatePrescriptionReadyTemplate,
   generatePaymentConfirmationTemplate,
   generatePasswordResetTemplate,
   generateAccountVerificationTemplate,
@@ -52,31 +50,6 @@ export class EmailTemplatesService {
     );
 
     return generateAppointmentReminderTemplate(data, unsubscribeUrl);
-  }
-
-  /**
-   * Generates prescription ready email template
-   * @param data - Prescription template data
-   * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
-   * @returns HTML email template
-   */
-  generatePrescriptionReadyTemplate(
-    data: PrescriptionTemplateData,
-    unsubscribeUrl?: string
-  ): string {
-    void this.loggingService.log(
-      LogType.SYSTEM,
-      LogLevel.INFO,
-      'Generating prescription ready template',
-      'EmailTemplatesService',
-      {
-        patientName: data.patientName,
-        prescriptionId: data.prescriptionId,
-        medicationCount: data.medications.length,
-      }
-    );
-
-    return generatePrescriptionReadyTemplate(data, unsubscribeUrl);
   }
 
   /**

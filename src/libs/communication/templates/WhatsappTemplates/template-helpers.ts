@@ -9,26 +9,38 @@
 
 /**
  * Formats OTP template parameters for WhatsApp
+ * @param purpose - OTP purpose label
+ * @param appName - Application name
+ * @param clinicName - Clinic or merchant name
  * @param otp - OTP code
- * @param expiryMinutes - OTP expiry time in minutes
+ * @param buttonUrl - Dynamic URL suffix for the CTA button
  * @returns Template components array
  */
 export function formatOTPTemplateParams(
+  purpose: string,
+  appName: string,
+  clinicName: string,
   otp: string,
-  expiryMinutes: number
+  buttonUrl?: string
 ): Array<{
   type: string;
   parameters: Array<{ type: string; text: string }>;
 }> {
-  return [
+  const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
+        { type: 'text', text: purpose },
+        { type: 'text', text: appName },
+        { type: 'text', text: clinicName },
         { type: 'text', text: otp },
-        { type: 'text', text: `${expiryMinutes}` },
+        { type: 'text', text: appName },
       ],
     },
   ];
+
+  components.push(...buildDetailsButton(buttonUrl ?? 'login'));
+  return components;
 }
 
 type WhatsAppTemplateComponent = {
@@ -38,8 +50,33 @@ type WhatsAppTemplateComponent = {
   index?: string;
 };
 
-function buildDetailsButton(detailsUrl?: string): WhatsAppTemplateComponent[] {
+function normalizeUrlButtonValue(detailsUrl?: string): string | undefined {
   if (!detailsUrl) {
+    return undefined;
+  }
+
+  const trimmed = detailsUrl.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const normalizedPath = `${parsed.pathname}${parsed.search}${parsed.hash}`.replace(/^\/+/, '');
+    return normalizedPath || undefined;
+  } catch {
+    return (
+      trimmed
+        .replace(/^https?:\/\/[^/]+/i, '')
+        .replace(/^\/+/, '')
+        .trim() || undefined
+    );
+  }
+}
+
+function buildDetailsButton(detailsUrl?: string): WhatsAppTemplateComponent[] {
+  const normalizedUrl = normalizeUrlButtonValue(detailsUrl);
+  if (!normalizedUrl) {
     return [];
   }
 
@@ -48,7 +85,7 @@ function buildDetailsButton(detailsUrl?: string): WhatsAppTemplateComponent[] {
       type: 'button',
       sub_type: 'url',
       index: '0',
-      parameters: [{ type: 'text', text: detailsUrl }],
+      parameters: [{ type: 'text', text: normalizedUrl }],
     },
   ];
 }
@@ -153,52 +190,12 @@ export function formatPaymentReceiptTemplateParams(
 }
 
 /**
- * Formats prescription notification template parameters for WhatsApp
- * @param patientName - Patient name
- * @param doctorName - Doctor name
- * @param medicationDetails - Medication details
- * @param prescriptionUrl - Optional prescription URL
- * @returns Template components array
- */
-export function formatPrescriptionNotificationTemplateParams(
-  patientName: string,
-  doctorName: string,
-  medicationDetails: string,
-  prescriptionUrl?: string
-): Array<{
-  type: string;
-  parameters: Array<{ type: string; text: string }>;
-}> {
-  const components: Array<{
-    type: string;
-    parameters: Array<{ type: string; text: string }>;
-  }> = [
-    {
-      type: 'body',
-      parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: doctorName },
-        { type: 'text', text: medicationDetails },
-      ],
-    },
-  ];
-
-  if (prescriptionUrl) {
-    components.push({
-      type: 'button',
-      parameters: [{ type: 'text', text: prescriptionUrl }],
-    });
-  }
-
-  return components;
-}
-
-/**
  * Example WhatsApp template structure documentation
  *
  * OTP Template Example:
- * Template Name: otp_verification
- * Template Body: "Your OTP code is {{1}} and is valid for {{2}} minutes. Please do not share this code with anyone."
+ * Template Name: verify_account
+ * Template Body: "This OTP code is for {{1}} your {{2}} account and linking it to {{3}}. OTP: {{4}} Do not share it with anyone, even to {{5}}, or they'll be able to access your account."
+ * Button: "Visit website" -> {{1}} (example suffix: "login")
  *
  * Appointment Confirmation Template Example:
  * Template Name: appointment_confirmation
@@ -215,8 +212,4 @@ export function formatPrescriptionNotificationTemplateParams(
  * Template Body: "Hello {{1}}, your receipt {{2}} for {{3}} has been generated. Paid On: {{4}}"
  * Button: "View details" -> {{1}}
  *
- * Prescription Notification Template Example:
- * Template Name: prescription_notification
- * Template Body: "Hello {{1}}, your prescription from Dr. {{2}} is ready. Medications: {{3}}"
- * Button: "View Prescription" -> {{1}}
  */

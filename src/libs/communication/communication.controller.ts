@@ -47,7 +47,6 @@ import {
   SendTopicNotificationDto,
   SendEmailDto,
   AppointmentReminderDto,
-  PrescriptionNotificationDto,
   ChatBackupDto,
   UnifiedNotificationDto,
   SubscribeToTopicDto,
@@ -218,60 +217,6 @@ export class CommunicationController {
         date: appointmentDto.date,
         time: appointmentDto.time,
         location: appointmentDto.location,
-      },
-      initiatorId: userId,
-      ...(userRole && { initiatorRole: userRole }),
-    });
-
-    return {
-      success: result.success,
-      ...(result.results[0]?.messageId && { messageId: result.results[0].messageId }),
-    };
-  }
-
-  /**
-   * Category-based routing: PRESCRIPTION
-   */
-  @Post('prescription/ready')
-  @Roles(Role.SUPER_ADMIN, Role.CLINIC_ADMIN, Role.DOCTOR, Role.PHARMACIST)
-  @RequireResourcePermission('notifications', 'create')
-  @ApiOperation({
-    summary: 'Send prescription ready notification',
-    description: 'Send prescription ready notification via email and optionally push notification',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Prescription notification sent successfully',
-    type: NotificationResponseDto,
-  })
-  async sendPrescriptionReady(
-    @Body() prescriptionDto: PrescriptionNotificationDto,
-    @Request() req: ClinicAuthenticatedRequest
-  ): Promise<NotificationResponseDto> {
-    const channels: CommunicationChannel[] = prescriptionDto.deviceToken
-      ? ['push', 'email', 'whatsapp', 'socket']
-      : ['email', 'whatsapp'];
-
-    const user = req.user;
-    const userId = user?.id || user?.sub || 'system';
-    const userRole = user?.role;
-
-    const result = await this.communicationService.send({
-      category: CommunicationCategory.PRESCRIPTION,
-      title: 'Prescription Ready',
-      body: `Your prescription from ${prescriptionDto.doctorName} is ready for pickup`,
-      recipients: [
-        {
-          ...(prescriptionDto.deviceToken && { deviceToken: prescriptionDto.deviceToken }),
-          email: prescriptionDto.to,
-        },
-      ],
-      channels,
-      priority: CommunicationPriority.HIGH,
-      data: {
-        type: 'prescription_ready',
-        ...(prescriptionDto.prescriptionId && { prescriptionId: prescriptionDto.prescriptionId }),
-        doctorName: prescriptionDto.doctorName,
       },
       initiatorId: userId,
       ...(userRole && { initiatorRole: userRole }),

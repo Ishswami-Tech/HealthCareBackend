@@ -144,7 +144,7 @@ export default function createDevelopmentConfig(): Config {
       apiKey: getEnvWithDefault(ENV_VARS.WHATSAPP_API_KEY, ''),
       phoneNumberId: getEnvWithDefault('WHATSAPP_PHONE_NUMBER_ID', ''),
       businessAccountId: getEnvWithDefault('WHATSAPP_BUSINESS_ACCOUNT_ID', ''),
-      otpTemplateId: getEnvWithDefault('WHATSAPP_OTP_TEMPLATE_ID', 'otp_verification'),
+      otpTemplateId: getEnvWithDefault('WHATSAPP_OTP_TEMPLATE_ID', 'verify_account'),
       appointmentConfirmationTemplateId: getEnvWithDefault(
         'WHATSAPP_APPOINTMENT_CONFIRMATION_TEMPLATE_ID',
         'appointment_confirmation'
@@ -152,10 +152,6 @@ export default function createDevelopmentConfig(): Config {
       appointmentReminderTemplateId: getEnvWithDefault(
         'WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID',
         'appointment_reminder_2'
-      ),
-      prescriptionTemplateId: getEnvWithDefault(
-        'WHATSAPP_PRESCRIPTION_TEMPLATE_ID',
-        'prescription_notification'
       ),
     },
     video: videoConfig(),

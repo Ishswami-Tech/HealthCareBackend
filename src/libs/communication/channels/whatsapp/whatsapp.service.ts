@@ -9,6 +9,7 @@ import { ProviderFactory } from '@communication/adapters/factories/provider.fact
 import { CommunicationConfigService } from '@communication/config/communication-config.service';
 import { ClinicTemplateService } from '@communication/services/clinic-template.service';
 import {
+  formatOTPTemplateParams,
   formatAppointmentConfirmationTemplateParams,
   formatAppointmentReminderTemplateParams,
   formatPaymentReceiptTemplateParams,
@@ -21,6 +22,8 @@ import {
  */
 @Injectable()
 export class WhatsAppService {
+  private readonly TEMPLATE_LANGUAGE_CODE = 'en_US';
+
   constructor(
     private readonly configService: ConfigService,
     private readonly whatsAppConfig: WhatsAppConfig,
@@ -62,10 +65,11 @@ export class WhatsAppService {
   async sendOTP(
     phoneNumber: string,
     otp: string,
-    expiryMinutes: number = 10,
+    _expiryMinutes: number = 10,
     maxRetries: number = 2,
     clinicId?: string,
-    purpose: string = 'verification'
+    purpose: string = 'verification',
+    buttonUrlSuffix: string = 'login'
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -103,18 +107,13 @@ export class WhatsAppService {
         await this.sendTemplateMessage(
           formattedPhone,
           templateId,
-          [
-            {
-              type: 'body',
-              parameters: [
-                { type: 'text', text: purpose.replace(/_/g, ' ').trim() || 'verification' },
-                { type: 'text', text: clinicName },
-                { type: 'text', text: otp },
-                { type: 'text', text: appName },
-                { type: 'text', text: `${expiryMinutes}` },
-              ],
-            },
-          ],
+          formatOTPTemplateParams(
+            purpose.replace(/_/g, ' ').trim() || 'verification',
+            appName,
+            clinicName,
+            otp,
+            buttonUrlSuffix
+          ),
           clinicId
         );
 
@@ -318,101 +317,6 @@ export class WhatsAppService {
   }
 
   /**
-   * Send prescription notification via WhatsApp
-   * @param phoneNumber - The recipient's phone number
-   * @param patientName - Patient's name
-   * @param doctorName - Doctor's name
-   * @param medicationDetails - Medication details
-   * @param prescriptionUrl - URL to download prescription
-   * @returns Promise<boolean> - Success status
-   */
-  /**
-   * Sends prescription notification via WhatsApp
-   * Supports multi-tenant communication via clinicId
-   * @param phoneNumber - Recipient phone number (with country code)
-   * @param patientName - Patient name for personalization
-   * @param doctorName - Doctor name who prescribed
-   * @param medicationDetails - Details about prescribed medications
-   * @param prescriptionUrl - Optional prescription document URL
-   * @param clinicId - Optional clinic ID for multi-tenant template and provider routing
-   * @returns Promise resolving to true if message was sent successfully
-   */
-  async sendPrescriptionNotification(
-    phoneNumber: string,
-    patientName: string,
-    doctorName: string,
-    medicationDetails: string,
-    prescriptionUrl?: string,
-    clinicId?: string
-  ): Promise<boolean> {
-    if (!this.whatsAppConfig.enabled && !clinicId) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        'WhatsApp service is disabled. Simulating successful prescription notification.',
-        'WhatsAppService'
-      );
-      return true;
-    }
-
-    try {
-      const formattedPhone = this.formatPhoneNumber(phoneNumber);
-
-      // Get clinic name and template ID if clinicId provided
-      let clinicName = 'Healthcare Clinic';
-      let templateId = this.whatsAppConfig.prescriptionTemplateId;
-
-      if (clinicId) {
-        const clinicData = await this.clinicTemplateService.getClinicTemplateData(clinicId);
-        if (clinicData) {
-          clinicName = clinicData.clinicName;
-          templateId =
-            clinicData.templateIds.prescription || this.whatsAppConfig.prescriptionTemplateId;
-        }
-      }
-
-      await this.sendTemplateMessage(
-        formattedPhone,
-        templateId,
-        [
-          {
-            type: 'body',
-            parameters: [
-              { type: 'text', text: clinicName },
-              { type: 'text', text: patientName },
-              { type: 'text', text: doctorName },
-              { type: 'text', text: medicationDetails },
-            ],
-          },
-        ],
-        clinicId
-      );
-
-      // If prescription URL is provided, send the document
-      if (prescriptionUrl) {
-        await this.sendDocumentMessage(formattedPhone, prescriptionUrl, 'Your Prescription');
-      }
-
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.INFO,
-        `Prescription notification sent to ${phoneNumber} via WhatsApp`,
-        'WhatsAppService'
-      );
-      return true;
-    } catch (error) {
-      void this.loggingService.log(
-        LogType.SYSTEM,
-        LogLevel.ERROR,
-        `Failed to send prescription notification via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        'WhatsAppService',
-        { stack: (error as Error)?.stack }
-      );
-      return false;
-    }
-  }
-
-  /**
    * Send a custom message via WhatsApp
    * @param phoneNumber - The recipient's phone number
    * @param message - The message to send
@@ -567,7 +471,7 @@ export class WhatsAppService {
                   },
                   {} as Record<string, string>
                 ) ?? {},
-              language: 'en',
+              language: this.TEMPLATE_LANGUAGE_CODE,
             });
 
             if (result.success) {
@@ -616,7 +520,7 @@ export class WhatsAppService {
           template: {
             name: templateName,
             language: {
-              code: 'en',
+              code: this.TEMPLATE_LANGUAGE_CODE,
             },
             components,
           },

@@ -17,7 +17,6 @@ export { EmailQueueService } from '@communication/channels/email/email-queue.ser
 export { SESEmailService } from '@communication/channels/email/ses-email.service';
 export type {
   AppointmentTemplateData,
-  PrescriptionTemplateData,
   PaymentTemplateData,
   AccountVerificationTemplateData,
   PasswordResetTemplateData,

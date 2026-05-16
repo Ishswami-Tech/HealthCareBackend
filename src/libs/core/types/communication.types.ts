@@ -223,15 +223,6 @@ export interface AppointmentTemplateData extends EmailTemplateData {
   cancelUrl?: string;
 }
 
-export interface PrescriptionTemplateData extends EmailTemplateData {
-  doctorName: string;
-  prescriptionId: string;
-  medications: readonly string[];
-  pickupInstructions?: string;
-  pharmacyName?: string;
-  pharmacyAddress?: string;
-}
-
 export interface PaymentTemplateData extends EmailTemplateData {
   amount: number;
   currency: string;

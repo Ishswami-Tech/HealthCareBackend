@@ -25,7 +25,6 @@ export {
   SendTopicNotificationDto,
   SendEmailDto,
   AppointmentReminderDto,
-  PrescriptionNotificationDto,
   ChatBackupDto,
   UnifiedNotificationDto,
   SubscribeToTopicDto,
