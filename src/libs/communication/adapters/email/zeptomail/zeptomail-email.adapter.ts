@@ -99,7 +99,7 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
   private bounceAddress: string = '';
   private config: ProviderConfig | null = null;
   private clinicId: string | undefined = undefined; // Store clinicId for multi-tenant support
-  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = '';
 
   constructor(
     @Inject(forwardRef(() => LoggingService))
@@ -146,9 +146,17 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
       throw new Error('ZeptoMail fromEmail is required');
     }
 
-    // Determine API Base URL based on region (default to com)
-    const region = credentials['region'] || credentials['REGION'] || 'com';
-    let apiUrl = credentials['apiUrl'] || `https://api.zeptomail.${region}/v1.1`;
+    // Determine API Base URL from explicit config or environment only.
+    const region = credentials['region'] || credentials['REGION'] || '';
+    let apiUrl =
+      credentials['apiUrl'] ||
+      process.env['ZEPTOMAIL_API_BASE_URL'] ||
+      process.env['ZEPTOMAIL_API_URL'] ||
+      '';
+
+    if (!apiUrl && region) {
+      apiUrl = `https://api.zeptomail.${region}/v1.1`;
+    }
 
     // Normalize URL: Strip trailing slash and specific endpoints if provided
     apiUrl = apiUrl.replace(/\/+$/, ''); // Strip trailing slashes

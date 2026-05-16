@@ -21,7 +21,7 @@ import {
 
 @Injectable()
 export class ZeptoMailSuppressionSyncService implements OnModuleInit, OnModuleDestroy {
-  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = '';
   private sendMailToken: string = '';
   private syncInterval?: NodeJS.Timeout;
 
@@ -63,6 +63,11 @@ export class ZeptoMailSuppressionSyncService implements OnModuleInit, OnModuleDe
         ''
       );
       this.apiBaseUrl = normalizedUrl;
+    } else {
+      this.apiBaseUrl =
+        process.env['ZEPTOMAIL_API_BASE_URL'] ||
+        process.env['ZEPTOMAIL_API_URL'] ||
+        this.apiBaseUrl;
     }
   }
 

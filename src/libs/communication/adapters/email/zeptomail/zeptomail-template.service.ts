@@ -51,7 +51,7 @@ interface ZeptoMailTemplateRequest {
 
 @Injectable()
 export class ZeptoMailTemplateService {
-  private apiBaseUrl: string = 'https://api.zeptomail.com/v1.1';
+  private apiBaseUrl: string = '';
   private sendMailToken: string = '';
   private fromEmail: string = '';
   private fromName: string = '';
@@ -88,6 +88,11 @@ export class ZeptoMailTemplateService {
         ''
       );
       this.apiBaseUrl = normalizedUrl;
+    } else {
+      this.apiBaseUrl =
+        process.env['ZEPTOMAIL_API_BASE_URL'] ||
+        process.env['ZEPTOMAIL_API_URL'] ||
+        this.apiBaseUrl;
     }
   }
 
