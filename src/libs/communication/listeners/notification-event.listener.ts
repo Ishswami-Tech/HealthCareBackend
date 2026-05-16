@@ -10,6 +10,7 @@ import { nowIso, formatTimeInIST } from '@utils/date-time.util';
  */
 
 import { Injectable, OnModuleInit, Inject, forwardRef } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { OnEvent } from '@nestjs/event-emitter';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { EventService } from '@infrastructure/events/event.service';
@@ -742,13 +743,14 @@ export class NotificationEventListener implements OnModuleInit {
 
   private typedEventService?: IEventService;
   private typedCommunicationService?: CommunicationService;
+  private appointmentNotificationService?: AppointmentNotificationService;
 
   constructor(
     @Inject(forwardRef(() => EventService))
     eventService: unknown,
     @Inject(forwardRef(() => CommunicationService))
     private readonly communicationService: unknown,
-    private readonly appointmentNotificationService: AppointmentNotificationService,
+    private readonly moduleRef: ModuleRef,
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
@@ -771,6 +773,10 @@ export class NotificationEventListener implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    this.appointmentNotificationService = this.moduleRef.get(AppointmentNotificationService, {
+      strict: false,
+    });
+
     await this.loggingService.log(
       LogType.SYSTEM,
       LogLevel.INFO,
@@ -844,7 +850,7 @@ export class NotificationEventListener implements OnModuleInit {
 
       if (normalizedEventType === 'appointment.confirmed') {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
-        if (notificationData) {
+        if (notificationData && this.appointmentNotificationService) {
           const result =
             await this.appointmentNotificationService.sendNotification(notificationData);
           await this.loggingService.log(
