@@ -1032,7 +1032,22 @@ export class CoreAppointmentService {
     }
     if (filters.type) where['type'] = filters.type;
     if (filters.priority) where['priority'] = filters.priority;
-    if (filters.patientId) where['patientId'] = filters.patientId;
+    if (filters.patientId) {
+      if (context.role === 'PATIENT' && context.userId) {
+        if (context.patientId && filters.patientId !== context.patientId) {
+          where['OR'] = [
+            ...(Array.isArray(where['OR']) ? (where['OR'] as Array<Record<string, unknown>>) : []),
+            { patientId: filters.patientId },
+            { patientId: context.patientId },
+            { patientId: context.userId },
+          ];
+        } else {
+          where['patientId'] = filters.patientId || context.patientId || context.userId;
+        }
+      } else {
+        where['patientId'] = filters.patientId;
+      }
+    }
     if (!(context.role === 'RECEPTIONIST' && context.locationId) && filters.locationId) {
       where['locationId'] = filters.locationId;
     }
