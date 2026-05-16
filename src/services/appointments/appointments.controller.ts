@@ -1557,7 +1557,7 @@ export class AppointmentsController {
         const patient = (await this.appointmentService.getPatientByUserId(currentUserId)) as {
           id: string;
         } | null;
-        if (result.patientId !== patient?.id) {
+        if (result.patientId !== patient?.id && result.patientId !== currentUserId) {
           throw new ForbiddenException('Patients can only access their own appointments');
         }
       }

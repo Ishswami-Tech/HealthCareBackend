@@ -4152,13 +4152,13 @@ export class AppointmentsService {
         const patient = await this.databaseService.executeHealthcareRead(async client => {
           const patientDelegate = client['patient'] as {
             findFirst: (args: {
-              where: { userId: string };
+              where: { OR: Array<{ userId: string } | { id: string }> };
               include: { user: boolean };
             }) => Promise<unknown>;
           };
           return await patientDelegate.findFirst({
             where: {
-              userId,
+              OR: [{ userId }, { id: userId }],
             },
             include: {
               user: true,

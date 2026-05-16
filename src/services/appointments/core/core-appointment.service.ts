@@ -986,12 +986,16 @@ export class CoreAppointmentService {
         where['doctorId'] = context.doctorId || context.userId;
         break;
       case 'PATIENT':
-        // Prefer the resolved Patient.id so the query can use indexed scalar filters.
-        if (context.patientId) {
+        // Support both storage variants:
+        // - appointment.patientId = patient profile id
+        // - appointment.patientId = authenticated user id
+        if (context.patientId && context.patientId !== context.userId) {
+          where['OR'] = [{ patientId: context.patientId }, { patientId: context.userId }];
+        } else if (context.patientId) {
           where['patientId'] = context.patientId;
         } else {
           // Fallback for older call sites that only pass the authenticated User.id.
-          where['patient'] = { userId: context.userId };
+          where['OR'] = [{ patientId: context.userId }, { patient: { userId: context.userId } }];
         }
         break;
       case 'NURSE':
