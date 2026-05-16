@@ -8,10 +8,11 @@
  * @description Event-driven communication integration via CommunicationService
  */
 
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { EventsModule } from '@infrastructure/events/events.module';
 import { LoggingModule } from '@logging';
+import { AppointmentsModule } from '@services/appointments/appointments.module';
 import { NotificationEventListener } from './notification-event.listener';
 
 /**
@@ -39,6 +40,7 @@ import { NotificationEventListener } from './notification-event.listener';
     EventEmitterModule,
     EventsModule, // Central event system
     LoggingModule,
+    forwardRef(() => AppointmentsModule),
   ],
   providers: [NotificationEventListener],
   exports: [NotificationEventListener],

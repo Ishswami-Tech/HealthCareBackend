@@ -120,7 +120,7 @@ import { EHRModule } from '@services/ehr/ehr.module';
     // Communication Modules
     VideoModule,
     forwardRef(() => BillingModule),
-    CommunicationModule,
+    forwardRef(() => CommunicationModule),
     EHRModule,
 
     // QR Code Module
@@ -229,6 +229,7 @@ import { EHRModule } from '@services/ehr/ehr.module';
     AppointmentAnalyticsService,
     CheckInService,
     CheckInLocationService,
+    AppointmentNotificationService,
   ],
 })
 export class AppointmentsModule {}
