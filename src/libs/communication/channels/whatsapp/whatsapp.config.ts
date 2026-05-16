@@ -3,6 +3,12 @@ import { ConfigService } from '@config/config.service';
 
 @Injectable()
 export class WhatsAppConfig {
+  /**
+   * Fixed receipt template name used by the billing flow.
+   * Keep this aligned with the approved WhatsApp template in Meta.
+   */
+  private static readonly RECEIPT_TEMPLATE_ID = 'payment_receipt';
+
   constructor(private readonly configService: ConfigService) {}
 
   // Use ConfigService (which uses dotenv) for all environment variable access
@@ -57,6 +63,10 @@ export class WhatsAppConfig {
       'WHATSAPP_APPOINTMENT_REMINDER_TEMPLATE_ID',
       'appointment_reminder_2'
     );
+  }
+
+  get receiptTemplateId(): string {
+    return WhatsAppConfig.RECEIPT_TEMPLATE_ID;
   }
 
   get prescriptionTemplateId(): string {

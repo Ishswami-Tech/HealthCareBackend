@@ -29,6 +29,7 @@ export interface ClinicTemplateData {
     appointmentConfirmation?: string;
     appointmentReminder?: string;
     reminder?: string;
+    receipt?: string;
     prescription?: string;
   };
 }
@@ -142,6 +143,18 @@ export class ClinicTemplateService {
               }
             : {}),
           ...(whatsappTemplates?.['reminder'] && { reminder: whatsappTemplates['reminder'] }),
+          ...(whatsappTemplates?.['receipt'] ||
+          whatsappTemplates?.['paymentReceipt'] ||
+          whatsappTemplates?.['payment_receipt'] ||
+          whatsappTemplates?.['invoice']
+            ? {
+                receipt:
+                  whatsappTemplates?.['receipt'] ||
+                  whatsappTemplates?.['paymentReceipt'] ||
+                  whatsappTemplates?.['payment_receipt'] ||
+                  whatsappTemplates?.['invoice'],
+              }
+            : {}),
           ...(whatsappTemplates?.['prescription'] && {
             prescription: whatsappTemplates['prescription'],
           }),
@@ -225,6 +238,7 @@ export class ClinicTemplateService {
       | 'appointmentConfirmation'
       | 'appointmentReminder'
       | 'reminder'
+      | 'receipt'
       | 'prescription'
   ): Promise<string | null> {
     const templateData = await this.getClinicTemplateData(clinicId);

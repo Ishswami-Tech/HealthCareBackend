@@ -83,6 +83,7 @@ type BillingAccessContext = {
 @Injectable()
 export class BillingService implements OnModuleInit {
   private appointmentsServiceRef: AppointmentsServiceLike | null = null;
+  private readonly invoiceWhatsAppSendLocks = new Map<string, Promise<boolean>>();
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -134,6 +135,34 @@ export class BillingService implements OnModuleInit {
       this.cacheService.invalidateCacheByTag(`user_subscriptions:${userId}`),
       this.cacheService.invalidateCacheByTag(`user:${userId}`),
     ]);
+  }
+
+  private async withInvoiceWhatsAppSendLock(
+    invoiceId: string,
+    task: () => Promise<boolean>
+  ): Promise<boolean> {
+    const existingTask = this.invoiceWhatsAppSendLocks.get(invoiceId);
+    if (existingTask) {
+      await this.loggingService.log(
+        LogType.SYSTEM,
+        LogLevel.INFO,
+        'Skipping duplicate invoice WhatsApp send while a send is already in progress',
+        'BillingService',
+        { invoiceId }
+      );
+      return await existingTask;
+    }
+
+    const taskPromise = (async () => {
+      try {
+        return await task();
+      } finally {
+        this.invoiceWhatsAppSendLocks.delete(invoiceId);
+      }
+    })();
+
+    this.invoiceWhatsAppSendLocks.set(invoiceId, taskPromise);
+    return await taskPromise;
   }
 
   private async emitBillingPaymentStateEvents(params: {
@@ -1632,7 +1661,7 @@ export class BillingService implements OnModuleInit {
       { invoiceId: id }
     );
 
-    await this.eventService.emit('billing.invoice.paid', { invoiceId: id, invoice });
+    await this.eventService.emit('billing.receipt.paid', { receiptId: id, invoice });
     await this.invalidateUserInvoiceCaches(existingInvoice.userId);
 
     return invoice;
@@ -4279,127 +4308,134 @@ export class BillingService implements OnModuleInit {
   }
 
   /**
-   * Send invoice via WhatsApp
+   * Send receipt via WhatsApp
    */
-  async sendInvoiceViaWhatsApp(invoiceId: string): Promise<boolean> {
-    try {
-      const invoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
+  async sendReceiptViaWhatsApp(receiptId: string): Promise<boolean> {
+    return await this.withInvoiceWhatsAppSendLock(receiptId, async () => {
+      try {
+        const invoice = await this.databaseService.findInvoiceByIdSafe(receiptId);
 
-      if (!invoice) {
-        throw new NotFoundException(`Invoice ${invoiceId} not found`);
-      }
-
-      if (invoice.sentViaWhatsApp) {
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Skipping invoice WhatsApp delivery because invoice was already sent',
-          'BillingService',
-          { invoiceId }
-        );
-        return true;
-      }
-
-      // Get user details
-      const subscriptionUser = invoice.subscription as {
-        user?: { phone?: string | null; id: string };
-      } | null;
-      const subscriptionUserData = subscriptionUser?.user;
-      const fetchedUser = await this.databaseService.findUserByIdSafe(invoice.userId);
-
-      // Use type-safe user data - prefer fetched user as it has all properties
-      const user = fetchedUser || subscriptionUserData;
-
-      if (!user) {
-        throw new NotFoundException(`User ${invoice.userId} not found`);
-      }
-
-      const userPhone = 'phone' in user ? user.phone : null;
-      if (!userPhone) {
-        const userId = 'id' in user ? user.id : invoice.userId;
-        throw new BadRequestException(`User ${userId} has no phone number`);
-      }
-
-      // Generate PDF if not already generated
-      if (!invoice.pdfUrl || !invoice.pdfFilePath) {
-        await this.generateInvoicePDF(invoiceId);
-
-        // Fetch updated invoice
-        const updatedInvoice = await this.databaseService.findInvoiceByIdSafe(invoiceId);
-
-        if (!updatedInvoice?.pdfUrl) {
-          throw new Error('Failed to generate invoice PDF');
+        if (!invoice) {
+          throw new NotFoundException(`Invoice ${receiptId} not found`);
         }
 
-        invoice.pdfUrl = updatedInvoice.pdfUrl;
-      }
+        if (invoice.sentViaWhatsApp) {
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Skipping invoice WhatsApp delivery because invoice was already sent',
+            'BillingService',
+            { receiptId }
+          );
+          return true;
+        }
 
-      // Send via WhatsApp - using type-safe access
-      const getUserNameForWhatsApp = (u: typeof user): string => {
-        if (typeof u === 'object' && u !== null) {
-          if ('name' in u && typeof u.name === 'string' && u.name) return u.name;
-          if (('firstName' in u || 'lastName' in u) && typeof u === 'object') {
-            const firstName =
-              'firstName' in u && typeof u.firstName === 'string' ? u.firstName : '';
-            const lastName = 'lastName' in u && typeof u.lastName === 'string' ? u.lastName : '';
-            const fullName = `${firstName} ${lastName}`.trim();
-            if (fullName) return fullName;
+        // Get user details
+        const subscriptionUser = invoice.subscription as {
+          user?: { phone?: string | null; id: string };
+        } | null;
+        const subscriptionUserData = subscriptionUser?.user;
+        const fetchedUser = await this.databaseService.findUserByIdSafe(invoice.userId);
+
+        // Use type-safe user data - prefer fetched user as it has all properties
+        const user = fetchedUser || subscriptionUserData;
+
+        if (!user) {
+          throw new NotFoundException(`User ${invoice.userId} not found`);
+        }
+
+        const userPhone = 'phone' in user ? user.phone : null;
+        if (!userPhone) {
+          const userId = 'id' in user ? user.id : invoice.userId;
+          throw new BadRequestException(`User ${userId} has no phone number`);
+        }
+
+        // Generate PDF if not already generated
+        if (!invoice.pdfUrl || !invoice.pdfFilePath) {
+          await this.generateInvoicePDF(receiptId);
+
+          // Fetch updated invoice
+          const updatedInvoice = await this.databaseService.findInvoiceByIdSafe(receiptId);
+
+          if (!updatedInvoice?.pdfUrl) {
+            throw new Error('Failed to generate invoice PDF');
           }
-          if ('email' in u && typeof u.email === 'string' && u.email) return u.email;
+
+          invoice.pdfUrl = updatedInvoice.pdfUrl;
         }
-        return 'User';
-      };
 
-      const userName = getUserNameForWhatsApp(user);
-      const success = await this.whatsAppService.sendInvoice(
-        userPhone,
-        userName,
-        invoice.invoiceNumber,
-        invoice.totalAmount,
-        formatDateInIST(invoice.dueDate, {
-          year: 'numeric',
-          month: 'short',
-          day: '2-digit',
-        }),
-        invoice.pdfUrl || ''
-      );
+        // Send via WhatsApp - using type-safe access
+        const getUserNameForWhatsApp = (u: typeof user): string => {
+          if (typeof u === 'object' && u !== null) {
+            if ('name' in u && typeof u.name === 'string' && u.name) return u.name;
+            if (('firstName' in u || 'lastName' in u) && typeof u === 'object') {
+              const firstName =
+                'firstName' in u && typeof u.firstName === 'string' ? u.firstName : '';
+              const lastName = 'lastName' in u && typeof u.lastName === 'string' ? u.lastName : '';
+              const fullName = `${firstName} ${lastName}`.trim();
+              if (fullName) return fullName;
+            }
+            if ('email' in u && typeof u.email === 'string' && u.email) return u.email;
+          }
+          return 'User';
+        };
 
-      if (success) {
-        // Update invoice
-        await this.databaseService.updateInvoiceSafe(invoiceId, {
-          sentViaWhatsApp: true,
-          whatsappSentAt: new Date(),
-        } as InvoiceUpdateInput);
-
-        await this.loggingService.log(
-          LogType.SYSTEM,
-          LogLevel.INFO,
-          'Invoice sent via WhatsApp',
-          'BillingService',
-          { invoiceId, userId: user.id }
+        const userName = getUserNameForWhatsApp(user);
+        const paymentDate = formatDateInIST(
+          invoice.paidAt ?? invoice.updatedAt ?? invoice.createdAt,
+          {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+          }
+        );
+        const success = await this.whatsAppService.sendReceipt(
+          userPhone,
+          userName,
+          invoice.invoiceNumber,
+          invoice.totalAmount,
+          paymentDate,
+          invoice.pdfUrl || '',
+          invoice.clinicId
         );
 
-        await this.eventService.emit('billing.invoice.sent_whatsapp', {
-          invoiceId,
-          userId: user.id,
-        });
-        await this.invalidateUserInvoiceCaches(invoice.userId);
-      }
+        if (success) {
+          // Update invoice
+          await this.databaseService.updateInvoiceSafe(receiptId, {
+            sentViaWhatsApp: true,
+            whatsappSentAt: new Date(),
+          } as InvoiceUpdateInput);
 
-      return success;
-    } catch (error) {
-      await this.loggingService.log(
-        LogType.ERROR,
-        LogLevel.ERROR,
-        'Failed to send invoice via WhatsApp',
-        'BillingService',
-        {
-          error: error instanceof Error ? error.message : 'Unknown error',
-          invoiceId,
+          await this.loggingService.log(
+            LogType.SYSTEM,
+            LogLevel.INFO,
+            'Receipt sent via WhatsApp',
+            'BillingService',
+            { receiptId, userId: user.id }
+          );
+
+          await this.eventService.emit('billing.receipt.sent_whatsapp', {
+            receiptId,
+            userId: user.id,
+          });
+          await this.invalidateUserInvoiceCaches(invoice.userId);
         }
-      );
-      return false;
-    }
+
+        return success;
+      } catch (error) {
+        await this.loggingService.log(
+          LogType.ERROR,
+          LogLevel.ERROR,
+          'Failed to send receipt via WhatsApp',
+          'BillingService',
+          {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            receiptId,
+          }
+        );
+        return false;
+      }
+    });
   }
 
   /**
@@ -4486,10 +4522,10 @@ export class BillingService implements OnModuleInit {
       const invoice = invoices.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
 
       if (invoice) {
-        // Send existing invoice via WhatsApp
-        await this.sendInvoiceViaWhatsApp(invoice.id);
+        // Send existing receipt via WhatsApp
+        await this.sendReceiptViaWhatsApp(invoice.id);
       } else {
-        // Create and send new invoice
+        // Create and send new receipt
         const newInvoice = await this.createInvoice({
           userId: subscription.userId,
           subscriptionId: subscription.id,
@@ -4510,8 +4546,8 @@ export class BillingService implements OnModuleInit {
           } as Record<string, unknown>,
         });
 
-        // Generate PDF and send via WhatsApp
-        await this.sendInvoiceViaWhatsApp(newInvoice.id);
+        // Generate PDF and send receipt via WhatsApp
+        await this.sendReceiptViaWhatsApp(newInvoice.id);
       }
 
       await this.loggingService.log(

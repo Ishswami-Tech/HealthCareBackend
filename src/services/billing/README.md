@@ -1,8 +1,7 @@
 # Billing Service
 
-**Purpose:** Billing, invoicing, and payment processing
-**Location:** `src/services/billing`
-**Status:** ✅ Production-ready
+**Purpose:** Billing, invoicing, and payment processing **Location:**
+`src/services/billing` **Status:** ✅ Production-ready
 
 ---
 
@@ -36,13 +35,13 @@ export class MyService {
 
 ## API Endpoints
 
-| Category | Endpoints | Description |
-|----------|-----------|-------------|
+| Category          | Endpoints                               | Description          |
+| ----------------- | --------------------------------------- | -------------------- |
 | **Billing Plans** | GET, POST, PUT, DELETE `/billing/plans` | Manage billing plans |
 | **Subscriptions** | GET, POST, PUT `/billing/subscriptions` | Manage subscriptions |
-| **Invoices** | GET, POST, PUT `/billing/invoices` | Manage invoices |
-| **Payments** | GET, POST `/billing/payments` | Process payments |
-| **Analytics** | GET `/billing/analytics/revenue` | Revenue reports |
+| **Invoices**      | GET, POST, PUT `/billing/invoices`      | Manage invoices      |
+| **Payments**      | GET, POST `/billing/payments`           | Process payments     |
+| **Analytics**     | GET `/billing/analytics/revenue`        | Revenue reports      |
 
 [Full API documentation](../../docs/api/README.md)
 
@@ -62,7 +61,7 @@ const invoice = await this.billingService.createInvoice({
 const pdfBuffer = await this.billingService.generateInvoicePDF(invoiceId);
 
 // Send via WhatsApp
-await this.billingService.sendInvoiceViaWhatsApp(invoiceId, phoneNumber);
+await this.billingService.sendReceiptViaWhatsApp(invoiceId, phoneNumber);
 
 // Process payment
 const payment = await this.billingService.processPayment({

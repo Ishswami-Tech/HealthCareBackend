@@ -14,6 +14,7 @@ import { OnEvent } from '@nestjs/event-emitter';
 // Use direct imports to avoid TDZ issues with barrel exports
 import { EventService } from '@infrastructure/events/event.service';
 import { CommunicationService } from '@communication/communication.service';
+import { AppointmentNotificationService } from '@services/appointments/plugins/notifications/appointment-notification.service';
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { DatabaseService } from '@infrastructure/database/database.service';
 import {
@@ -29,6 +30,7 @@ import {
   CommunicationPriority,
   type CommunicationChannel,
 } from '@core/types';
+import type { NotificationData } from '@core/types/appointment.types';
 import type { EnterpriseEventPayload } from '@core/types';
 
 /**
@@ -746,6 +748,7 @@ export class NotificationEventListener implements OnModuleInit {
     eventService: unknown,
     @Inject(forwardRef(() => CommunicationService))
     private readonly communicationService: unknown,
+    private readonly appointmentNotificationService: AppointmentNotificationService,
     private readonly databaseService: DatabaseService,
     @Inject(forwardRef(() => LoggingService))
     private readonly loggingService: LoggingService
@@ -837,6 +840,28 @@ export class NotificationEventListener implements OnModuleInit {
       // Check if communication should be sent
       if (!rule.shouldNotify(eventPayload)) {
         return;
+      }
+
+      if (normalizedEventType === 'appointment.confirmed') {
+        const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
+        if (notificationData) {
+          const result =
+            await this.appointmentNotificationService.sendNotification(notificationData);
+          await this.loggingService.log(
+            LogType.NOTIFICATION,
+            result.success ? LogLevel.INFO : LogLevel.WARN,
+            `Processed confirmation notification for event ${normalizedEventType}`,
+            'NotificationEventListener',
+            {
+              eventType: normalizedEventType,
+              category: rule.category,
+              success: result.success,
+              requestId: result.notificationId,
+              sentChannels: result.sentChannels,
+            }
+          );
+          return;
+        }
       }
 
       // Get recipients
@@ -1080,7 +1105,7 @@ export class NotificationEventListener implements OnModuleInit {
    */
   private generateCommunicationContent(
     eventType: string,
-    _payload: EnterpriseEventPayload,
+    payload: EnterpriseEventPayload,
     _rule: CommunicationRule
   ): { title: string; body: string } {
     // Default content
@@ -1096,6 +1121,9 @@ export class NotificationEventListener implements OnModuleInit {
       if (eventType.includes('.created')) {
         title = 'Appointment Scheduled';
         body = 'Your appointment has been successfully scheduled';
+      } else if (eventType.includes('.confirmed')) {
+        title = 'Appointment Confirmed';
+        body = 'Your appointment has been confirmed';
       } else if (eventType.includes('.cancelled')) {
         title = 'Appointment Cancelled';
         body = 'Your appointment has been cancelled';
@@ -1106,11 +1134,11 @@ export class NotificationEventListener implements OnModuleInit {
     } else if (eventType.startsWith('user.')) {
       if (eventType.includes('.logged_in')) {
         const loginMethod =
-          typeof _payload.metadata?.['loginMethod'] === 'string' &&
-          _payload.metadata['loginMethod'].trim().length > 0
-            ? _payload.metadata['loginMethod']
+          typeof payload.metadata?.['loginMethod'] === 'string' &&
+          payload.metadata['loginMethod'].trim().length > 0
+            ? payload.metadata['loginMethod']
             : 'account';
-        const loginTime = formatTimeInIST(_payload.timestamp);
+        const loginTime = formatTimeInIST(payload.timestamp);
         title = 'New Login Detected';
         body = `A ${loginMethod.replace(/_/g, ' ')} sign-in was detected for your account at ${loginTime}. If this was not you, please change your password immediately.`;
       } else if (eventType.includes('.created')) {
@@ -1124,9 +1152,9 @@ export class NotificationEventListener implements OnModuleInit {
       title = 'Billing Update';
       body = 'You have a new billing notification';
     } else if (eventType.startsWith('appointment.queue.')) {
-      const position = _payload.metadata?.['position'] as number | undefined;
-      const totalInQueue = _payload.metadata?.['totalInQueue'] as number | undefined;
-      const estimatedWaitTime = _payload.metadata?.['estimatedWaitTime'] as number | undefined;
+      const position = payload.metadata?.['position'] as number | undefined;
+      const totalInQueue = payload.metadata?.['totalInQueue'] as number | undefined;
+      const estimatedWaitTime = payload.metadata?.['estimatedWaitTime'] as number | undefined;
       if (eventType.includes('.position.updated')) {
         title = 'Queue Position Update';
         if (position === 1) {
@@ -1150,5 +1178,76 @@ export class NotificationEventListener implements OnModuleInit {
     }
 
     return { title, body };
+  }
+
+  private buildAppointmentConfirmationNotificationData(
+    payload: EnterpriseEventPayload
+  ): NotificationData | null {
+    const eventPayload = payload as unknown as Record<string, unknown>;
+    const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
+
+    const patientId =
+      payload.userId ||
+      (payload.metadata?.['patientId'] as string | undefined) ||
+      (payload.metadata?.['userId'] as string | undefined) ||
+      (eventPayload['patientId'] as string | undefined);
+    const doctorId =
+      (payload.metadata?.['doctorId'] as string | undefined) ||
+      (eventPayload['doctorId'] as string | undefined);
+    const clinicId =
+      payload.clinicId ||
+      (payload.metadata?.['clinicId'] as string | undefined) ||
+      (eventPayload['clinicId'] as string | undefined);
+    const appointmentId =
+      (payload.metadata?.['appointmentId'] as string | undefined) ||
+      (eventPayload['appointmentId'] as string | undefined) ||
+      (appointment['id'] as string | undefined);
+
+    if (!patientId || !doctorId || !clinicId || !appointmentId) {
+      return null;
+    }
+
+    const appointmentType =
+      (payload.metadata?.['appointmentType'] as string | undefined) ||
+      (appointment['appointmentType'] as string | undefined) ||
+      'in-person';
+
+    return {
+      appointmentId,
+      patientId,
+      doctorId,
+      clinicId,
+      type: 'confirmation',
+      priority: 'high',
+      channels: ['email', 'whatsapp', 'push'],
+      templateData: {
+        patientName:
+          (payload.metadata?.['patientName'] as string | undefined) ||
+          (appointment['patientName'] as string | undefined) ||
+          'Patient',
+        doctorName:
+          (payload.metadata?.['doctorName'] as string | undefined) ||
+          (appointment['doctorName'] as string | undefined) ||
+          'Doctor',
+        appointmentDate:
+          (payload.metadata?.['appointmentDate'] as string | undefined) ||
+          (appointment['appointmentDate'] as string | undefined) ||
+          (appointment['date'] as string | undefined) ||
+          '',
+        appointmentTime:
+          (payload.metadata?.['appointmentTime'] as string | undefined) ||
+          (appointment['appointmentTime'] as string | undefined) ||
+          '',
+        location:
+          (payload.metadata?.['location'] as string | undefined) ||
+          (appointment['location'] as string | undefined) ||
+          'Clinic',
+        clinicName:
+          (payload.metadata?.['clinicName'] as string | undefined) ||
+          (appointment['clinicName'] as string | undefined) ||
+          'Healthcare Clinic',
+        appointmentType,
+      },
+    };
   }
 }

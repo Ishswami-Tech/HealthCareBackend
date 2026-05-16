@@ -43,7 +43,7 @@ export class BillingEventsListener {
     );
 
     try {
-      // Send subscription confirmation and invoice via WhatsApp
+      // Send subscription confirmation and receipt via WhatsApp
       await this.billingService.sendSubscriptionConfirmation(payload.subscriptionId);
 
       await this.loggingService.log(
@@ -104,7 +104,7 @@ export class BillingEventsListener {
   }
 
   /**
-   * Auto-send invoice via WhatsApp when payment is completed
+   * Auto-send receipt via WhatsApp when payment is completed
    */
   @OnEvent('billing.payment.updated')
   async handlePaymentUpdated(payload: {
@@ -137,34 +137,21 @@ export class BillingEventsListener {
     );
 
     try {
-      // Prefer the websocket snapshot when available; fall back to DB lookup.
-      const payment = paymentSnapshot || (await this.billingService.getPayment(paymentId));
-
-      // Type-safe check for payment status and invoiceId
-      if (
-        'status' in payment &&
-        payment.status === 'COMPLETED' &&
-        'invoiceId' in payment &&
-        payment.invoiceId
-      ) {
-        // Send invoice via WhatsApp
-        const sent = await this.billingService.sendInvoiceViaWhatsApp(payment.invoiceId);
-
-        await this.loggingService.log(
-          LogType.PAYMENT,
-          sent ? LogLevel.INFO : LogLevel.WARN,
-          sent
-            ? `Invoice sent via WhatsApp for payment ${paymentId}`
-            : `Invoice WhatsApp delivery skipped or failed for payment ${paymentId}`,
-          'BillingEventsListener',
-          { paymentId, invoiceId: payment.invoiceId, sent }
-        );
-      }
+      // Payment updates are informational only.
+      // Receipt WhatsApp delivery is handled by billing.receipt.paid to avoid duplicate sends.
+      void paymentSnapshot;
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        `Skipping receipt delivery on payment.updated; handled by billing.receipt.paid`,
+        'BillingEventsListener',
+        { paymentId }
+      );
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'BillingEventsListener',
         {
           paymentId,
@@ -176,22 +163,22 @@ export class BillingEventsListener {
   }
 
   /**
-   * Auto-send invoice via WhatsApp when invoice is marked as paid
+   * Auto-send receipt via WhatsApp when invoice is marked as paid
    */
-  @OnEvent('billing.invoice.paid')
-  async handleInvoicePaid(payload: {
-    invoiceId?: string;
+  @OnEvent('billing.receipt.paid')
+  async handleReceiptPaid(payload: {
+    receiptId?: string;
     invoice?: { id?: string };
-    payload?: { invoiceId?: string; invoice?: { id?: string } };
+    payload?: { receiptId?: string; invoice?: { id?: string } };
   }) {
-    const invoiceId = payload?.invoiceId ?? payload?.payload?.invoiceId;
+    const receiptId = payload?.receiptId ?? payload?.payload?.receiptId;
     const invoiceSnapshot = payload?.invoice ?? payload?.payload?.invoice;
 
-    if (!invoiceId) {
+    if (!receiptId) {
       await this.loggingService.log(
         LogType.PAYMENT,
         LogLevel.WARN,
-        'Skipping invoice.paid event with missing invoiceId',
+        'Skipping receipt.paid event with missing receiptId',
         'BillingEventsListener'
       );
       return;
@@ -200,37 +187,51 @@ export class BillingEventsListener {
     await this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
-      `Handling invoice.paid event for invoice ${invoiceId}`,
+      `Handling receipt.paid event for receipt ${receiptId}`,
       'BillingEventsListener',
-      { invoiceId }
+      { receiptId }
     );
 
     try {
-      // Make the invoice artifact available first so billing updates are deterministic.
-      await this.billingService.generateInvoicePDF(invoiceId);
+      const invoiceRecord = await this.databaseService.findInvoiceByIdSafe(receiptId);
+      if (invoiceRecord?.sentViaWhatsApp) {
+        await this.loggingService.log(
+          LogType.PAYMENT,
+          LogLevel.INFO,
+          'Skipping receipt.paid delivery because the receipt was already sent via WhatsApp',
+          'BillingEventsListener',
+          { receiptId }
+        );
+        return;
+      }
 
-      // Send invoice via WhatsApp
-      const sent = await this.billingService.sendInvoiceViaWhatsApp(
-        invoiceSnapshot?.id || invoiceId
+      // Make the receipt artifact available first so billing updates are deterministic.
+      if (!invoiceRecord?.pdfUrl || !invoiceRecord?.pdfFilePath) {
+        await this.billingService.generateInvoicePDF(receiptId);
+      }
+
+      // Send receipt via WhatsApp
+      const sent = await this.billingService.sendReceiptViaWhatsApp(
+        invoiceSnapshot?.id || receiptId
       );
 
       await this.loggingService.log(
         LogType.PAYMENT,
         sent ? LogLevel.INFO : LogLevel.WARN,
         sent
-          ? `Invoice sent via WhatsApp for ${invoiceId}`
-          : `Invoice WhatsApp delivery skipped or failed for ${invoiceId}`,
+          ? `Receipt sent via WhatsApp for ${receiptId}`
+          : `Receipt WhatsApp delivery skipped or failed for ${receiptId}`,
         'BillingEventsListener',
-        { invoiceId, sent }
+        { receiptId, sent }
       );
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,
         LogLevel.ERROR,
-        `Failed to send invoice via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Failed to send receipt via WhatsApp: ${error instanceof Error ? error.message : 'Unknown error'}`,
         'BillingEventsListener',
         {
-          invoiceId,
+          receiptId,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
