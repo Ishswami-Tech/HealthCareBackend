@@ -157,6 +157,19 @@ export class PaymentController {
     return null;
   }
 
+  private async resolveClinicIdFromAppointment(appointmentId?: string): Promise<string | null> {
+    if (!appointmentId || !appointmentId.trim()) {
+      return null;
+    }
+
+    try {
+      const appointment = await this.databaseService.findAppointmentByIdSafe(appointmentId);
+      return appointment?.clinicId ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * Razorpay webhook handler
    */
@@ -286,8 +299,22 @@ export class PaymentController {
       const dataObj = (
         typeof body['data'] === 'object' && body['data'] !== null ? body['data'] : body
       ) as Record<string, unknown>;
+      const orderEntity =
+        typeof dataObj['order'] === 'object' && dataObj['order'] !== null
+          ? (dataObj['order'] as Record<string, unknown>)
+          : null;
       const orderIdRaw =
-        dataObj['orderId'] ?? dataObj['order_id'] ?? body['orderId'] ?? body['order_id'];
+        dataObj['orderId'] ??
+        dataObj['order_id'] ??
+        orderEntity?.['order_id'] ??
+        orderEntity?.['id'] ??
+        body['orderId'] ??
+        body['order_id'];
+      const appointmentIdRaw =
+        dataObj['appointmentId'] ??
+        dataObj['appointment_id'] ??
+        body['appointmentId'] ??
+        body['appointment_id'];
       const paymentIdRaw =
         dataObj['cf_payment_id'] ??
         dataObj['paymentId'] ??
@@ -303,11 +330,14 @@ export class PaymentController {
         body['paymentStatus'] ??
         '';
       const orderId = typeof orderIdRaw === 'string' ? orderIdRaw : '';
+      const appointmentId = typeof appointmentIdRaw === 'string' ? appointmentIdRaw : '';
       const paymentId = typeof paymentIdRaw === 'string' ? paymentIdRaw : '';
       const paymentStatus =
         typeof paymentStatusRaw === 'string' ? paymentStatusRaw.toUpperCase() : '';
       const resolvedClinicId =
-        clinicId || (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId));
+        clinicId ||
+        (await this.resolveClinicIdFromPaymentReferences(paymentId, orderId)) ||
+        (await this.resolveClinicIdFromAppointment(appointmentId));
 
       if (!resolvedClinicId) {
         throw new Error('Clinic ID is required');

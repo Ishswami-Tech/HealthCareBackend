@@ -23,7 +23,7 @@ export interface WhatsAppOptions {
     type: string;
     parameters: Array<{ type: string; text: string }>;
     sub_type?: string;
-    index?: string;
+    index?: number;
   }>;
   language?: string; // Language code for templates (default: 'en')
   metadata?: Record<string, unknown>;

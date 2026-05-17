@@ -250,8 +250,30 @@ export class BillingEventsListener {
     appointmentId?: string;
     paymentId: string;
     status: string;
-    clinicId: string;
+    clinicId?: string;
+    appointment?: {
+      clinicId?: string;
+      patientId?: string;
+      doctorId?: string;
+    };
   }) {
+    const resolvedClinicId =
+      payload.clinicId || payload.appointment?.clinicId || (await this.resolveClinicId(payload));
+
+    if (!resolvedClinicId) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.WARN,
+        'Skipping payment.completed event because clinicId could not be resolved',
+        'BillingEventsListener',
+        {
+          paymentId: payload.paymentId,
+          appointmentId: payload.appointmentId,
+        }
+      );
+      return;
+    }
+
     await this.loggingService.log(
       LogType.PAYMENT,
       LogLevel.INFO,
@@ -260,16 +282,16 @@ export class BillingEventsListener {
       {
         paymentId: payload.paymentId,
         appointmentId: payload.appointmentId,
-        clinicId: payload.clinicId,
+        clinicId: resolvedClinicId,
       }
     );
 
     try {
       // Only process if payment is for an appointment and status is completed
-      if (payload.appointmentId && payload.status === 'completed' && payload.clinicId) {
+      if (payload.appointmentId && payload.status === 'completed') {
         await this.billingService.preparePayoutForAppointmentPayment(
           payload.paymentId,
-          payload.clinicId
+          resolvedClinicId
         );
 
         const appointmentId = payload.appointmentId;
@@ -283,7 +305,7 @@ export class BillingEventsListener {
           {
             appointmentId,
             paymentId: payload.paymentId,
-            clinicId: payload.clinicId,
+            clinicId: resolvedClinicId,
             appointmentType: appointment ? String(appointment.type) : 'NOT_FOUND',
             currentStatus: appointment ? String(appointment.status) : 'NOT_FOUND',
           }
@@ -298,7 +320,7 @@ export class BillingEventsListener {
             {
               appointmentId,
               paymentId: payload.paymentId,
-              clinicId: payload.clinicId,
+              clinicId: resolvedClinicId,
               previousStatus: String(appointment.status),
               nextStatus: String(AppointmentStatus.CONFIRMED),
               appointmentType: String(appointment.type),
@@ -324,7 +346,7 @@ export class BillingEventsListener {
             },
             {
               userId: 'system',
-              clinicId: payload.clinicId,
+              clinicId: resolvedClinicId,
               resourceType: 'APPOINTMENT',
               operation: 'UPDATE',
               resourceId: appointmentId,
@@ -341,7 +363,7 @@ export class BillingEventsListener {
 
           await this.billingService.syncAppointmentAfterPayment({
             appointmentId,
-            clinicId: payload.clinicId,
+            clinicId: resolvedClinicId,
             paymentId: payload.paymentId,
             paymentStatus: payload.status,
             appointment: refreshedAppointment ?? appointment,
@@ -351,7 +373,7 @@ export class BillingEventsListener {
           const confirmedAppointment = refreshedAppointment ?? appointment;
           await this.eventService.emit('appointment.confirmed', {
             appointmentId,
-            clinicId: payload.clinicId,
+            clinicId: resolvedClinicId,
             doctorId: confirmedAppointment.doctorId,
             patientId: confirmedAppointment.patientId,
             status: AppointmentStatus.CONFIRMED,
@@ -372,7 +394,7 @@ export class BillingEventsListener {
             {
               appointmentId: payload.appointmentId,
               paymentId: payload.paymentId,
-              clinicId: payload.clinicId,
+              clinicId: resolvedClinicId,
               previousStatus: String(appointment.status),
               nextStatus: String(AppointmentStatus.CONFIRMED),
               appointmentType: String(appointment.type),
@@ -389,7 +411,7 @@ export class BillingEventsListener {
           {
             appointmentId,
             paymentId: payload.paymentId,
-            clinicId: payload.clinicId,
+            clinicId: resolvedClinicId,
           }
         );
       }
@@ -402,12 +424,26 @@ export class BillingEventsListener {
         {
           appointmentId: payload.appointmentId,
           paymentId: payload.paymentId,
-          clinicId: payload.clinicId,
+          clinicId: resolvedClinicId,
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
         }
       );
     }
+  }
+
+  private async resolveClinicId(payload: {
+    appointmentId?: string;
+    appointment?: { clinicId?: string };
+  }): Promise<string | null> {
+    if (payload.appointment?.clinicId) {
+      return payload.appointment.clinicId;
+    }
+    if (!payload.appointmentId) {
+      return null;
+    }
+    const appointment = await this.databaseService.findAppointmentByIdSafe(payload.appointmentId);
+    return appointment?.clinicId ?? null;
   }
 
   @OnEvent('appointment.completed')

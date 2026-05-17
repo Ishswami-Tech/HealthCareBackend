@@ -451,6 +451,8 @@ export class WhatsAppService {
     components: Array<{
       type: string;
       parameters: Array<{ type: string; text: string }>;
+      sub_type?: string;
+      index?: number;
     }>,
     clinicId?: string
   ): Promise<unknown> {
@@ -471,6 +473,7 @@ export class WhatsAppService {
                   },
                   {} as Record<string, string>
                 ) ?? {},
+              templateComponents: components,
               language: this.TEMPLATE_LANGUAGE_CODE,
             });
 
