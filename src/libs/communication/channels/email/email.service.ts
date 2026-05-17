@@ -470,6 +470,101 @@ export class EmailService implements OnModuleInit {
         );
       }
 
+      // Prefer the global ZeptoMail path first so auth and appointment emails
+      // are not silently overridden by clinic-specific provider config.
+      if (this.zeptoMailToken && this.globalAdapter) {
+        try {
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.DEBUG,
+            'Attempting global ZeptoMail delivery before clinic-specific routing',
+            'EmailService',
+            {
+              clinicId: clinicId || null,
+              recipients: allowedEmails.length,
+              subject: options.subject,
+            }
+          );
+
+          const globalResults = await Promise.allSettled(
+            allowedEmails.map(async to => {
+              const unsubscribeUrl = this.unsubscribeService.generateUnsubscribeUrl(
+                to,
+                options.userId
+              );
+
+              let emailBody = options.body;
+              if (options.isHtml !== false) {
+                const { generateUnsubscribeFooter } =
+                  await import('@communication/templates/emailTemplates/unsubscribe-footer');
+                emailBody = options.body + generateUnsubscribeFooter(unsubscribeUrl);
+              }
+
+              return await this.globalAdapter!.send({
+                to,
+                from:
+                  this.zeptoMailFromEmail ||
+                  this.configService.getEnv('DEFAULT_FROM_EMAIL') ||
+                  this.configService.getEnv('ZEPTOMAIL_FROM_EMAIL') ||
+                  this.configService.getEnv('EMAIL_FROM') ||
+                  'noreply@healthcare.com',
+                fromName:
+                  this.zeptoMailFromName ||
+                  this.configService.getEnv('DEFAULT_FROM_NAME') ||
+                  this.configService.getEnv('APP_NAME') ||
+                  'Healthcare App',
+                subject: options.subject,
+                body: emailBody,
+                html: options.isHtml !== false,
+                ...(options.replyTo ? { replyTo: options.replyTo } : {}),
+                ...(options.cc && options.cc.length > 0 ? { cc: options.cc } : {}),
+                ...(options.bcc && options.bcc.length > 0 ? { bcc: options.bcc } : {}),
+              });
+            })
+          );
+
+          const allGlobalSuccessful = globalResults.every(
+            result => result.status === 'fulfilled' && result.value.success
+          );
+          const firstGlobalResult = globalResults[0];
+
+          if (
+            allGlobalSuccessful &&
+            firstGlobalResult &&
+            firstGlobalResult.status === 'fulfilled' &&
+            firstGlobalResult.value.success
+          ) {
+            return {
+              success: true,
+              messageId:
+                firstGlobalResult.value.messageId || `email:${toAddresses.join(',')}:${Date.now()}`,
+            };
+          }
+
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            'Global ZeptoMail delivery failed, evaluating clinic-specific fallback',
+            'EmailService',
+            {
+              clinicId: clinicId || null,
+              subject: options.subject,
+            }
+          );
+        } catch (error) {
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.WARN,
+            `Global ZeptoMail delivery failed: ${error instanceof Error ? error.message : String(error)}`,
+            'EmailService',
+            {
+              clinicId: clinicId || null,
+              subject: options.subject,
+            }
+          );
+        }
+      }
+
       // If clinicId is provided, use multi-tenant provider adapter
       if (clinicId) {
         try {

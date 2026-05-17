@@ -521,63 +521,36 @@ export class AuthService {
         );
       }
 
-      // Resolve clinic context for login:
-      // header > body > primaryClinicId > active UserRole assignment
-      const clinicId = await this.resolveClinicForAuthentication(
-        user,
-        clinicIdFromHeader || loginDto.clinicId || undefined
-      );
-
-      // SUPER_ADMIN operates across all clinics — clinic association is optional
-      const isSuperAdmin = (user.role as Role) === Role.SUPER_ADMIN;
-
-      if (!clinicId && !isSuperAdmin) {
+      if (loginDto.clinicId && clinicIdFromHeader && loginDto.clinicId !== clinicIdFromHeader) {
         await this.logging.log(
           LogType.SECURITY,
-          LogLevel.WARN,
-          `Login attempt without clinic association: ${loginDto.email}`,
+          LogLevel.ERROR,
+          `Login attempt with mismatched clinicId: header=${clinicIdFromHeader}, body=${loginDto.clinicId}`,
           'AuthService.login',
-          { email: loginDto.email, userId: user.id }
+          {
+            email: loginDto.email,
+            userId: user.id,
+            headerClinicId: clinicIdFromHeader,
+            bodyClinicId: loginDto.clinicId,
+          }
         );
         throw this.errors.validationError(
           'clinicId',
-          'No clinic associated with this account. Please contact support.',
+          'Clinic ID mismatch detected. Please login through the correct clinic portal.',
           'AuthService.login'
         );
       }
 
-      // Validate clinic access BEFORE creating session.
-      // Priority: header > body > user.primaryClinicId
-      // If user's primaryClinicId is stale (clinic deleted/migrated), fall back to header clinicId.
-      let clinicUUID: string | undefined;
-      if (isSuperAdmin && !clinicId) {
-        // SUPER_ADMIN without explicit clinic — skip clinic validation
-        clinicUUID = undefined;
+      const clinicId = clinicIdFromHeader || loginDto.clinicId;
+      if (!clinicId) {
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID is required for login',
+          'AuthService.login'
+        );
       }
-      try {
-        if (clinicId) {
-          clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
-        }
-      } catch (clinicErr) {
-        // If the stored primaryClinicId is stale, try header-provided clinicId as fallback
-        if (clinicIdFromHeader && clinicIdFromHeader !== clinicId) {
-          await this.logging.log(
-            LogType.SECURITY,
-            LogLevel.WARN,
-            `Stored clinicId ${clinicId} is invalid for user ${user.id}, trying header clinicId ${clinicIdFromHeader}`,
-            'AuthService.login',
-            {
-              userId: user.id,
-              email: loginDto.email,
-              storedClinicId: clinicId,
-              headerClinicId: clinicIdFromHeader,
-            }
-          );
-          clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicIdFromHeader, 'login');
-        } else {
-          throw clinicErr;
-        }
-      }
+
+      const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
 
       // Create session with validated clinic UUID (optional for SUPER_ADMIN)
       const session = await this.sessionService.createSession({
@@ -1090,9 +1063,14 @@ export class AuthService {
         }
       }
 
-      // Extract clinicId from requestDto, header, or user's primary clinic
-      const clinicId =
-        requestDto.clinicId || clinicIdFromHeader || user?.primaryClinicId || undefined;
+      const clinicId = requestDto.clinicId || clinicIdFromHeader;
+      if (!clinicId) {
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID is required for OTP requests',
+          'AuthService.requestOtp'
+        );
+      }
       const userName = user
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
@@ -1287,22 +1265,24 @@ export class AuthService {
       // Legacy cleanup: Also try to delete OTP stored by user ID if it exists (legacy support)
       await this.cacheService.del(`otp:${user.id}`).catch(() => {});
 
-      // Resolve and validate clinic context before creating session
-      const clinicId = await this.resolveClinicForAuthentication(
-        user,
-        verifyDto.clinicId || clinicIdFromHeader || undefined
-      );
-      const isSuperAdmin = (user.role as Role) === Role.SUPER_ADMIN;
-      if (!clinicId && !isSuperAdmin) {
+      if (verifyDto.clinicId && clinicIdFromHeader && verifyDto.clinicId !== clinicIdFromHeader) {
         throw this.errors.validationError(
           'clinicId',
-          'No clinic associated with this account. Please contact support.',
+          'Clinic ID mismatch detected. Please verify through the correct clinic portal.',
           'AuthService.verifyOtp'
         );
       }
-      const clinicUUID = clinicId
-        ? await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp')
-        : undefined;
+
+      const clinicId = verifyDto.clinicId || clinicIdFromHeader;
+      if (!clinicId) {
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID is required for OTP verification',
+          'AuthService.verifyOtp'
+        );
+      }
+
+      const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp');
 
       // Create session first
       // Session is stored in Redis via SessionManagementService
@@ -2024,6 +2004,14 @@ export class AuthService {
       return true;
     }
 
+    if (!clinicId) {
+      throw this.errors.validationError(
+        'clinicId',
+        'Clinic ID is required for verification',
+        'AuthService.resendVerification'
+      );
+    }
+
     if (user.isVerified) {
       return true;
     }
@@ -2080,10 +2068,14 @@ export class AuthService {
 
       // Determine clinic ID
       const { resolveClinicUUID } = await import('@utils/clinic.utils');
-      const requestedClinicId = clinicId || fullUser.primaryClinicId || undefined;
-      const finalClinicId = requestedClinicId
-        ? await resolveClinicUUID(this.databaseService, requestedClinicId)
-        : undefined;
+      if (!clinicId) {
+        throw this.errors.validationError(
+          'clinicId',
+          'Clinic ID is required for Google authentication',
+          'AuthService.authenticateWithGoogle'
+        );
+      }
+      const finalClinicId = await resolveClinicUUID(this.databaseService, clinicId);
 
       // Persist the clinic association for Google users so subsequent guarded
       // requests can resolve clinic access from the database, not just the JWT.
