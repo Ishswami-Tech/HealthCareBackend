@@ -874,21 +874,39 @@ export class NotificationEventListener implements OnModuleInit {
       ) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         if (notificationData && this.appointmentNotificationService) {
-          const result =
-            await this.appointmentNotificationService.sendNotification(notificationData);
-          await this.loggingService.log(
-            LogType.NOTIFICATION,
-            result.success ? LogLevel.INFO : LogLevel.WARN,
-            `Processed confirmation notification for event ${normalizedEventType}`,
-            'NotificationEventListener',
-            {
-              eventType: normalizedEventType,
-              category: rule.category,
-              success: result.success,
-              requestId: result.notificationId,
-              sentChannels: result.sentChannels,
+          if (normalizedEventType === 'appointment.created') {
+            const status = resolveText(
+              eventPayload.metadata?.['status'] ||
+                (eventPayload.payload as Record<string, unknown>)?.['status'] ||
+                (eventPayload as unknown as Record<string, unknown>)?.['status'] ||
+                ''
+            ).toUpperCase();
+
+            if (status !== 'CONFIRMED') {
+              notificationData.channels = notificationData.channels.filter(
+                c => c !== 'email' && c !== 'whatsapp'
+              );
             }
-          );
+          }
+
+          if (notificationData.channels.length > 0) {
+            const result =
+              await this.appointmentNotificationService.sendNotification(notificationData);
+
+            await this.loggingService.log(
+              LogType.NOTIFICATION,
+              result.success ? LogLevel.INFO : LogLevel.WARN,
+              `Processed confirmation notification for event ${normalizedEventType}`,
+              'NotificationEventListener',
+              {
+                eventType: normalizedEventType,
+                category: rule.category,
+                success: result.success,
+                requestId: result.notificationId,
+                sentChannels: result.sentChannels,
+              }
+            );
+          }
           return;
         }
 
@@ -1270,6 +1288,17 @@ export class NotificationEventListener implements OnModuleInit {
     const eventPayload = payload as unknown as Record<string, unknown>;
     const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
     const nestedPayload = (eventPayload['payload'] as Record<string, unknown> | undefined) || {};
+    const asRecord = (value: unknown): Record<string, unknown> | null =>
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? (value as Record<string, unknown>)
+        : null;
+    const asString = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    const patientRecord = asRecord(appointment['patient']);
+    const patientUserRecord = asRecord(patientRecord?.['user']);
+    const doctorRecord = asRecord(appointment['doctor']);
+    const doctorUserRecord = asRecord(doctorRecord?.['user']);
+    const clinicRecord = asRecord(appointment['clinic']);
 
     const toDisplayDate = (value: unknown): string => {
       if (value === null || value === undefined || value === '') {
@@ -1386,14 +1415,26 @@ export class NotificationEventListener implements OnModuleInit {
       channels: ['email', 'whatsapp', 'push'],
       templateData: {
         patientName:
-          (payload.metadata?.['patientName'] as string | undefined) ||
-          (appointment['patientName'] as string | undefined) ||
-          (nestedPayload['patientName'] as string | undefined) ||
+          asString(payload.metadata?.['patientName']) ||
+          asString(patientUserRecord?.['name']) ||
+          (asString(patientUserRecord?.['firstName']) && asString(patientUserRecord?.['lastName'])
+            ? `${asString(patientUserRecord?.['firstName'])} ${asString(patientUserRecord?.['lastName'])}`
+            : undefined) ||
+          asString(patientUserRecord?.['firstName']) ||
+          asString(patientRecord?.['name']) ||
+          asString(appointment['patientName']) ||
+          asString(nestedPayload['patientName']) ||
           'Patient',
         doctorName:
-          (payload.metadata?.['doctorName'] as string | undefined) ||
-          (appointment['doctorName'] as string | undefined) ||
-          (nestedPayload['doctorName'] as string | undefined) ||
+          asString(payload.metadata?.['doctorName']) ||
+          asString(doctorUserRecord?.['name']) ||
+          (asString(doctorUserRecord?.['firstName']) && asString(doctorUserRecord?.['lastName'])
+            ? `${asString(doctorUserRecord?.['firstName'])} ${asString(doctorUserRecord?.['lastName'])}`
+            : undefined) ||
+          asString(doctorUserRecord?.['firstName']) ||
+          asString(doctorRecord?.['name']) ||
+          asString(appointment['doctorName']) ||
+          asString(nestedPayload['doctorName']) ||
           'Doctor',
         appointmentDate: toDisplayDate(appointmentDateValue) || formatDateInIST(nowIso()),
         appointmentTime:
@@ -1404,14 +1445,16 @@ export class NotificationEventListener implements OnModuleInit {
             hour12: true,
           }),
         location:
-          (payload.metadata?.['location'] as string | undefined) ||
-          (appointment['location'] as string | undefined) ||
-          (nestedPayload['location'] as string | undefined) ||
+          asString(payload.metadata?.['location']) ||
+          asString(clinicRecord?.['name']) ||
+          asString(appointment['location']) ||
+          asString(nestedPayload['location']) ||
           'Clinic',
         clinicName:
-          (payload.metadata?.['clinicName'] as string | undefined) ||
-          (appointment['clinicName'] as string | undefined) ||
-          (nestedPayload['clinicName'] as string | undefined) ||
+          asString(payload.metadata?.['clinicName']) ||
+          asString(clinicRecord?.['name']) ||
+          asString(appointment['clinicName']) ||
+          asString(nestedPayload['clinicName']) ||
           'Healthcare Clinic',
         appointmentType,
       },
