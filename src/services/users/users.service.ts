@@ -172,7 +172,7 @@ export class UsersService {
   }
 
   async findOne(id: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:${id}`;
+    const cacheKey = `users:one:${id}:with-relations-v2`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -186,9 +186,10 @@ export class UsersService {
         }
 
         const { password: _password, ...result } = user;
-        const userResponse: UserResponseDto = {
+        const userResponse = {
           id: result.id,
           email: result.email,
+          name: result.name ?? '',
           firstName: result.firstName ?? '',
           lastName: result.lastName ?? '',
           role: result.role as Role,
@@ -197,6 +198,36 @@ export class UsersService {
           createdAt: result.createdAt,
           updatedAt: result.updatedAt,
           phone: result.phone ?? '',
+          primaryClinicId: result.primaryClinicId ?? undefined,
+          clinicId: result.primaryClinicId ?? undefined,
+          ...(result.patient
+            ? {
+                patient: {
+                  id: result.patient.id,
+                  userId: result.patient.userId,
+                },
+                patientId: result.patient.id,
+              }
+            : {}),
+          ...(result.doctor
+            ? {
+                doctor: {
+                  id: result.doctor.id,
+                  userId: result.doctor.userId,
+                  specialization: result.doctor.specialization,
+                  experience: result.doctor.experience,
+                },
+                doctorId: result.doctor.id,
+              }
+            : {}),
+        } as UserResponseDto & {
+          name?: string;
+          primaryClinicId?: string;
+          clinicId?: string;
+          patient?: { id: string; userId: string };
+          patientId?: string;
+          doctor?: { id: string; userId: string; specialization: string; experience: number };
+          doctorId?: string;
         };
 
         if (result.dateOfBirth) {

@@ -353,8 +353,39 @@ export class AppointmentsController {
         { userId, clinicId }
       );
 
-      const filters: AppointmentFilters = {
-        userId,
+      const patient = (await this.appointmentService.getPatientByUserId(userId)) as {
+        id?: string;
+      } | null;
+      const patientId = patient?.id;
+
+      if (!patientId) {
+        await this.loggingService.log(
+          LogType.APPOINTMENT,
+          LogLevel.WARN,
+          'Patient profile not found while fetching my appointments',
+          'AppointmentsController',
+          { userId, clinicId }
+        );
+
+        return {
+          success: true,
+          data: {
+            appointments: [],
+            pagination: {
+              page: Math.max(1, page),
+              limit: Math.min(100, Math.max(1, limit)),
+              total: 0,
+              totalPages: 0,
+              hasNext: false,
+              hasPrev: false,
+            },
+          },
+          message: 'No patient profile found for this user',
+        } as unknown as ServiceResponse<AppointmentListResponseDto>;
+      }
+
+      const filters: AppointmentFilterDto = {
+        patientId,
         clinicId,
         ...(status && { status: status as AppointmentStatus }),
         ...(date && { date }),
@@ -363,9 +394,12 @@ export class AppointmentsController {
       };
 
       const result = await this.appointmentService.getAppointments(
-        filters as AppointmentFilterDto,
+        filters,
         userId || '',
-        clinicId
+        clinicId,
+        req.user?.role || Role.PATIENT,
+        Math.max(1, page),
+        Math.min(100, Math.max(1, limit))
       );
 
       await this.loggingService.log(
@@ -2879,7 +2913,7 @@ export class AppointmentsController {
       } = {
         appointmentId: appointment.id,
         locationId: location.id,
-        patientId: userId,
+        patientId: appointment.patientId,
       };
       if (scanDto.coordinates !== undefined) {
         checkInData.coordinates = scanDto.coordinates;

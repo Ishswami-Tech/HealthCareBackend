@@ -1147,42 +1147,24 @@ export class AppointmentsService {
    * Get patient by user ID
    */
   async getPatientByUserId(userId: string): Promise<unknown> {
-    // Use CacheService key factory for proper key generation (single source of truth)
-    // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
-    const cacheKey = this.cacheService.getKeyFactory().patient(userId, undefined, 'user');
-
-    return this.cacheService.cache(
-      cacheKey,
-      async () => {
-        // Use executeHealthcareRead with client parameter (patient doesn't have safe method yet)
-        const patient = await this.databaseService.executeHealthcareRead(async client => {
-          const patientDelegate = client['patient'] as {
-            findFirst: (args: {
-              where: { userId: string };
-              include: { user: boolean };
-            }) => Promise<unknown>;
-          };
-          return await patientDelegate.findFirst({
-            where: {
-              userId,
-            },
-            include: {
-              user: true,
-            },
-          });
-        });
-
-        return patient;
-      },
-      {
-        ttl: 3600,
-        tags: ['patients', 'user_patients', `user:${userId}`],
-        priority: 'high',
-        enableSwr: true,
-        containsPHI: true,
-        compress: true,
-      }
-    );
+    // This mapping is security-critical for patient appointment reads.
+    // Do not serve cached nulls here; stale nulls make valid appointments invisible.
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const patientDelegate = client['patient'] as {
+        findFirst: (args: {
+          where: { userId: string };
+          include: { user: boolean };
+        }) => Promise<unknown>;
+      };
+      return await patientDelegate.findFirst({
+        where: {
+          userId,
+        },
+        include: {
+          user: true,
+        },
+      });
+    });
   }
 
   // =============================================
@@ -1310,8 +1292,36 @@ export class AppointmentsService {
     return this.cacheService.cache(
       cacheKey,
       async () => {
+        const patient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+        const patientId = patient?.id;
+
+        if (!patientId) {
+          await this.loggingService.log(
+            LogType.APPOINTMENT,
+            LogLevel.WARN,
+            'Patient profile not found while fetching upcoming appointments',
+            'AppointmentsService.getUserUpcomingAppointments',
+            { userId, clinicId }
+          );
+          return {
+            success: true,
+            data: {
+              appointments: [],
+              pagination: {
+                page: 1,
+                limit: 10,
+                total: 0,
+                totalPages: 0,
+                hasNext: false,
+                hasPrev: false,
+              },
+            },
+            message: 'No patient profile found for this user',
+          };
+        }
+
         const filters: AppointmentFilterDto = {
-          patientId: userId,
+          patientId,
           startDate: new Date().toISOString().split('T')[0] || '',
           status: AppointmentStatus.SCHEDULED,
         };
@@ -1361,10 +1371,23 @@ export class AppointmentsService {
         clinicId,
         locationId,
       };
+      const patient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+      const patientId = patient?.id;
+
+      if (!patientId) {
+        await this.loggingService.log(
+          LogType.SYSTEM,
+          LogLevel.WARN,
+          'Patient profile not found while finding appointments by location',
+          'AppointmentsService.findUserAppointmentsByLocation',
+          { userId, locationId, clinicId }
+        );
+        return [];
+      }
 
       // Query for CONFIRMED appointments
       const confirmedFilters: AppointmentFilterDto = {
-        patientId: userId,
+        patientId,
         locationId,
         clinicId,
         startDate: today.toISOString(),
@@ -1380,7 +1403,7 @@ export class AppointmentsService {
 
       // Query for SCHEDULED appointments
       const scheduledFilters: AppointmentFilterDto = {
-        patientId: userId,
+        patientId,
         locationId,
         clinicId,
         startDate: today.toISOString(),

@@ -860,7 +860,9 @@ export class CoreAppointmentService {
         where['doctorId'] = context.userId;
         break;
       case 'PATIENT':
-        where['patientId'] = context.userId;
+        // Appointment.patientId references Patient.id, not User.id.
+        // Patient-facing callers must resolve User.id -> Patient.id before querying.
+        where['patientId'] = context.patientId || '__missing_patient_profile__';
         break;
       case 'NURSE':
       case 'RECEPTIONIST':
@@ -868,7 +870,10 @@ export class CoreAppointmentService {
         break;
       default:
         // For unknown roles, restrict to user's own appointments
-        where['OR'] = [{ doctorId: context.userId }, { patientId: context.userId }];
+        where['OR'] = [
+          { doctorId: context.userId },
+          { patientId: context.patientId || '__missing_patient_profile__' },
+        ];
         break;
     }
 

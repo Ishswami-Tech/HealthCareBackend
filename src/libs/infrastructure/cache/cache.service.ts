@@ -505,10 +505,27 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidatePatientCache(patientId: string, clinicId?: string): Promise<number> {
-    const pattern = clinicId
-      ? this.keyFactory.patient(patientId, clinicId, '*')
-      : this.keyFactory.patient(patientId, undefined, '*');
-    return this.invalidateCacheByPattern(pattern);
+    const patterns = [
+      clinicId
+        ? this.keyFactory.patient(patientId, clinicId, '*')
+        : this.keyFactory.patient(patientId, undefined, '*'),
+      this.keyFactory.patient(patientId, undefined, '*'),
+      `healthcare:user:${patientId}:*`,
+      `healthcare:user:${patientId}`,
+      `user:${patientId}:*`,
+      `user:${patientId}`,
+    ];
+    const tags = ['patients', 'user_patients', `user:${patientId}`];
+
+    let invalidated = 0;
+    for (const pattern of new Set(patterns)) {
+      invalidated += await this.invalidateCacheByPattern(pattern);
+    }
+    for (const tag of tags) {
+      invalidated += await this.invalidateCacheByTag(tag);
+    }
+
+    return invalidated;
   }
 
   async invalidateDoctorCache(doctorId: string, clinicId?: string): Promise<number> {

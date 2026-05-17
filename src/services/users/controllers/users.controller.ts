@@ -85,7 +85,7 @@ export class UsersController {
   @Get('profile')
   @RequireResourcePermission('profile', 'read', { requireOwnership: true })
   @PatientCache({
-    keyTemplate: 'user:{userId}:profile',
+    keyTemplate: 'user:{userId}:profile:v2',
     ttl: 1800, // 30 minutes
     tags: ['user_profiles', 'users'],
     priority: 'high',
@@ -123,7 +123,7 @@ export class UsersController {
   @Get(':id')
   @RequireResourcePermission('users', 'read')
   @PatientCache({
-    keyTemplate: 'users:one:{id}',
+    keyTemplate: 'users:one:{id}:with-relations-v2',
     ttl: 3600, // 1 hour
     tags: ['users', 'user_details'],
     priority: 'high',
