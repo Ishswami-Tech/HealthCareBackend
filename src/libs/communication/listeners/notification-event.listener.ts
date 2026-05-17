@@ -280,7 +280,9 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^appointment\.created$/,
       category: CommunicationCategory.APPOINTMENT,
-      channels: ['socket', 'push', 'email', 'whatsapp'],
+      // Booking creation should update the UI immediately, but only payment confirmation
+      // should send the user-facing WhatsApp/email confirmation to avoid duplicates.
+      channels: ['socket', 'push'],
       priority: CommunicationPriority.HIGH,
       template: 'appointment_confirmation',
       recipients: payload => {
@@ -868,66 +870,68 @@ export class NotificationEventListener implements OnModuleInit {
         return;
       }
 
-      if (
-        normalizedEventType === 'appointment.created' ||
-        normalizedEventType === 'appointment.confirmed'
-      ) {
+      if (normalizedEventType.startsWith('appointment.')) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         if (notificationData && this.appointmentNotificationService) {
-          if (normalizedEventType === 'appointment.created') {
-            const status = resolveText(
-              eventPayload.metadata?.['status'] ||
-                (eventPayload.payload as Record<string, unknown>)?.['status'] ||
-                (eventPayload as unknown as Record<string, unknown>)?.['status'] ||
-                ''
-            ).toUpperCase();
+          const nextType =
+            normalizedEventType === 'appointment.confirmed'
+              ? 'confirmation'
+              : normalizedEventType === 'appointment.cancelled'
+                ? 'cancellation'
+                : normalizedEventType === 'appointment.rescheduled'
+                  ? 'reschedule'
+                  : normalizedEventType === 'appointment.created'
+                    ? 'reminder'
+                    : 'updated';
 
-            if (status !== 'CONFIRMED') {
-              notificationData.channels = notificationData.channels.filter(
-                c => c !== 'email' && c !== 'whatsapp'
-              );
+          const nextChannels: NotificationData['channels'] =
+            normalizedEventType === 'appointment.confirmed'
+              ? ['email', 'whatsapp', 'push', 'socket']
+              : normalizedEventType === 'appointment.cancelled' ||
+                  normalizedEventType === 'appointment.rescheduled'
+                ? ['email', 'push', 'socket']
+                : ['push', 'socket'];
+
+          notificationData.type = nextType as NotificationData['type'];
+          notificationData.channels = nextChannels;
+
+          const result =
+            await this.appointmentNotificationService.sendNotification(notificationData);
+
+          await this.loggingService.log(
+            LogType.NOTIFICATION,
+            result.success ? LogLevel.INFO : LogLevel.WARN,
+            `Processed appointment notification for event ${normalizedEventType}`,
+            'NotificationEventListener',
+            {
+              eventType: normalizedEventType,
+              category: rule.category,
+              success: result.success,
+              requestId: result.notificationId,
+              sentChannels: result.sentChannels,
             }
-          }
-
-          if (notificationData.channels.length > 0) {
-            const result =
-              await this.appointmentNotificationService.sendNotification(notificationData);
-
-            await this.loggingService.log(
-              LogType.NOTIFICATION,
-              result.success ? LogLevel.INFO : LogLevel.WARN,
-              `Processed confirmation notification for event ${normalizedEventType}`,
-              'NotificationEventListener',
-              {
-                eventType: normalizedEventType,
-                category: rule.category,
-                success: result.success,
-                requestId: result.notificationId,
-                sentChannels: result.sentChannels,
-              }
-            );
-          }
-          return;
+          );
+        } else {
+          await this.loggingService.log(
+            LogType.NOTIFICATION,
+            LogLevel.WARN,
+            `Appointment notification could not be built for ${normalizedEventType}; skipping generic fallback`,
+            'NotificationEventListener',
+            {
+              eventType: normalizedEventType,
+              appointmentId:
+                eventPayload.metadata?.['appointmentId'] ||
+                (eventPayload as unknown as Record<string, unknown>)['appointmentId'],
+              patientId:
+                eventPayload.userId ||
+                eventPayload.metadata?.['patientId'] ||
+                eventPayload.metadata?.['userId'],
+              doctorId: eventPayload.metadata?.['doctorId'],
+              clinicId: eventPayload.clinicId || eventPayload.metadata?.['clinicId'],
+            }
+          );
         }
-
-        await this.loggingService.log(
-          LogType.NOTIFICATION,
-          LogLevel.WARN,
-          `Appointment notification could not be built for ${normalizedEventType}; falling back to generic communication path`,
-          'NotificationEventListener',
-          {
-            eventType: normalizedEventType,
-            appointmentId:
-              eventPayload.metadata?.['appointmentId'] ||
-              (eventPayload as unknown as Record<string, unknown>)['appointmentId'],
-            patientId:
-              eventPayload.userId ||
-              eventPayload.metadata?.['patientId'] ||
-              eventPayload.metadata?.['userId'],
-            doctorId: eventPayload.metadata?.['doctorId'],
-            clinicId: eventPayload.clinicId || eventPayload.metadata?.['clinicId'],
-          }
-        );
+        return;
       }
 
       // Get recipients

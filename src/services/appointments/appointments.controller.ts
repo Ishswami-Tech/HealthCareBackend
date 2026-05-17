@@ -760,28 +760,30 @@ export class AppointmentsController {
   ): Promise<ServiceResponse<AppointmentListResponseDto>> {
     try {
       const clinicId = req.clinicContext?.clinicId;
+      const queryClinicId = (req.query as { clinicId?: string } | undefined)?.clinicId;
       const userId = req.user?.sub;
       const role = req.user?.role || Role.PATIENT;
+      const resolvedClinicId = queryClinicId || clinicId;
 
       if (!userId) {
         throw new BadRequestException('User ID not found');
       }
 
-      if (!clinicId) {
+      if (!resolvedClinicId) {
         throw new BadRequestException('Clinic context is required');
       }
 
       await this.loggingService.log(
         LogType.APPOINTMENT,
         LogLevel.INFO,
-        `Getting appointments for user ${userId} in clinic ${clinicId}`,
+        `Getting appointments for user ${userId} in clinic ${resolvedClinicId}`,
         'AppointmentsController',
-        { userId, clinicId }
+        { userId, clinicId: resolvedClinicId }
       );
 
       const filters: AppointmentFilters & { statusList?: AppointmentStatus[] } = {
         userId,
-        clinicId,
+        clinicId: resolvedClinicId,
         ...this.parseStatusFilter(status),
         ...(date && { date }),
         page: Math.max(1, page),
@@ -791,7 +793,7 @@ export class AppointmentsController {
       const result = await this.appointmentService.getAppointments(
         filters as AppointmentFilterDto,
         userId || '',
-        clinicId,
+        resolvedClinicId,
         role
       );
 
