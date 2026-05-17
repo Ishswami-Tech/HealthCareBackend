@@ -369,11 +369,23 @@ export class EmailService implements OnModuleInit {
       );
       return false;
     }
-    if (this.provider === 'smtp') {
-      return this.sendViaSMTP(options);
-    } else {
+
+    if (this.zeptoMailToken) {
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.DEBUG,
+        'Using direct ZeptoMail send path',
+        'EmailService',
+        { to: options.to, subject: options.subject }
+      );
       return this.sendViaAPI(options);
     }
+
+    if (this.provider === 'smtp') {
+      return this.sendViaSMTP(options);
+    }
+
+    return this.sendViaAPI(options);
   }
 
   /**
@@ -401,6 +413,20 @@ export class EmailService implements OnModuleInit {
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
+
+      void this.loggingService.log(
+        LogType.EMAIL,
+        LogLevel.DEBUG,
+        'Preparing simple email send',
+        'EmailService',
+        {
+          clinicId: clinicId || null,
+          provider: this.provider,
+          recipients: toAddresses.length,
+          subject: options.subject,
+          isHtml: options.isHtml !== false,
+        }
+      );
 
       // Check suppression list for all recipients
       const suppressedEmails: string[] = [];
@@ -466,6 +492,20 @@ export class EmailService implements OnModuleInit {
               this.configService.getEnv('ZEPTOMAIL_FROM_NAME') ||
               this.configService.getEnv('APP_NAME') ||
               'Healthcare App';
+
+            void this.loggingService.log(
+              LogType.EMAIL,
+              LogLevel.DEBUG,
+              'Resolved clinic-specific email provider',
+              'EmailService',
+              {
+                clinicId,
+                adapter: adapter.getProviderName?.() || 'unknown',
+                fromEmail: defaultFrom,
+                fromName: defaultFromName,
+                recipients: allowedEmails.length,
+              }
+            );
 
             // Send to all recipients
             // Use adapter's EmailOptions interface
@@ -596,6 +636,20 @@ export class EmailService implements OnModuleInit {
             to,
             html: emailBody,
           };
+
+          void this.loggingService.log(
+            LogType.EMAIL,
+            LogLevel.DEBUG,
+            'Resolved global email send',
+            'EmailService',
+            {
+              to,
+              provider: this.provider,
+              hasGlobalAdapter: !!this.globalAdapter,
+              fromEmail: this.zeptoMailFromEmail || this.configService.getEnv('EMAIL_FROM') || null,
+              fromName: this.zeptoMailFromName || this.configService.getEnv('APP_NAME') || null,
+            }
+          );
 
           if (index === 0) {
             return await this.sendEmail(emailOptions);
@@ -753,6 +807,20 @@ export class EmailService implements OnModuleInit {
     if (!fromName) {
       throw new Error('Email from name could not be resolved from configuration');
     }
+
+    void this.loggingService.log(
+      LogType.EMAIL,
+      LogLevel.DEBUG,
+      'Preparing ZeptoMail send via global adapter',
+      'EmailService',
+      {
+        to: options.to,
+        fromEmail,
+        fromName,
+        hasGlobalAdapter: !!this.globalAdapter,
+        zeptoMailConfigured: !!this.zeptoMailToken,
+      }
+    );
 
     const emailBody = options.html || this.getEmailTemplate(options.template, options.context);
 

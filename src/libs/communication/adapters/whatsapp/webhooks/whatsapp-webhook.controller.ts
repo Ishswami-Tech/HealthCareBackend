@@ -17,12 +17,14 @@ import {
   HttpStatus,
   Headers,
   Query,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader, ApiQuery } from '@nestjs/swagger';
 import { WhatsAppWebhookService } from './whatsapp-webhook.service';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
+import type { FastifyRequest } from 'fastify';
 
 /**
  * Meta WhatsApp Webhook Event Structure
@@ -179,6 +181,7 @@ export class WhatsAppWebhookController {
     },
   })
   async handleMetaWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() event: MetaWhatsAppWebhookEvent,
     @Headers('x-hub-signature-256') signature?: string,
     @Query('hub.mode') _mode?: string,
@@ -190,7 +193,19 @@ export class WhatsAppWebhookController {
       if (signature && process.env['NODE_ENV'] === 'production') {
         const appSecret = this.configService.getEnv('META_WHATSAPP_APP_SECRET');
         if (appSecret) {
-          const rawBody = JSON.stringify(event);
+          const rawBody =
+            typeof request.rawBody === 'string'
+              ? request.rawBody
+              : Buffer.isBuffer(request.rawBody)
+                ? request.rawBody.toString('utf8')
+                : JSON.stringify(event);
+
+          if (!request.rawBody) {
+            // Fall back to parsed payload only when raw body capture is unavailable.
+            // This keeps webhook processing functional, but exact Meta signature
+            // validation depends on the raw body hook being present.
+          }
+
           const expectedSignature = crypto
             .createHmac('sha256', appSecret)
             .update(rawBody)

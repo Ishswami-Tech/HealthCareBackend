@@ -177,6 +177,8 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
       {
         fromEmail: this.fromEmail,
         hasBounceAddress: !!this.bounceAddress,
+        apiBaseUrl: this.apiBaseUrl,
+        clinicId: this.clinicId || null,
       }
     );
   }
@@ -302,6 +304,22 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
       // Validate options
       this.validateEmailOptions(options);
 
+      void this.logger.log(
+        LogType.EMAIL,
+        LogLevel.DEBUG,
+        'ZeptoMail send request prepared',
+        'ZeptoMailEmailAdapter',
+        {
+          to: options.to,
+          subject: options.subject,
+          clinicId: this.clinicId || null,
+          apiBaseUrl: this.apiBaseUrl,
+          fromEmail: this.fromEmail,
+          fromName: this.fromName,
+          hasBounceAddress: !!this.bounceAddress,
+        }
+      );
+
       const toAddresses = Array.isArray(options.to) ? options.to : [options.to];
 
       // Check suppression list for all recipients
@@ -348,6 +366,19 @@ export class ZeptoMailEmailAdapter extends BaseEmailAdapter {
 
       // Use only allowed emails for sending
       const recipientsToSend = allowedEmails;
+
+      void this.logger.log(
+        LogType.EMAIL,
+        LogLevel.DEBUG,
+        'ZeptoMail recipients resolved',
+        'ZeptoMailEmailAdapter',
+        {
+          totalRecipients: toAddresses.length,
+          allowedRecipients: recipientsToSend.length,
+          suppressedRecipients: suppressedEmails.length,
+          clinicId: this.clinicId || null,
+        }
+      );
 
       // Build ZeptoMail request payload
       const payload: ZeptoMailRequest = {
