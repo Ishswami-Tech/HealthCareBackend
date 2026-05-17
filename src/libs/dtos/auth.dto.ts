@@ -655,8 +655,8 @@ export class VerifyOtpRequestDto {
   @Transform(
     ({ value, obj }: { value: unknown; obj?: Record<string, unknown> }) =>
       getTrimmedString(value) ||
-      getTrimmedString(obj?.email) ||
-      getTrimmedString(obj?.contact) ||
+      getTrimmedString(obj?.['email']) ||
+      getTrimmedString(obj?.['contact']) ||
       ''
   )
   @IsString({ message: 'Identifier must be a string' })
