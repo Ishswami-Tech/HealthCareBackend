@@ -246,17 +246,36 @@ export class BillingEventsListener {
    * Listens to payment.completed simple event (emitted after enterprise event)
    */
   @OnEvent('payment.completed')
-  async handlePaymentCompleted(payload: {
-    appointmentId?: string;
-    paymentId: string;
-    status: string;
-    clinicId?: string;
-    appointment?: {
-      clinicId?: string;
-      patientId?: string;
-      doctorId?: string;
+  async handlePaymentCompleted(rawPayload: Record<string, unknown>) {
+    // EventService wraps every emit() in an enterprise envelope:
+    // { eventId, eventType, payload: <original data>, clinicId, ... }
+    // Unwrap the inner payload, falling back to top-level fields for compatibility.
+    const inner =
+      rawPayload['payload'] !== null &&
+      typeof rawPayload['payload'] === 'object' &&
+      !Array.isArray(rawPayload['payload'])
+        ? (rawPayload['payload'] as Record<string, unknown>)
+        : rawPayload;
+
+    const payload = {
+      appointmentId:
+        (inner['appointmentId'] as string | undefined) ??
+        (rawPayload['appointmentId'] as string | undefined),
+      paymentId:
+        (inner['paymentId'] as string | undefined) ??
+        (rawPayload['paymentId'] as string | undefined) ??
+        '',
+      status:
+        (inner['status'] as string | undefined) ??
+        (rawPayload['status'] as string | undefined) ??
+        '',
+      clinicId:
+        (inner['clinicId'] as string | undefined) ?? (rawPayload['clinicId'] as string | undefined),
+      appointment: (inner['appointment'] ?? rawPayload['appointment']) as
+        | { clinicId?: string; patientId?: string; doctorId?: string }
+        | undefined,
     };
-  }) {
+
     const resolvedClinicId =
       payload.clinicId || payload.appointment?.clinicId || (await this.resolveClinicId(payload));
 
@@ -433,11 +452,15 @@ export class BillingEventsListener {
   }
 
   private async resolveClinicId(payload: {
-    appointmentId?: string;
-    appointment?: { clinicId?: string };
+    appointmentId?: string | undefined;
+    appointment?: { clinicId?: string | undefined } | undefined;
+    clinicId?: string | undefined;
   }): Promise<string | null> {
     if (payload.appointment?.clinicId) {
       return payload.appointment.clinicId;
+    }
+    if (payload.clinicId) {
+      return payload.clinicId;
     }
     if (!payload.appointmentId) {
       return null;

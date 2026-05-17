@@ -3002,7 +3002,7 @@ export class BillingService implements OnModuleInit {
 
       // Idempotency + anti-regression for repeated gateway callbacks.
       if (
-        (isSameStatus && incomingStatusLower !== 'completed') ||
+        isSameStatus ||
         (isCurrentFinal && incomingStatusLower !== currentStatusLower) ||
         (currentStatusLower === 'failed' && incomingStatusLower === 'pending')
       ) {
@@ -3100,7 +3100,7 @@ export class BillingService implements OnModuleInit {
           amount: paymentStatus.amount,
           appointment: completedAppointment,
           userId: payment.userId ?? null,
-          emitAppointmentUpdated: false,
+          emitAppointmentUpdated: true, // Emit so frontend dashboards refresh via WebSocket
         });
       }
 
