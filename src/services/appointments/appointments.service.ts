@@ -2472,9 +2472,7 @@ export class AppointmentsService {
     }
 
     const patient =
-      _role === 'PATIENT'
-        ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
-        : null;
+      _role === 'PATIENT' ? await this.resolvePatientProfileForAppointments(userId) : null;
     const isConsultantRole = [Role.DOCTOR, Role.ASSISTANT_DOCTOR].includes(_role as Role);
 
     const doctor = isConsultantRole ? await this.resolveDoctorEntityId(userId, clinicId) : null;
@@ -4099,6 +4097,39 @@ export class AppointmentsService {
     );
   }
 
+  /**
+   * Resolve the patient profile for appointment reads.
+   *
+   * This falls back to a direct database lookup if the cached mapping is stale
+   * or has been hydrated as null earlier in the request lifecycle.
+   */
+  private async resolvePatientProfileForAppointments(
+    userId: string
+  ): Promise<{ id?: string } | null> {
+    const cachedPatient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+    if (cachedPatient?.id) {
+      return cachedPatient;
+    }
+
+    return await this.databaseService.executeHealthcareRead(async client => {
+      const patientDelegate = client['patient'] as {
+        findFirst: (args: {
+          where: { OR: Array<{ userId: string } | { id: string }> };
+          include: { user: boolean };
+        }) => Promise<{ id?: string } | null>;
+      };
+
+      return await patientDelegate.findFirst({
+        where: {
+          OR: [{ userId }, { id: userId }],
+        },
+        include: {
+          user: true,
+        },
+      });
+    });
+  }
+
   // =============================================
   // UTILITY METHODS
   // =============================================
@@ -4256,9 +4287,7 @@ export class AppointmentsService {
       cacheKey,
       async () => {
         const patient =
-          role === 'PATIENT'
-            ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
-            : null;
+          role === 'PATIENT' ? await this.resolvePatientProfileForAppointments(userId) : null;
         const candidateIds = Array.from(
           new Set([patient?.id, userId].filter((value): value is string => Boolean(value)))
         );
@@ -4347,7 +4376,7 @@ export class AppointmentsService {
         clinicId,
         locationId,
       };
-      const patient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+      const patient = await this.resolvePatientProfileForAppointments(userId);
       const patientIdentifiers = Array.from(
         new Set([userId, patient?.id].filter((value): value is string => Boolean(value)))
       );
