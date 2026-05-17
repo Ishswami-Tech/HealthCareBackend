@@ -4396,10 +4396,12 @@ export class BillingService implements OnModuleInit {
             day: '2-digit',
           }
         );
+        const gatewayOrderId = this.buildGatewayOrderId(invoice.invoiceNumber, invoice.id);
+        const receiptReference = `${invoice.invoiceNumber} | Ref: ${gatewayOrderId}`;
         const success = await this.whatsAppService.sendReceipt(
           userPhone,
           userName,
-          invoice.invoiceNumber,
+          receiptReference,
           invoice.totalAmount,
           paymentDate,
           invoice.pdfUrl || '',
@@ -4424,6 +4426,7 @@ export class BillingService implements OnModuleInit {
           await this.eventService.emit('billing.receipt.sent_whatsapp', {
             receiptId,
             userId: user.id,
+            receiptReference,
           });
           await this.invalidateUserInvoiceCaches(invoice.userId);
         }
