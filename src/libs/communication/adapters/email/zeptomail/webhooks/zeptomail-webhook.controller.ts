@@ -14,12 +14,14 @@ import {
   HttpCode,
   HttpStatus,
   Headers,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiHeader } from '@nestjs/swagger';
 import { ZeptoMailWebhookService } from './zeptomail-webhook.service';
 import { ConfigService } from '@config/config.service';
 import * as crypto from 'crypto';
+import type { FastifyRequest } from 'fastify';
 
 /**
  * ZeptoMail Webhook Event Structure
@@ -83,6 +85,7 @@ export class ZeptoMailWebhookController {
     },
   })
   async handleWebhook(
+    @Req() request: FastifyRequest & { rawBody?: string | Buffer },
     @Body() event: ZeptoMailWebhookEvent,
     @Headers('x-zeptomail-signature') signature?: string
   ): Promise<{ received: boolean; processed: boolean }> {
@@ -93,7 +96,12 @@ export class ZeptoMailWebhookController {
         const webhookSecret = this.configService.getEnv('ZEPTOMAIL_WEBHOOK_SECRET');
         if (webhookSecret) {
           // ZeptoMail typically uses HMAC SHA256 for webhook signatures
-          const rawBody = JSON.stringify(event);
+          const rawBody =
+            typeof request.rawBody === 'string'
+              ? request.rawBody
+              : Buffer.isBuffer(request.rawBody)
+                ? request.rawBody.toString('utf8')
+                : JSON.stringify(event);
           const expectedSignature = crypto
             .createHmac('sha256', webhookSecret)
             .update(rawBody)

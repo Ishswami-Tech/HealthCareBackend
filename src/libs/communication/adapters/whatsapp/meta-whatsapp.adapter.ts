@@ -13,6 +13,7 @@ import { HttpService } from '@infrastructure/http';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
+import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { BaseWhatsAppAdapter } from '@communication/adapters/base/base-whatsapp-adapter';
 import type { WhatsAppOptions, WhatsAppResult } from '@communication/adapters/interfaces';
 import type { ProviderConfig } from '@core/types/communication.types';
@@ -183,6 +184,17 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
 
       return this.createSuccessResult(messageId);
     } catch (error) {
+      const errorObject = error as {
+        message?: string;
+        response?: { status?: number; statusText?: string; data?: unknown };
+        getResponse?: () => unknown;
+        metadata?: Record<string, unknown>;
+      };
+      const responsePayload =
+        error instanceof HealthcareError
+          ? (error.getResponse() as { error?: { metadata?: Record<string, unknown> } } | undefined)
+              ?.error?.metadata?.['responseData']
+          : errorObject.response?.data;
       await this.logger.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
@@ -190,6 +202,9 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
         'MetaWhatsAppAdapter',
         {
           error: error instanceof Error ? error.message : String(error),
+          responseStatus: errorObject.response?.status,
+          responseStatusText: errorObject.response?.statusText,
+          responseData: responsePayload ?? errorObject.response?.data,
           to: options.to,
           ...(options.templateId && { templateId: options.templateId }),
         }
