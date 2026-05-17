@@ -348,25 +348,29 @@ export class BillingService implements OnModuleInit {
     const resolvedClinicId = appointment.clinicId || args.clinicId;
     const resolvedUserId = args.userId || (await this.resolveAppointmentBillingUserId(appointment));
     const shouldEmit = args.emitAppointmentUpdated ?? true;
+    const patientProfileId = appointment.patientId || undefined;
+    const cacheIdentityIds = Array.from(
+      new Set([resolvedUserId, patientProfileId].filter((value): value is string => Boolean(value)))
+    );
 
     await Promise.all([
       this.cacheService.invalidateAppointmentCache(
         appointment.id,
-        appointment.patientId || undefined,
+        patientProfileId,
         appointment.doctorId || undefined,
         resolvedClinicId
       ),
-      resolvedUserId
-        ? this.cacheService.invalidateMyAppointmentsCache(resolvedUserId)
-        : Promise.resolve(0),
-      appointment.patientId
-        ? this.cacheService.invalidatePatientCache(appointment.patientId, resolvedClinicId)
-        : Promise.resolve(0),
+      ...cacheIdentityIds.map(identityId =>
+        this.cacheService.invalidateMyAppointmentsCache(identityId)
+      ),
+      ...cacheIdentityIds.map(identityId =>
+        this.cacheService.invalidateUpcomingAppointmentsCache(identityId)
+      ),
+      ...cacheIdentityIds.map(identityId =>
+        this.cacheService.invalidatePatientCache(identityId, resolvedClinicId)
+      ),
       appointment.doctorId
         ? this.cacheService.invalidateDoctorCache(appointment.doctorId, resolvedClinicId)
-        : Promise.resolve(0),
-      resolvedUserId
-        ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedUserId)
         : Promise.resolve(0),
     ]);
 

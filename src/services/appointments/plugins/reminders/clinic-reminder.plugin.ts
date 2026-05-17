@@ -222,7 +222,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       throw new Error('Missing required fields for scheduleAppointmentReminder');
     }
     const reminderType = 'appointment_reminder';
-    const leadHours = pluginData.hoursBefore ?? 24;
+    const leadHours = pluginData.hoursBefore ?? 0.25;
     const channels = pluginData.channels ?? ['email', 'whatsapp', 'push'];
     const reminderTargetTime = this.resolveReminderScheduledFor(
       pluginData.appointmentDate,
@@ -313,7 +313,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
     }
 
     const reminderType = 'appointment_reminder';
-    const leadHours = pluginData.hoursBefore ?? 24;
+    const leadHours = pluginData.hoursBefore ?? 0.25;
     const channels = pluginData.channels ?? ['email', 'whatsapp', 'push'];
     const scheduledFor = this.resolveReminderScheduledFor(
       pluginData.appointmentDate,
@@ -358,7 +358,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       throw new Error('Missing required fields for schedulePrescriptionReminder');
     }
     const reminderType = 'prescription';
-    const hoursBefore = pluginData.hoursBefore ?? 24;
+    const hoursBefore = pluginData.hoursBefore ?? 0.25;
     const channels = pluginData.channels ?? ['whatsapp', 'push'];
     const scheduledFor = this.resolveReminderScheduledFor(
       pluginData.appointmentDate,
@@ -404,7 +404,7 @@ export class ClinicReminderPlugin extends BaseAppointmentPlugin {
       throw new Error('Missing required fields for schedulePaymentReminder');
     }
     const reminderType = 'payment';
-    const hoursBefore = pluginData.hoursBefore ?? 24;
+    const hoursBefore = pluginData.hoursBefore ?? 0.25;
     const channels = pluginData.channels ?? ['email', 'whatsapp'];
     const scheduledFor = this.resolveReminderScheduledFor(
       pluginData.appointmentDate,

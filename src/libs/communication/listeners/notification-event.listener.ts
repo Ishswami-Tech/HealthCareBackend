@@ -44,6 +44,12 @@ function resolveText(value: unknown, fallback = ''): string {
   return fallback;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 /**
  * Event-to-Communication mapping rules
  */
@@ -873,6 +879,18 @@ export class NotificationEventListener implements OnModuleInit {
       if (normalizedEventType.startsWith('appointment.')) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         if (notificationData && this.appointmentNotificationService) {
+          const rawPayloadRecord = eventPayload as unknown as Record<string, unknown>;
+          const nestedPayload = asRecord(rawPayloadRecord['payload']);
+          const eventContext =
+            asRecord(rawPayloadRecord['context']) || asRecord(nestedPayload?.['context']);
+          const confirmationFromBilling =
+            resolveText(eventContext?.['source']) === 'BillingEventsListener' ||
+            resolveText(eventContext?.['source']).toLowerCase().includes('billing') ||
+            Boolean(rawPayloadRecord['paymentId']) ||
+            Boolean(nestedPayload?.['paymentId']) ||
+            Boolean(rawPayloadRecord['paymentStatus']) ||
+            Boolean(nestedPayload?.['paymentStatus']);
+
           const nextType =
             normalizedEventType === 'appointment.confirmed'
               ? 'confirmation'
@@ -886,7 +904,9 @@ export class NotificationEventListener implements OnModuleInit {
 
           const nextChannels: NotificationData['channels'] =
             normalizedEventType === 'appointment.confirmed'
-              ? ['email', 'whatsapp', 'push', 'socket']
+              ? confirmationFromBilling
+                ? ['email', 'whatsapp', 'push', 'socket']
+                : ['push', 'socket']
               : normalizedEventType === 'appointment.cancelled' ||
                   normalizedEventType === 'appointment.rescheduled'
                 ? ['email', 'push', 'socket']
@@ -1292,10 +1312,6 @@ export class NotificationEventListener implements OnModuleInit {
     const eventPayload = payload as unknown as Record<string, unknown>;
     const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
     const nestedPayload = (eventPayload['payload'] as Record<string, unknown> | undefined) || {};
-    const asRecord = (value: unknown): Record<string, unknown> | null =>
-      value && typeof value === 'object' && !Array.isArray(value)
-        ? (value as Record<string, unknown>)
-        : null;
     const asString = (value: unknown): string | undefined =>
       typeof value === 'string' && value.trim() ? value.trim() : undefined;
     const patientRecord = asRecord(appointment['patient']);
