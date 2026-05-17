@@ -2477,6 +2477,17 @@ export class AppointmentsService {
 
     const doctor = isConsultantRole ? await this.resolveDoctorEntityId(userId, clinicId) : null;
 
+    // Log patient resolution for debugging
+    if (_role === 'PATIENT') {
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.INFO,
+        `[getAppointments] Patient resolution: userId=${userId}, patientId=${patient?.id || 'NOT_FOUND'}`,
+        'AppointmentsService',
+        { userId, patientId: patient?.id, role: _role }
+      );
+    }
+
     const context: AppointmentContext = {
       userId,
       role: _role,

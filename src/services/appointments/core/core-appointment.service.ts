@@ -220,6 +220,19 @@ export class CoreAppointmentService {
         };
       });
 
+      // Log patient ID resolution for debugging
+      void this.loggingService.log(
+        LogType.BUSINESS,
+        LogLevel.INFO,
+        `[createAppointment] Patient ID resolution: input=${createDto.patientId}, resolved=${resolvedIds.patientId}, userId=${resolvedIds.patientUserId}`,
+        'CoreAppointmentService.createAppointment',
+        {
+          inputPatientId: createDto.patientId,
+          resolvedPatientId: resolvedIds.patientId,
+          patientUserId: resolvedIds.patientUserId,
+        }
+      );
+
       if (!resolvedIds.patientId) {
         return {
           success: false,
@@ -1002,15 +1015,16 @@ export class CoreAppointmentService {
         break;
       case 'PATIENT':
         // Support both storage variants:
-        // - appointment.patientId = patient profile id
-        // - appointment.patientId = authenticated user id
-        if (context.patientId && context.patientId !== context.userId) {
+        // - appointment.patientId = patient profile id (Patient.id)
+        // - appointment.patientId = authenticated user id (User.id) - legacy
+        if (context.patientId) {
+          // If we have a resolved Patient.id, use it
+          // Also check User.id as fallback for legacy appointments
           where['OR'] = [{ patientId: context.patientId }, { patientId: context.userId }];
-        } else if (context.patientId) {
-          where['patientId'] = context.patientId;
         } else {
-          // Fallback for older call sites that only pass the authenticated User.id.
-          where['OR'] = [{ patientId: context.userId }, { patient: { userId: context.userId } }];
+          // Fallback: no patient profile found, try User.id only
+          // This should rarely happen if resolvePatientProfileForAppointments works correctly
+          where['patientId'] = context.userId;
         }
         break;
       case 'NURSE':
