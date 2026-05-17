@@ -363,6 +363,8 @@ export class AuthService {
         }
       }
 
+      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+
       // 7. Send OTP and return response
       await this.eventService.emit('user.registered', {
         userId: user.id,
@@ -389,6 +391,8 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: false,
+          clinicId: clinicUUID,
+          ...(clinicName && { clinicName }),
         },
         requiresVerification: true,
         message:
@@ -587,13 +591,13 @@ export class AuthService {
 
       // Emit user login event
       const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
-      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+      const loginEventClinicName = await this.resolveClinicDisplayName(clinicUUID);
       await this.eventService.emit('user.logged_in', {
         userId: user.id,
         email: user.email,
         role: user.role,
         clinicId,
-        ...(clinicName && { clinicName }),
+        ...(loginEventClinicName && { clinicName: loginEventClinicName }),
         sessionId: session.sessionId,
         appName,
         isFirstLogin,
@@ -614,6 +618,8 @@ export class AuthService {
 
       const profileStatus = await this.checkProfileCompletionStatus(user.id, user.role as Role);
 
+      const loginResponseClinicName = await this.resolveClinicDisplayName(clinicUUID);
+
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -625,6 +631,7 @@ export class AuthService {
           role: user.role as Role,
           isVerified: user.isVerified,
           clinicId: clinicUUID || undefined,
+          ...(loginResponseClinicName && { clinicName: loginResponseClinicName }),
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
         },
@@ -1785,6 +1792,8 @@ export class AuthService {
         registrationMethod: 'email-otp',
       });
 
+      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
@@ -1795,6 +1804,8 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
+          clinicId: clinicUUID,
+          ...(clinicName && { clinicName }),
           profileComplete: false, // New users must complete profile
           requiresProfileCompletion: true,
         },
@@ -1899,6 +1910,8 @@ export class AuthService {
       );
 
       // 7. Emit registration event
+      const clinicName = await this.resolveClinicDisplayName(clinicUUID);
+
       await this.eventService.emit('user.registered', {
         userId: user.id,
         phone: user.phone || phone,
@@ -1918,6 +1931,8 @@ export class AuthService {
           lastName: user.lastName || undefined,
           role: user.role as Role,
           isVerified: user.isVerified,
+          clinicId: clinicUUID,
+          ...(clinicName && { clinicName }),
           profileComplete: false, // New users must complete profile
           requiresProfileCompletion: true,
         },
@@ -1959,7 +1974,6 @@ export class AuthService {
       sub: user.id,
       email: user.email,
       role: user.role || '',
-      domain: 'healthcare',
       sessionId: sessionId,
       ...(clinicId && { clinicId }), // Include clinic ID only when present
     };
@@ -2149,13 +2163,13 @@ export class AuthService {
 
       // Emit Google OAuth login event
       const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
-      const clinicName = await this.resolveClinicDisplayName(finalClinicId);
+      const googleEventClinicName = await this.resolveClinicDisplayName(finalClinicId);
       await this.eventService.emit('user.google_oauth_logged_in', {
         userId: fullUser.id,
         email: fullUser.email,
         role: fullUser.role,
         clinicId: finalClinicId,
-        ...(clinicName && { clinicName }),
+        ...(googleEventClinicName && { clinicName: googleEventClinicName }),
         sessionId: session.sessionId,
         isNewUser: socialAuthResult.isNewUser,
         appName,
@@ -2179,6 +2193,7 @@ export class AuthService {
         fullUser.id,
         fullUser.role as Role
       );
+      const googleResponseClinicName = await this.resolveClinicDisplayName(finalClinicId);
 
       return {
         accessToken: tokens.accessToken,
@@ -2191,6 +2206,7 @@ export class AuthService {
           role: fullUser.role as Role,
           isVerified: fullUser.isVerified,
           clinicId: finalClinicId || undefined,
+          ...(googleResponseClinicName && { clinicName: googleResponseClinicName }),
           profilePicture: fullUser.profilePicture || undefined,
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
