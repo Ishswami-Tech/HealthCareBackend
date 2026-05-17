@@ -763,7 +763,9 @@ export class AppointmentsController {
       const queryClinicId = (req.query as { clinicId?: string } | undefined)?.clinicId;
       const userId = req.user?.sub;
       const role = req.user?.role || Role.PATIENT;
-      const resolvedClinicId = queryClinicId || clinicId;
+      // ClinicGuard resolves CL0002-style public clinic codes to the canonical clinic UUID.
+      // Prefer that validated UUID so frontend filter params cannot force a code-based DB query.
+      const resolvedClinicId = clinicId || queryClinicId;
 
       if (!userId) {
         throw new BadRequestException('User ID not found');
