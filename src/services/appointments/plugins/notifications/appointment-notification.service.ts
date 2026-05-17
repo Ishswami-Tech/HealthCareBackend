@@ -174,7 +174,7 @@ export class AppointmentNotificationService {
    */
   async sendReminderNotifications(
     clinicId: string,
-    hoursBefore: number = 24
+    hoursBefore: number = 0.25
   ): Promise<{ processed: number; sent: number; failed: number }> {
     await this.loggingService.log(
       LogType.NOTIFICATION,
@@ -673,7 +673,10 @@ export class AppointmentNotificationService {
       };
 
       await sendForRecipient('patient', patientPhone);
-      if (doctorPhone) {
+      // Keep doctors out of per-appointment WhatsApp/email traffic.
+      // Doctor-facing updates are handled via dashboard/socket and can be summarized separately.
+      const shouldNotifyDoctor = false;
+      if (doctorPhone && shouldNotifyDoctor) {
         await sendForRecipient('doctor', doctorPhone);
       }
 
@@ -996,7 +999,7 @@ export class AppointmentNotificationService {
     clinicName?: string
   ): string {
     const clinicLabel = resolveText(clinicName, 'Healthcare Clinic');
-    const appointmentLink = detailsUrl ? `\nLink: ${detailsUrl}` : '';
+    const joinLink = detailsUrl ? `\nJoin link: ${detailsUrl}` : '';
 
     return [
       `Today's video appointment for ${doctorName}`,
@@ -1004,7 +1007,7 @@ export class AppointmentNotificationService {
       `Patient: ${patientName}`,
       `Time: ${appointmentDate} at ${appointmentTime}`,
       `Clinic: ${clinicLabel}`,
-      `${appointmentLink}`.trim(),
+      `${joinLink}`.trim(),
     ]
       .filter(Boolean)
       .join('\n');

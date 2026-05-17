@@ -257,6 +257,24 @@ export class BillingEventsListener {
    */
   @OnEvent('payment.completed')
   async handlePaymentCompleted(rawPayload: Record<string, unknown>) {
+    // BillingService emits payment.completed twice for compatibility:
+    // 1) enterprise envelope via emitEnterprise() (source: BillingService, category: BILLING)
+    // 2) simple emit() wrapper (source: EventService, category: SYSTEM)
+    // Only process the billing-origin envelope here to avoid duplicate confirmation messages.
+    const source = resolveRecordValue(rawPayload['source']).toLowerCase();
+    const category = resolveRecordValue(rawPayload['category']).toLowerCase();
+    const isBillingEnvelope = source === 'billingservice' || category === 'billing';
+
+    if (!isBillingEnvelope) {
+      await this.loggingService.log(
+        LogType.PAYMENT,
+        LogLevel.INFO,
+        'Skipping plain payment.completed event to avoid duplicate confirmation processing',
+        'BillingEventsListener'
+      );
+      return;
+    }
+
     // EventService wraps every emit() in an enterprise envelope:
     // { eventId, eventType, payload: <original data>, clinicId, ... }
     // Unwrap the inner payload, falling back to top-level fields for compatibility.

@@ -1604,7 +1604,7 @@ export class AppointmentsService {
           clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
           patientName: 'Patient',
           doctorName: 'Doctor',
-          hoursBefore: this.configService.getEnvNumber('APPOINTMENT_REMINDER_HOURS_BEFORE', 24),
+          hoursBefore: 0.25,
           channels: ['email', 'whatsapp'],
         })
         .catch(reminderError => {
@@ -2413,7 +2413,7 @@ export class AppointmentsService {
         clinicName: this.configService.getEnv('APP_NAME', 'Healthcare App'),
         patientName: 'Patient',
         doctorName: 'Doctor',
-        hoursBefore: this.configService.getEnvNumber('APPOINTMENT_REMINDER_HOURS_BEFORE', 24),
+        hoursBefore: 0.25,
         channels: ['email', 'whatsapp'],
       });
     } catch (reminderError) {
