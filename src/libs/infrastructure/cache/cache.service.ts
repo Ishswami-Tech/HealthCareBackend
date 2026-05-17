@@ -512,7 +512,14 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     const pattern = clinicId
       ? this.keyFactory.patient(patientId, clinicId, '*')
       : this.keyFactory.patient(patientId, undefined, '*');
-    return this.invalidateCacheByPattern(pattern);
+    let count = await this.invalidateCacheByPattern(pattern);
+
+    // Also invalidate by patient tags to ensure mapping caches (like getPatientByUserId) are cleared
+    count += await this.invalidateCacheByTag(`user:${patientId}`);
+    count += await this.invalidateCacheByTag('user_patients');
+    count += await this.invalidateCacheByTag('patients');
+
+    return count;
   }
 
   async invalidateDoctorCache(doctorId: string, clinicId?: string): Promise<number> {
@@ -524,17 +531,29 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async invalidateAppointmentCache(
     appointmentId: string,
-    _patientId?: string,
+    patientId?: string,
     _doctorId?: string,
     clinicId?: string
   ): Promise<number> {
     const patterns = [this.keyFactory.appointment(appointmentId, '*')];
-    const tags = [`appointment:${appointmentId}`];
+    const tags = [
+      `appointment:${appointmentId}`,
+      'appointments',
+      'appointment_data',
+      'upcoming_appointments',
+      'patient_appointments',
+      'clinic_appointments',
+    ];
 
     if (clinicId) {
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:list:*'));
       patterns.push(this.keyFactory.clinic(clinicId, 'appointments:*'));
       tags.push(`clinic:${clinicId}`);
+    }
+
+    if (patientId) {
+      patterns.push(this.keyFactory.patient(patientId, clinicId, '*'));
+      tags.push(`user:${patientId}`);
     }
 
     let invalidated = 0;
@@ -551,12 +570,20 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
 
   async invalidateUpcomingAppointmentsCache(userId: string): Promise<number> {
     const key = this.keyFactory.fromTemplate('appointments:upcoming:{userId}', { userId });
-    return this.invalidateCacheByPattern(key);
+    let count = await this.invalidateCacheByPattern(key);
+    count += await this.invalidateCacheByTag('upcoming_appointments');
+    count += await this.invalidateCacheByTag('appointments');
+    count += await this.invalidateCacheByTag(`user:${userId}`);
+    return count;
   }
 
   async invalidateMyAppointmentsCache(userId: string): Promise<number> {
     const key = this.keyFactory.fromTemplate('appointments:my:{userId}', { userId });
-    return this.invalidateCacheByPattern(key);
+    let count = await this.invalidateCacheByPattern(key);
+    count += await this.invalidateCacheByTag('patient_appointments');
+    count += await this.invalidateCacheByTag('appointments');
+    count += await this.invalidateCacheByTag(`user:${userId}`);
+    return count;
   }
 
   async invalidateClinicCache(clinicId: string): Promise<number> {

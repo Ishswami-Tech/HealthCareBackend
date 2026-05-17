@@ -10,6 +10,7 @@ import type {
 } from '@core/types/communication.types';
 import {
   generateAppointmentReminderTemplate,
+  generateAppointmentConfirmationTemplate,
   generatePaymentConfirmationTemplate,
   generatePasswordResetTemplate,
   generateAccountVerificationTemplate,
@@ -50,6 +51,31 @@ export class EmailTemplatesService {
     );
 
     return generateAppointmentReminderTemplate(data, unsubscribeUrl);
+  }
+
+  /**
+   * Generates appointment confirmation email template
+   * @param data - Appointment template data
+   * @param unsubscribeUrl - Optional unsubscribe URL (will be added automatically if not provided)
+   * @returns HTML email template
+   */
+  generateAppointmentConfirmationTemplate(
+    data: AppointmentTemplateData,
+    unsubscribeUrl?: string
+  ): string {
+    void this.loggingService.log(
+      LogType.SYSTEM,
+      LogLevel.INFO,
+      'Generating appointment confirmation template',
+      'EmailTemplatesService',
+      {
+        patientName: data.patientName,
+        doctorName: data.doctorName,
+        appointmentDate: data.appointmentDate,
+      }
+    );
+
+    return generateAppointmentConfirmationTemplate(data, unsubscribeUrl);
   }
 
   /**

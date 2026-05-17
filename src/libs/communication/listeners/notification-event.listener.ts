@@ -403,7 +403,7 @@ export class NotificationEventListener implements OnModuleInit {
     {
       eventPattern: /^appointment\.(completed|updated)$/,
       category: CommunicationCategory.APPOINTMENT,
-      channels: ['socket', 'push', 'email', 'whatsapp'],
+      channels: ['socket', 'push'],
       priority: CommunicationPriority.NORMAL,
       template: 'appointment_updated',
       recipients: payload => {
@@ -1366,6 +1366,7 @@ export class NotificationEventListener implements OnModuleInit {
       (payload.metadata?.['patientId'] as string | undefined) ||
       (payload.metadata?.['userId'] as string | undefined) ||
       (eventPayload['patientId'] as string | undefined) ||
+      (eventPayload['userId'] as string | undefined) ||
       (nestedPayload['patientId'] as string | undefined) ||
       (nestedPayload['userId'] as string | undefined);
     const doctorId =
@@ -1389,12 +1390,18 @@ export class NotificationEventListener implements OnModuleInit {
 
     const appointmentType =
       (payload.metadata?.['appointmentType'] as string | undefined) ||
+      (eventPayload['appointmentType'] as string | undefined) ||
+      (eventPayload['type'] as string | undefined) ||
+      (appointment['type'] as string | undefined) ||
       (appointment['appointmentType'] as string | undefined) ||
+      (nestedPayload['type'] as string | undefined) ||
       (nestedPayload['appointmentType'] as string | undefined) ||
       'in-person';
     const appointmentDateValue =
       payload.metadata?.['appointmentDate'] ||
       payload.metadata?.['scheduledDate'] ||
+      eventPayload['appointmentDate'] ||
+      eventPayload['scheduledDate'] ||
       appointment['appointmentDate'] ||
       appointment['scheduledDate'] ||
       nestedPayload['appointmentDate'] ||
@@ -1403,6 +1410,8 @@ export class NotificationEventListener implements OnModuleInit {
     const appointmentTimeValue =
       payload.metadata?.['appointmentTime'] ||
       payload.metadata?.['scheduledTime'] ||
+      eventPayload['appointmentTime'] ||
+      eventPayload['scheduledTime'] ||
       appointment['appointmentTime'] ||
       appointment['scheduledTime'] ||
       nestedPayload['appointmentTime'] ||
@@ -1420,6 +1429,7 @@ export class NotificationEventListener implements OnModuleInit {
       templateData: {
         patientName:
           asString(payload.metadata?.['patientName']) ||
+          asString(eventPayload['patientName']) ||
           asString(patientUserRecord?.['name']) ||
           (asString(patientUserRecord?.['firstName']) && asString(patientUserRecord?.['lastName'])
             ? `${asString(patientUserRecord?.['firstName'])} ${asString(patientUserRecord?.['lastName'])}`
@@ -1431,6 +1441,7 @@ export class NotificationEventListener implements OnModuleInit {
           'Patient',
         doctorName:
           asString(payload.metadata?.['doctorName']) ||
+          asString(eventPayload['doctorName']) ||
           asString(doctorUserRecord?.['name']) ||
           (asString(doctorUserRecord?.['firstName']) && asString(doctorUserRecord?.['lastName'])
             ? `${asString(doctorUserRecord?.['firstName'])} ${asString(doctorUserRecord?.['lastName'])}`
@@ -1450,12 +1461,14 @@ export class NotificationEventListener implements OnModuleInit {
           }),
         location:
           asString(payload.metadata?.['location']) ||
+          asString(eventPayload['location']) ||
           asString(clinicRecord?.['name']) ||
           asString(appointment['location']) ||
           asString(nestedPayload['location']) ||
           'Clinic',
         clinicName:
           asString(payload.metadata?.['clinicName']) ||
+          asString(eventPayload['clinicName']) ||
           asString(clinicRecord?.['name']) ||
           asString(appointment['clinicName']) ||
           asString(nestedPayload['clinicName']) ||

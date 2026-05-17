@@ -144,8 +144,22 @@ export class EmailController {
           appointmentTime: '10:00 AM',
           location: 'Test Clinic Location',
           appointmentId: 'appt_test_001',
+          appointmentType: 'in-person',
           rescheduleUrl: `${frontendUrl}/appointments/reschedule/appt_test_001`,
           cancelUrl: `${frontendUrl}/appointments/cancel/appt_test_001`,
+        } satisfies AppointmentTemplateData;
+        break;
+      case EmailTemplate.APPOINTMENT_CONFIRMATION:
+        context = {
+          patientName: 'Test User',
+          doctorName: 'Test Doctor',
+          clinicName: 'Test Clinic',
+          appointmentDate: formatDateTimeInIST(new Date()),
+          appointmentTime: '10:00 AM',
+          location: 'Test Clinic Location',
+          appointmentId: 'appt_test_001',
+          appointmentType: 'video',
+          detailsUrl: `${frontendUrl}/patient/appointments?appointmentId=appt_test_001`,
         } satisfies AppointmentTemplateData;
         break;
       case EmailTemplate.SECURITY_ALERT:

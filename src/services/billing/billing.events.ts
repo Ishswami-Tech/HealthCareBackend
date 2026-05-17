@@ -6,6 +6,16 @@ import { EventService } from '@infrastructure/events/event.service';
 import { LoggingService } from '@infrastructure/logging';
 import { LogType, LogLevel, AppointmentStatus } from '@core/types';
 
+function resolveRecordValue(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  return fallback;
+}
+
 /**
  * Billing event listeners for automatic invoice generation and delivery
  */
@@ -390,6 +400,48 @@ export class BillingEventsListener {
           });
 
           const confirmedAppointment = refreshedAppointment ?? appointment;
+          const confirmedAppointmentRecord = confirmedAppointment as unknown as Record<
+            string,
+            unknown
+          >;
+          const patientRelation = confirmedAppointment.patient as
+            | { user?: { name?: string; firstName?: string; lastName?: string } }
+            | undefined;
+          const doctorRelation = confirmedAppointment.doctor as
+            | { user?: { name?: string; firstName?: string; lastName?: string } }
+            | undefined;
+          const locationRelation = confirmedAppointment.location as { name?: string } | undefined;
+          const appointmentType = resolveRecordValue(
+            confirmedAppointmentRecord['type'] ??
+              confirmedAppointmentRecord['appointmentType'] ??
+              appointment.type,
+            'IN_PERSON'
+          );
+          const patientUser = patientRelation?.user;
+          const doctorUser = doctorRelation?.user;
+          const patientName =
+            patientUser?.name ||
+            [patientUser?.firstName, patientUser?.lastName].filter(Boolean).join(' ') ||
+            (confirmedAppointment as { patientName?: string }).patientName ||
+            'Patient';
+          const doctorName =
+            doctorUser?.name ||
+            [doctorUser?.firstName, doctorUser?.lastName].filter(Boolean).join(' ') ||
+            (confirmedAppointment as { doctorName?: string }).doctorName ||
+            'Doctor';
+          const clinicName =
+            confirmedAppointment.clinic?.name || appointment.clinic?.name || 'Healthcare Clinic';
+          const locationName = locationRelation?.name || appointment.location?.name || clinicName;
+          const appointmentDate = resolveRecordValue(
+            confirmedAppointmentRecord['date'] ??
+              confirmedAppointmentRecord['appointmentDate'] ??
+              appointment.date
+          );
+          const appointmentTime = resolveRecordValue(
+            confirmedAppointmentRecord['time'] ??
+              confirmedAppointmentRecord['appointmentTime'] ??
+              appointment.time
+          );
           await this.eventService.emit('appointment.confirmed', {
             appointmentId,
             clinicId: resolvedClinicId,
@@ -399,6 +451,13 @@ export class BillingEventsListener {
             paymentId: payload.paymentId,
             paymentStatus: payload.status,
             appointment: confirmedAppointment,
+            appointmentType,
+            patientName,
+            doctorName,
+            clinicName,
+            location: locationName,
+            appointmentDate,
+            appointmentTime,
             context: {
               source: 'BillingEventsListener',
               paymentId: payload.paymentId,

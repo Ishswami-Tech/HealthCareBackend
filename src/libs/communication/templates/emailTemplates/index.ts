@@ -6,6 +6,7 @@
 
 // EmailTemplatesService templates
 export * from './appointment-reminder.template';
+export * from './appointment-confirmation.template';
 export * from './payment-confirmation.template';
 export * from './password-reset.template';
 export * from './account-verification.template';
