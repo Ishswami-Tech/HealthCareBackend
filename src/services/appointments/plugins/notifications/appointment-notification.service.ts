@@ -481,7 +481,7 @@ export class AppointmentNotificationService {
     notificationData: NotificationData,
     notificationId: string
   ): Promise<void> {
-    const { templateData, type, clinicId, patientId } = notificationData;
+    const { appointmentId, templateData, type, clinicId, patientId } = notificationData;
     const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
 
     // Fetch patient email using DatabaseService helper method (follows architecture rules)
@@ -523,11 +523,19 @@ export class AppointmentNotificationService {
 
     const subject = this.getEmailSubject(type, templateData);
     const body = this.getEmailBody(type, templateData);
+    const emailTemplate =
+      type === 'confirmation'
+        ? EmailTemplate.APPOINTMENT_CONFIRMATION
+        : EmailTemplate.APPOINTMENT_REMINDER;
+    const appointmentType = this.normalizeAppointmentType(templateData.appointmentType);
+    const detailsUrl = appointmentId
+      ? this.buildAppointmentDetailsUrl(appointmentId, appointmentType)
+      : undefined;
 
     await this.emailService.sendEmail({
       to: patientEmail,
       subject,
-      template: EmailTemplate.APPOINTMENT_REMINDER,
+      template: emailTemplate,
       context: {
         patientName: templateData.patientName,
         doctorName: templateData.doctorName,
@@ -535,6 +543,9 @@ export class AppointmentNotificationService {
         appointmentTime: templateData.appointmentTime,
         location: templateData.location,
         clinicName: templateData.clinicName,
+        appointmentType,
+        appointmentId,
+        detailsUrl,
       },
       text: body,
       html: body,
@@ -594,7 +605,6 @@ export class AppointmentNotificationService {
         notificationData.appointmentId,
         appointmentType
       );
-      const shouldNotifyDoctor = type === 'confirmation' || type === 'created';
       const deliveryResults: Array<{ role: 'patient' | 'doctor'; phone: string }> = [];
 
       const sendForRecipient = async (
@@ -614,19 +624,32 @@ export class AppointmentNotificationService {
 
         let didSend = false;
         if (type === 'confirmation' || type === 'created') {
-          await this.whatsAppService.sendAppointmentConfirmation(
-            phone,
-            templateData.patientName,
-            templateData.doctorName,
-            templateData.appointmentDate,
-            templateData.appointmentTime,
-            templateData.location,
-            clinicId,
-            detailsUrl,
-            appointmentType,
-            role
-          );
-          didSend = true;
+          if (role === 'patient') {
+            await this.whatsAppService.sendAppointmentConfirmation(
+              phone,
+              templateData.patientName,
+              templateData.doctorName,
+              templateData.appointmentDate,
+              templateData.appointmentTime,
+              templateData.location,
+              clinicId,
+              detailsUrl,
+              appointmentType,
+              role
+            );
+            didSend = true;
+          } else if (role === 'doctor' && appointmentType === 'video') {
+            const customMessage = this.buildDoctorVideoSummaryMessage(
+              templateData.patientName,
+              templateData.doctorName,
+              templateData.appointmentDate,
+              templateData.appointmentTime,
+              detailsUrl,
+              templateData.clinicName
+            );
+            await this.whatsAppService.sendCustomMessage(phone, customMessage, clinicId);
+            didSend = true;
+          }
         } else if (type === 'reminder' || type === 'updated') {
           if (role === 'patient') {
             await this.whatsAppService.sendAppointmentReminder(
@@ -650,7 +673,7 @@ export class AppointmentNotificationService {
       };
 
       await sendForRecipient('patient', patientPhone);
-      if (shouldNotifyDoctor) {
+      if (doctorPhone) {
         await sendForRecipient('doctor', doctorPhone);
       }
 
@@ -837,16 +860,13 @@ export class AppointmentNotificationService {
    */
   private getEmailSubject(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
-    const displayName = resolveText(
-      data['clinicName'] || data['appName'],
-      'Healthcare App'
-    ).toUpperCase();
+    const displayName = resolveText(data['clinicName'] || data['appName'], 'Healthcare App');
     const subjects = {
-      reminder: `APPOINTMENT REMINDER - ${displayName}`,
-      confirmation: `APPOINTMENT CONFIRMED - ${displayName}`,
-      cancellation: `APPOINTMENT CANCELLED - ${displayName}`,
-      reschedule: `APPOINTMENT RESCHEDULED - ${displayName}`,
-      follow_up: `FOLLOW-UP REQUIRED - ${displayName}`,
+      reminder: `Appointment reminder from ${displayName}`,
+      confirmation: `Appointment confirmed by ${displayName}`,
+      cancellation: `Appointment cancelled by ${displayName}`,
+      reschedule: `Appointment rescheduled by ${displayName}`,
+      follow_up: `Follow-up required from ${displayName}`,
     };
 
     return subjects[type as keyof typeof subjects] || 'APPOINTMENT NOTIFICATION';
@@ -857,23 +877,49 @@ export class AppointmentNotificationService {
    */
   private getEmailBody(type: string, templateData: unknown): string {
     const data = templateData as Record<string, unknown>;
-    const displayName = resolveText(
-      data['clinicName'] || data['appName'],
-      'Healthcare App'
-    ).toUpperCase();
+    const displayName = resolveText(data['clinicName'] || data['appName'], 'Healthcare App');
+    const patientName = resolveText(data['patientName'], 'there');
+    const doctorName = resolveText(data['doctorName'], 'Doctor');
+    const appointmentDate = resolveText(data['appointmentDate'], 'soon');
+    const appointmentTime = resolveText(data['appointmentTime'], 'TBD');
+    const location = resolveText(data['location'], displayName);
+    const appointmentType = resolveText(data['appointmentType'], 'appointment');
+    const detailsUrl = resolveText(data['detailsUrl'], '');
     const bodies = {
       reminder: `
-        <h2>APPOINTMENT REMINDER</h2>
-        <p>Hi ${data['patientName'] as string},</p>
-        <p>This is a reminder for your appointment at ${displayName} with ${data['doctorName'] as string} on ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
-        <p>Location: ${data['location'] as string}</p>
-        <p>Please arrive 15 minutes early.</p>
+        <h2>Appointment Reminder</h2>
+        <p>Hello ${patientName},</p>
+        <p>This is a reminder for your ${appointmentType} appointment with ${doctorName} at ${displayName}.</p>
+        <p><strong>Date:</strong> ${appointmentDate}</p>
+        <p><strong>Time:</strong> ${appointmentTime}</p>
+        <p><strong>Location:</strong> ${location}</p>
+        <p>Please arrive 15 minutes early and bring any required documents.</p>
       `,
       confirmation: `
-        <h2>APPOINTMENT CONFIRMED</h2>
-        <p>Hi ${data['patientName'] as string},</p>
-        <p>Your appointment at ${displayName} with ${data['doctorName'] as string} has been confirmed for ${data['appointmentDate'] as string} at ${data['appointmentTime'] as string}.</p>
-        <p>Location: ${data['location'] as string}</p>
+        <h2>Appointment Confirmed</h2>
+        <p>Hello ${patientName},</p>
+        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been confirmed.</p>
+        <p><strong>Date:</strong> ${appointmentDate}</p>
+        <p><strong>Time:</strong> ${appointmentTime}</p>
+        <p><strong>Location:</strong> ${location}</p>
+        ${detailsUrl ? `<p><a href="${detailsUrl}">View appointment details</a></p>` : ''}
+        <p>Please open your appointment details in the app for location or join link.</p>
+      `,
+      cancellation: `
+        <h2>Appointment Cancelled</h2>
+        <p>Hello ${patientName},</p>
+        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been cancelled.</p>
+        <p><strong>Date:</strong> ${appointmentDate}</p>
+        <p><strong>Time:</strong> ${appointmentTime}</p>
+        <p><strong>Location:</strong> ${location}</p>
+      `,
+      reschedule: `
+        <h2>Appointment Rescheduled</h2>
+        <p>Hello ${patientName},</p>
+        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been rescheduled.</p>
+        <p><strong>New Date:</strong> ${appointmentDate}</p>
+        <p><strong>New Time:</strong> ${appointmentTime}</p>
+        <p><strong>Location:</strong> ${location}</p>
       `,
     };
 
@@ -939,5 +985,28 @@ export class AppointmentNotificationService {
     }
 
     return `${normalizedFrontendUrl}/patient/appointments?appointmentId=${encodeURIComponent(appointmentId)}`;
+  }
+
+  private buildDoctorVideoSummaryMessage(
+    patientName: string,
+    doctorName: string,
+    appointmentDate: string,
+    appointmentTime: string,
+    detailsUrl?: string,
+    clinicName?: string
+  ): string {
+    const clinicLabel = resolveText(clinicName, 'Healthcare Clinic');
+    const appointmentLink = detailsUrl ? `\nLink: ${detailsUrl}` : '';
+
+    return [
+      `Today's video appointment for ${doctorName}`,
+      '',
+      `Patient: ${patientName}`,
+      `Time: ${appointmentDate} at ${appointmentTime}`,
+      `Clinic: ${clinicLabel}`,
+      `${appointmentLink}`.trim(),
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 }

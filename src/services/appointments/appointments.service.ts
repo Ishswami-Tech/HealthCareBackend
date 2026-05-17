@@ -4225,6 +4225,26 @@ export class AppointmentsService {
     clinicId: string,
     role: string = 'USER'
   ): Promise<unknown> {
+    const resolveAppointmentIdentifier = (appointment: unknown): string => {
+      if (!appointment || typeof appointment !== 'object') {
+        return '';
+      }
+
+      const record = appointment as Record<string, unknown>;
+      const candidateId = record['appointmentId'] ?? record['id'];
+      if (typeof candidateId === 'string') {
+        return candidateId;
+      }
+      if (
+        typeof candidateId === 'number' ||
+        typeof candidateId === 'bigint' ||
+        typeof candidateId === 'boolean'
+      ) {
+        return String(candidateId);
+      }
+      return '';
+    };
+
     // Use CacheService key factory for proper key generation (single source of truth)
     // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
     // Use patient-specific caching for better healthcare optimization
@@ -4239,17 +4259,51 @@ export class AppointmentsService {
           role === 'PATIENT'
             ? ((await this.getPatientByUserId(userId)) as { id?: string } | null)
             : null;
-        const filters: AppointmentFilterDto & { statusList?: AppointmentStatus[] } = {
-          patientId: patient?.id || userId,
-          startDate: formatDateKeyInIST(new Date()),
-          // Keep both states visible here:
-          // - SCHEDULED for the booking-created row
-          // - CONFIRMED once payment/webhook reconciliation completes
-          statusList: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
-        };
+        const candidateIds = Array.from(
+          new Set([patient?.id, userId].filter((value): value is string => Boolean(value)))
+        );
 
-        const result = await this.getAppointments(filters, userId, clinicId, role, 1, 10);
-        return result;
+        const combinedAppointments: unknown[] = [];
+        for (const candidateId of candidateIds) {
+          const filters: AppointmentFilterDto & { statusList?: AppointmentStatus[] } = {
+            patientId: candidateId,
+            startDate: formatDateKeyInIST(new Date()),
+            // Keep both states visible here:
+            // - SCHEDULED for the booking-created row
+            // - CONFIRMED once payment/webhook reconciliation completes
+            statusList: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          };
+
+          const result = await this.getAppointments(filters, userId, clinicId, role, 1, 10);
+          const resultData = Array.isArray((result as { data?: unknown }).data)
+            ? ((result as { data?: unknown }).data as unknown[])
+            : Array.isArray((result as { appointments?: unknown[] }).appointments)
+              ? ((result as { appointments?: unknown[] }).appointments as unknown[])
+              : [];
+
+          for (const appointment of resultData) {
+            const appointmentId = resolveAppointmentIdentifier(appointment);
+            if (
+              appointmentId &&
+              !combinedAppointments.some(
+                existing => resolveAppointmentIdentifier(existing) === appointmentId
+              )
+            ) {
+              combinedAppointments.push(appointment);
+            }
+          }
+        }
+
+        return {
+          success: true,
+          data: {
+            appointments: combinedAppointments,
+          },
+          appointments: combinedAppointments,
+          meta: {
+            count: combinedAppointments.length,
+          },
+        };
       },
       {
         ttl: 600,

@@ -24,6 +24,7 @@ import { HealthcareError } from '@core/errors';
 import { ErrorCode } from '@core/errors/error-codes.enum';
 import {
   generateVerificationTemplate,
+  generateAppointmentConfirmationTemplate,
   generateAppointmentReminderTemplate,
   generatePasswordResetRequestTemplate,
   generatePasswordResetConfirmationTemplate,
@@ -1081,6 +1082,10 @@ export class EmailService implements OnModuleInit {
         return generateWelcomeTemplate(enrichedContext as WelcomeEmailContext);
       case EmailTemplate.LOGIN_NOTIFICATION:
         return generateLoginNotificationTemplate(enrichedContext as LoginNotificationEmailContext);
+      case EmailTemplate.APPOINTMENT_CONFIRMATION:
+        return generateAppointmentConfirmationTemplate(
+          enrichedContext as import('@core/types/communication.types').AppointmentTemplateData
+        );
       case EmailTemplate.APPOINTMENT_REMINDER:
         return generateAppointmentReminderTemplate(
           enrichedContext as import('@core/types/communication.types').AppointmentTemplateData

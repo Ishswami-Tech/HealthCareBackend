@@ -219,6 +219,8 @@ export interface AppointmentTemplateData extends EmailTemplateData {
   appointmentTime: string;
   location: string;
   appointmentId?: string;
+  appointmentType?: string;
+  detailsUrl?: string;
   rescheduleUrl?: string;
   cancelUrl?: string;
 }

@@ -10,6 +10,7 @@ import {
   type ClinicPatientOptions,
   type ClinicPatientResult,
 } from '@core/types/database.types';
+import { CacheService } from '@infrastructure/cache/cache.service';
 
 interface MulterFile {
   buffer: Buffer;
@@ -23,7 +24,8 @@ export class PatientsService {
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
-    private readonly staticAssetService: StaticAssetService
+    private readonly staticAssetService: StaticAssetService,
+    private readonly cacheService: CacheService
   ) {}
 
   /**
@@ -59,6 +61,9 @@ export class PatientsService {
           details: { action: 'ensure_patient_profile' },
         }
       );
+
+      // Invalidate cached null profile so that dashboard reflects existence instantly
+      await this.cacheService.invalidatePatientCache(userId);
     }
   }
 
@@ -236,6 +241,9 @@ export class PatientsService {
         }
       );
     }
+
+    // Invalidate cached patient profile upon upserting profile details
+    await this.cacheService.invalidatePatientCache(userId, data.clinicId);
 
     return { success: true, message: 'Patient profile updated' };
   }

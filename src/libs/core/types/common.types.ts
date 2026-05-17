@@ -236,6 +236,8 @@ export enum EmailTemplate {
   LOGIN_NOTIFICATION = 'LOGIN_NOTIFICATION',
   /** Appointment reminder template */
   APPOINTMENT_REMINDER = 'APPOINTMENT_REMINDER',
+  /** Appointment confirmation template */
+  APPOINTMENT_CONFIRMATION = 'APPOINTMENT_CONFIRMATION',
 }
 
 /**
