@@ -1014,18 +1014,9 @@ export class CoreAppointmentService {
         where['doctorId'] = context.doctorId || context.userId;
         break;
       case 'PATIENT':
-        // Support both storage variants:
-        // - appointment.patientId = patient profile id (Patient.id)
-        // - appointment.patientId = authenticated user id (User.id) - legacy
-        if (context.patientId) {
-          // If we have a resolved Patient.id, use it
-          // Also check User.id as fallback for legacy appointments
-          where['OR'] = [{ patientId: context.patientId }, { patientId: context.userId }];
-        } else {
-          // Fallback: no patient profile found, try User.id only
-          // This should rarely happen if resolvePatientProfileForAppointments works correctly
-          where['patientId'] = context.userId;
-        }
+        // Appointment.patientId references Patient.id, not User.id.
+        // Patient-facing callers must resolve User.id -> Patient.id before querying.
+        where['patientId'] = context.patientId || '__missing_patient_profile__';
         break;
       case 'NURSE':
       case 'RECEPTIONIST':
@@ -1047,8 +1038,10 @@ export class CoreAppointmentService {
         break;
       default:
         // For unknown roles, restrict to user's own appointments
-        // Use an OR clause that checks both the direct UUIDs and potential User UUIDs
-        where['OR'] = [{ doctorId: context.userId }, { patientId: context.userId }];
+        where['OR'] = [
+          { doctorId: context.doctorId || context.userId },
+          { patientId: context.patientId || '__missing_patient_profile__' },
+        ];
         break;
     }
 
