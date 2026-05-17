@@ -1269,6 +1269,7 @@ export class NotificationEventListener implements OnModuleInit {
   ): NotificationData | null {
     const eventPayload = payload as unknown as Record<string, unknown>;
     const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
+    const nestedPayload = (eventPayload['payload'] as Record<string, unknown> | undefined) || {};
 
     const toDisplayDate = (value: unknown): string => {
       if (value === null || value === undefined || value === '') {
@@ -1331,17 +1332,22 @@ export class NotificationEventListener implements OnModuleInit {
       payload.userId ||
       (payload.metadata?.['patientId'] as string | undefined) ||
       (payload.metadata?.['userId'] as string | undefined) ||
-      (eventPayload['patientId'] as string | undefined);
+      (eventPayload['patientId'] as string | undefined) ||
+      (nestedPayload['patientId'] as string | undefined) ||
+      (nestedPayload['userId'] as string | undefined);
     const doctorId =
       (payload.metadata?.['doctorId'] as string | undefined) ||
-      (eventPayload['doctorId'] as string | undefined);
+      (eventPayload['doctorId'] as string | undefined) ||
+      (nestedPayload['doctorId'] as string | undefined);
     const clinicId =
       payload.clinicId ||
       (payload.metadata?.['clinicId'] as string | undefined) ||
-      (eventPayload['clinicId'] as string | undefined);
+      (eventPayload['clinicId'] as string | undefined) ||
+      (nestedPayload['clinicId'] as string | undefined);
     const appointmentId =
       (payload.metadata?.['appointmentId'] as string | undefined) ||
       (eventPayload['appointmentId'] as string | undefined) ||
+      (nestedPayload['appointmentId'] as string | undefined) ||
       (appointment['id'] as string | undefined);
 
     if (!patientId || !doctorId || !clinicId || !appointmentId) {
@@ -1351,18 +1357,23 @@ export class NotificationEventListener implements OnModuleInit {
     const appointmentType =
       (payload.metadata?.['appointmentType'] as string | undefined) ||
       (appointment['appointmentType'] as string | undefined) ||
+      (nestedPayload['appointmentType'] as string | undefined) ||
       'in-person';
     const appointmentDateValue =
       payload.metadata?.['appointmentDate'] ||
       payload.metadata?.['scheduledDate'] ||
       appointment['appointmentDate'] ||
       appointment['scheduledDate'] ||
+      nestedPayload['appointmentDate'] ||
+      nestedPayload['scheduledDate'] ||
       appointment['date'];
     const appointmentTimeValue =
       payload.metadata?.['appointmentTime'] ||
       payload.metadata?.['scheduledTime'] ||
       appointment['appointmentTime'] ||
       appointment['scheduledTime'] ||
+      nestedPayload['appointmentTime'] ||
+      nestedPayload['scheduledTime'] ||
       appointment['time'];
 
     return {
@@ -1377,10 +1388,12 @@ export class NotificationEventListener implements OnModuleInit {
         patientName:
           (payload.metadata?.['patientName'] as string | undefined) ||
           (appointment['patientName'] as string | undefined) ||
+          (nestedPayload['patientName'] as string | undefined) ||
           'Patient',
         doctorName:
           (payload.metadata?.['doctorName'] as string | undefined) ||
           (appointment['doctorName'] as string | undefined) ||
+          (nestedPayload['doctorName'] as string | undefined) ||
           'Doctor',
         appointmentDate: toDisplayDate(appointmentDateValue) || formatDateInIST(nowIso()),
         appointmentTime:
@@ -1393,10 +1406,12 @@ export class NotificationEventListener implements OnModuleInit {
         location:
           (payload.metadata?.['location'] as string | undefined) ||
           (appointment['location'] as string | undefined) ||
+          (nestedPayload['location'] as string | undefined) ||
           'Clinic',
         clinicName:
           (payload.metadata?.['clinicName'] as string | undefined) ||
           (appointment['clinicName'] as string | undefined) ||
+          (nestedPayload['clinicName'] as string | undefined) ||
           'Healthcare Clinic',
         appointmentType,
       },
