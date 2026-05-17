@@ -47,8 +47,19 @@ type WhatsAppTemplateComponent = {
   type: string;
   parameters: Array<{ type: string; text: string }>;
   sub_type?: string;
-  index?: string;
+  index?: number;
 };
+
+function normalizeTemplateText(value: unknown, fallback: string): string {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return fallback;
+}
 
 function normalizeUrlButtonValue(detailsUrl?: string): string | undefined {
   if (!detailsUrl) {
@@ -84,7 +95,7 @@ function buildDetailsButton(detailsUrl?: string): WhatsAppTemplateComponent[] {
     {
       type: 'button',
       sub_type: 'url',
-      index: '0',
+      index: 0,
       parameters: [{ type: 'text', text: normalizedUrl }],
     },
   ];
@@ -112,11 +123,11 @@ export function formatAppointmentConfirmationTemplateParams(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: appointmentType },
-        { type: 'text', text: doctorName },
-        { type: 'text', text: appointmentDate },
-        { type: 'text', text: appointmentTime },
+        { type: 'text', text: normalizeTemplateText(patientName, 'Patient') },
+        { type: 'text', text: normalizeTemplateText(appointmentType, 'in-person') },
+        { type: 'text', text: normalizeTemplateText(doctorName, 'Doctor') },
+        { type: 'text', text: normalizeTemplateText(appointmentDate, 'TBD') },
+        { type: 'text', text: normalizeTemplateText(appointmentTime, 'TBD') },
       ],
     },
   ];
@@ -145,10 +156,10 @@ export function formatAppointmentReminderTemplateParams(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: patientName },
-        { type: 'text', text: appointmentType },
-        { type: 'text', text: doctorName },
-        { type: 'text', text: appointmentDateTime },
+        { type: 'text', text: normalizeTemplateText(patientName, 'Patient') },
+        { type: 'text', text: normalizeTemplateText(appointmentType, 'in-person') },
+        { type: 'text', text: normalizeTemplateText(doctorName, 'Doctor') },
+        { type: 'text', text: normalizeTemplateText(appointmentDateTime, 'TBD') },
       ],
     },
   ];
@@ -177,10 +188,10 @@ export function formatPaymentReceiptTemplateParams(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: recipientName },
-        { type: 'text', text: receiptNumber },
-        { type: 'text', text: amount },
-        { type: 'text', text: paymentDate },
+        { type: 'text', text: normalizeTemplateText(recipientName, 'Patient') },
+        { type: 'text', text: normalizeTemplateText(receiptNumber, 'Receipt') },
+        { type: 'text', text: normalizeTemplateText(amount, '0') },
+        { type: 'text', text: normalizeTemplateText(paymentDate, 'TBD') },
       ],
     },
   ];

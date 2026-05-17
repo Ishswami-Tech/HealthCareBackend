@@ -1,4 +1,4 @@
-import { nowIso, formatTimeInIST } from '@utils/date-time.util';
+import { nowIso, formatDateInIST, formatTimeInIST } from '@utils/date-time.util';
 /**
  * Notification Event Listener
  * ============================
@@ -282,7 +282,7 @@ export class NotificationEventListener implements OnModuleInit {
       category: CommunicationCategory.APPOINTMENT,
       channels: ['socket', 'push', 'email', 'whatsapp'],
       priority: CommunicationPriority.HIGH,
-      template: 'appointment_created',
+      template: 'appointment_confirmation',
       recipients: payload => {
         const recipients: Array<{
           userId?: string;
@@ -868,7 +868,10 @@ export class NotificationEventListener implements OnModuleInit {
         return;
       }
 
-      if (normalizedEventType === 'appointment.confirmed') {
+      if (
+        normalizedEventType === 'appointment.created' ||
+        normalizedEventType === 'appointment.confirmed'
+      ) {
         const notificationData = this.buildAppointmentConfirmationNotificationData(eventPayload);
         if (notificationData && this.appointmentNotificationService) {
           const result =
@@ -888,6 +891,25 @@ export class NotificationEventListener implements OnModuleInit {
           );
           return;
         }
+
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.WARN,
+          `Appointment notification could not be built for ${normalizedEventType}; falling back to generic communication path`,
+          'NotificationEventListener',
+          {
+            eventType: normalizedEventType,
+            appointmentId:
+              eventPayload.metadata?.['appointmentId'] ||
+              (eventPayload as unknown as Record<string, unknown>)['appointmentId'],
+            patientId:
+              eventPayload.userId ||
+              eventPayload.metadata?.['patientId'] ||
+              eventPayload.metadata?.['userId'],
+            doctorId: eventPayload.metadata?.['doctorId'],
+            clinicId: eventPayload.clinicId || eventPayload.metadata?.['clinicId'],
+          }
+        );
       }
 
       // Get recipients
@@ -1248,6 +1270,63 @@ export class NotificationEventListener implements OnModuleInit {
     const eventPayload = payload as unknown as Record<string, unknown>;
     const appointment = (eventPayload['appointment'] as Record<string, unknown> | undefined) || {};
 
+    const toDisplayDate = (value: unknown): string => {
+      if (value === null || value === undefined || value === '') {
+        return '';
+      }
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return '';
+        }
+        return (
+          formatDateInIST(trimmed, {
+            year: 'numeric',
+            month: 'short',
+            day: '2-digit',
+          }) || trimmed
+        );
+      }
+      return (
+        formatDateInIST(value as Date, {
+          year: 'numeric',
+          month: 'short',
+          day: '2-digit',
+        }) || ''
+      );
+    };
+
+    const toDisplayTime = (value: unknown): string => {
+      if (value === null || value === undefined || value === '') {
+        return '';
+      }
+      if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) {
+          return '';
+        }
+        const parsed = new Date(`1970-01-01T${trimmed}`);
+        if (!Number.isNaN(parsed.getTime())) {
+          const formatted = formatTimeInIST(parsed, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          });
+          if (formatted) {
+            return formatted;
+          }
+        }
+        return trimmed;
+      }
+      return (
+        formatTimeInIST(value as Date, {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true,
+        }) || ''
+      );
+    };
+
     const patientId =
       payload.userId ||
       (payload.metadata?.['patientId'] as string | undefined) ||
@@ -1273,6 +1352,18 @@ export class NotificationEventListener implements OnModuleInit {
       (payload.metadata?.['appointmentType'] as string | undefined) ||
       (appointment['appointmentType'] as string | undefined) ||
       'in-person';
+    const appointmentDateValue =
+      payload.metadata?.['appointmentDate'] ||
+      payload.metadata?.['scheduledDate'] ||
+      appointment['appointmentDate'] ||
+      appointment['scheduledDate'] ||
+      appointment['date'];
+    const appointmentTimeValue =
+      payload.metadata?.['appointmentTime'] ||
+      payload.metadata?.['scheduledTime'] ||
+      appointment['appointmentTime'] ||
+      appointment['scheduledTime'] ||
+      appointment['time'];
 
     return {
       appointmentId,
@@ -1291,15 +1382,14 @@ export class NotificationEventListener implements OnModuleInit {
           (payload.metadata?.['doctorName'] as string | undefined) ||
           (appointment['doctorName'] as string | undefined) ||
           'Doctor',
-        appointmentDate:
-          (payload.metadata?.['appointmentDate'] as string | undefined) ||
-          (appointment['appointmentDate'] as string | undefined) ||
-          (appointment['date'] as string | undefined) ||
-          '',
+        appointmentDate: toDisplayDate(appointmentDateValue) || formatDateInIST(nowIso()),
         appointmentTime:
-          (payload.metadata?.['appointmentTime'] as string | undefined) ||
-          (appointment['appointmentTime'] as string | undefined) ||
-          '',
+          toDisplayTime(appointmentTimeValue) ||
+          formatTimeInIST(nowIso(), {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          }),
         location:
           (payload.metadata?.['location'] as string | undefined) ||
           (appointment['location'] as string | undefined) ||

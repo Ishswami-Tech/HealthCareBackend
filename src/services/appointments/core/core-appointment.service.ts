@@ -180,7 +180,9 @@ export class CoreAppointmentService {
       // The API layer may supply User IDs for doctor/patient, while Prisma relations require entity IDs.
       const resolvedIds = await this.databaseService.executeHealthcareRead<{
         patientId: string | null;
+        patientUserId: string | null;
         doctorId: string | null;
+        doctorUserId: string | null;
         locationId: string | null;
       }>(async client => {
         const typedClient = client as unknown as PrismaTransactionClientWithDelegates;
@@ -189,14 +191,14 @@ export class CoreAppointmentService {
           where: {
             OR: [{ id: createDto.patientId }, { userId: createDto.patientId }],
           } as PrismaDelegateArgs,
-          select: { id: true } as PrismaDelegateArgs,
+          select: { id: true, userId: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
 
         const doctor = await typedClient.doctor.findFirst({
           where: {
             OR: [{ id: createDto.doctorId }, { userId: createDto.doctorId }],
           } as PrismaDelegateArgs,
-          select: { id: true } as PrismaDelegateArgs,
+          select: { id: true, userId: true } as PrismaDelegateArgs,
         } as PrismaDelegateArgs);
 
         const rawLocationId = (createDto as { locationId?: string }).locationId;
@@ -211,7 +213,9 @@ export class CoreAppointmentService {
 
         return {
           patientId: patient?.id ?? null,
+          patientUserId: patient?.userId ?? null,
           doctorId: doctor?.id ?? null,
+          doctorUserId: doctor?.userId ?? null,
           locationId: location?.id ?? null,
         };
       });
@@ -386,7 +390,18 @@ export class CoreAppointmentService {
       });
 
       // 8. Invalidate cache
-      void this.invalidateAppointmentCache(context.clinicId);
+      await Promise.all([
+        this.invalidateAppointmentCache(context.clinicId),
+        resolvedIds.patientUserId
+          ? this.cacheService.invalidateMyAppointmentsCache(resolvedIds.patientUserId)
+          : Promise.resolve(0),
+        resolvedIds.patientUserId
+          ? this.cacheService.invalidateUpcomingAppointmentsCache(resolvedIds.patientUserId)
+          : Promise.resolve(0),
+        resolvedIds.doctorUserId
+          ? this.cacheService.invalidateDoctorCache(resolvedIds.doctorUserId, context.clinicId)
+          : Promise.resolve(0),
+      ]);
 
       const processingTime = Date.now() - startTime;
       void this.loggingService.log(

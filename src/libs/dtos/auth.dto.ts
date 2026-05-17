@@ -16,6 +16,15 @@ import { Transform, Type } from 'class-transformer';
 import { IsClinicId } from '@core/decorators/clinic-id.validator';
 import { Role } from '@core/types/enums.types';
 
+function getTrimmedString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
 /**
  * Data Transfer Object for user profile in auth response
  */
@@ -643,9 +652,34 @@ export class VerifyOtpRequestDto {
     description: 'User email or phone',
     example: 'user@example.com',
   })
+  @Transform(
+    ({ value, obj }: { value: unknown; obj?: Record<string, unknown> }) =>
+      getTrimmedString(value) ||
+      getTrimmedString(obj?.email) ||
+      getTrimmedString(obj?.contact) ||
+      ''
+  )
   @IsString({ message: 'Identifier must be a string' })
   @IsNotEmpty({ message: 'Identifier is required' })
   identifier!: string;
+
+  @ApiProperty({
+    description: 'Legacy email alias for identifier',
+    example: 'user@example.com',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  email?: string;
+
+  @ApiProperty({
+    description: 'Legacy contact alias for identifier',
+    example: '+919876543210',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  contact?: string;
 
   @ApiProperty({
     description: 'OTP code',
@@ -674,6 +708,16 @@ export class VerifyOtpRequestDto {
   isRegistration?: boolean;
 
   @ApiProperty({
+    description: 'Remember me option for extended session',
+    example: false,
+    required: false,
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Remember me must be a boolean' })
+  rememberMe?: boolean = false;
+
+  @ApiProperty({
     description: 'First Name (required for registration)',
     example: 'John',
     required: false,
@@ -690,11 +734,6 @@ export class VerifyOtpRequestDto {
   @IsOptional()
   @IsString()
   lastName?: string;
-
-  // Compatibility getters
-  get email(): string {
-    return this.identifier;
-  }
 }
 
 /**

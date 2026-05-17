@@ -100,6 +100,7 @@ export class PaymentController {
     );
 
     for (const reference of references) {
+      // 1. Try by DB payment UUID / transactionId
       const payment =
         (await this.databaseService.findPaymentByIdSafe(reference)) ??
         (await this.databaseService.findPaymentsSafe({ transactionId: reference }))[0] ??
@@ -117,6 +118,39 @@ export class PaymentController {
 
       if (resolvedClinicId) {
         return resolvedClinicId;
+      }
+    }
+
+    // 2. Fallback: the Cashfree orderId is formatted as `${invoiceNumber}${alphanumericSuffix}`.
+    //    The suffix is generated from the gateway reference and is 8 alphanumeric chars.
+    //    Try the stripped invoice number first, then the full orderId verbatim.
+    if (orderId) {
+      const invoiceNumberCandidate =
+        orderId.startsWith('INV-') && orderId.length > 8 ? orderId.slice(0, -8) : orderId;
+      const candidates = [
+        invoiceNumberCandidate, // e.g. "INV-2026-000008" from "INV-2026-00000840ab9a6c"
+        orderId, // try full orderId verbatim as invoiceNumber
+      ].filter((v): v is string => typeof v === 'string' && v.length > 0);
+
+      for (const candidate of candidates) {
+        try {
+          const invoices = await this.databaseService.findInvoicesSafe({
+            invoiceNumber: candidate,
+          });
+          const invoiceClinicId = invoices[0]?.clinicId;
+          if (invoiceClinicId) {
+            await this.loggingService.log(
+              LogType.PAYMENT,
+              LogLevel.INFO,
+              'Resolved clinicId from invoice number fallback',
+              'PaymentController',
+              { orderId, candidate, clinicId: invoiceClinicId }
+            );
+            return invoiceClinicId;
+          }
+        } catch {
+          // Non-fatal: try next candidate
+        }
       }
     }
 
