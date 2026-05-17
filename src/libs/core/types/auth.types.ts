@@ -86,8 +86,6 @@ export interface TokenPayload {
   readonly permissions?: string[];
   /** Optional clinic ID */
   readonly clinicId?: string;
-  /** Optional domain */
-  readonly domain?: string;
   /** Optional session ID */
   readonly sessionId?: string;
   /** Optional issued at timestamp */
@@ -120,6 +118,8 @@ export interface UserProfile {
   readonly role?: string;
   /** Optional clinic ID */
   readonly clinicId?: string;
+  /** Optional clinic display name */
+  readonly clinicName?: string;
   /** Optional phone number */
   readonly phone?: string;
   /** Optional avatar URL */
