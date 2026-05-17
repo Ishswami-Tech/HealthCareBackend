@@ -670,6 +670,14 @@ export class UserResponseDto extends OmitType(CreateUserDto, ['password'] as con
   @IsOptional()
   @IsBoolean({ message: 'Requires profile completion must be a boolean' })
   requiresProfileCompletion?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'patient-uuid-123',
+    description: 'Patient profile identifier for patient users',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Patient ID must be a valid UUID' })
+  patientId?: string;
 }
 
 /**

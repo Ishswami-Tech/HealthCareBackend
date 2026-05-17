@@ -230,7 +230,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v3:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -256,6 +256,10 @@ export class UsersService {
           updatedAt: result.updatedAt,
           phone: result.phone ?? '',
         };
+        const patientRecord = result.patient as { id?: string } | null | undefined;
+        if (patientRecord?.id) {
+          userResponse.patientId = patientRecord.id;
+        }
 
         if (result.dateOfBirth) {
           userResponse.dateOfBirth = this.formatDateToString(result.dateOfBirth);
