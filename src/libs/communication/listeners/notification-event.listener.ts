@@ -772,6 +772,8 @@ export class NotificationEventListener implements OnModuleInit {
   private typedEventService?: IEventService;
   private typedCommunicationService?: CommunicationService;
   private appointmentNotificationService?: AppointmentNotificationService;
+  private readonly appointmentNotificationDedup = new Map<string, number>();
+  private readonly appointmentNotificationDedupTtlMs = 30_000;
 
   constructor(
     @Inject(forwardRef(() => EventService))
@@ -862,6 +864,25 @@ export class NotificationEventListener implements OnModuleInit {
 
       // Normalize payload
       const eventPayload = this.normalizePayload(payload);
+
+      if (this.shouldSkipDuplicateAppointmentNotification(normalizedEventType, eventPayload)) {
+        await this.loggingService.log(
+          LogType.NOTIFICATION,
+          LogLevel.DEBUG,
+          `Skipping duplicate appointment notification for event ${normalizedEventType}`,
+          'NotificationEventListener',
+          {
+            eventType: normalizedEventType,
+            appointmentId:
+              eventPayload.metadata?.['appointmentId'] ||
+              (eventPayload as unknown as Record<string, unknown>)['appointmentId'],
+            paymentId:
+              eventPayload.metadata?.['paymentId'] ||
+              (eventPayload as unknown as Record<string, unknown>)['paymentId'],
+          }
+        );
+        return;
+      }
 
       // Find matching communication rule
       const rule = this.findMatchingRule(normalizedEventType, eventPayload);
@@ -1025,6 +1046,63 @@ export class NotificationEventListener implements OnModuleInit {
         }
       );
     }
+  }
+
+  private shouldSkipDuplicateAppointmentNotification(
+    eventType: string,
+    payload: EnterpriseEventPayload | Record<string, unknown>
+  ): boolean {
+    if (!eventType.startsWith('appointment.')) {
+      return false;
+    }
+
+    const record = payload as Record<string, unknown>;
+    const metadata = asRecord(record['metadata']);
+    const nestedPayload = asRecord(record['payload']);
+    const appointmentId = resolveText(
+      metadata?.['appointmentId'] ??
+        record['appointmentId'] ??
+        nestedPayload?.['appointmentId'] ??
+        ''
+    ).trim();
+    const paymentId = resolveText(
+      metadata?.['paymentId'] ?? record['paymentId'] ?? nestedPayload?.['paymentId'] ?? ''
+    ).trim();
+    const status = resolveText(
+      metadata?.['status'] ?? record['status'] ?? nestedPayload?.['status'] ?? ''
+    )
+      .trim()
+      .toUpperCase();
+    const source = resolveText(
+      metadata?.['source'] ?? record['source'] ?? nestedPayload?.['source'] ?? ''
+    )
+      .trim()
+      .toLowerCase();
+
+    const dedupKey = [
+      eventType,
+      appointmentId || 'no-appointment',
+      paymentId || 'no-payment',
+      status || 'no-status',
+      source || 'no-source',
+    ].join('|');
+    const now = Date.now();
+    const lastSeen = this.appointmentNotificationDedup.get(dedupKey);
+    if (lastSeen && now - lastSeen < this.appointmentNotificationDedupTtlMs) {
+      return true;
+    }
+
+    this.appointmentNotificationDedup.set(dedupKey, now);
+
+    if (this.appointmentNotificationDedup.size > 500) {
+      for (const [key, timestamp] of this.appointmentNotificationDedup.entries()) {
+        if (now - timestamp >= this.appointmentNotificationDedupTtlMs) {
+          this.appointmentNotificationDedup.delete(key);
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
