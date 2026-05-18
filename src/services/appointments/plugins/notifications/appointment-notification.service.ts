@@ -843,7 +843,7 @@ export class AppointmentNotificationService {
       type,
       timestamp: nowIso(),
     };
-    void this.socketService.sendToRoom(`clinic_${clinicId}`, 'appointment_update', clinicEventData);
+    void this.socketService.sendToRoom(`clinic:${clinicId}`, 'appointment_update', clinicEventData);
 
     await this.loggingService.log(
       LogType.NOTIFICATION,
