@@ -607,6 +607,66 @@ export class VideoConsultationSessionDto {
   @IsOptional()
   endTime?: Date | null;
 
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether the appointment is currently joinable',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Can join must be a boolean' })
+  canJoin?: boolean;
+
+  @ApiPropertyOptional({
+    example: false,
+    description: 'Whether payment is still required for the visit',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Payment required must be a boolean' })
+  paymentRequired?: boolean;
+
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Whether payment has been completed for the visit',
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Payment completed must be a boolean' })
+  paymentCompleted?: boolean;
+
+  @ApiPropertyOptional({
+    example: 'Payment is required before joining this video appointment.',
+    description: 'Reason the visit cannot be joined, if any',
+  })
+  @IsOptional()
+  @IsString({ message: 'Join blocked reason must be a string' })
+  joinBlockedReason?: string | null;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T09:50:00.000Z',
+    description: 'Computed join window start time',
+  })
+  @IsOptional()
+  joinWindowStart?: Date | null;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T13:00:00.000Z',
+    description: 'Computed join window end time',
+  })
+  @IsOptional()
+  joinWindowEnd?: Date | null;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T10:00:00.000Z',
+    description: 'Scheduled start time from the appointment record',
+  })
+  @IsOptional()
+  scheduledStartTime?: Date | null;
+
+  @ApiPropertyOptional({
+    example: '2024-01-15T10:15:00.000Z',
+    description: 'Scheduled end time from the appointment record',
+  })
+  @IsOptional()
+  scheduledEndTime?: Date | null;
+
   @ApiProperty({
     description: 'Session participants',
     type: [Object],

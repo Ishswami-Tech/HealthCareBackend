@@ -56,11 +56,13 @@ import type { LoggerLike } from '@core/types';
  */
 @Injectable()
 export class CacheService implements OnModuleInit, OnModuleDestroy {
+  private static readonly CACHE_INVALIDATION_CHANNEL = 'cache:invalidation';
   private config!: HealthcareCacheConfig;
   private advancedProvider!: IAdvancedCacheProvider;
 
   private enableL1: boolean;
   private l1TTL: number;
+  private cacheInvalidationSubscribed = false;
 
   constructor(
     @Inject(forwardRef(() => ConfigService))
@@ -118,6 +120,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         multiLayer: this.enableL1 && this.l1CacheService !== null,
       }
     );
+
+    await this.subscribeToCacheInvalidations();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -128,6 +132,67 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
       'CacheService',
       {}
     );
+  }
+
+  private async subscribeToCacheInvalidations(): Promise<void> {
+    if (this.cacheInvalidationSubscribed || !this.l1CacheService || !this.enableL1) {
+      return;
+    }
+
+    try {
+      await this.subscribe(CacheService.CACHE_INVALIDATION_CHANNEL, message => {
+        try {
+          const payload = JSON.parse(message) as { scope?: string; keys?: string[] };
+          void payload;
+        } catch {
+          // Ignore malformed payloads; the safe fallback is clearing local L1.
+        }
+
+        this.l1CacheService?.clear();
+      });
+
+      this.cacheInvalidationSubscribed = true;
+
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.INFO,
+        'Subscribed to cache invalidation broadcasts',
+        'CacheService',
+        { channel: CacheService.CACHE_INVALIDATION_CHANNEL }
+      );
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        'Failed to subscribe to cache invalidation broadcasts',
+        'CacheService',
+        {
+          channel: CacheService.CACHE_INVALIDATION_CHANNEL,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+  }
+
+  private async broadcastCacheInvalidation(
+    scope: 'key' | 'keys' | 'pattern' | 'tag' | 'clear',
+    value?: string | string[]
+  ): Promise<void> {
+    try {
+      await this.publish(CacheService.CACHE_INVALIDATION_CHANNEL, JSON.stringify({ scope, value }));
+    } catch (error) {
+      await this.loggingService.log(
+        LogType.CACHE,
+        LogLevel.WARN,
+        'Failed to broadcast cache invalidation',
+        'CacheService',
+        {
+          scope,
+          value,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
   }
 
   /**
@@ -452,9 +517,12 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
         return 0;
       }
       const deleted = await this.cacheRepository.delete(key);
+      await this.broadcastCacheInvalidation('key', key);
       return deleted ? 1 : 0;
     }
-    return this.cacheRepository.deleteMultiple(keys);
+    const deletedCount = await this.cacheRepository.deleteMultiple(keys);
+    await this.broadcastCacheInvalidation('keys', keys);
+    return deletedCount;
   }
 
   async exists(key: string): Promise<boolean> {
@@ -472,7 +540,9 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   // ===== INVALIDATION METHODS =====
 
   async invalidateCache(key: string): Promise<boolean> {
-    return this.cacheRepository.delete(key);
+    const deleted = await this.cacheRepository.delete(key);
+    await this.broadcastCacheInvalidation('key', key);
+    return deleted;
   }
 
   async invalidateCacheByPattern(pattern: string): Promise<number> {
@@ -484,6 +554,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     if (this.enableL1 && this.l1CacheService) {
       this.l1CacheService.clear();
     }
+
+    await this.broadcastCacheInvalidation('pattern', pattern);
 
     return count;
   }
@@ -504,6 +576,8 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
     if (this.enableL1 && this.l1CacheService) {
       this.l1CacheService.clear();
     }
+
+    await this.broadcastCacheInvalidation('tag', tag);
 
     return count;
   }
@@ -587,8 +661,20 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async invalidateClinicCache(clinicId: string): Promise<number> {
-    const pattern = this.keyFactory.clinic(clinicId, '*');
-    return this.invalidateCacheByPattern(pattern);
+    const patterns = [
+      this.keyFactory.clinic(clinicId, '*'),
+      `clinic:${clinicId}:*`,
+      `clinic_locations:${clinicId}:*`,
+      `location:list:${clinicId}:*`,
+      `location:${clinicId}:*`,
+    ];
+
+    let invalidated = 0;
+    for (const pattern of patterns) {
+      invalidated += await this.invalidateCacheByPattern(pattern);
+    }
+
+    return invalidated;
   }
 
   async clearPHICache(): Promise<number> {
@@ -760,11 +846,25 @@ export class CacheService implements OnModuleInit, OnModuleDestroy {
   }
 
   async clearAllCache(): Promise<number> {
-    return this.getProvider().clearAllCache();
+    const cleared = await this.getProvider().clearAllCache();
+    if (this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.clear();
+    }
+    if (cleared > 0) {
+      await this.broadcastCacheInvalidation('clear');
+    }
+    return cleared;
   }
 
   async clearCache(pattern?: string): Promise<number> {
-    return this.getProvider().clearByPattern(pattern || '*');
+    const cleared = await this.getProvider().clearByPattern(pattern || '*');
+    if (this.enableL1 && this.l1CacheService) {
+      this.l1CacheService.clear();
+    }
+    if (cleared > 0) {
+      await this.broadcastCacheInvalidation('pattern', pattern || '*');
+    }
+    return cleared;
   }
 
   async resetCacheStats(): Promise<void> {

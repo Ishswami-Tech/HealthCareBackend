@@ -37,6 +37,7 @@ import type {
   VideoProviderType,
   VideoTokenResponse,
   VideoConsultationSession,
+  VideoConsultationAccessState,
 } from '@core/types/video.types';
 import { VideoProviderFactory } from '@services/video/providers/video-provider.factory';
 import { LoggingService } from '@infrastructure/logging';
@@ -68,6 +69,24 @@ import { normalizeAppointmentId } from '@utils/appointment-id.utils';
 import { parseIstDateTime, nowIso } from '../../libs/utils/date-time.util';
 
 export type { VideoCall, VideoCallSettings };
+
+type AppointmentPaymentLike = {
+  payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
+  paymentStatus?: string | null;
+  billing?: {
+    paymentStatus?: string | null;
+    status?: string | null;
+    paid?: boolean | null;
+  } | null;
+  invoice?: {
+    paymentStatus?: string | null;
+    status?: string | null;
+    paid?: boolean | null;
+  } | null;
+  paymentCompleted?: boolean | null;
+  isPaid?: boolean | null;
+  paid?: boolean | null;
+};
 
 // Type aliases for response data structures using existing ServiceResponse<T>
 type CreateVideoCallResponse = ServiceResponse<VideoCall>;
@@ -907,23 +926,7 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private isAppointmentPaid(appointment: {
-    payment?: { status?: string | null } | Array<{ status?: string | null }> | null;
-    paymentStatus?: string | null;
-    billing?: {
-      paymentStatus?: string | null;
-      status?: string | null;
-      paid?: boolean | null;
-    } | null;
-    invoice?: {
-      paymentStatus?: string | null;
-      status?: string | null;
-      paid?: boolean | null;
-    } | null;
-    paymentCompleted?: boolean | null;
-    isPaid?: boolean | null;
-    paid?: boolean | null;
-  }): boolean {
+  private isAppointmentPaid(appointment: AppointmentPaymentLike): boolean {
     if (
       appointment.paymentCompleted === true ||
       appointment.isPaid === true ||
@@ -954,6 +957,87 @@ export class VideoService implements OnModuleInit, OnModuleDestroy {
       ['PAID', 'COMPLETED'].includes(String(appointment.invoice?.status || '').toUpperCase()) ||
       appointment.invoice?.paid === true
     );
+  }
+
+  async getConsultationAccessState(
+    appointmentId: string,
+    accessContext?: VideoSessionAccessContext
+  ): Promise<VideoConsultationAccessState> {
+    const resolvedAppointmentId = normalizeAppointmentId(appointmentId);
+    const appointment = await this.databaseService.findAppointmentByIdSafe(resolvedAppointmentId);
+
+    if (!appointment) {
+      return {
+        appointmentId: resolvedAppointmentId,
+        canJoin: false,
+        paymentRequired: false,
+        paymentCompleted: false,
+        joinBlockedReason: 'This video appointment is no longer available.',
+        appointmentStatus: 'NOT_FOUND',
+        scheduledStartTime: null,
+        scheduledEndTime: null,
+        joinWindowStart: null,
+        joinWindowEnd: null,
+      };
+    }
+
+    const appointmentStatus = String(appointment.status || '').toUpperCase();
+    const paymentCompleted = this.isAppointmentPaid(appointment as AppointmentPaymentLike);
+    const paymentRequired =
+      String(appointment.type || '').toUpperCase() === 'VIDEO_CALL' && !paymentCompleted;
+    const scheduledWindow = this.resolveAppointmentVideoWindow(appointment);
+    const joinWindowStart = scheduledWindow?.startTime
+      ? new Date(scheduledWindow.startTime.getTime() - 10 * 60_000)
+      : null;
+    const joinWindowEnd = scheduledWindow?.endTime ?? null;
+    const confirmedSlotIndex = (
+      appointment as unknown as {
+        confirmedSlotIndex?: number | null;
+      }
+    ).confirmedSlotIndex;
+
+    let joinBlockedReason: string | null = null;
+
+    if (appointmentStatus === String(AppointmentStatus.CANCELLED)) {
+      joinBlockedReason = 'This appointment has been cancelled.';
+    } else if (appointmentStatus === String(AppointmentStatus.COMPLETED)) {
+      joinBlockedReason = 'This appointment has already been completed.';
+    } else if (
+      this.configService.isVideoNoShowEnabled() &&
+      appointmentStatus === String(AppointmentStatus.NO_SHOW)
+    ) {
+      joinBlockedReason = 'This appointment was marked as no-show.';
+    } else if (
+      isVideoSlotAwaitingConfirmation({
+        type: appointment.type,
+        status: appointment.status,
+        proposedSlots: (appointment as unknown as { proposedSlots?: unknown }).proposedSlots,
+        confirmedSlotIndex,
+      })
+    ) {
+      joinBlockedReason = 'This video request is awaiting slot confirmation.';
+    } else if (accessContext?.userRole === 'patient' && paymentRequired && !paymentCompleted) {
+      joinBlockedReason = 'Payment is required before joining this video appointment.';
+    } else if (joinWindowStart && joinWindowEnd) {
+      const now = new Date();
+      if (now < joinWindowStart || now > joinWindowEnd) {
+        joinBlockedReason =
+          'Join opens 10 minutes before your visit and stays open for 3 hours after start.';
+      }
+    }
+
+    return {
+      appointmentId: resolvedAppointmentId,
+      canJoin: !joinBlockedReason,
+      paymentRequired,
+      paymentCompleted,
+      joinBlockedReason,
+      appointmentStatus,
+      scheduledStartTime: scheduledWindow?.startTime ?? null,
+      scheduledEndTime: scheduledWindow?.endTime ?? null,
+      joinWindowStart,
+      joinWindowEnd,
+    };
   }
 
   private buildPlaceholderConsultationSession(appointment: {

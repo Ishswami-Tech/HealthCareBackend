@@ -222,6 +222,8 @@ export class LocationCacheService {
       // Invalidate location lists if clinicId provided
       if (clinicId) {
         keysToInvalidate.push(
+          `clinic_locations:${clinicId}:false`,
+          `clinic_locations:${clinicId}:true`,
           this.getLocationsListKey(clinicId, false),
           this.getLocationsListKey(clinicId, true)
         );

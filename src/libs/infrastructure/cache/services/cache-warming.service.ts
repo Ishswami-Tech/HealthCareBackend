@@ -9,6 +9,7 @@ import { HEALTHCARE_QUEUE } from '@infrastructure/queue/src/queue.constants';
 import { JobType } from '@core/types/queue.types';
 import { LogType, LogLevel } from '@core/types';
 import type { LoggerLike } from '@core/types';
+import { Role } from '@core/types/enums.types';
 import { formatDateKeyInIST } from '../../../utils/date-time.util';
 
 /**
@@ -302,72 +303,84 @@ export class CacheWarmingService implements OnModuleInit {
    */
   private async warmClinicCaches(clinicId: string): Promise<void> {
     try {
-      // Warm clinic info
-      await this.cacheService.warmClinicCache(clinicId);
-
-      // Warm clinic doctors list
-      const keyFactory = this.cacheService.getKeyFactory();
-      const doctorsKey = keyFactory.clinic(clinicId, 'doctors');
-
-      // Fetch and cache doctors list (Doctor uses many-to-many relation with clinics via DoctorClinic)
+      // Warm the active doctor list endpoint used by the booking UI.
       const doctors = await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            doctor: {
-              findMany: <T>(args: T) => Promise<unknown[]>;
-            };
-          }
-        ).doctor.findMany({
+        const typedClient = client as unknown as {
+          user: {
+            findMany: <T>(args: T) => Promise<
+              Array<{
+                doctor?: unknown;
+              }>
+            >;
+          };
+        };
+
+        const users = await typedClient.user.findMany({
           where: {
-            clinics: {
-              some: {
-                clinicId,
+            OR: [
+              { role: Role.DOCTOR },
+              { role: 'DOCTOR' },
+              {
+                userRoles: { some: { clinicId, role: { name: Role.DOCTOR }, isActive: true } },
+              },
+            ],
+            AND: [
+              {
+                OR: [
+                  { doctor: { clinics: { some: { clinicId } } } },
+                  { primaryClinicId: clinicId },
+                  { clinics: { some: { id: clinicId } } },
+                  { userRoles: { some: { clinicId, isActive: true } } },
+                ],
+              },
+            ],
+          },
+          include: {
+            doctor: {
+              include: {
+                user: true,
               },
             },
-            isAvailable: true,
           },
-          select: {
-            id: true,
-            userId: true,
-            specialization: true,
-          },
-          take: 100, // Limit to top 100 doctors per clinic
         });
+
+        return users
+          .filter(user => Boolean(user.doctor))
+          .map(user => ({
+            doctor: user.doctor,
+          }));
       });
 
-      await this.cacheService.set(
-        doctorsKey,
-        doctors,
-        14400 // Increased TTL to 4 hours for doctor profiles (better hit rate)
-      );
+      await this.cacheService.set(`clinic:${clinicId}:doctors`, doctors, 14400);
 
-      // Warm clinic locations
-      const locationsKey = keyFactory.clinic(clinicId, 'locations');
+      // Warm the active location list keys used by the booking UI.
       const locations = await this.databaseService.executeHealthcareRead(async client => {
-        return await (
-          client as unknown as {
-            clinicLocation: {
-              findMany: <T>(args: T) => Promise<unknown[]>;
-            };
-          }
-        ).clinicLocation.findMany({
+        const typedClient = client as unknown as {
+          clinicLocation: {
+            findMany: <T>(args: T) => Promise<unknown[]>;
+          };
+        };
+
+        return await typedClient.clinicLocation.findMany({
           where: {
             clinicId,
             isActive: true,
           },
           select: {
             id: true,
+            clinicId: true,
             name: true,
             address: true,
+            workingHours: true,
+            isActive: true,
+            createdAt: true,
+            updatedAt: true,
           },
         });
       });
 
-      await this.cacheService.set(
-        locationsKey,
-        locations,
-        28800 // Increased TTL to 8 hours for clinic data (better hit rate)
-      );
+      await this.cacheService.set(`clinic_locations:${clinicId}:false`, locations, 3600);
+      await this.cacheService.set(`location:list:${clinicId}:basic`, locations, 3600);
     } catch (error) {
       await this.loggingService.log(
         LogType.ERROR,

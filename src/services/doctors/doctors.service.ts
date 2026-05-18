@@ -1,13 +1,16 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { DatabaseService } from '@infrastructure/database';
 import { LoggingService } from '@infrastructure/logging';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/types/prisma.types';
 
 @Injectable()
 export class DoctorsService {
   constructor(
     private readonly databaseService: DatabaseService,
-    private readonly loggingService: LoggingService
+    private readonly loggingService: LoggingService,
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService: CacheService
   ) {}
 
   /**
@@ -96,6 +99,10 @@ export class DoctorsService {
       );
     }
 
+    if (data.clinicId) {
+      await this.cacheService.invalidateClinicCache(data.clinicId);
+    }
+
     return { success: true, message: 'Doctor profile updated' };
   }
 
@@ -124,47 +131,73 @@ export class DoctorsService {
     clinicId?: string | undefined;
     locationId?: string | undefined;
   }) {
-    return await this.databaseService.executeHealthcareRead(async client => {
-      const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
-        user: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
-      };
+    const clinicSegment = filters?.clinicId?.trim() || 'global';
+    const specializationSegment = filters?.specialization?.trim() || 'all';
+    const locationSegment = filters?.locationId?.trim() || 'all';
+    const cacheKey = this.cacheService
+      .getKeyFactory()
+      .fromTemplate('clinic:{clinicId}:doctors:spec:{specialization}:loc:{locationId}', {
+        clinicId: clinicSegment,
+        specialization: specializationSegment,
+        locationId: locationSegment,
+      });
 
-      const where: Record<string, unknown> = { role: 'DOCTOR' };
+    return await this.cacheService.cache(
+      cacheKey,
+      async () => {
+        return await this.databaseService.executeHealthcareRead(async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            user: { findMany: (args: PrismaDelegateArgs) => Promise<unknown[]> };
+          };
 
-      if (filters?.specialization) {
-        where['doctor'] = {
-          specialization: { contains: filters.specialization, mode: 'insensitive' },
-        };
+          const where: Record<string, unknown> = { role: 'DOCTOR' };
+
+          if (filters?.specialization) {
+            where['doctor'] = {
+              specialization: { contains: filters.specialization, mode: 'insensitive' },
+            };
+          }
+
+          if (filters?.clinicId || filters?.locationId) {
+            if (!where['doctor']) {
+              where['doctor'] = {};
+            }
+            const doctorWhere = where['doctor'] as Record<string, unknown>;
+
+            const clinicsFilter: Record<string, unknown> = {};
+
+            if (filters.clinicId) {
+              clinicsFilter['clinicId'] = filters.clinicId;
+            }
+
+            if (filters.locationId) {
+              // Match doctors assigned specifically to this location OR not assigned to any specific location (clinic-wide)
+              clinicsFilter['OR'] = [{ locationId: filters.locationId }, { locationId: null }];
+            }
+
+            doctorWhere['clinics'] = {
+              some: clinicsFilter,
+            };
+          }
+
+          return await typedClient.user.findMany({
+            where: where as PrismaDelegateArgs,
+            include: {
+              doctor: true,
+            } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        });
+      },
+      {
+        ttl: 14400,
+        enableSwr: true,
+        tags: [
+          'doctors',
+          `clinic:${clinicSegment}`,
+          `clinic:${clinicSegment}:doctors`,
+          `clinic:${clinicSegment}:doctors:spec:${specializationSegment}:loc:${locationSegment}`,
+        ],
       }
-
-      if (filters?.clinicId || filters?.locationId) {
-        if (!where['doctor']) {
-          where['doctor'] = {};
-        }
-        const doctorWhere = where['doctor'] as Record<string, unknown>;
-
-        const clinicsFilter: Record<string, unknown> = {};
-
-        if (filters.clinicId) {
-          clinicsFilter['clinicId'] = filters.clinicId;
-        }
-
-        if (filters.locationId) {
-          // Match doctors assigned specifically to this location OR not assigned to any specific location (clinic-wide)
-          clinicsFilter['OR'] = [{ locationId: filters.locationId }, { locationId: null }];
-        }
-
-        doctorWhere['clinics'] = {
-          some: clinicsFilter,
-        };
-      }
-
-      return await typedClient.user.findMany({
-        where: where as PrismaDelegateArgs,
-        include: {
-          doctor: true,
-        } as PrismaDelegateArgs,
-      } as PrismaDelegateArgs);
-    });
+    );
   }
 }
