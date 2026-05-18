@@ -912,9 +912,6 @@ export class AppointmentNotificationService {
         <h2>Appointment Cancelled</h2>
         <p>Hello ${patientName},</p>
         <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been cancelled.</p>
-        <p><strong>Date:</strong> ${appointmentDate}</p>
-        <p><strong>Time:</strong> ${appointmentTime}</p>
-        <p><strong>Location:</strong> ${location}</p>
       `,
       reschedule: `
         <h2>Appointment Rescheduled</h2>

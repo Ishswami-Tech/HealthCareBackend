@@ -93,7 +93,8 @@ export class ClinicLocationService {
 
   async getLocations(
     clinicId: string,
-    includeDoctors = false
+    includeDoctors = false,
+    includeInactive = false
   ): Promise<ClinicLocationResponseDto[]> {
     // Resolve clinic UUID from code if necessary
     const resolvedClinicId = await resolveClinicUUID(this.databaseService, clinicId);
@@ -102,7 +103,8 @@ export class ClinicLocationService {
     if (this.locationCacheService) {
       const cached = await this.locationCacheService.getLocationsByClinic(
         resolvedClinicId,
-        includeDoctors
+        includeDoctors,
+        includeInactive
       );
       if (cached) {
         return cached;
@@ -110,13 +112,13 @@ export class ClinicLocationService {
     }
 
     // Fallback to direct cache or fetch
-    const cacheKey = `clinic_locations:${resolvedClinicId}:${includeDoctors}`;
+    const cacheKey = `clinic_locations:${resolvedClinicId}:${includeDoctors ? 'with-doctors' : 'basic'}:${includeInactive ? 'all' : 'active'}`;
 
     if (this.cacheService) {
       const locations = await this.cacheService.cache(
         cacheKey,
         async () => {
-          return this.fetchLocations(resolvedClinicId, includeDoctors);
+          return this.fetchLocations(resolvedClinicId, includeDoctors, includeInactive);
         },
         {
           ttl: 1800, // 30 minutes
@@ -130,21 +132,23 @@ export class ClinicLocationService {
         await this.locationCacheService.setLocationsByClinic(
           resolvedClinicId,
           locations,
-          includeDoctors
+          includeDoctors,
+          includeInactive
         );
       }
 
       return locations;
     }
 
-    const locations = await this.fetchLocations(resolvedClinicId, includeDoctors);
+    const locations = await this.fetchLocations(resolvedClinicId, includeDoctors, includeInactive);
 
     // Set in LocationCacheService if available
     if (this.locationCacheService) {
       await this.locationCacheService.setLocationsByClinic(
         resolvedClinicId,
         locations,
-        includeDoctors
+        includeDoctors,
+        includeInactive
       );
     }
 
@@ -153,12 +157,13 @@ export class ClinicLocationService {
 
   private async fetchLocations(
     clinicId: string, // Assumed to be UUID here
-    includeDoctors = false
+    includeDoctors = false,
+    includeInactive = false
   ): Promise<ClinicLocationResponseDto[]> {
     try {
       // Use executeHealthcareRead for optimized query
       const queryOptions: {
-        where: { clinicId: string; isActive: boolean };
+        where: { clinicId: string; isActive?: boolean };
         orderBy: { name: 'asc' } | Array<{ name: 'asc' }>;
         select: {
           id: boolean;
@@ -190,7 +195,7 @@ export class ClinicLocationService {
       } = {
         where: {
           clinicId,
-          isActive: true,
+          ...(includeInactive ? {} : { isActive: true }),
         },
         orderBy: { name: 'asc' },
         select: {

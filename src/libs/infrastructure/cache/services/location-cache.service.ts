@@ -44,9 +44,10 @@ export class LocationCacheService {
   async getLocation(
     locationId: string,
     includeDoctors = false,
-    clinicId?: string
+    clinicId?: string,
+    includeInactive = false
   ): Promise<ClinicLocationResponseDto | null> {
-    const cacheKey = this.getLocationKey(locationId, includeDoctors, clinicId);
+    const cacheKey = this.getLocationKey(locationId, includeDoctors, includeInactive, clinicId);
     const startTime = Date.now();
 
     try {
@@ -95,14 +96,20 @@ export class LocationCacheService {
     locationId: string,
     location: ClinicLocationResponseDto | ClinicLocation,
     includeDoctors = false,
-    clinicId?: string
+    clinicId?: string,
+    includeInactive = false
   ): Promise<void> {
     const resolvedClinicId =
       clinicId ||
       ('clinicId' in location && typeof location.clinicId === 'string'
         ? location.clinicId
         : undefined);
-    const cacheKey = this.getLocationKey(locationId, includeDoctors, resolvedClinicId);
+    const cacheKey = this.getLocationKey(
+      locationId,
+      includeDoctors,
+      includeInactive,
+      resolvedClinicId
+    );
 
     try {
       // Use cache() method with forceRefresh to ensure value is set
@@ -138,9 +145,10 @@ export class LocationCacheService {
    */
   async getLocationsByClinic(
     clinicId: string,
-    includeDoctors = false
+    includeDoctors = false,
+    includeInactive = false
   ): Promise<ClinicLocationResponseDto[] | null> {
-    const cacheKey = this.getLocationsListKey(clinicId, includeDoctors);
+    const cacheKey = this.getLocationsListKey(clinicId, includeDoctors, includeInactive);
 
     try {
       // Direct cache get (no fetchFn to avoid circular dependency)
@@ -168,9 +176,10 @@ export class LocationCacheService {
   async setLocationsByClinic(
     clinicId: string,
     locations: ClinicLocationResponseDto[],
-    includeDoctors = false
+    includeDoctors = false,
+    includeInactive = false
   ): Promise<void> {
-    const cacheKey = this.getLocationsListKey(clinicId, includeDoctors);
+    const cacheKey = this.getLocationsListKey(clinicId, includeDoctors, includeInactive);
 
     try {
       // Use cache() method with forceRefresh to ensure value is set
@@ -202,13 +211,17 @@ export class LocationCacheService {
     try {
       // Invalidate all variants of this location
       const keysToInvalidate = [
-        this.getLocationKey(locationId, false),
-        this.getLocationKey(locationId, true),
+        this.getLocationKey(locationId, false, false),
+        this.getLocationKey(locationId, true, false),
+        this.getLocationKey(locationId, false, true),
+        this.getLocationKey(locationId, true, true),
       ];
       if (clinicId) {
         keysToInvalidate.push(
-          this.getLocationKey(locationId, false, clinicId),
-          this.getLocationKey(locationId, true, clinicId)
+          this.getLocationKey(locationId, false, false, clinicId),
+          this.getLocationKey(locationId, true, false, clinicId),
+          this.getLocationKey(locationId, false, true, clinicId),
+          this.getLocationKey(locationId, true, true, clinicId)
         );
       }
 
@@ -222,10 +235,10 @@ export class LocationCacheService {
       // Invalidate location lists if clinicId provided
       if (clinicId) {
         keysToInvalidate.push(
-          `clinic_locations:${clinicId}:false`,
-          `clinic_locations:${clinicId}:true`,
-          this.getLocationsListKey(clinicId, false),
-          this.getLocationsListKey(clinicId, true)
+          this.getLocationsListKey(clinicId, false, false),
+          this.getLocationsListKey(clinicId, false, true),
+          this.getLocationsListKey(clinicId, true, false),
+          this.getLocationsListKey(clinicId, true, true)
         );
       }
 
@@ -328,15 +341,24 @@ export class LocationCacheService {
   /**
    * Get cache key for a single location
    */
-  private getLocationKey(locationId: string, includeDoctors: boolean, clinicId?: string): string {
+  private getLocationKey(
+    locationId: string,
+    includeDoctors: boolean,
+    includeInactive: boolean,
+    clinicId?: string
+  ): string {
     const scope = clinicId ? `${clinicId}:` : '';
-    return `${this.CACHE_PREFIX}:${scope}${locationId}:${includeDoctors ? 'with-doctors' : 'basic'}`;
+    return `${this.CACHE_PREFIX}:${scope}${locationId}:${includeDoctors ? 'with-doctors' : 'basic'}:${includeInactive ? 'all' : 'active'}`;
   }
 
   /**
    * Get cache key for locations list
    */
-  private getLocationsListKey(clinicId: string, includeDoctors: boolean): string {
-    return `${this.CACHE_PREFIX}:list:${clinicId}:${includeDoctors ? 'with-doctors' : 'basic'}`;
+  private getLocationsListKey(
+    clinicId: string,
+    includeDoctors: boolean,
+    includeInactive: boolean
+  ): string {
+    return `${this.CACHE_PREFIX}:list:${clinicId}:${includeDoctors ? 'with-doctors' : 'basic'}:${includeInactive ? 'all' : 'active'}`;
   }
 }
