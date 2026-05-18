@@ -1325,8 +1325,21 @@ export class AppointmentsController {
       };
 
       // Construct the response DTO with all required fields
-      const slotsArray = validatedData.availableSlots;
-      const bookedArray = validatedData.bookedSlots;
+      const normalizeSlot = (slot: string): string => {
+        const trimmed = slot.trim();
+        const match = /^(\d{1,2}):(\d{2})(?::\d{2})?$/.exec(trimmed);
+        if (!match) {
+          return trimmed;
+        }
+        return `${(match[1] || '').padStart(2, '0')}:${match[2] || ''}`;
+      };
+      const bookedArray = Array.from(new Set(validatedData.bookedSlots.map(normalizeSlot)));
+      const bookedSet = new Set(bookedArray);
+      const slotsArray = Array.from(
+        new Set(
+          validatedData.availableSlots.map(normalizeSlot).filter(slot => !bookedSet.has(slot))
+        )
+      );
       const workingHoursObj = validatedData.workingHours;
 
       const availabilityResult: DoctorAvailabilityResponseDto = {
