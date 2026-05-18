@@ -256,15 +256,21 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         if (clinicId) {
           builder = builder.clinicId(clinicId);
         }
-        return builder
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .hipaaCompliant(true)
-          .rowLevelSecurity(
-            options?.rowLevelSecurity !== undefined ? options.rowLevelSecurity : true
-          )
-          .build();
+        return (
+          builder
+            // Appointment list queries must NOT be cached at the DB layer.
+            // The service layer (CacheService) manages appointment list caching with proper
+            // invalidation tags. The DB-level cache uses a separate key namespace
+            // (READ_OPERATION + hash) that is never cleared by invalidateMyAppointmentsCache,
+            // causing stale lists to be returned after new appointments are created.
+            .useCache(false)
+            .priority('normal')
+            .hipaaCompliant(true)
+            .rowLevelSecurity(
+              options?.rowLevelSecurity !== undefined ? options.rowLevelSecurity : true
+            )
+            .build()
+        );
       })()
     );
   }
@@ -287,13 +293,16 @@ export class AppointmentMethods extends DatabaseMethodsBase {
         if (clinicId) {
           builder = builder.clinicId(clinicId);
         }
-        return builder
-          .useCache(true)
-          .cacheStrategy('short')
-          .priority('normal')
-          .hipaaCompliant(true)
-          .rowLevelSecurity(true)
-          .build();
+        return (
+          builder
+            // Keep count queries fresh with the appointment list query. A stale DB-layer
+            // count can make patient pagination/meta disagree with newly created rows.
+            .useCache(false)
+            .priority('normal')
+            .hipaaCompliant(true)
+            .rowLevelSecurity(true)
+            .build()
+        );
       })()
     );
   }

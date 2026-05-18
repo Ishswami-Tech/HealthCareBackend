@@ -4277,10 +4277,10 @@ export class AppointmentsService {
         return { success: true, data: availabilityData };
       },
       {
-        ttl: 180,
+        ttl: 10,
         tags: ['appointments', 'doctor_availability', `doctor:${doctorId}`],
         priority: 'high',
-        enableSwr: true,
+        enableSwr: false,
         containsPHI: false,
         compress: false,
       }

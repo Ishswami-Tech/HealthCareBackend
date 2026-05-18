@@ -230,7 +230,7 @@ export class UsersService {
   }
 
   async findOne(id: string, clinicId?: string): Promise<UserResponseDto> {
-    const cacheKey = `users:one:v3:${id}:${clinicId || 'global'}`;
+    const cacheKey = `users:one:v4:${id}:${clinicId || 'global'}`;
 
     return this.cacheService.cache(
       cacheKey,
@@ -256,7 +256,25 @@ export class UsersService {
           updatedAt: result.updatedAt,
           phone: result.phone ?? '',
         };
-        const patientRecord = result.patient as { id?: string } | null | undefined;
+        let patientRecord = result.patient as { id?: string } | null | undefined;
+        if (String(result.role).toUpperCase() === 'PATIENT') {
+          if (!patientRecord?.id) {
+            await this.patientsService.ensurePatientProfile(result.id);
+          }
+
+          patientRecord = await this.databaseService.executeHealthcareRead(async client => {
+            const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+              patient: {
+                findUnique: (args: PrismaDelegateArgs) => Promise<{ id?: string } | null>;
+              };
+            };
+            return typedClient.patient.findUnique({
+              where: { userId: result.id } as PrismaDelegateArgs,
+              select: { id: true } as PrismaDelegateArgs,
+            } as PrismaDelegateArgs);
+          });
+        }
+
         if (patientRecord?.id) {
           userResponse.patientId = patientRecord.id;
         }
@@ -268,10 +286,10 @@ export class UsersService {
         return userResponse;
       },
       {
-        ttl: 3600, // 1 hour
+        ttl: 30,
         tags: [`user:${id}`, 'user_details'],
         priority: 'high',
-        enableSwr: true,
+        enableSwr: false,
         compress: true, // Compress user details
         containsPHI: true, // User details contain PHI
       }
