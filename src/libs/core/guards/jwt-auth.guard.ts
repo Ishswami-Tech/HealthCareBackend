@@ -184,6 +184,12 @@ export class JwtAuthGuard implements CanActivate {
     '/api/v1/profile-completion',
     '/api/v1/user/',
     '/api/v1/users/profile',
+    '/api/v1/clinics/',
+    '/api/v1/doctors/',
+    '/api/v1/appointments/',
+    '/api/v1/video/',
+    '/api/v1/billing/',
+    '/api/v1/ehr/',
   ];
 
   /**

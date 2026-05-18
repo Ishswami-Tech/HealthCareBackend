@@ -172,7 +172,7 @@ const APPOINTMENT_SERVICE_CATALOG: AppointmentServiceMetadataDto[] = [
     description: 'Care pathway tailored for senior citizens and older adults',
     category: AppointmentServiceCategory.CONSULTATION,
     defaultDurationMinutes: TEST_APPOINTMENT_DURATION_MINUTES,
-    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.HOME_VISIT],
+    appointmentModes: [AppointmentType.IN_PERSON, AppointmentType.VIDEO_CALL],
     queueCategory: AppointmentQueueCategory.DOCTOR_CONSULTATION,
     serviceBucket: 'SENIOR_CITIZEN',
     billingMode: AppointmentBillingMode.SUBSCRIPTION_INCLUDED,

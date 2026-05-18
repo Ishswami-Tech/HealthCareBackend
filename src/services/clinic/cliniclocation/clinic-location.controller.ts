@@ -6,6 +6,7 @@ import {
   Param,
   Delete,
   Put,
+  Query,
   UseGuards,
   Request,
   NotFoundException,
@@ -18,6 +19,7 @@ import {
   ApiParam,
   ApiSecurity,
   ApiBody,
+  ApiQuery,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '@core/guards/jwt-auth.guard';
 import { RolesGuard } from '@core/guards/roles.guard';
@@ -90,7 +92,7 @@ export class ClinicLocationController {
   )
   @RequireResourcePermission('clinics', 'read')
   @CacheDecorator({
-    keyTemplate: 'clinic_locations:{clinicId}:false',
+    keyTemplate: 'clinic_locations:{clinicId}:false:{includeInactive}',
     ttl: 1800, // 30 minutes
     tags: ['clinic_locations', 'clinic:{clinicId}'],
     enableSWR: true,
@@ -101,11 +103,19 @@ export class ClinicLocationController {
     description: 'Return all locations for the specified clinic.',
   })
   @ApiParam({ name: 'clinicId', description: 'ID of the clinic' })
+  @ApiQuery({
+    name: 'includeInactive',
+    description: 'Include inactive locations in the response',
+    required: false,
+    type: Boolean,
+  })
   async findAll(
     @Param('clinicId') clinicId: string,
-    @Request() _req: { user: { id: string } }
+    @Request() _req: { user: { id: string } },
+    @Query('includeInactive') includeInactive?: string
   ): Promise<ClinicLocationResponseDto[]> {
-    return await this.locationService.getLocations(clinicId, false);
+    const includeInactiveFlag = includeInactive === 'true';
+    return await this.locationService.getLocations(clinicId, false, includeInactiveFlag);
   }
 
   @Get(':id')
