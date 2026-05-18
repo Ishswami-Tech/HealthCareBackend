@@ -1,4 +1,4 @@
-import { nowIso, formatDateInIST, formatTimeInIST } from '@utils/date-time.util';
+import { nowIso, formatDateInIST, formatTimeInIST, parseIstDateTime } from '@utils/date-time.util';
 /**
  * Notification Event Listener
  * ============================
@@ -1354,6 +1354,19 @@ export class NotificationEventListener implements OnModuleInit {
         const trimmed = value.trim();
         if (!trimmed) {
           return '';
+        }
+        const timeOnlyMatch = /^([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?:\s*(am|pm))?$/i.exec(
+          trimmed
+        );
+        if (timeOnlyMatch) {
+          const parsedSlotTime = parseIstDateTime('1970-01-01', trimmed);
+          if (parsedSlotTime) {
+            return formatTimeInIST(parsedSlotTime, {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true,
+            });
+          }
         }
         const parsed = new Date(`1970-01-01T${trimmed}`);
         if (!Number.isNaN(parsed.getTime())) {

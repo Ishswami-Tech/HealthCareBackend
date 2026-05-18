@@ -161,10 +161,10 @@ export class UsersController {
   @RequireResourcePermission('profile', 'read', { requireOwnership: true })
   @PatientCache({
     keyTemplate: 'user:{userId}:profile',
-    ttl: 1800, // 30 minutes
+    ttl: 30, // Keep short so newly created Patient records are reflected quickly.
     tags: ['user_profiles', 'users'],
     priority: 'high',
-    enableSWR: true,
+    enableSWR: false,
     containsPHI: true,
     compress: true,
   })

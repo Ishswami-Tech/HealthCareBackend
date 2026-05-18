@@ -4074,42 +4074,26 @@ export class AppointmentsService {
    * Get patient by user ID
    */
   async getPatientByUserId(userId: string): Promise<unknown> {
-    // Use CacheService key factory for proper key generation (single source of truth)
-    // Leverages all optimization layers: circuit breaker, metrics, error handling, SWR
-    const cacheKey = this.cacheService.getKeyFactory().patient(userId, undefined, 'user');
+    // Direct DB lookup. Patient-to-user mapping must always be fresh.
+    // A 1-hour stale cache caused null returns for newly created patient profiles.
+    const patient = await this.databaseService.executeHealthcareRead(async client => {
+      const patientDelegate = client['patient'] as {
+        findFirst: (args: {
+          where: { OR: Array<{ userId: string } | { id: string }> };
+          include: { user: boolean };
+        }) => Promise<unknown>;
+      };
+      return await patientDelegate.findFirst({
+        where: {
+          OR: [{ userId }, { id: userId }],
+        },
+        include: {
+          user: true,
+        },
+      });
+    });
 
-    return this.cacheService.cache(
-      cacheKey,
-      async () => {
-        // Use executeHealthcareRead with client parameter (patient doesn't have safe method yet)
-        const patient = await this.databaseService.executeHealthcareRead(async client => {
-          const patientDelegate = client['patient'] as {
-            findFirst: (args: {
-              where: { OR: Array<{ userId: string } | { id: string }> };
-              include: { user: boolean };
-            }) => Promise<unknown>;
-          };
-          return await patientDelegate.findFirst({
-            where: {
-              OR: [{ userId }, { id: userId }],
-            },
-            include: {
-              user: true,
-            },
-          });
-        });
-
-        return patient;
-      },
-      {
-        ttl: 3600,
-        tags: ['patients', 'user_patients', `user:${userId}`],
-        priority: 'high',
-        enableSwr: true,
-        containsPHI: true,
-        compress: true,
-      }
-    );
+    return patient;
   }
 
   /**
@@ -4121,33 +4105,75 @@ export class AppointmentsService {
   private async resolvePatientProfileForAppointments(
     userId: string
   ): Promise<{ id?: string } | null> {
-    const cachedPatient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
-    if (cachedPatient?.id) {
-      return cachedPatient;
+    // getPatientByUserId is now cache-free; direct DB query.
+    const patient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+    if (patient?.id) {
+      return patient;
     }
 
-    return await this.databaseService.executeHealthcareRead(async client => {
-      const patientDelegate = client['patient'] as {
-        findFirst: (args: {
-          where: { OR: Array<{ userId: string } | { id: string }> };
-          include: { user: boolean };
-        }) => Promise<{ id?: string } | null>;
-      };
+    // Self-heal: If the Patient record is missing, create it inline then re-fetch it.
+    // This handles users who registered before the patient-profile creation was reliable.
+    // Keep this direct to avoid introducing a circular PatientsService dependency here.
+    try {
+      await this.loggingService.log(
+        LogType.APPOINTMENT,
+        LogLevel.WARN,
+        `[resolvePatientProfile] No Patient record for userId=${userId}. Attempting auto-create.`,
+        'AppointmentsService',
+        { userId }
+      );
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as {
+            patient: {
+              upsert: (args: {
+                where: { userId: string };
+                update: Record<string, never>;
+                create: { userId: string };
+              }) => Promise<unknown>;
+            };
+          };
+          return await typedClient.patient.upsert({
+            where: { userId },
+            update: {},
+            create: { userId },
+          });
+        },
+        {
+          userId,
+          clinicId: '',
+          resourceType: 'PATIENT',
+          operation: 'CREATE',
+          resourceId: 'auto',
+          userRole: 'system',
+          details: { action: 'self_heal_patient_profile' },
+        }
+      );
+      await Promise.all([
+        this.cacheService.invalidatePatientCache(userId),
+        this.cacheService.invalidateCacheByTag(`user:${userId}`),
+        this.cacheService.invalidateCacheByTag('user_details'),
+      ]);
+      // Re-fetch the newly created patient
+      const freshPatient = (await this.getPatientByUserId(userId)) as { id?: string } | null;
+      if (freshPatient?.id) {
+        return freshPatient;
+      }
+    } catch (autoCreateErr) {
+      await this.loggingService.log(
+        LogType.ERROR,
+        LogLevel.ERROR,
+        `[resolvePatientProfile] Auto-create failed for userId=${userId}`,
+        'AppointmentsService',
+        {
+          userId,
+          error: autoCreateErr instanceof Error ? autoCreateErr.message : String(autoCreateErr),
+        }
+      );
+    }
 
-      return await patientDelegate.findFirst({
-        where: {
-          OR: [{ userId }, { id: userId }],
-        },
-        include: {
-          user: true,
-        },
-      });
-    });
+    return null;
   }
-
-  // =============================================
-  // UTILITY METHODS
-  // =============================================
 
   // =============================================
   // UTILITY METHODS
