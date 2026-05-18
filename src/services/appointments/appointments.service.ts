@@ -2522,6 +2522,10 @@ export class AppointmentsService {
       }
     );
 
+    if (_role === 'PATIENT') {
+      return this.coreAppointmentService.getAppointments(filters, context, page, limit);
+    }
+
     return this.cacheService.cache(
       cacheKey,
       () => this.coreAppointmentService.getAppointments(filters, context, page, limit),

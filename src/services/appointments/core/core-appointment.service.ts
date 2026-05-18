@@ -1014,9 +1014,12 @@ export class CoreAppointmentService {
         where['doctorId'] = context.doctorId || context.userId;
         break;
       case 'PATIENT':
-        // Appointment.patientId references Patient.id, not User.id.
-        // Patient-facing callers must resolve User.id -> Patient.id before querying.
-        where['patientId'] = context.patientId || '__missing_patient_profile__';
+        // Appointment.patientId references Patient.id, while Appointment.userId is the booking user.
+        // Query both so patient dashboards survive profile-cache gaps and legacy self-booked rows.
+        where['OR'] = [
+          { userId: context.userId },
+          { patientId: context.patientId || '__missing_patient_profile__' },
+        ];
         break;
       case 'NURSE':
       case 'RECEPTIONIST':
