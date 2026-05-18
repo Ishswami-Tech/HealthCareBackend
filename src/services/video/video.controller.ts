@@ -63,6 +63,7 @@ import type { ClinicAuthenticatedRequest } from '@core/types/clinic.types';
 import type {
   VideoTokenResponse,
   VideoConsultationSession,
+  VideoConsultationAccessState,
   VideoProviderType,
   VideoProviderSettingResponse,
 } from '@core/types/video.types';
@@ -400,7 +401,8 @@ export class VideoController {
     recordingEnabled: boolean,
     screenSharingEnabled: boolean,
     chatEnabled: boolean,
-    waitingRoomEnabled: boolean
+    waitingRoomEnabled: boolean,
+    accessState?: VideoConsultationAccessState
   ): VideoConsultationSessionDto {
     const dtoData: {
       id: string;
@@ -420,6 +422,14 @@ export class VideoController {
       screenSharingEnabled: boolean;
       chatEnabled: boolean;
       waitingRoomEnabled: boolean;
+      canJoin?: boolean;
+      paymentRequired?: boolean;
+      paymentCompleted?: boolean;
+      joinBlockedReason?: string | null;
+      joinWindowStart?: Date | null;
+      joinWindowEnd?: Date | null;
+      scheduledStartTime?: Date | null;
+      scheduledEndTime?: Date | null;
     } = {
       id,
       appointmentId,
@@ -435,6 +445,16 @@ export class VideoController {
       chatEnabled,
       waitingRoomEnabled,
     };
+    if (accessState) {
+      dtoData.canJoin = accessState.canJoin;
+      dtoData.paymentRequired = accessState.paymentRequired;
+      dtoData.paymentCompleted = accessState.paymentCompleted;
+      dtoData.joinBlockedReason = accessState.joinBlockedReason;
+      dtoData.joinWindowStart = accessState.joinWindowStart;
+      dtoData.joinWindowEnd = accessState.joinWindowEnd;
+      dtoData.scheduledStartTime = accessState.scheduledStartTime;
+      dtoData.scheduledEndTime = accessState.scheduledEndTime;
+    }
     const VideoConsultationSessionDtoClass: typeof VideoConsultationSessionDto =
       VideoConsultationSessionDto;
     const dtoInstanceRawUnknown: unknown = new VideoConsultationSessionDtoClass();
@@ -857,6 +877,10 @@ export class VideoController {
       if (req.user?.role) {
         accessContext.userRole = req.user.role;
       }
+      const accessState = await this.videoService.getConsultationAccessState(
+        appointmentId,
+        accessContext
+      );
       const sessionResult: unknown = await this.videoService.getConsultationSession(
         appointmentId,
         accessContext
@@ -909,7 +933,8 @@ export class VideoController {
         sessionRecordingEnabled,
         sessionScreenSharingEnabled,
         sessionChatEnabled,
-        sessionWaitingRoomEnabled
+        sessionWaitingRoomEnabled,
+        accessState
       );
       if (
         typeof sessionDtoResult !== 'object' ||

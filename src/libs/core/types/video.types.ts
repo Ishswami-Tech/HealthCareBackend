@@ -32,6 +32,14 @@ export interface VideoConsultationSession {
   status: 'SCHEDULED' | 'ACTIVE' | 'ENDED' | 'COMPLETED' | 'CANCELLED';
   startTime: Date | null;
   endTime: Date | null;
+  scheduledStartTime?: Date | null;
+  scheduledEndTime?: Date | null;
+  paymentRequired?: boolean;
+  paymentCompleted?: boolean;
+  canJoin?: boolean;
+  joinBlockedReason?: string | null;
+  joinWindowStart?: Date | null;
+  joinWindowEnd?: Date | null;
   participants: Array<{
     userId: string;
     role: 'HOST' | 'PARTICIPANT';
@@ -41,6 +49,22 @@ export interface VideoConsultationSession {
   screenSharingEnabled: boolean;
   chatEnabled: boolean;
   waitingRoomEnabled: boolean;
+}
+
+/**
+ * Explicit join state for a video consultation.
+ */
+export interface VideoConsultationAccessState {
+  appointmentId: string;
+  canJoin: boolean;
+  paymentRequired: boolean;
+  paymentCompleted: boolean;
+  joinBlockedReason: string | null;
+  appointmentStatus: string;
+  scheduledStartTime: Date | null;
+  scheduledEndTime: Date | null;
+  joinWindowStart: Date | null;
+  joinWindowEnd: Date | null;
 }
 
 /**

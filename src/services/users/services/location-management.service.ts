@@ -11,6 +11,7 @@ import { RbacService } from '@core/rbac/rbac.service';
 import { LoggingService } from '@infrastructure/logging';
 import { HealthcareErrorsService } from '@core/errors';
 import { ClinicLocationService } from '@services/clinic/services/clinic-location.service';
+import { CacheService } from '@infrastructure/cache/cache.service';
 import { LocationCacheService } from '@infrastructure/cache/services/location-cache.service';
 import { LogType, LogLevel } from '@core/types';
 import { Role } from '@core/types/enums.types';
@@ -35,6 +36,9 @@ export class LocationManagementService {
     private readonly errors: HealthcareErrorsService,
     @Inject(forwardRef(() => ClinicLocationService))
     private readonly clinicLocationService: ClinicLocationService,
+    @Optional()
+    @Inject(forwardRef(() => CacheService))
+    private readonly cacheService?: CacheService,
     @Optional()
     @Inject(forwardRef(() => LocationCacheService))
     private readonly locationCacheService?: LocationCacheService
@@ -431,6 +435,10 @@ export class LocationManagementService {
         break;
       default:
         throw new BadRequestException(`Location change not supported for role: ${role}`);
+    }
+
+    if (this.cacheService) {
+      await this.cacheService.invalidateClinicCache(clinicId);
     }
   }
 }

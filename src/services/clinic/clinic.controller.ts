@@ -794,13 +794,6 @@ export class ClinicController {
     status: HttpStatus.NOT_FOUND,
     description: 'Clinic not found.',
   })
-  @Cache({
-    keyTemplate: 'clinic:{id}:doctors',
-    ttl: 300, // 5 minutes
-    tags: ['clinics', 'clinic:{id}', 'doctors'],
-    enableSWR: true,
-    containsPHI: true,
-  })
   async getClinicDoctors(
     @Param('id', ClinicIdPipe) id: string,
     @Req() req: ClinicAuthenticatedRequest
