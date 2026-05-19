@@ -100,10 +100,8 @@ export class SocialAuthService {
   /**
    * Authenticate with Google
    */
-  async authenticateWithGoogle(googleToken: string): Promise<SocialAuthResult> {
+  async authenticateWithGoogle(googleToken: string, clinicId?: string): Promise<SocialAuthResult> {
     try {
-      // In a real implementation, you would verify the Google token
-      // For now, we'll simulate the user data extraction
       const googleUser = await this.verifyGoogleToken(googleToken);
 
       return await this.processSocialUser({
@@ -113,6 +111,7 @@ export class SocialAuthService {
         lastName: (googleUser as Record<string, unknown>)['family_name'] as string,
         profilePicture: (googleUser as Record<string, unknown>)['picture'] as string,
         provider: 'google',
+        ...(clinicId ? { clinicId } : {}),
       });
     } catch (_error) {
       void this.loggingService.log(
@@ -134,7 +133,6 @@ export class SocialAuthService {
    */
   async authenticateWithFacebook(facebookToken: string): Promise<SocialAuthResult> {
     try {
-      // In a real implementation, you would verify the Facebook token
       const facebookUser = await this.verifyFacebookToken(facebookToken);
 
       return await this.processSocialUser({
@@ -169,7 +167,6 @@ export class SocialAuthService {
    */
   async authenticateWithApple(appleToken: string): Promise<SocialAuthResult> {
     try {
-      // In a real implementation, you would verify the Apple token
       const appleUser = await this.verifyAppleToken(appleToken);
 
       return await this.processSocialUser({
@@ -219,6 +216,8 @@ export class SocialAuthService {
           role: 'PATIENT',
           isVerified: true, // Social auth users are pre-verified
           [this.getSocialIdField(socialUser.provider)]: socialUser.id,
+          // Persist primaryClinicId so new OAuth users get the correct clinic on first login.
+          ...(socialUser.clinicId && { primaryClinicId: socialUser.clinicId }),
         };
 
         const userDataForCreate: UserCreateInput & Record<string, unknown> = {
