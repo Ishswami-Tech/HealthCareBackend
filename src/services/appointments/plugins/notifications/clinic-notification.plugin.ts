@@ -26,6 +26,9 @@ interface NotificationPluginData {
   appointmentType?: string;
   notes?: string;
   rescheduleUrl?: string;
+  reason?: string;
+  cancellationReason?: string;
+  cancelledBy?: string;
 }
 
 @Injectable()
@@ -223,6 +226,8 @@ export class ClinicNotificationPlugin extends BaseAppointmentPlugin {
         clinicName: pluginData.clinicName || 'Healthcare Clinic',
         appointmentType: pluginData.appointmentType || '',
         notes: pluginData.notes || '',
+        cancellationReason: pluginData.reason || pluginData.cancellationReason || '',
+        cancelledBy: pluginData.cancelledBy || '',
       },
     };
 
