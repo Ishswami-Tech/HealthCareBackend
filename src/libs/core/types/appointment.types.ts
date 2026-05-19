@@ -1116,6 +1116,8 @@ export interface NotificationData {
     medicationDetails?: string;
     prescriptionUrl?: string;
     cancelUrl?: string;
+    cancellationReason?: string;
+    cancelledBy?: string;
     changes?: Record<string, unknown>;
   };
 }

@@ -482,6 +482,7 @@ export class AppointmentNotificationService {
     notificationId: string
   ): Promise<void> {
     const { appointmentId, templateData, type, clinicId, patientId } = notificationData;
+
     const patientUserId = await this.resolvePatientUserId(patientId, notificationId);
 
     // Fetch patient email using DatabaseService helper method (follows architecture rules)
@@ -867,7 +868,7 @@ export class AppointmentNotificationService {
     const subjects = {
       reminder: `Appointment reminder from ${displayName}`,
       confirmation: `Appointment confirmed by ${displayName}`,
-      cancellation: `Appointment cancelled by ${displayName}`,
+      cancellation: `Appointment cancellation notice from ${displayName}`,
       reschedule: `Appointment rescheduled by ${displayName}`,
       follow_up: `Follow-up required from ${displayName}`,
     };
@@ -886,13 +887,19 @@ export class AppointmentNotificationService {
     const appointmentDate = resolveText(data['appointmentDate'], 'soon');
     const appointmentTime = resolveText(data['appointmentTime'], 'TBD');
     const location = resolveText(data['location'], displayName);
-    const appointmentType = resolveText(data['appointmentType'], 'appointment');
+    const appointmentType = this.normalizeAppointmentType(
+      resolveText(data['appointmentType'], 'appointment')
+    );
     const detailsUrl = resolveText(data['detailsUrl'], '');
+    const cancellationReason = resolveText(data['cancellationReason'], '');
+    const cancelledBy = resolveText(data['cancelledBy'], '');
+    const typeLabel =
+      appointmentType === 'video' ? 'video appointment' : `${appointmentType} appointment`;
     const bodies = {
       reminder: `
         <h2>Appointment Reminder</h2>
         <p>Hello ${patientName},</p>
-        <p>This is a reminder for your ${appointmentType} appointment with ${doctorName} at ${displayName}.</p>
+        <p>This is a reminder for your ${typeLabel} with ${doctorName} at ${displayName}.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
         <p><strong>Location:</strong> ${location}</p>
@@ -901,22 +908,30 @@ export class AppointmentNotificationService {
       confirmation: `
         <h2>Appointment Confirmed</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been confirmed.</p>
+        <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been confirmed.</p>
         <p><strong>Date:</strong> ${appointmentDate}</p>
         <p><strong>Time:</strong> ${appointmentTime}</p>
         <p><strong>Location:</strong> ${location}</p>
         ${detailsUrl ? `<p><a href="${detailsUrl}">View appointment details</a></p>` : ''}
-        <p>Please open your appointment details in the app for location or join link.</p>
+        <p>${appointmentType === 'video' ? 'Please open your appointment details in the app for the video join link.' : 'Please open your appointment details in the app for location or join link.'}</p>
       `,
       cancellation: `
         <h2>Appointment Cancelled</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been cancelled.</p>
+        <p>Your ${typeLabel} with ${doctorName} at ${displayName} scheduled for ${appointmentDate} at ${appointmentTime} has been cancelled.</p>
+        ${cancellationReason ? `<p><strong>Reason:</strong> ${cancellationReason}</p>` : ''}
+        ${cancelledBy ? `<p><strong>Cancelled by:</strong> ${cancelledBy}</p>` : ''}
+        ${
+          appointmentType === 'video'
+            ? '<p>The video consultation link for this appointment is no longer active.</p>'
+            : ''
+        }
+        <p>Please contact the clinic if you need to reschedule or have any questions.</p>
       `,
       reschedule: `
         <h2>Appointment Rescheduled</h2>
         <p>Hello ${patientName},</p>
-        <p>Your ${appointmentType} appointment with ${doctorName} at ${displayName} has been rescheduled.</p>
+        <p>Your ${typeLabel} with ${doctorName} at ${displayName} has been rescheduled.</p>
         <p><strong>New Date:</strong> ${appointmentDate}</p>
         <p><strong>New Time:</strong> ${appointmentTime}</p>
         <p><strong>Location:</strong> ${location}</p>
