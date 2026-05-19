@@ -34,6 +34,10 @@ import { EmailTemplate } from '@core/types/common.types';
 import type { UserWhereInput, UserCreateInput, UserUpdateInput } from '@core/types/input.types';
 import { Role } from '@core/types/enums.types';
 import type { UserWithPassword, UserWithRelations } from '@core/types/user.types';
+import type {
+  PrismaDelegateArgs,
+  PrismaTransactionClientWithDelegates,
+} from '@core/types/prisma.types';
 import * as bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import type { FastifyReply } from 'fastify';
@@ -196,6 +200,72 @@ export class AuthService {
   }
 
   /**
+   * Ensure a Patient record exists for auth-generated or auth-recovered patient sessions.
+   */
+  private async ensurePatientRecordForAuth(
+    userId: string,
+    clinicId?: string,
+    source: string = 'auth'
+  ): Promise<void> {
+    try {
+      const existingPatient = await this.databaseService.executeHealthcareRead(async client => {
+        const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+          patient: {
+            findUnique: (args: PrismaDelegateArgs) => Promise<{ id: string } | null>;
+          };
+        };
+
+        return await typedClient.patient.findUnique({
+          where: { userId } as PrismaDelegateArgs,
+          select: { id: true } as PrismaDelegateArgs,
+        } as PrismaDelegateArgs);
+      });
+
+      if (existingPatient) {
+        return;
+      }
+
+      await this.databaseService.executeHealthcareWrite(
+        async client => {
+          const typedClient = client as unknown as PrismaTransactionClientWithDelegates & {
+            patient: {
+              create: (args: PrismaDelegateArgs) => Promise<{ id: string }>;
+            };
+          };
+
+          return await typedClient.patient.create({
+            data: { userId } as PrismaDelegateArgs,
+          } as PrismaDelegateArgs);
+        },
+        {
+          userId,
+          clinicId: clinicId || '',
+          resourceType: 'PATIENT',
+          operation: 'CREATE',
+          resourceId: userId,
+          userRole: Role.PATIENT,
+          details: { source, action: 'ensure_patient_profile' },
+        }
+      );
+
+      await this.cacheService.invalidatePatientCache(userId, clinicId);
+      await this.cacheService.invalidateCacheByTag('users');
+    } catch (error) {
+      await this.logging.log(
+        LogType.SYSTEM,
+        LogLevel.WARN,
+        `Failed to ensure patient record for ${source}`,
+        'AuthService.ensurePatientRecordForAuth',
+        {
+          userId,
+          clinicId: clinicId || '',
+          error: error instanceof Error ? error.message : String(error),
+        }
+      );
+    }
+  }
+
+  /**
    * User registration
    */
   /**
@@ -330,37 +400,9 @@ export class AuthService {
         // Public patient registrations remain incomplete until profile completion is finished.
       });
 
-      // 6. Create Patient record if role is PATIENT
+      // 6. Ensure Patient record exists for patient registrations
       if ((registerDto.role || 'PATIENT') === 'PATIENT') {
-        try {
-          await this.databaseService.executeHealthcareWrite(
-            async client => {
-              const typedClient = client as unknown as {
-                patient: {
-                  create: (args: { data: { userId: string } }) => Promise<{ id: string }>;
-                };
-              };
-              await typedClient.patient.create({ data: { userId: user.id } });
-            },
-            {
-              userId: user.id,
-              clinicId: clinicUUID,
-              resourceType: 'PATIENT',
-              operation: 'CREATE',
-              resourceId: user.id,
-              userRole: 'PATIENT',
-              details: { registration: true },
-            }
-          );
-        } catch (patientError) {
-          await this.logging.log(
-            LogType.ERROR,
-            LogLevel.WARN,
-            `Failed to create patient record: ${(patientError as Error).message}`,
-            'AuthService.register',
-            { userId: user.id }
-          );
-        }
+        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'register');
       }
 
       const clinicName = await this.resolveClinicDisplayName(clinicUUID);
@@ -555,6 +597,11 @@ export class AuthService {
       }
 
       const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'login');
+
+      const loginUserRole = user.role as Role;
+      if (loginUserRole === Role.PATIENT) {
+        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'login');
+      }
 
       // Create session with validated clinic UUID (optional for SUPER_ADMIN)
       const session = await this.sessionService.createSession({
@@ -1291,6 +1338,11 @@ export class AuthService {
 
       const clinicUUID = await this.validateClinicAccessForAuth(user.id, clinicId, 'verifyOtp');
 
+      const otpUserRole = user.role as Role;
+      if (otpUserRole === Role.PATIENT) {
+        await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'verifyOtp');
+      }
+
       // Create session first
       // Session is stored in Redis via SessionManagementService
       // Fastify session will be set in controller if request object is available
@@ -1758,6 +1810,8 @@ export class AuthService {
         age: 12, // Default age, will be updated in profile completion
       });
 
+      await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'registerWithEmailOtp');
+
       // 5. Create session
       const session = await this.sessionService.createSession({
         userId: user.id,
@@ -1882,6 +1936,8 @@ export class AuthService {
         name: `${firstName} ${lastName}`,
         age: 12, // Default age, will be updated in profile completion
       });
+
+      await this.ensurePatientRecordForAuth(user.id, clinicUUID, 'registerWithPhoneOtp');
 
       // 5. Create session
       const session = await this.sessionService.createSession({
@@ -2120,6 +2176,11 @@ export class AuthService {
           // still carries the resolved clinic for this login request.
           fullUser.primaryClinicId = finalClinicId;
         }
+      }
+
+      const googleUserRole = fullUser.role as Role;
+      if (googleUserRole === Role.PATIENT) {
+        await this.ensurePatientRecordForAuth(fullUser.id, finalClinicId, 'googleOAuth');
       }
 
       // Create session
