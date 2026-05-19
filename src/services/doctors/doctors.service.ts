@@ -6,6 +6,8 @@ import { PrismaDelegateArgs, PrismaTransactionClientWithDelegates } from '@core/
 
 @Injectable()
 export class DoctorsService {
+  private readonly EMPTY_RESULT_TTL = 60;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
@@ -142,7 +144,7 @@ export class DoctorsService {
         locationId: locationSegment,
       });
 
-    return await this.cacheService.cache(
+    const result = await this.cacheService.cache(
       cacheKey,
       async () => {
         return await this.databaseService.executeHealthcareRead(async client => {
@@ -199,5 +201,14 @@ export class DoctorsService {
         ],
       }
     );
+
+    if (Array.isArray(result) && result.length === 0) {
+      await Promise.allSettled([
+        this.cacheService.del(cacheKey),
+        this.cacheService.set(cacheKey, result, this.EMPTY_RESULT_TTL),
+      ]);
+    }
+
+    return result;
   }
 }
