@@ -2103,7 +2103,10 @@ export class AuthService {
   ): Promise<AuthResponse> {
     try {
       // Verify Google token and get user info
-      const socialAuthResult = await this.socialAuthService.authenticateWithGoogle(googleToken);
+      const socialAuthResult = await this.socialAuthService.authenticateWithGoogle(
+        googleToken,
+        clinicId
+      );
 
       if (!socialAuthResult.success || !socialAuthResult.user) {
         throw this.errors.invalidCredentials('AuthService.authenticateWithGoogle');

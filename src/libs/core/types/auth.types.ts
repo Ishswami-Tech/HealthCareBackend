@@ -188,6 +188,8 @@ export interface SocialUser {
   lastName?: string;
   profilePicture?: string;
   provider: 'google' | 'facebook' | 'apple';
+  /** Resolved clinic UUID — set by the auth service before calling processSocialUser for new users */
+  clinicId?: string;
 }
 
 /**
