@@ -24,6 +24,7 @@ export class LocationCacheService {
   private readonly CACHE_PREFIX = 'location';
   private readonly DEFAULT_TTL = 7200; // Increased from 3600 to 2 hours for better hit rate
   private readonly LOCATIONS_LIST_TTL = 3600; // Increased from 1800 to 1 hour for better hit rate
+  private readonly EMPTY_RESULT_TTL = 60;
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -182,9 +183,10 @@ export class LocationCacheService {
     const cacheKey = this.getLocationsListKey(clinicId, includeDoctors, includeInactive);
 
     try {
+      const ttl = locations.length === 0 ? this.EMPTY_RESULT_TTL : this.LOCATIONS_LIST_TTL;
       // Use cache() method with forceRefresh to ensure value is set
       await this.cacheService.cache(cacheKey, () => Promise.resolve(locations), {
-        ttl: this.LOCATIONS_LIST_TTL,
+        ttl,
         tags: ['locations', `clinic:${clinicId}`, 'location_lists'],
         enableSwr: true,
         forceRefresh: true, // Force set the value

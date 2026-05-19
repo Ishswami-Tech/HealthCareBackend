@@ -18,6 +18,8 @@ import { resolveClinicUUID } from '../../../libs/utils/clinic.utils';
 
 @Injectable()
 export class ClinicLocationService {
+  private readonly EMPTY_RESULT_TTL = 60;
+
   constructor(
     private readonly databaseService: DatabaseService,
     private readonly loggingService: LoggingService,
@@ -127,6 +129,15 @@ export class ClinicLocationService {
         }
       );
 
+      if (locations.length === 0) {
+        const shortTtl = this.EMPTY_RESULT_TTL;
+        const cacheService = this.cacheService;
+        await Promise.allSettled([
+          cacheService.del(cacheKey),
+          cacheService.set(cacheKey, locations, shortTtl),
+        ]);
+      }
+
       // Also set in LocationCacheService for consistency
       if (this.locationCacheService) {
         await this.locationCacheService.setLocationsByClinic(
@@ -141,6 +152,11 @@ export class ClinicLocationService {
     }
 
     const locations = await this.fetchLocations(resolvedClinicId, includeDoctors, includeInactive);
+
+    if (locations.length === 0 && this.cacheService) {
+      const cacheService = this.cacheService as CacheService;
+      await cacheService.set(cacheKey, locations, this.EMPTY_RESULT_TTL);
+    }
 
     // Set in LocationCacheService if available
     if (this.locationCacheService) {
