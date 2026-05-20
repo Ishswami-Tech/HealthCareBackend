@@ -14,6 +14,7 @@ import type { OtpConfig, OtpResult } from '@core/types/auth.types';
 @Injectable()
 export class OtpService {
   private readonly config: OtpConfig;
+  private readonly otpDebugEnabled: boolean;
 
   constructor(
     @Inject(forwardRef(() => CacheService))
@@ -31,6 +32,34 @@ export class OtpService {
       maxAttempts: this.configService.getEnvNumber('OTP_MAX_ATTEMPTS', 3),
       cooldownMinutes: this.configService.getEnvNumber('OTP_COOLDOWN_MINUTES', 1),
     };
+
+    this.otpDebugEnabled =
+      this.configService.getEnvBoolean('ENABLE_OTP_DEBUG', false) ||
+      this.configService.getEnvBoolean('DEBUG_MODE', false);
+  }
+
+  private normalizeIdentifier(identifier: string): string {
+    const trimmed = identifier.trim();
+
+    if (trimmed.includes('@')) {
+      return trimmed.toLowerCase();
+    }
+
+    const cleaned = trimmed.replace(/[^\d+]/g, '');
+    if (!cleaned.startsWith('+')) {
+      return `+${cleaned}`;
+    }
+
+    return cleaned;
+  }
+
+  private debugOtp(message: string, context: Record<string, unknown> = {}): void {
+    if (!this.otpDebugEnabled) {
+      return;
+    }
+
+    console.warn(`[OtpService][OTP] ${message}`, context);
+    void this.loggingService.log(LogType.AUTH, LogLevel.DEBUG, message, 'OtpService', context);
   }
 
   // ... (generateOtp and sendOtpEmail remain unchanged) ...
@@ -55,8 +84,9 @@ export class OtpService {
     providedOtp?: string
   ): Promise<OtpResult> {
     try {
+      const normalizedEmail = this.normalizeIdentifier(email);
       // Check cooldown
-      const cooldownKey = `otp_cooldown:${email}`;
+      const cooldownKey = `otp_cooldown:${normalizedEmail}`;
       const cooldown = await this.cacheService.get<string>(cooldownKey);
 
       if (cooldown) {
@@ -67,7 +97,7 @@ export class OtpService {
       }
 
       // Check attempts
-      const attemptsKey = `otp_attempts:${email}`;
+      const attemptsKey = `otp_attempts:${normalizedEmail}`;
       const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
 
@@ -80,8 +110,15 @@ export class OtpService {
 
       // Generate and store OTP
       const otp = providedOtp || this.generateOtp();
-      const otpKey = `otp:${email}`;
+      const otpKey = `otp:${normalizedEmail}`;
       const expirySeconds = this.config.expiryMinutes * 60;
+
+      this.debugOtp('Email OTP generated and cached', {
+        normalizedEmail,
+        purpose,
+        otpKey,
+        otpLength: otp.length,
+      });
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
@@ -109,7 +146,7 @@ export class OtpService {
         LogLevel.INFO,
         `OTP sent to ${email} for ${purpose}`,
         'OtpService',
-        { email, purpose }
+        { email: normalizedEmail, purpose }
       );
 
       return {
@@ -148,8 +185,9 @@ export class OtpService {
     providedOtp?: string
   ): Promise<OtpResult> {
     try {
+      const normalizedPhone = this.normalizeIdentifier(phone);
       // Check cooldown
-      const cooldownKey = `otp_cooldown:${phone}`;
+      const cooldownKey = `otp_cooldown:${normalizedPhone}`;
       const cooldown = await this.cacheService.get<string>(cooldownKey);
 
       if (cooldown) {
@@ -160,7 +198,7 @@ export class OtpService {
       }
 
       // Check attempts
-      const attemptsKey = `otp_attempts:${phone}`;
+      const attemptsKey = `otp_attempts:${normalizedPhone}`;
       const attempts = await this.cacheService.get<string>(attemptsKey);
       const attemptCount = attempts ? parseInt(attempts) : 0;
 
@@ -173,8 +211,15 @@ export class OtpService {
 
       // Generate and store OTP (reusing email logic logic but with phone key)
       const otp = providedOtp || this.generateOtp();
-      const otpKey = `otp:${phone}`;
+      const otpKey = `otp:${normalizedPhone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
+
+      this.debugOtp('WhatsApp OTP generated and cached', {
+        normalizedPhone,
+        purpose,
+        otpKey,
+        otpLength: otp.length,
+      });
 
       await this.cacheService.set(otpKey, otp, expirySeconds);
       await this.cacheService.set(attemptsKey, (attemptCount + 1).toString(), 60 * 60); // 1 hour
@@ -182,7 +227,7 @@ export class OtpService {
 
       // Send via WhatsApp
       const sent = await this.whatsAppService.sendOTP(
-        phone,
+        normalizedPhone,
         otp,
         this.config.expiryMinutes,
         2, // retries
@@ -194,9 +239,9 @@ export class OtpService {
         void this.loggingService.log(
           LogType.AUTH,
           LogLevel.INFO,
-          `OTP sent via WhatsApp to ${phone}`,
+          `OTP sent via WhatsApp to ${normalizedPhone}`,
           'OtpService',
-          { phone, purpose }
+          { phone: normalizedPhone, purpose }
         );
       } else {
         // Fallback logging if WhatsApp fails (since sendOTP acts as the primary sender now)
@@ -204,7 +249,7 @@ export class OtpService {
         void this.loggingService.log(
           LogType.AUTH,
           LogLevel.WARN,
-          `WhatsApp OTP send returned false for ${phone}`,
+          `WhatsApp OTP send returned false for ${normalizedPhone}`,
           'OtpService'
         );
       }
@@ -223,7 +268,7 @@ export class OtpService {
         void this.loggingService.log(
           LogType.AUTH,
           LogLevel.INFO,
-          `[DEV FALLBACK] WhatsApp disabled/failed. OTP for ${phone}: ${otp}`,
+          `[DEV FALLBACK] WhatsApp disabled/failed. OTP for ${normalizedPhone}: ${otp}`,
           'OtpService'
         );
       }
@@ -259,8 +304,17 @@ export class OtpService {
    */
   async verifyOtp(identifier: string, otp: string): Promise<OtpResult> {
     try {
-      const otpKey = `otp:${identifier}`;
+      const normalizedIdentifier = this.normalizeIdentifier(identifier);
+      const otpKey = `otp:${normalizedIdentifier}`;
       const storedOtp = await this.cacheService.get<string>(otpKey);
+
+      this.debugOtp('OTP verification lookup', {
+        identifier: normalizedIdentifier,
+        otpKey,
+        hasStoredOtp: storedOtp !== null,
+        providedOtpLength: otp.length,
+        storedOtpLength: storedOtp?.length || 0,
+      });
 
       if (!storedOtp) {
         return {
@@ -279,12 +333,17 @@ export class OtpService {
       // Remove OTP after successful verification
       await this.cacheService.del(otpKey);
 
+      this.debugOtp('OTP verification succeeded', {
+        identifier: normalizedIdentifier,
+        otpKey,
+      });
+
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.INFO,
-        `OTP verified successfully for ${identifier}`,
+        `OTP verified successfully for ${normalizedIdentifier}`,
         'OtpService',
-        { identifier }
+        { identifier: normalizedIdentifier }
       );
 
       return {
@@ -319,9 +378,10 @@ export class OtpService {
     attemptsRemaining?: number;
   }> {
     try {
-      const otpKey = `otp:${identifier}`;
-      const attemptsKey = `otp_attempts:${identifier}`;
-      const cooldownKey = `otp_cooldown:${identifier}`;
+      const normalizedIdentifier = this.normalizeIdentifier(identifier);
+      const otpKey = `otp:${normalizedIdentifier}`;
+      const attemptsKey = `otp_attempts:${normalizedIdentifier}`;
+      const cooldownKey = `otp_cooldown:${normalizedIdentifier}`;
 
       const [otpData, attempts, cooldownData] = await Promise.all([
         this.cacheService.get<string>(otpKey),
@@ -363,13 +423,14 @@ export class OtpService {
    */
   async invalidateOtp(identifier: string): Promise<boolean> {
     try {
-      const otpKey = `otp:${identifier}`;
+      const normalizedIdentifier = this.normalizeIdentifier(identifier);
+      const otpKey = `otp:${normalizedIdentifier}`;
       await this.cacheService.del(otpKey);
 
       void this.loggingService.log(
         LogType.SYSTEM,
         LogLevel.INFO,
-        `OTP invalidated for ${identifier}`,
+        `OTP invalidated for ${normalizedIdentifier}`,
         'OtpService'
       );
 
@@ -395,17 +456,18 @@ export class OtpService {
    */
   async resetOtpAttempts(identifier: string): Promise<void> {
     try {
-      const attemptsKey = `otp_attempts:${identifier}`;
-      const cooldownKey = `otp_cooldown:${identifier}`;
+      const normalizedIdentifier = this.normalizeIdentifier(identifier);
+      const attemptsKey = `otp_attempts:${normalizedIdentifier}`;
+      const cooldownKey = `otp_cooldown:${normalizedIdentifier}`;
 
       await Promise.all([this.cacheService.del(attemptsKey), this.cacheService.del(cooldownKey)]);
 
       void this.loggingService.log(
         LogType.AUTH,
         LogLevel.INFO,
-        `OTP attempts reset for ${identifier}`,
+        `OTP attempts reset for ${normalizedIdentifier}`,
         'OtpService',
-        { identifier }
+        { identifier: normalizedIdentifier }
       );
     } catch (_error) {
       void this.loggingService.log(

@@ -13,7 +13,6 @@ import { HttpService } from '@infrastructure/http';
 // Use direct import to avoid TDZ issues with barrel exports
 import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
-import { HealthcareError } from '@core/errors/healthcare-error.class';
 import { BaseWhatsAppAdapter } from '@communication/adapters/base/base-whatsapp-adapter';
 import type { WhatsAppOptions, WhatsAppResult } from '@communication/adapters/interfaces';
 import type { ProviderConfig } from '@core/types/communication.types';
@@ -106,14 +105,14 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
       return this.createErrorResult('Meta WhatsApp adapter not initialized');
     }
 
+    let payload: Record<string, unknown> = {};
+
     try {
       this.validateWhatsAppOptions(options);
 
       // Determine if this is a template or regular message
       const isTemplate = !!options.templateId;
       const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
-
-      let payload: Record<string, unknown>;
 
       if (isTemplate) {
         // Template message
@@ -181,12 +180,36 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
         }
       );
 
+      // Log the exact payload being sent for debugging
+      void this.logger.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        `Meta WhatsApp payload`,
+        'MetaWhatsAppAdapter',
+        {
+          url,
+          payload: JSON.parse(JSON.stringify(payload)),
+          to: options.to,
+          ...(isTemplate && {
+            templateId: options.templateId,
+            language: options.language || 'en',
+            componentCount: templatePayload?.template?.components?.length,
+            parameters: templatePayload?.template?.components?.map(c => ({
+              type: c.type,
+              paramCount: c.parameters?.length,
+              params: c.parameters?.map(p => p.text),
+            })),
+          }),
+        }
+      );
+
       const response = await this.sendWithRetry(async () => {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
         }
         return await this.httpService.post<{
           messages?: Array<{ id?: string }>;
+          error?: { message?: string; type?: string; code?: string; fbtrace_id?: string };
           [key: string]: unknown;
         }>(url, payload, {
           headers: {
@@ -214,27 +237,48 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
     } catch (error) {
       const errorObject = error as {
         message?: string;
-        response?: { status?: number; statusText?: string; data?: unknown };
+        response?: {
+          status?: number;
+          statusText?: string;
+          data?: {
+            error?: {
+              message?: string;
+              type?: string;
+              code?: string;
+              fbtrace_id?: string;
+              subcode?: number;
+              error_data?: Record<string, unknown>;
+            };
+          };
+        };
         getResponse?: () => unknown;
         metadata?: Record<string, unknown>;
       };
-      const responsePayload =
-        error instanceof HealthcareError
-          ? (error.getResponse() as { error?: { metadata?: Record<string, unknown> } } | undefined)
-              ?.error?.metadata?.['responseData']
-          : errorObject.response?.data;
-      await this.logger.log(
+
+      // Detailed error logging for debugging
+      const errorResponse = errorObject.response?.data;
+      const errorDetails = errorResponse?.error;
+
+      void this.logger.log(
         LogType.NOTIFICATION,
         LogLevel.ERROR,
-        `Failed to send Meta WhatsApp ${options.templateId ? 'template' : 'message'}`,
+        `Meta WhatsApp API Error Details`,
         'MetaWhatsAppAdapter',
         {
-          error: error instanceof Error ? error.message : String(error),
-          responseStatus: errorObject.response?.status,
-          responseStatusText: errorObject.response?.statusText,
-          responseData: responsePayload ?? errorObject.response?.data,
+          httpStatus: errorObject.response?.status,
+          httpStatusText: errorObject.response?.statusText,
+          apiErrorMessage: errorDetails?.message,
+          apiErrorType: errorDetails?.type,
+          apiErrorCode: errorDetails?.code,
+          apiErrorSubcode: errorDetails?.subcode,
+          fbTraceId: errorDetails?.fbtrace_id,
+          apiErrorData: errorDetails?.error_data,
+          fullResponseBody: JSON.stringify(errorResponse),
+          sentPayload: JSON.stringify(payload),
           to: options.to,
-          ...(options.templateId && { templateId: options.templateId }),
+          templateId: options.templateId,
+          templateParams: options.templateParams,
+          language: options.language || 'en',
         }
       );
 

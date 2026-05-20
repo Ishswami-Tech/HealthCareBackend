@@ -46,6 +46,7 @@ import type { FastifyReply } from 'fastify';
 @Injectable()
 export class AuthService {
   private readonly CACHE_TTL = 3600; // 1 hour
+  private readonly otpDebugEnabled: boolean;
 
   constructor(
     private readonly databaseService: DatabaseService,
@@ -74,6 +75,20 @@ export class AuthService {
         {}
       );
     }
+
+    this.otpDebugEnabled =
+      this.configService?.getEnvBoolean('ENABLE_OTP_DEBUG', false) ||
+      this.configService?.getEnvBoolean('DEBUG_MODE', false) ||
+      false;
+  }
+
+  private debugOtp(message: string, context: Record<string, unknown> = {}): void {
+    if (!this.otpDebugEnabled) {
+      return;
+    }
+
+    console.warn(`[AuthService][OTP] ${message}`, context);
+    void this.logging.log(LogType.AUTH, LogLevel.DEBUG, message, 'AuthService', context);
   }
 
   // Comprehensive type-safe database operations
@@ -1094,8 +1109,9 @@ export class AuthService {
         user = await this.databaseService.findUserByEmailSafe(requestDto.identifier);
       } else {
         // Find by phone
+        const normalizedPhoneIdentifier = this.normalizePhoneNumber(requestDto.identifier);
         const users = await this.databaseService.findUsersSafe(
-          { phone: requestDto.identifier },
+          { phone: normalizedPhoneIdentifier },
           { take: 1 }
         );
         user = users[0] || null;
@@ -1130,6 +1146,15 @@ export class AuthService {
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
       const otpCode = this.otpService.generateOtp();
+      this.debugOtp('Generated OTP for requestOtp', {
+        identifier: requestDto.identifier,
+        normalizedIdentifier: isEmail
+          ? requestDto.identifier.trim().toLowerCase()
+          : this.normalizePhoneNumber(requestDto.identifier),
+        flow: isEmail ? 'email' : 'phone',
+        otpLength: otpCode.length,
+        otp: otpCode,
+      });
 
       let result;
       if (isEmail) {
@@ -1151,7 +1176,7 @@ export class AuthService {
         );
       } else {
         // ✅ DUAL-CHANNEL OTP: Send via WhatsApp AND email (if available) for better delivery
-        const phoneTarget = user?.phone || requestDto.identifier;
+        const phoneTarget = this.normalizePhoneNumber(user?.phone || requestDto.identifier);
         if (!phoneTarget) {
           throw this.errors.validationError(
             'phone',
@@ -1283,10 +1308,11 @@ export class AuthService {
       if (isEmail) {
         user = await this.databaseService.findUserByEmailSafe(verifyDto.identifier);
       } else {
+        const normalizedPhoneIdentifier = this.normalizePhoneNumber(verifyDto.identifier);
         // Find by phone
         // Uses findUsersSafe which returns an array, take the first one
         const users = await this.databaseService.findUsersSafe(
-          { phone: verifyDto.identifier },
+          { phone: normalizedPhoneIdentifier },
           { take: 1 }
         );
         user = users[0] || null;
@@ -1300,9 +1326,19 @@ export class AuthService {
       // Verify OTP using dedicated service
       // This handles cache lookup and deletion
       const verificationResult = await this.otpService.verifyOtp(
-        verifyDto.identifier,
+        isEmail ? verifyDto.identifier : this.normalizePhoneNumber(verifyDto.identifier),
         verifyDto.otp
       );
+      this.debugOtp('OTP verification attempted', {
+        identifier: verifyDto.identifier,
+        normalizedIdentifier: isEmail
+          ? verifyDto.identifier.trim().toLowerCase()
+          : this.normalizePhoneNumber(verifyDto.identifier),
+        flow: isEmail ? 'email' : 'phone',
+        otpLength: verifyDto.otp?.length,
+        verificationSuccess: verificationResult.success,
+        verificationMessage: verificationResult.message,
+      });
 
       if (!verificationResult.success) {
         // ✅ SECURITY: Log failed OTP attempts for audit trail
@@ -1494,9 +1530,9 @@ export class AuthService {
       throw this.errors.userNotFound(userId, 'AuthService.verifyPhone');
     }
 
-    const normalizedPhone = phone.trim();
-    const expectedPhone = user.phone?.trim() || normalizedPhone;
-    if (expectedPhone !== normalizedPhone && user.phone) {
+    const normalizedInputPhone = this.normalizePhoneNumber(phone);
+    const expectedPhone = this.normalizePhoneNumber(user.phone || normalizedInputPhone);
+    if (expectedPhone !== normalizedInputPhone && user.phone) {
       throw this.errors.validationError(
         'phone',
         'Phone number does not match the authenticated user profile',
@@ -1504,7 +1540,7 @@ export class AuthService {
       );
     }
 
-    const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+    const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedInputPhone);
     if (existingPhoneUser && existingPhoneUser.id !== user.id) {
       throw this.errors.validationError(
         'phone',
@@ -1513,14 +1549,23 @@ export class AuthService {
       );
     }
 
-    const verificationResult = await this.otpService.verifyOtp(normalizedPhone, otp);
+    const verificationResult = await this.otpService.verifyOtp(normalizedInputPhone, otp);
+    this.debugOtp('verifyPhone OTP verification attempted', {
+      userId,
+      identifier: phone,
+      normalizedIdentifier: normalizedInputPhone,
+      expectedPhone,
+      otpLength: otp?.length,
+      verificationSuccess: verificationResult.success,
+      verificationMessage: verificationResult.message,
+    });
     if (!verificationResult.success) {
       throw this.errors.otpInvalid('AuthService.verifyPhone');
     }
 
     const verifiedAt = new Date();
     await this.databaseService.updateUserSafe(user.id, {
-      phone: normalizedPhone,
+      phone: normalizedInputPhone,
       phoneVerified: true,
       phoneVerifiedAt: verifiedAt,
     } as never);
@@ -1530,6 +1575,14 @@ export class AuthService {
       phoneVerified: true,
       phoneVerifiedAt: verifiedAt.toISOString(),
     };
+  }
+
+  private normalizePhoneNumber(phone: string): string {
+    const cleaned = phone.trim().replace(/[^\d+]/g, '');
+    if (!cleaned.startsWith('+')) {
+      return `+${cleaned}`;
+    }
+    return cleaned;
   }
 
   /**
@@ -2030,8 +2083,10 @@ export class AuthService {
     sessionMetadata?: { userAgent?: string; ipAddress?: string }
   ): Promise<AuthResponse> {
     try {
+      const normalizedPhone = this.normalizePhoneNumber(phone);
+
       // 1. Verify OTP
-      const verificationResult = await this.otpService.verifyOtp(phone, otp);
+      const verificationResult = await this.otpService.verifyOtp(normalizedPhone, otp);
       if (!verificationResult.success) {
         throw this.errors.validationError(
           'otp',
@@ -2041,7 +2096,7 @@ export class AuthService {
       }
 
       // 2. Check if phone already exists
-      const existingUser = await this.databaseService.findUserByPhoneSafe(phone);
+      const existingUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
       if (existingUser) {
         throw this.errors.validationError(
           'phone',
@@ -2065,8 +2120,8 @@ export class AuthService {
 
       // 4. Create user
       const user = await this.databaseService.createUserSafe({
-        phone,
-        email: email || `${phone}@temp.com`, // Temporary email if not provided
+        phone: normalizedPhone,
+        email: email || `${normalizedPhone}@temp.com`, // Temporary email if not provided
         firstName,
         lastName,
         primaryClinicId: clinicUUID,
@@ -2113,7 +2168,7 @@ export class AuthService {
 
       await this.eventService.emit('user.registered', {
         userId: user.id,
-        phone: user.phone || phone,
+        phone: user.phone || normalizedPhone,
         role: user.role,
         clinicId: clinicUUID,
         registrationMethod: 'phone-otp',
