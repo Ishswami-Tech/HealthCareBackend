@@ -9,19 +9,15 @@
 
 /**
  * Formats OTP template parameters for WhatsApp
- * @param purpose - OTP purpose label
- * @param appName - Application name
- * @param clinicName - Clinic or merchant name
+ * Matches the approved `verify_account` authentication template:
+ * "This OTP code is for creating your account and linking it to merchant_name. OTP: 123456 ..."
+ * @param merchantName - Clinic or merchant name
  * @param otp - OTP code
- * @param buttonUrl - Dynamic URL suffix for the CTA button
  * @returns Template components array
  */
 export function formatOTPTemplateParams(
-  purpose: string,
-  appName: string,
-  clinicName: string,
-  otp: string,
-  buttonUrl?: string
+  merchantName: string,
+  otp: string
 ): Array<{
   type: string;
   parameters: Array<{ type: string; text: string }>;
@@ -30,16 +26,11 @@ export function formatOTPTemplateParams(
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: purpose },
-        { type: 'text', text: appName },
-        { type: 'text', text: clinicName },
+        { type: 'text', text: merchantName },
         { type: 'text', text: otp },
-        { type: 'text', text: appName },
       ],
     },
   ];
-
-  components.push(...buildDetailsButton(buttonUrl ?? 'login'));
   return components;
 }
 
