@@ -532,10 +532,6 @@ Clinic names are dynamically injected into all WhatsApp templates:
   { type: 'text', text: appName }, // "GoPay"
 ]
 
-// OTP Button URL suffix
-// The approved template uses a dynamic URL button, so send only the suffix.
-// Example: "login"
-
 // Appointment Template Parameters
 [
   { type: 'text', text: patientName }, // "John Doe"
