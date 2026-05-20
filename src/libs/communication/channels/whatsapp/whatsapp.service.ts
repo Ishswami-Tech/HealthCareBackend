@@ -106,7 +106,12 @@ export class WhatsAppService {
         await this.sendTemplateMessage(
           formattedPhone,
           templateId,
-          formatOTPTemplateParams(clinicName || appName, otp),
+          formatOTPTemplateParams(
+            this.resolveOtpPurposeLabel(purpose),
+            appName,
+            clinicName || appName,
+            otp
+          ),
           clinicId
         );
 
@@ -766,5 +771,35 @@ export class WhatsAppService {
     }
 
     return cleaned;
+  }
+
+  private resolveOtpPurposeLabel(purpose: string): string {
+    const normalizedPurpose = purpose.trim().toLowerCase();
+
+    if (
+      normalizedPurpose.includes('login') ||
+      normalizedPurpose.includes('signin') ||
+      normalizedPurpose.includes('sign in') ||
+      normalizedPurpose.includes('verify') ||
+      normalizedPurpose.includes('verification')
+    ) {
+      return 'verifying';
+    }
+
+    if (
+      normalizedPurpose.includes('register') ||
+      normalizedPurpose.includes('registration') ||
+      normalizedPurpose.includes('create') ||
+      normalizedPurpose.includes('signup') ||
+      normalizedPurpose.includes('sign up')
+    ) {
+      return 'creating';
+    }
+
+    if (normalizedPurpose.includes('reset') || normalizedPurpose.includes('forgot')) {
+      return 'resetting';
+    }
+
+    return normalizedPurpose || 'verifying';
   }
 }
