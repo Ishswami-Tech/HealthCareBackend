@@ -10,27 +10,32 @@
 /**
  * Formats OTP template parameters for WhatsApp
  * Matches the approved `verify_account` authentication template:
- * "This OTP code is for creating your account and linking it to merchant_name. OTP: 123456 ..."
+ * "This OTP code is for {{1}} your {{2}} account and linking it to {{3}}. OTP: {{4}} ..."
+ * @param purpose - OTP purpose label, such as verifying or creating
+ * @param appName - Application name
  * @param merchantName - Clinic or merchant name
  * @param otp - OTP code
  * @returns Template components array
  */
 export function formatOTPTemplateParams(
+  purpose: string,
+  appName: string,
   merchantName: string,
   otp: string
-): Array<{
-  type: string;
-  parameters: Array<{ type: string; text: string }>;
-}> {
+): WhatsAppTemplateComponent[] {
   const components: WhatsAppTemplateComponent[] = [
     {
       type: 'body',
       parameters: [
-        { type: 'text', text: merchantName },
-        { type: 'text', text: otp },
+        { type: 'text', text: normalizeTemplateText(purpose, 'verifying') },
+        { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
+        { type: 'text', text: normalizeTemplateText(merchantName, appName) },
+        { type: 'text', text: normalizeTemplateText(otp, '000000') },
+        { type: 'text', text: normalizeTemplateText(appName, 'Healthcare App') },
       ],
     },
   ];
+
   return components;
 }
 
@@ -197,7 +202,6 @@ export function formatPaymentReceiptTemplateParams(
  * OTP Template Example:
  * Template Name: verify_account
  * Template Body: "This OTP code is for {{1}} your {{2}} account and linking it to {{3}}. OTP: {{4}} Do not share it with anyone, even to {{5}}, or they'll be able to access your account."
- * Button: "Visit website" -> {{1}} (example suffix: "login")
  *
  * Appointment Confirmation Template Example:
  * Template Name: appointment_confirmation
