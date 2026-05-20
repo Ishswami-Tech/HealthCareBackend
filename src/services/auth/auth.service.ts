@@ -124,7 +124,7 @@ export class AuthService {
           id: user.id,
           email: user.email,
           name: `${user.firstName} ${user.lastName}`,
-          role: user.role,
+          role: user.role as Role,
           ...(user.primaryClinicId && { clinicId: user.primaryClinicId }),
         };
       },
@@ -411,7 +411,7 @@ export class AuthService {
       await this.eventService.emit('user.registered', {
         userId: user.id,
         email: user.email,
-        role: user.role,
+        role: user.role as Role,
         clinicId: clinicUUID,
       });
       await this.logging.log(
@@ -429,8 +429,8 @@ export class AuthService {
         user: {
           id: user.id,
           email: user.email,
-          firstName: user.firstName || undefined,
-          lastName: user.lastName || undefined,
+          ...(user.firstName ? { firstName: user.firstName } : {}),
+          ...(user.lastName ? { lastName: user.lastName } : {}),
           role: user.role as Role,
           isVerified: false,
           clinicId: clinicUUID,
@@ -617,7 +617,7 @@ export class AuthService {
         id: user.id,
         email: user.email,
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
-        role: user.role,
+        role: user.role as Role,
         ...(user.phone && { phone: user.phone }),
         ...(clinicUUID && { clinicId: clinicUUID }),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
@@ -642,7 +642,7 @@ export class AuthService {
       await this.eventService.emit('user.logged_in', {
         userId: user.id,
         email: user.email,
-        role: user.role,
+        role: user.role as Role,
         clinicId,
         ...(loginEventClinicName && { clinicName: loginEventClinicName }),
         sessionId: session.sessionId,
@@ -670,18 +670,13 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName || undefined,
-          lastName: user.lastName || undefined,
-          role: user.role as Role,
-          isVerified: user.isVerified,
+        user: this.buildAuthUserPayload(user, {
           clinicId: clinicUUID || undefined,
-          ...(loginResponseClinicName && { clinicName: loginResponseClinicName }),
+          clinicName: loginResponseClinicName,
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
-        },
+          loginMethod: 'password',
+        }),
       };
     } catch (_error) {
       await this.logging.log(
@@ -1354,17 +1349,47 @@ export class AuthService {
         ...(clinicUUID && { clinicId: clinicUUID }),
       });
 
+      let verifiedUser = user;
+      const loginIdentifier = verifyDto.identifier.trim();
+      if (!isEmail) {
+        const normalizedPhone = user.phone || loginIdentifier;
+        const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+        if (existingPhoneUser && existingPhoneUser.id !== user.id) {
+          throw this.errors.validationError(
+            'phone',
+            'Phone number already registered',
+            'AuthService.verifyOtp'
+          );
+        }
+
+        await this.databaseService.updateUserSafe(user.id, {
+          phone: normalizedPhone,
+          phoneVerified: true,
+          phoneVerifiedAt: new Date(),
+        } as never);
+
+        verifiedUser = {
+          ...user,
+          phone: normalizedPhone,
+          phoneVerified: true,
+          phoneVerifiedAt: new Date(),
+        } as UserWithRelations;
+      }
+
       // Generate tokens with session ID - handle null phone
       // Include clinicId from login or user's primary clinic
       const userForTokens: UserProfile = {
-        id: user.id,
-        email: user.email,
-        name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
-        role: user.role,
-        ...(user.phone && { phone: user.phone }),
+        id: verifiedUser.id,
+        email: verifiedUser.email,
+        name:
+          verifiedUser.name ||
+          `${verifiedUser.firstName || ''} ${verifiedUser.lastName || ''}`.trim() ||
+          verifiedUser.email,
+        role: verifiedUser.role as Role,
+        ...(verifiedUser.phone && { phone: verifiedUser.phone }),
         ...(clinicUUID && { clinicId: clinicUUID }),
         // Include clinicId: from verifyDto, or user's primaryClinicId
-        ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
+        ...(verifiedUser.primaryClinicId && { primaryClinicId: verifiedUser.primaryClinicId }),
         ...(clinicIdFromHeader && { currentClinicId: clinicIdFromHeader }),
       };
       const tokens = await this.generateTokens(
@@ -1376,8 +1401,8 @@ export class AuthService {
       );
 
       // Update last login
-      const isFirstLogin = !user.lastLogin;
-      await this.databaseService.updateUserSafe(user.id, {
+      const isFirstLogin = !verifiedUser.lastLogin;
+      await this.databaseService.updateUserSafe(verifiedUser.id, {
         lastLogin: new Date(),
       });
 
@@ -1385,9 +1410,9 @@ export class AuthService {
       const appName = this.configService.getEnv('APP_NAME') || 'Healthcare App';
       const clinicName = await this.resolveClinicDisplayName(clinicUUID);
       await this.eventService.emit('user.otp_logged_in', {
-        userId: user.id,
-        email: user.email,
-        role: user.role,
+        userId: verifiedUser.id,
+        email: verifiedUser.email,
+        role: verifiedUser.role as Role,
         clinicId: clinicUUID,
         ...(clinicName && { clinicName }),
         sessionId: session.sessionId,
@@ -1403,27 +1428,30 @@ export class AuthService {
       await this.logging.log(
         LogType.AUDIT,
         LogLevel.INFO,
-        `OTP login successful for: ${user.email}`,
+        `OTP login successful for: ${verifiedUser.email}`,
         'AuthService.verifyOtp',
-        { userId: user.id, email: user.email, role: user.role, clinicId: clinicUUID }
+        {
+          userId: verifiedUser.id,
+          email: verifiedUser.email,
+          role: verifiedUser.role as Role,
+          clinicId: clinicUUID,
+        }
       );
 
-      const profileStatus = await this.checkProfileCompletionStatus(user.id, user.role as Role);
+      const profileStatus = await this.checkProfileCompletionStatus(
+        verifiedUser.id,
+        verifiedUser.role as Role
+      );
 
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName || undefined,
-          lastName: user.lastName || undefined,
-          role: user.role as Role,
-          isVerified: user.isVerified,
+        user: this.buildAuthUserPayload(verifiedUser, {
           clinicId: clinicUUID || undefined,
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
-        },
+          loginMethod: 'otp',
+        }),
       };
     } catch (_error) {
       await this.logging.log(
@@ -1439,6 +1467,57 @@ export class AuthService {
       );
       throw _error;
     }
+  }
+
+  /**
+   * Verify an authenticated user's phone number with OTP.
+   */
+  async verifyPhone(
+    userId: string,
+    phone: string,
+    otp: string
+  ): Promise<{ success: boolean; phoneVerified: boolean; phoneVerifiedAt: string }> {
+    const user = await this.databaseService.findUserByIdSafe(userId);
+    if (!user) {
+      throw this.errors.userNotFound(userId, 'AuthService.verifyPhone');
+    }
+
+    const normalizedPhone = phone.trim();
+    const expectedPhone = user.phone?.trim() || normalizedPhone;
+    if (expectedPhone !== normalizedPhone && user.phone) {
+      throw this.errors.validationError(
+        'phone',
+        'Phone number does not match the authenticated user profile',
+        'AuthService.verifyPhone'
+      );
+    }
+
+    const existingPhoneUser = await this.databaseService.findUserByPhoneSafe(normalizedPhone);
+    if (existingPhoneUser && existingPhoneUser.id !== user.id) {
+      throw this.errors.validationError(
+        'phone',
+        'Phone number already registered',
+        'AuthService.verifyPhone'
+      );
+    }
+
+    const verificationResult = await this.otpService.verifyOtp(normalizedPhone, otp);
+    if (!verificationResult.success) {
+      throw this.errors.otpInvalid('AuthService.verifyPhone');
+    }
+
+    const verifiedAt = new Date();
+    await this.databaseService.updateUserSafe(user.id, {
+      phone: normalizedPhone,
+      phoneVerified: true,
+      phoneVerifiedAt: verifiedAt,
+    } as never);
+
+    return {
+      success: true,
+      phoneVerified: true,
+      phoneVerifiedAt: verifiedAt.toISOString(),
+    };
   }
 
   /**
@@ -1529,6 +1608,55 @@ export class AuthService {
     } catch {
       return undefined;
     }
+  }
+
+  private buildAuthUserPayload(
+    user: {
+      id: string;
+      email: string;
+      name?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+      role: Role | string;
+      isVerified: boolean;
+      phone?: string | null;
+      phoneVerified?: boolean | null;
+      phoneVerifiedAt?: Date | string | null;
+      profilePicture?: string | null;
+    },
+    options: {
+      clinicId?: string | undefined;
+      clinicName?: string | undefined;
+      profileComplete: boolean;
+      requiresProfileCompletion: boolean;
+      loginMethod?: 'password' | 'otp' | 'google_oauth' | 'facebook_oauth' | 'apple_oauth';
+    }
+  ): UserProfile {
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email,
+      ...(user.firstName ? { firstName: user.firstName } : {}),
+      ...(user.lastName ? { lastName: user.lastName } : {}),
+      role: user.role as Role,
+      isVerified: user.isVerified,
+      ...(user.phone ? { phone: user.phone } : {}),
+      ...(typeof user.phoneVerified === 'boolean' ? { phoneVerified: user.phoneVerified } : {}),
+      ...(user.phoneVerifiedAt
+        ? {
+            phoneVerifiedAt:
+              user.phoneVerifiedAt instanceof Date
+                ? user.phoneVerifiedAt.toISOString()
+                : new Date(user.phoneVerifiedAt).toISOString(),
+          }
+        : {}),
+      ...(options.clinicId ? { clinicId: options.clinicId } : {}),
+      ...(options.clinicName ? { clinicName: options.clinicName } : {}),
+      ...(user.profilePicture ? { profilePicture: user.profilePicture } : {}),
+      profileComplete: options.profileComplete,
+      requiresProfileCompletion: options.requiresProfileCompletion,
+      ...(options.loginMethod ? { loginMethod: options.loginMethod } : {}),
+    };
   }
 
   /**
@@ -1676,18 +1804,24 @@ export class AuthService {
       return false;
     }
 
-    return requiredFields.every(field => this.isProfileFieldPresent(user[field]));
+    const hasRequiredFields = requiredFields.every(field =>
+      this.isProfileFieldPresent(user[field])
+    );
+    const hasVerifiedPhone =
+      !this.isProfileFieldPresent(user['phone']) || user['phoneVerified'] === true;
+
+    return hasRequiredFields && hasVerifiedPhone;
   }
 
   private getRequiredProfileFieldsForRole(role: Role): string[] {
     switch (role) {
       case Role.PATIENT:
-        return ['firstName', 'lastName', 'phone', 'address'];
+        return ['firstName', 'lastName', 'phone'];
       case Role.DOCTOR:
       case Role.ASSISTANT_DOCTOR:
-        return ['firstName', 'lastName', 'phone', 'address'];
+        return ['firstName', 'lastName', 'phone'];
       default:
-        return ['firstName', 'lastName', 'phone', 'address'];
+        return ['firstName', 'lastName', 'phone'];
     }
   }
 
@@ -1826,7 +1960,7 @@ export class AuthService {
         id: user.id,
         email: user.email || email,
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        role: user.role,
+        role: user.role as Role,
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
       const tokens = await this.generateTokens(
@@ -1841,7 +1975,7 @@ export class AuthService {
       await this.eventService.emit('user.registered', {
         userId: user.id,
         email: user.email || email,
-        role: user.role,
+        role: user.role as Role,
         clinicId: clinicUUID,
         registrationMethod: 'email-otp',
       });
@@ -1851,18 +1985,13 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        user: {
-          id: user.id,
-          email: user.email || email,
-          firstName: user.firstName || undefined,
-          lastName: user.lastName || undefined,
-          role: user.role as Role,
-          isVerified: user.isVerified,
+        user: this.buildAuthUserPayload(user, {
           clinicId: clinicUUID,
-          ...(clinicName && { clinicName }),
-          profileComplete: false, // New users must complete profile
+          clinicName,
+          profileComplete: false,
           requiresProfileCompletion: true,
-        },
+          loginMethod: 'otp',
+        }),
       };
     } catch (error) {
       await this.logging.log(
@@ -1930,6 +2059,8 @@ export class AuthService {
         lastName,
         primaryClinicId: clinicUUID,
         isVerified: true, // Phone verified via OTP
+        phoneVerified: true,
+        phoneVerifiedAt: new Date(),
         role: 'PATIENT',
         password: '', // No password for OTP registration
         userid: uuidv4(),
@@ -1953,7 +2084,7 @@ export class AuthService {
         id: user.id,
         email: user.email || '',
         name: user.name || `${user.firstName || ''} ${user.lastName || ''}`.trim(),
-        role: user.role,
+        role: user.role as Role,
         ...(user.phone && { phone: user.phone }),
         ...(user.primaryClinicId && { primaryClinicId: user.primaryClinicId }),
       };
@@ -1979,19 +2110,13 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        user: {
-          id: user.id,
-          email: user.email || '',
-          phone: user.phone || undefined,
-          firstName: user.firstName || undefined,
-          lastName: user.lastName || undefined,
-          role: user.role as Role,
-          isVerified: user.isVerified,
+        user: this.buildAuthUserPayload(user, {
           clinicId: clinicUUID,
-          ...(clinicName && { clinicName }),
-          profileComplete: false, // New users must complete profile
+          clinicName,
+          profileComplete: false,
           requiresProfileCompletion: true,
-        },
+          loginMethod: 'otp',
+        }),
       };
     } catch (error) {
       await this.logging.log(
@@ -2204,7 +2329,7 @@ export class AuthService {
           fullUser.name ||
           `${fullUser.firstName || ''} ${fullUser.lastName || ''}`.trim() ||
           fullUser.email,
-        role: fullUser.role,
+        role: fullUser.role as Role,
         ...(fullUser.phone && { phone: fullUser.phone }),
         // Include clinicId as the resolved UUID so guards and DB checks agree.
         ...(finalClinicId ? { clinicId: finalClinicId } : {}),
@@ -2231,7 +2356,7 @@ export class AuthService {
       await this.eventService.emit('user.google_oauth_logged_in', {
         userId: fullUser.id,
         email: fullUser.email,
-        role: fullUser.role,
+        role: fullUser.role as Role,
         clinicId: finalClinicId,
         ...(googleEventClinicName && { clinicName: googleEventClinicName }),
         sessionId: session.sessionId,
@@ -2262,19 +2387,13 @@ export class AuthService {
       return {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
-        user: {
-          id: fullUser.id,
-          email: fullUser.email,
-          firstName: fullUser.firstName || undefined,
-          lastName: fullUser.lastName || undefined,
-          role: fullUser.role as Role,
-          isVerified: fullUser.isVerified,
+        user: this.buildAuthUserPayload(fullUser, {
           clinicId: finalClinicId || undefined,
-          ...(googleResponseClinicName && { clinicName: googleResponseClinicName }),
-          profilePicture: fullUser.profilePicture || undefined,
+          clinicName: googleResponseClinicName,
           profileComplete: profileStatus.isComplete,
           requiresProfileCompletion: !profileStatus.isComplete,
-        },
+          loginMethod: 'google_oauth',
+        }),
       };
     } catch (_error) {
       await this.logging.log(

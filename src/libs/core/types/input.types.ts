@@ -18,6 +18,8 @@ export type UserCreateInput = {
   firstName: string;
   lastName: string;
   phone?: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Date;
   dateOfBirth?: Date;
   gender?: string;
   address?: string;
@@ -46,6 +48,8 @@ export type UserUpdateInput = {
   firstName?: string;
   lastName?: string;
   phone?: string;
+  phoneVerified?: boolean;
+  phoneVerifiedAt?: Date;
   dateOfBirth?: Date;
   gender?: string;
   address?: string;

@@ -18,7 +18,9 @@ model User {
   age                     Int?
   firstName               String?
   lastName                String?
-  phone                   String?
+  phone                   String?                   @unique
+  phoneVerified           Boolean                   @default(false)
+  phoneVerifiedAt         DateTime?
   role                    Role                      @default(PATIENT)
   profilePicture          String?
   gender                  String?
@@ -79,6 +81,8 @@ model User {
   notificationPreference  NotificationPreference?
   nurse                   Nurse?
   patient                 Patient?
+  familyMembers           FamilyMember[]            @relation("PrimaryPatientFamilyMembers")
+  createdFamilyMembers    FamilyMember[]            @relation("FamilyMemberCreatedByUser")
   pharmacist              Pharmacist?
   prakritiAnalyses        PrakritiAnalysis[]
   radiologyReports        RadiologyReport[]
@@ -425,6 +429,33 @@ model Patient {
   waitlistEntries    WaitlistEntry[]
   videoConsultations VideoConsultation[]
   insuranceClaims    InsuranceClaim[]
+  familyMembers      FamilyMember[]               @relation("PatientFamilyMembers")
+}
+
+model FamilyMember {
+  id              String        @id @default(uuid())
+  patientId       String
+  userId          String?
+  firstName       String
+  lastName        String
+  relation        String
+  gender          String?
+  dateOfBirth     DateTime?
+  phone           String?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdByUserId String?
+  notes           String?
+  patient         Patient       @relation("PatientFamilyMembers", fields: [patientId], references: [id], onDelete: Cascade)
+  user            User?         @relation("PrimaryPatientFamilyMembers", fields: [userId], references: [id])
+  createdByUser   User?         @relation("FamilyMemberCreatedByUser", fields: [createdByUserId], references: [id])
+  appointments    Appointment[]
+
+  @@index([patientId])
+  @@index([userId])
+  @@index([createdByUserId])
+  @@map("family_members")
 }
 
 model Appointment {
@@ -433,6 +464,7 @@ model Appointment {
   treatmentType       TreatmentType     @default(GENERAL_CONSULTATION)
   doctorId            String
   patientId           String
+  familyMemberId      String?
   locationId          String? // Optional for VIDEO_CALL (uses virtual/online)
   clinicId            String
   date                DateTime
@@ -478,6 +510,7 @@ model Appointment {
   doctor       Doctor          @relation(fields: [doctorId], references: [id])
   location     ClinicLocation? @relation(fields: [locationId], references: [id])
   patient      Patient         @relation(fields: [patientId], references: [id])
+  familyMember FamilyMember?   @relation(fields: [familyMemberId], references: [id])
   subscription Subscription?   @relation(fields: [subscriptionId], references: [id])
   therapy      Therapy?        @relation(fields: [therapyId], references: [id])
   user         User            @relation(fields: [userId], references: [id])
@@ -501,6 +534,7 @@ model Appointment {
   // Single-column indexes (existing)
   @@index([doctorId])
   @@index([patientId])
+  @@index([familyMemberId])
   @@index([locationId])
   @@index([clinicId])
   @@index([subscriptionId])

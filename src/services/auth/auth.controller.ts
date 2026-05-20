@@ -41,6 +41,7 @@ import {
   ChangePasswordDto,
   RequestOtpDto,
   VerifyOtpRequestDto,
+  VerifyPhoneDto,
   LogoutDto,
   GoogleOAuthDto,
   ResendVerificationDto,
@@ -67,6 +68,7 @@ import { RateLimitAPI } from '@security/rate-limit/rate-limit.decorator';
   ChangePasswordDto,
   RequestOtpDto,
   VerifyOtpRequestDto,
+  VerifyPhoneDto,
   LogoutDto,
   GoogleOAuthDto
 )
@@ -1224,6 +1226,46 @@ export class AuthController {
       }
       throw _error;
     }
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('verify-phone')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Verify phone number for the authenticated user',
+    description:
+      'Verifies the authenticated user phone number using OTP and stores the verification timestamp.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Phone verified successfully',
+    schema: {
+      example: {
+        success: true,
+        phoneVerified: true,
+        phoneVerifiedAt: '2026-05-20T10:00:00.000Z',
+      },
+    },
+  })
+  async verifyPhone(
+    @Body() verifyPhoneDto: VerifyPhoneDto,
+    @Request() req: FastifyRequestWithUser
+  ): Promise<
+    DataResponseDto<{ success: boolean; phoneVerified: boolean; phoneVerifiedAt: string }>
+  > {
+    const userId = req.user?.id;
+    if (!userId) {
+      throw this.errors.invalidCredentials('AuthController.verifyPhone');
+    }
+
+    const result = await this.authService.verifyPhone(
+      userId,
+      verifyPhoneDto.phone,
+      verifyPhoneDto.otp
+    );
+
+    return new DataResponseDto(result, 'Phone verified successfully');
   }
 
   @UseGuards(JwtAuthGuard)

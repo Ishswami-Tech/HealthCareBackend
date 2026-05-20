@@ -935,7 +935,6 @@ export class NotificationEventListener implements OnModuleInit {
 
           notificationData.type = nextType as NotificationData['type'];
           notificationData.channels = nextChannels;
-
           const result =
             await this.appointmentNotificationService.sendNotification(notificationData);
 
