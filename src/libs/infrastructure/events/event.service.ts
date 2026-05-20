@@ -962,10 +962,16 @@ export class EventService implements OnModuleInit, OnModuleDestroy {
       // This ensures ALL events appear in the logger dashboard
       // Convert EnterpriseEventPayload to EventEntry format for UI
       // EnterpriseEventPayload has 'metadata' not 'payload', use metadata or spread the event
+      const payloadData =
+        event.metadata && Object.keys(event.metadata).length > 0
+          ? event.metadata
+          : event.payload && typeof event.payload === 'object' && event.payload !== null
+            ? (event.payload as Record<string, unknown>)
+            : {};
       const eventEntry = {
         id: event.eventId,
         type: event.eventType,
-        data: event.metadata || {},
+        data: payloadData,
         timestamp: event.timestamp,
         ...(event.clinicId && { clinicId: event.clinicId }),
         ...(event.userId && { userId: event.userId }),

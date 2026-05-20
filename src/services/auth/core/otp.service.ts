@@ -51,7 +51,8 @@ export class OtpService {
     email: string,
     name: string,
     purpose: string = 'verification',
-    clinicId?: string
+    clinicId?: string,
+    providedOtp?: string
   ): Promise<OtpResult> {
     try {
       // Check cooldown
@@ -78,7 +79,7 @@ export class OtpService {
       }
 
       // Generate and store OTP
-      const otp = this.generateOtp();
+      const otp = providedOtp || this.generateOtp();
       const otpKey = `otp:${email}`;
       const expirySeconds = this.config.expiryMinutes * 60;
 
@@ -114,6 +115,7 @@ export class OtpService {
       return {
         success: true,
         message: 'OTP sent successfully',
+        otp,
         expiresIn: expirySeconds,
         attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
       };
@@ -142,7 +144,8 @@ export class OtpService {
   async sendOtpSms(
     phone: string,
     purpose: string = 'verification',
-    clinicId?: string
+    clinicId?: string,
+    providedOtp?: string
   ): Promise<OtpResult> {
     try {
       // Check cooldown
@@ -169,7 +172,7 @@ export class OtpService {
       }
 
       // Generate and store OTP (reusing email logic logic but with phone key)
-      const otp = this.generateOtp();
+      const otp = providedOtp || this.generateOtp();
       const otpKey = `otp:${phone}`;
       const expirySeconds = this.config.expiryMinutes * 60;
 
@@ -228,6 +231,7 @@ export class OtpService {
       return {
         success: true,
         message: 'OTP sent successfully',
+        otp,
         expiresIn: expirySeconds,
         attemptsRemaining: this.config.maxAttempts - attemptCount - 1,
       };

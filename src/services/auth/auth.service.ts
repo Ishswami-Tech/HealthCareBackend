@@ -1129,6 +1129,7 @@ export class AuthService {
       const userName = user
         ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User'
         : 'Future User';
+      const otpCode = this.otpService.generateOtp();
 
       let result;
       if (isEmail) {
@@ -1145,7 +1146,8 @@ export class AuthService {
           emailTarget,
           userName,
           requestDto.isRegistration ? 'verification' : 'login',
-          clinicId
+          clinicId,
+          otpCode
         );
       } else {
         // ✅ DUAL-CHANNEL OTP: Send via WhatsApp AND email (if available) for better delivery
@@ -1162,7 +1164,8 @@ export class AuthService {
           this.otpService.sendOtpSms(
             phoneTarget,
             requestDto.isRegistration ? 'verification' : 'login',
-            clinicId
+            clinicId,
+            otpCode
           ),
         ];
 
@@ -1174,7 +1177,8 @@ export class AuthService {
                 user.email,
                 userName,
                 requestDto.isRegistration ? 'verification' : 'login',
-                clinicId
+                clinicId,
+                otpCode
               )
               .catch((err: Error) => {
                 // Log but don't fail if email send fails (WhatsApp is primary)
@@ -1222,6 +1226,7 @@ export class AuthService {
         identifier: requestDto.identifier,
         ...(clinicId && { clinicId }),
         isRegistration: !!requestDto.isRegistration,
+        otp: otpCode,
       });
 
       await this.logging.log(
@@ -1234,6 +1239,7 @@ export class AuthService {
           method: isEmail ? 'Email' : 'SMS',
           ipAddress: sessionMetadata?.ipAddress,
           userAgent: sessionMetadata?.userAgent,
+          otp: otpCode,
         }
       );
 

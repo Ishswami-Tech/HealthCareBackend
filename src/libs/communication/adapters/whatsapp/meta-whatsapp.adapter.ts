@@ -153,6 +153,34 @@ export class MetaWhatsAppAdapter extends BaseWhatsAppAdapter {
         };
       }
 
+      const templatePayload = isTemplate
+        ? (payload as {
+            template?: {
+              components?: Array<{
+                type: string;
+                parameters: Array<{ type: string; text: string }>;
+                sub_type?: string;
+                index?: number;
+              }>;
+            };
+          })
+        : undefined;
+
+      await this.logger.log(
+        LogType.NOTIFICATION,
+        LogLevel.DEBUG,
+        `Sending Meta WhatsApp ${isTemplate ? 'template' : 'message'}`,
+        'MetaWhatsAppAdapter',
+        {
+          to: options.to,
+          ...(isTemplate && {
+            templateId: options.templateId,
+            language: options.language || 'en',
+            components: templatePayload?.template?.components,
+          }),
+        }
+      );
+
       const response = await this.sendWithRetry(async () => {
         if (!this.httpService) {
           throw new Error('HTTP service not initialized');
