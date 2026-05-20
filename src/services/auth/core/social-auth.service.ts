@@ -6,6 +6,7 @@ import { LoggingService } from '@infrastructure/logging/logging.service';
 import { LogType, LogLevel } from '@core/types';
 import type { SocialAuthProvider, SocialUser, SocialAuthResult } from '@core/types/auth.types';
 import type { UserCreateInput, UserUpdateInput } from '@core/types/input.types';
+import { resolveClinicUUID } from '@utils/clinic.utils';
 import { OAuth2Client } from 'google-auth-library';
 
 @Injectable()
@@ -202,6 +203,12 @@ export class SocialAuthService {
       let isNewUser = false;
 
       if (!user) {
+        let primaryClinicId: string | undefined;
+
+        if (socialUser.clinicId) {
+          primaryClinicId = await resolveClinicUUID(this.databaseService, socialUser.clinicId);
+        }
+
         // Create new user
         const userData: Record<string, unknown> = {
           userid: `user_${Date.now()}_${Math.random().toString(36).substring(2)}`,
@@ -216,8 +223,8 @@ export class SocialAuthService {
           role: 'PATIENT',
           isVerified: true, // Social auth users are pre-verified
           [this.getSocialIdField(socialUser.provider)]: socialUser.id,
-          // Persist primaryClinicId so new OAuth users get the correct clinic on first login.
-          ...(socialUser.clinicId && { primaryClinicId: socialUser.clinicId }),
+          // Persist the resolved clinic UUID so OAuth users stay aligned with the FK.
+          ...(primaryClinicId && { primaryClinicId }),
         };
 
         const userDataForCreate: UserCreateInput & Record<string, unknown> = {
