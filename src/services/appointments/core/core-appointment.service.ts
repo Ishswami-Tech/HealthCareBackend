@@ -1497,6 +1497,7 @@ export class CoreAppointmentService {
             ? clinicSettings['appointmentSettings']
             : {};
           videoCallWindow = this.extractVideoCallWindow(appointmentSettings);
+          const holidayClosures = this.extractHolidayClosures(appointmentSettings);
           const clinicOpdControls = isRecord(appointmentSettings['opdControls'])
             ? appointmentSettings['opdControls']
             : isRecord(appointmentSettings['opdControl'])
@@ -1576,6 +1577,26 @@ export class CoreAppointmentService {
               };
             }
 
+            if (holidayClosures.has(date)) {
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: 'Clinic is closed on this holiday',
+                },
+                message: 'Clinic is closed on this holiday',
+              };
+            }
+
             if (
               clinicPaused ||
               doctorPaused ||
@@ -1615,6 +1636,11 @@ export class CoreAppointmentService {
               appointmentSettings['operatingWindowsByDay'],
               dayName
             );
+            const hasExplicitSchedule =
+              Boolean(association.startTime || association.endTime) ||
+              !!association.location?.workingHours ||
+              !!association.doctor?.workingHours ||
+              isRecord(appointmentSettings['operatingWindowsByDay']);
 
             // Update working hours if defined - extract HH:mm using IST to avoid UTC shifts
             const timeFormatOptions = {
@@ -1642,7 +1668,29 @@ export class CoreAppointmentService {
                   ? doctorSessions
                   : clinicSessions.length > 0
                     ? clinicSessions
-                    : legacySession;
+                    : hasExplicitSchedule
+                      ? []
+                      : legacySession;
+
+            if (sessionWindows.length === 0 && hasExplicitSchedule) {
+              return {
+                doctorId,
+                date,
+                available: false,
+                availableSlots: [],
+                bookedSlots: [],
+                workingHours,
+                restrictions: {
+                  clinicPaused,
+                  doctorPaused,
+                  emergencyOnly,
+                  generalConsultationEnabled,
+                  videoConsultationEnabled,
+                  reason: 'Clinic is closed on this day',
+                },
+                message: 'Clinic is closed on this day',
+              };
+            }
           }
         } catch (e) {
           // Fallback to defaults if check fails
@@ -1938,6 +1986,75 @@ export class CoreAppointmentService {
     }
 
     return { start, end };
+  }
+
+  private extractHolidayClosures(settings: Record<string, unknown>): Set<string> {
+    const rawClosures = settings['holidayClosures'];
+    const closures = new Set<string>();
+
+    const addDate = (value: unknown) => {
+      if (typeof value !== 'string') {
+        return;
+      }
+
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const normalized = this.normalizeDateValue(trimmed);
+      if (normalized) {
+        closures.add(normalized);
+      }
+    };
+
+    if (Array.isArray(rawClosures)) {
+      rawClosures.forEach(entry => {
+        if (typeof entry === 'string') {
+          addDate(entry);
+          return;
+        }
+
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          const record = entry as Record<string, unknown>;
+          addDate(record['date']);
+        }
+      });
+    } else if (typeof rawClosures === 'string') {
+      addDate(rawClosures);
+    }
+
+    const legacyHolidayDates = settings['holidayDates'];
+    if (Array.isArray(legacyHolidayDates)) {
+      legacyHolidayDates.forEach(addDate);
+    } else if (typeof legacyHolidayDates === 'string') {
+      addDate(legacyHolidayDates);
+    }
+
+    return closures;
+  }
+
+  private normalizeDateValue(value: string): string | null {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const isoMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (isoMatch) {
+      const [, year, month, day] = isoMatch;
+      return `${year}-${month}-${day}`;
+    }
+
+    const date = new Date(trimmed);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    const year = date.getFullYear();
+    const month = `${date.getMonth() + 1}`.padStart(2, '0');
+    const day = `${date.getDate()}`.padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
 
   private timeToMinutes(value: string): number {
