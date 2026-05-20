@@ -68,8 +68,7 @@ export class WhatsAppService {
     _expiryMinutes: number = 10,
     maxRetries: number = 2,
     clinicId?: string,
-    purpose: string = 'verification',
-    buttonUrlSuffix: string = 'login'
+    purpose: string = 'verification'
   ): Promise<boolean> {
     if (!this.whatsAppConfig.enabled && !clinicId) {
       void this.loggingService.log(
@@ -107,13 +106,7 @@ export class WhatsAppService {
         await this.sendTemplateMessage(
           formattedPhone,
           templateId,
-          formatOTPTemplateParams(
-            purpose.replace(/_/g, ' ').trim() || 'verification',
-            appName,
-            clinicName,
-            otp,
-            buttonUrlSuffix
-          ),
+          formatOTPTemplateParams(clinicName || appName, otp),
           clinicId
         );
 
