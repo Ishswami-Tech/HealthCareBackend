@@ -1107,9 +1107,15 @@ export class AuthService {
           throw this.errors.emailAlreadyExists(requestDto.identifier, 'AuthService.requestOtp');
         }
       } else {
-        if (!user) {
+        // For existing user login - user MUST exist
+        // But for profile completion phone verification, user might not have this phone yet
+        // In that case, we still try to send OTP (SMS provider will handle invalid numbers)
+        // Only throw if it's an email (which requires existing user for login)
+        if (!user && isEmail) {
           throw this.errors.userNotFound(undefined, 'AuthService.requestOtp');
         }
+        // For phone, allow OTP even if user doesn't have this phone registered
+        // This enables phone verification for profile completion
       }
 
       const clinicId = requestDto.clinicId || clinicIdFromHeader;
